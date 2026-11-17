@@ -388,12 +388,19 @@ export async function saveEpubOffline(
   blob: Blob,
   options: { cache?: boolean } = {},
 ) {
-  // Read just before the record is written, so an explicit save that lands while a cache write runs stays kept.
-  const mark = async () => {
-    const existing = (await authDB.preferences.get(`reader-file:${book.id}`).catch(() => undefined))?.value as ReaderFileRecord;
-    return writesAsCache(existing, { cache: options.cache === true }) ? { cache: true } : {};
-  };
-  await navigator.storage?.persist?.().catch(() => false);
+  // The existing record is read and the new one written in one transaction, so an explicit save and the reader's
+  // cache write of the same edition (Now playing's hidden reader opens the mini player's book while Keep on this
+  // device saves it) cannot interleave: a cache write that read "nothing here" must not then overwrite the kept copy.
+  const key = `reader-file:${book.id}`;
+  const record = (value: { fingerprint: string; opfs?: true; blob?: Blob }) =>
+    authDB.transaction("rw", authDB.preferences, async () => {
+      const existing = (await authDB.preferences.get(key))?.value as ReaderFileRecord;
+      const mark = writesAsCache(existing, { cache: options.cache === true }) ? { cache: true } : {};
+      await authDB.preferences.put({ key, value: { ...value, ...mark } });
+    });
+  // Asked for, not waited on: Firefox answers with a prompt that may stay unanswered, and the copy must not wait on it
+  // (Keep on this device then never saved the EPUB in Firefox, #532).
+  void navigator.storage?.persist?.().catch(() => false);
   if (navigator.storage?.getDirectory) {
     const folder = await (
       await navigator.storage.getDirectory()
@@ -409,15 +416,8 @@ export async function saveEpubOffline(
       await writer.abort().catch(() => {});
       throw error;
     }
-    await authDB.preferences.put({
-      key: `reader-file:${book.id}`,
-      value: { fingerprint: book.fingerprint, opfs: true, ...(await mark()) },
-    });
-  } else
-    await authDB.preferences.put({
-      key: `reader-file:${book.id}`,
-      value: { fingerprint: book.fingerprint, blob, ...(await mark()) },
-    });
+    await record({ fingerprint: book.fingerprint, opfs: true });
+  } else await record({ fingerprint: book.fingerprint, blob });
   window.dispatchEvent(new CustomEvent(EBOOK_DEVICE_EVENT, { detail: { id: book.id } }));
 }
 export function openReader(id: string, fromAudio = false) {

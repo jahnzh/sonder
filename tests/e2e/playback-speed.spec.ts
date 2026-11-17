@@ -37,25 +37,15 @@ test("the default speed applies once chosen, chapter lengths stay real for a boo
     await expect(stepper).toHaveText("1.8×");
     await expect.poll(() => serverSpeed(page)).toBe(1.8);
     await expectDockSpeed(page, "1.8×");
-    const dockTitle = await page
-      .locator(".player-dock")
-      .getByRole("button", { name: /^Open title page for / })
-      .getAttribute("aria-label");
-    const books: { title: string; inLibrary: boolean; tracks: unknown[] }[] =
-      await (await page.request.get("/api/books")).json();
-    const otherBook = books.find(
-      (book) => book.inLibrary && book.tracks.length > 0 &&
-        `Open title page for ${book.title}` !== dockTitle,
-    );
-    expect(otherBook).toBeDefined();
-    await page.locator(".mobile-nav").getByRole("button", { name: "My library", exact: true }).click();
-    await page.getByRole("button", { name: `About ${otherBook!.title}`, exact: true }).click();
-    const details = page.getByRole("dialog", { name: "Book details", exact: true });
-    // Chapter lengths stay real lengths at any speed; only the current chapter's time left is adjusted.
+    // Chapter lengths stay real lengths at any speed; only the current chapter's time left is adjusted. The Book page
+    // has no chapter list (#532): the player's chapter list, the same component, shows it.
+    await page.locator(".dock-book").click();
+    const nowPlaying = page.getByRole("dialog", { name: "Now playing", exact: true });
+    await expect(nowPlaying).toBeVisible();
     await expect(
-      details.locator(".detail-chapters .chapter-row small").first(),
+      nowPlaying.locator(".chapter-list .chapter-row:not(.selected) small").first(),
     ).toHaveAttribute("title", "Chapter length");
-    await details.getByRole("button", { name: "Close dialog", exact: true }).click();
+    await nowPlaying.getByRole("button", { name: "Close dialog", exact: true }).click();
     stepper = await openPlayback();
     await stepper.focus();
     await page.keyboard.press("PageDown");

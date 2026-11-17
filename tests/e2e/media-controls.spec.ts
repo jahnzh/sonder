@@ -293,26 +293,23 @@ test("Space toggles playback across views and arrows skip 30 seconds while ignor
   await expect(search).toHaveValue("wonder land");
   expect(await paused()).toBe(true);
   await search.fill("");
-  // Space on a title page toggles playback.
+  // Space on the Book page (#532) toggles playback.
   await page
     .getByRole("button", {
       name: "Open title page for Alice’s Adventures in Wonderland",
       exact: true,
     })
     .click();
-  await expect(
-    page.getByRole("dialog", { name: "Book details", exact: true }),
-  ).toBeVisible();
+  const bookPage = page.getByRole("region", { name: "Book", exact: true });
+  await expect(bookPage).toBeVisible();
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await page.keyboard.press(" ");
   await expect.poll(paused).toBe(false);
   await page.keyboard.press(" ");
   await expect.poll(paused).toBe(true);
   // On the Audiobook page (#530) Space toggles playback, and is ignored while its picker, a dialog of a copy or the
   // note of Report a problem has focus.
-  await page
-    .getByRole("dialog", { name: "Book details", exact: true })
-    .getByRole("button", { name: /^Audiobook / })
-    .click();
+  await bookPage.getByRole("button", { name: /^Audiobook / }).click();
   const audiobook = page.getByRole("region", { name: "Audiobook", exact: true });
   await expect(audiobook).toBeVisible();
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
@@ -348,10 +345,9 @@ test("Space toggles playback across views and arrows skip 30 seconds while ignor
   await expect(note).toBeHidden();
   await page.goBack();
   await expect(audiobook).toBeHidden();
-  await page
-    .getByRole("dialog", { name: "Book details", exact: true })
-    .getByRole("button", { name: "Close dialog", exact: true })
-    .click();
+  await expect(bookPage).toBeVisible();
+  await bookPage.getByRole("button", { name: "Back to Library", exact: true }).click();
+  await expect(bookPage).toBeHidden();
   // Space and arrows work in Now Playing.
   await page.locator(".dock-book").click();
   const nowPlaying = page.getByRole("dialog", {

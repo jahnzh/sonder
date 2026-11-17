@@ -181,11 +181,14 @@ test("closing the reader goes back, and Back afterwards does not reopen it", asy
   await tab(page, "My library").click();
   await expect(shown(page)).toHaveText("Library");
   await page.getByRole("button", { name: `About ${title}`, exact: true }).click();
-  await page.getByRole("dialog", { name: "Book details" }).getByRole("button", { name: "Read ebook", exact: true }).click();
+  // Read on the Book page (#532) opens the chosen EPUB; closing the reader goes back to the book.
+  await page.getByRole("region", { name: "Book", exact: true }).getByRole("button", { name: "Read", exact: true }).click();
   await expect(reader(page)).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`#reader/${book.ebookId}$`));
   await closeReader(page);
   await expect(reader(page)).toBeHidden();
+  await expect(page).toHaveURL(/#book\/[^/]+$/);
+  await page.goBack();
   await expect(page).toHaveURL(/#library$/);
   await page.goBack();
   await expect(page).toHaveURL(/#discover$/);
@@ -437,19 +440,24 @@ test.describe("with answers from the test", () => {
     await expect(shown(page)).toHaveText("Library");
   }
 
-  test("Back with Book details open leaves the page and closes them", async ({ page }) => {
+  test("the Book page is an entry of its own: Back returns to the Library, and Back again leaves it", async ({ page }) => {
     const title = unique("Details back");
     await importAudio(page, title);
     await libraryOverDiscover(page);
-    const details = page.getByRole("dialog", { name: "Book details" });
+    const details = page.getByRole("region", { name: "Book", exact: true });
     await page.getByRole("button", { name: `About ${title}`, exact: true }).click();
     await expect(details).toBeVisible();
+    await expect(page).toHaveURL(/#book\/[^/]+$/);
+    await page.goBack();
+    await expect(shown(page)).toHaveText("Library");
+    await expect(details).toBeHidden();
     await page.goBack();
     await expect(shown(page)).toHaveText("Discover");
-    await expect(details).toBeHidden();
     await page.goForward();
     await expect(shown(page)).toHaveText("Library");
     await expect(details).toBeHidden();
+    await page.goForward();
+    await expect(details.getByRole("heading", { level: 1, name: title, exact: true })).toBeVisible();
   });
 
   test("Back with a series and its removal confirmation open leaves the page, and nothing is confirmed", async ({ page }) => {
@@ -477,22 +485,24 @@ test.describe("with answers from the test", () => {
     const title = unique("Manager back");
     await importAudio(page, title);
     await libraryOverDiscover(page);
-    const details = page.getByRole("dialog", { name: "Book details" });
+    const details = page.getByRole("region", { name: "Book", exact: true });
     const manager = page.getByRole("region", { name: "Audiobook", exact: true });
     await page.getByRole("button", { name: `About ${title}`, exact: true }).click();
-    // The book dialog's Audiobook row opens the Audiobook page (#530), an entry of its own.
+    // The Book page's Audiobook row opens the Audiobook page (#530), an entry of its own.
     await details.getByRole("button", { name: /^Audiobook / }).click();
     await expect(manager).toBeVisible();
     await expect(page).toHaveURL(/#book\/[^/]+\/audiobook$/);
     await expect(details).toBeHidden();
-    // Its back button is "Back to the book": until the Book page, the book is its dialog.
+    // Back returns to the Book page (#532), then to the Library, then leaves it.
     await page.goBack();
     await expect(manager).toBeHidden();
+    await expect(page).toHaveURL(/#book\/[^/]+$/);
+    await expect(details.getByRole("heading", { level: 1, name: title, exact: true })).toBeVisible();
+    await page.goBack();
     await expect(page).toHaveURL(/#library$/);
-    await expect(details.getByRole("heading", { name: title, exact: true })).toBeVisible();
+    await expect(details).toBeHidden();
     await page.goBack();
     await expect(shown(page)).toHaveText("Discover");
-    await expect(details).toBeHidden();
     await page.goForward();
     await expect(shown(page)).toHaveText("Library");
     await expect(manager).toBeHidden();
@@ -627,18 +637,19 @@ test("Back with the Audiobook page's removal confirmation open removes nothing",
   await page.goto("/#discover");
   await tab(page, "My library").click();
   await expect(shown(page)).toHaveText("Library");
-  const details = page.getByRole("dialog", { name: "Book details" });
+  const details = page.getByRole("region", { name: "Book", exact: true });
   const manager = page.getByRole("region", { name: "Audiobook", exact: true });
   const confirm = page.getByRole("dialog", { name: "Remove from this device?", exact: true });
   await page.getByRole("button", { name: `About ${title}`, exact: true }).click();
-  await details.getByRole("button", { name: "Save offline", exact: true }).click();
-  await expect(details.getByText("Ready for offline listening", { exact: true })).toBeVisible();
+  // The Book page's Keep on this device switch saves the book (#532).
+  await details.getByRole("switch", { name: "Keep on this device", exact: true }).click();
+  await expect(details.locator("#book-keep-line")).toHaveText(/^Audiobook · /, { timeout: 20000 });
   await details.getByRole("button", { name: /^Audiobook / }).click();
   await manager.getByRole("button", { name: /^Device copy / }).click();
   await page.getByRole("dialog", { name: "Device copy", exact: true }).getByRole("button", { name: "Remove from this device", exact: true }).click();
   await expect(confirm).toBeVisible();
   await page.goBack();
-  await expect(page).toHaveURL(/#library$/);
+  await expect(page).toHaveURL(/#book\/[^/]+$/);
   await expect(confirm).toBeHidden();
   await expect(manager).toBeHidden();
   await page.goForward();

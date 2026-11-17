@@ -1,8 +1,27 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { parseRange } from "../../server/range";
 test.use({ serviceWorkers: "block" });
+let ALICE_WORK = "";
+test.beforeEach(async ({ page }) => {
+  ALICE_WORK = (await (await page.request.get("/api/books")).json()).find((book: any) => book.id === "alice").workId;
+});
+/** The library by work answers Alice with the same tracks as the books do, so the Book page counts the same files. */
+async function sliceLibrary(page: Page, count: number) {
+  const slice = (work: any) => ({
+    ...work,
+    recordings: work.recordings.map((recording: any) => ({ ...recording, tracks: recording.tracks.slice(0, count) })),
+  });
+  await page.route("**/api/library", async (route) => {
+    const headers = { ...route.request().headers() };
+    delete headers["if-none-match"];
+    const response = await route.fetch({ headers });
+    const works = await response.json();
+    await route.fulfill({ status: 200, contentType: "application/json", json: works.map((w: any) => (w.workId === ALICE_WORK ? slice(w) : w)) });
+  });
+}
+
 test("offline downloads retry temporary HTTP errors at different chapter boundaries", async ({
   page,
 }) => {
@@ -15,6 +34,7 @@ test("offline downloads retry temporary HTTP errors at different chapter boundar
     alice.tracks = alice.tracks.slice(0, 2);
     await route.fulfill({ response, json: books });
   });
+  await sliceLibrary(page, 2);
   await page.route(/\/api\/media\/alice-[01]$/, (route) => {
     if (!route.request().headers()["x-sonder-download"])
       return route.continue();
@@ -56,10 +76,11 @@ test("offline downloads retry temporary HTTP errors at different chapter boundar
       exact: true,
     })
     .click();
-  await page.getByRole("button", { name: "Save offline", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Downloaded", exact: true }),
-  ).toBeDisabled({ timeout: 20000 });
+  // The Book page's Keep on this device switch starts today's save (#532).
+  const keep = page.getByRole("switch", { name: "Keep on this device", exact: true });
+  await keep.click();
+  await expect(keep).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator("#book-keep-line")).toHaveText(/^Audiobook( and ebook)? · /, { timeout: 20000 });
   expect(attempts.get(`alice-0:${4 * 1024 * 1024}`)).toBe(2);
   expect(attempts.get("alice-1:0")).toBe(2);
   await expect(page.locator(".toast")).not.toContainText("error");
@@ -78,6 +99,7 @@ test("player downloads retain verified sections after connection failure and res
       .tracks.slice(0, 1);
     await route.fulfill({ response, json: books });
   });
+  await sliceLibrary(page, 1);
   await page.route("**/api/media/alice-0", (route) => {
     if (!route.request().headers()["x-sonder-download"])
       return route.continue();
@@ -97,12 +119,16 @@ test("player downloads retain verified sections after connection failure and res
       },
     });
   });
-  await page.goto("/");
+  // The save starts from the Book page's Keep on this device switch (#532); the player's own button follows it.
+  await page.goto(`/#book/${encodeURIComponent(ALICE_WORK)}`);
+  const keep = page.getByRole("switch", { name: "Keep on this device", exact: true });
+  await keep.click();
+  await expect(page.locator(".toast")).toContainText("downloaded sections are kept", { timeout: 20000 });
+  // Partly on this device: the switch stays on, and the row offers Resume.
+  await expect(keep).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
   await page.locator(".dock-book").click();
   await expect(page.getByRole("dialog")).toBeVisible();
-  await page
-    .getByRole("button", { name: "Save on device", exact: true })
-    .click();
   await expect(
     page.getByRole("button", { name: "Resume download", exact: true }),
   ).toBeVisible({ timeout: 20000 });
@@ -130,11 +156,14 @@ test("player downloads retain verified sections after connection failure and res
   expect(pending.part.loaded).toBe(4 * 1024 * 1024);
   expect(pending.complete).toBeUndefined();
   fail = false;
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.reload();
+  // After a reload the switch is still on and Resume carries on from the saved sections.
+  await expect(keep).toHaveAttribute("aria-checked", "true");
+  await page.getByRole("button", { name: "Resume", exact: true }).click();
+  await expect(page.locator("#book-keep-line")).toHaveText(/^Audiobook( and ebook)? · /, { timeout: 20000 });
   await page.locator(".dock-book").click();
-  await page
-    .getByRole("button", { name: "Resume download", exact: true })
-    .click();
   await expect(
     page.getByRole("button", { name: "Saved on device", exact: true }),
   ).toBeDisabled();
@@ -174,13 +203,13 @@ test("player downloads retain verified sections after connection failure and res
   await page
     .getByRole("button", { name: "Book details and editions", exact: true })
     .click();
-  // The Audiobook row opens the Audiobook page (#530), where Get another recording is.
-  await expect(
-    page.getByRole("dialog", { name: "Book details" }).getByRole("button", { name: /^Audiobook / }),
-  ).toBeVisible();
+  // The player's book button opens the Book page (#532): its Audiobook row opens the Audiobook page (#530), where
+  // Get another recording is.
+  const bookPage = page.getByRole("region", { name: "Book", exact: true });
+  await expect(bookPage.getByRole("button", { name: /^Audiobook / })).toBeVisible();
   // The ebook's actions pass through the Ebook row (#531): Get when the book has no edition yet, otherwise the
   // row opens the Ebook page, whose Get another edition opens the same search.
-  const ebookRow = page.getByRole("dialog").getByRole("list", { name: "Ebook", exact: true });
+  const ebookRow = bookPage.getByRole("list", { name: "Files", exact: true }).getByRole("listitem").nth(1);
   await expect(ebookRow.getByText("Ebook", { exact: true })).toBeVisible();
   const getEbook = ebookRow.getByRole("button", { name: "Get an ebook", exact: true });
   if (await getEbook.count()) {

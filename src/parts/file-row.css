@@ -62,3 +62,18 @@ button.part-file-row:focus-visible {
   gap: var(--space-8);
   color: var(--muted);
 }
+/* A name followed by an info mark: the pair takes the name's place, the mark right after the words. */
+.part-file-row-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.part-file-row-title > .part-file-row-name {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+/* A muted row: its name in the muted colour, as what it names cannot be used yet. */
+.part-file-row[data-muted] .part-file-row-name {
+  color: var(--muted);
+}

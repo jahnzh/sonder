@@ -1,8 +1,8 @@
 // Which of this device's EPUB copies the user chose to keep (#671, spec #548 "Activity's entries"): the reader copies
 // every EPUB it opens to the device as a reading cache, so a book can be read again without a connection, and the
 // hidden reader of Now playing does so for the book in the mini player as well. That copy is not kept: it counts in
-// Used by Sonder and is not listed or counted under Kept on this device. Only an explicit save ("Save ebook offline")
-// keeps an edition. A record written before #671 carries no mark and stays kept, as nobody can tell it apart.
+// Used by Sonder and is not listed or counted under Kept on this device. Only an explicit save (the Book page's Keep
+// on this device switch, #532) keeps an edition. A record written before #671 carries no mark and stays kept, as nobody can tell it apart.
 //
 // Pure functions of the stored `reader-file:<id>` record; the server must not import this file.
 

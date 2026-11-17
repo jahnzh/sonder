@@ -62,7 +62,7 @@ test("multiple audiobook releases can be filtered, paged and explicitly chosen f
     .click();
   // From the Audiobook page's Get another recording (#530), until the Get sheet replaces the picker.
   await page
-    .getByRole("dialog", { name: "Book details" })
+    .getByRole("region", { name: "Book", exact: true })
     .getByRole("button", { name: /^Audiobook / })
     .click();
   await expect(page).toHaveURL(/#book\/work-alice\/audiobook$/);
@@ -114,7 +114,7 @@ test("multiple audiobook releases can be filtered, paged and explicitly chosen f
 test("removing and restoring a library book sends no empty JSON body and persists across reloads", async ({
   page,
 }) => {
-  // The book dialog removes and adds the whole work (#527): DELETE and PUT /api/works/<workId>/library, no body.
+  // The Book page removes and adds the whole work (#527, #532): DELETE and PUT /api/works/<workId>/library, no body.
   const membership = (method: "DELETE" | "PUT") =>
     page.waitForRequest(
       (request) =>
@@ -125,6 +125,7 @@ test("removing and restoring a library book sends no empty JSON body and persist
     expect(request.headers()["content-type"]).toBeUndefined();
     expect(request.postData()).toBeNull();
   };
+  const book = page.getByRole("region", { name: "Book", exact: true });
   await page.goto("/");
   await page
     .getByRole("button", {
@@ -132,31 +133,15 @@ test("removing and restoring a library book sends no empty JSON body and persist
       exact: true,
     })
     .click();
-  let removed = membership("DELETE");
-  await page
-    .getByRole("button", { name: "Remove from library", exact: true })
+  const removed = membership("DELETE");
+  await book.getByRole("button", { name: "Remove from library", exact: true }).click();
+  await book
+    .getByRole("group", { name: "Remove from library?", exact: true })
+    .getByRole("button", { name: "Remove", exact: true })
     .click();
   expectNoBody(await removed);
-  await expect(page.locator(".toast")).toContainText(
-    "Book removed from your library",
-  );
-  // The dialog stays open on the book, now outside the library, and adds it back.
-  const added = membership("PUT");
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Add to library", exact: true })
-    .click();
-  expectNoBody(await added);
-  await expect(page.locator(".toast")).toContainText("Added to library.");
-  removed = membership("DELETE");
-  await page
-    .getByRole("button", { name: "Remove from library", exact: true })
-    .click();
-  expectNoBody(await removed);
-  await expect(page.locator(".toast")).toContainText(
-    "Book removed from your library",
-  );
-  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await expect(page.locator(".toast")).toContainText("Removed from your library");
+  await expect(page).toHaveURL(/#library$/);
   await page.reload();
   await expect(
     page.getByRole("button", {
@@ -164,8 +149,17 @@ test("removing and restoring a library book sends no empty JSON body and persist
       exact: true,
     }),
   ).toHaveCount(0);
-  expect((await page.request.put("/api/works/work-alice/library")).ok()).toBe(true);
+  // The book's page outside the library says so and adds it back, staying on the book.
+  await page.goto("/#book/work-alice");
+  await expect(book.getByTestId("book-place")).toHaveText("Not in your library");
+  const added = membership("PUT");
+  await book.getByRole("button", { name: "Add to library", exact: true }).click();
+  expectNoBody(await added);
+  await expect(book.getByRole("button", { name: "Listen", exact: true })).toBeVisible();
+  await expect(book.getByRole("button", { name: "Remove from library", exact: true })).toBeVisible();
   await page.reload();
+  await expect(book.getByRole("button", { name: "Listen", exact: true })).toBeVisible();
+  await book.getByRole("button", { name: "Back to Library", exact: true }).click();
   await expect(
     page.getByRole("button", {
       name: "About Alice’s Adventures in Wonderland",

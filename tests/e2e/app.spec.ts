@@ -254,11 +254,11 @@ test("import, complete device download, service-worker ranges and offline relaun
   await page
     .getByRole("button", { name: story, exact: true })
     .click();
-  await page.getByRole("button", { name: "Save offline", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Downloaded", exact: true }),
-  ).toBeDisabled();
-  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
+  // The Book page's Keep on this device switch saves the book (#532).
+  await page.getByRole("switch", { name: "Keep on this device", exact: true }).click();
+  await expect(page.locator("#book-keep-line")).toHaveText(/^Audiobook · /, { timeout: 20000 });
+  await page.getByRole("button", { name: "Back to Library", exact: true }).click();
+  await expect(page).toHaveURL(/#library$/);
   const books = await (await page.request.get("/api/books")).json();
   const book = books.find(
     (b: { title: string }) => b.title === story,

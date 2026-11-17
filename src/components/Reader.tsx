@@ -11,7 +11,6 @@ import {
   Bookmark,
   Search,
   Headphones,
-  Download,
   Loader2,
   List,
   X,
@@ -54,8 +53,6 @@ import { ApiError, api, forgetPositionHistory, localDB } from "../lib";
 import {
   loadReader,
   epubFile,
-  saveEpubOffline,
-  epubKept,
   readingState,
   saveReading,
   storeReading,
@@ -366,8 +363,6 @@ export function ReaderView({
     [map, setMap] = useState<AlignmentJob | null>(null),
     // The server confirmed `map` for the current audio in this reader (a cached map is not, until the map endpoint answers).
     [mapConfirmed, setMapConfirmed] = useState(false),
-    [offline, setOffline] = useState(false),
-    [saving, setSaving] = useState(false),
     [recovering, setRecovering] = useState(false),
     [conflict, setConflict] = useState<ReadingCheckpoint | null>(null),
     [follow, setFollow] = useState(true),
@@ -546,8 +541,6 @@ export function ReaderView({
       latest.current = value.checkpoint?.locator || null;
       const state = await readingState(id);
       setConflict(state?.conflict || null);
-      // The reader's own copy is a cache, not a save (#671): the entry offers Save until the user saved it.
-      setOffline(await epubKept(id, value.fingerprint));
     } catch (error) {
       // Only a confirmed "not found" means gone; offline, with no copy here, keeps the reader's message.
       // A reader closed before the answer came leaves the page shown now alone.
@@ -1645,15 +1638,6 @@ export function ReaderView({
     setPanel(null);
     action();
   };
-  const saveOffline = () => {
-    if (!book || !file.current) return;
-    setSaving(true);
-    void saveEpubOffline(book, file.current)
-      // The entry itself says "Ebook saved offline" once it is; only a failure is a message (#591).
-      .then(() => setOffline(true))
-      .catch(() => messages.error("save-offline"))
-      .finally(() => setSaving(false));
-  };
   // The message in the foot (#591): a place saved elsewhere, an error, a notice with Undo, an update while paused.
   const update = useReaderUpdate(viewport);
   const message = messageToShow(messages.state, {
@@ -1711,10 +1695,6 @@ export function ReaderView({
       </button>
       <button className="reader-more-item" onClick={fromMenu(() => setPanel("sync"))}>
         <Headphones size={19} /> Reading sync
-      </button>
-      <button className="reader-more-item" disabled={!book || !file.current || saving || offline} onClick={saveOffline}>
-        {saving ? <Loader2 size={19} className="spin" /> : <Download size={19} />}
-        {offline ? "Ebook saved offline" : "Save ebook offline"}
       </button>
       <p className="reader-sync-state" role="status">
         {recoveryStatus || (!follow ? "Audio follow paused" : currentInterval ? "Estimated sentence timings" : map ? "No timing for this position" : "Prepare reading sync to highlight narration")}
