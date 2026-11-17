@@ -1,8 +1,8 @@
 /**
  * Retry and Resume of downloads and reading syncs through Activity (#515, ADR 0010): `/api/activity/items/retry` and
- * `/api/activity/items/resume` on the real app, each through the route the feature has today (the Downloads page's
- * `POST /api/acquisitions/<id>/control`, the reading sync's `PATCH /api/alignments/<id>` resume). A fake Transmission
- * answers the torrent client's RPC; nothing leaves the process.
+ * `/api/activity/items/resume` on the real app, each through the route the feature has today (the server queue's
+ * `POST /api/acquisitions/<id>/control` in Activity's Now, the reading sync's `PATCH /api/alignments/<id>` resume). A
+ * fake Transmission answers the torrent client's RPC; nothing leaves the process.
  */
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
@@ -178,7 +178,7 @@ test("older requests with an empty body still get their answer", async () => {
   assert.equal(resume.json().error, "This item cannot be resumed.");
 });
 
-test("Resume of a paused download starts its torrent again, as the Downloads page's Resume does", async () => {
+test("Resume of a paused download starts its torrent again, as the server queue's Resume does", async () => {
   const resumed = await post(admin, "/api/activity/items/resume", { id: "acquisition:acq-paused" });
   assert.equal(resumed.statusCode, 200, resumed.body);
   assert.deepEqual(resumed.json(), { ok: true, result: { ok: true } });
@@ -189,7 +189,7 @@ test("Resume of a paused download starts its torrent again, as the Downloads pag
   assert.deepEqual(item.actions, [], "a running download offers neither");
   rpc.length = 0;
 
-  // The same through the Downloads page's control: the same RPC and the same stored status.
+  // The same through the server queue's control in Activity's Now: the same RPC and the same stored status.
   run("UPDATE acquisitions SET status='paused' WHERE id='acq-paused'");
   assert.equal((await post(admin, "/api/acquisitions/acq-paused/control", { action: "resume" })).statusCode, 200);
   assert.deepEqual(changes().map((call) => [call.method, call.arguments.ids]), [["torrent-start", [HASHES["acq-paused"]]]]);
@@ -197,7 +197,7 @@ test("Resume of a paused download starts its torrent again, as the Downloads pag
   rpc.length = 0;
 });
 
-test("Retry of a failed download adds its magnet again under the same id, as the Downloads page's Retry does", async () => {
+test("Retry of a failed download adds its magnet again under the same id, as the server queue's Retry does", async () => {
   const retried = await post(admin, "/api/activity/items/retry", { id: "acquisition:acq-failed" });
   assert.equal(retried.statusCode, 200, retried.body);
   assert.equal(retried.json().ok, true);

@@ -58,7 +58,7 @@ test("acquisitions: every status the writers use maps to its Activity state", ()
   const expected = {
     checking: "running", preparing: "running", downloading: "running", paused: "paused", ready: "done", error: "failed",
   } satisfies Record<AcquisitionJobStatus, ActivityState>;
-  // Retry when it failed, Resume when it is paused, through the Downloads page's control (#515).
+  // Retry when it failed, Resume when it is paused, through the server queue's control in Activity's Now (#515, #516).
   const actions = {
     checking: [], preparing: [], downloading: [], paused: ["resume"], ready: [], error: ["retry"],
   } satisfies Record<AcquisitionJobStatus, ActivityItemAction[]>;
