@@ -16,6 +16,10 @@ type Common = {
   status: string;
   /** 0 to 1 while something moves; draws the bar under the status line. Leave out when nothing moves. */
   progress?: number | null;
+  /** An info mark (Tooltip's InfoMark) after the name. Not on a row that is a button: a mark is a button. */
+  info?: ReactNode;
+  /** The row is muted: what it names cannot be used yet (a Reading sync that needs a file). */
+  muted?: boolean;
 };
 export type FileRowProps = Common &
   (
@@ -31,16 +35,25 @@ export type FileRowProps = Common &
       }
   );
 
-function Body({ id, kind, name, status, progress }: Common & { id: string }) {
+function Body({ id, kind, name, status, progress, info }: Common & { id: string }) {
   return (
     <>
       <span className="part-file-row-icon">
         <FileIcon kind={kind} />
       </span>
       <span className="part-file-row-text">
-        <span id={`${id}-name`} className="part-file-row-name type-body">
-          {name}
-        </span>
+        {info ? (
+          <span className="part-file-row-title">
+            <span id={`${id}-name`} className="part-file-row-name type-body">
+              {name}
+            </span>
+            {info}
+          </span>
+        ) : (
+          <span id={`${id}-name`} className="part-file-row-name type-body">
+            {name}
+          </span>
+        )}
         <span id={`${id}-status`} className="part-file-row-status type-label">
           {status}
         </span>
@@ -67,7 +80,7 @@ export function FileRow(props: FileRowProps) {
   }
   return (
     <li className="part-file-row-item" aria-labelledby={`${id}-name ${id}-status`}>
-      <div className="part-file-row" data-kind={props.kind} data-moving={moving}>
+      <div className="part-file-row" data-kind={props.kind} data-moving={moving} data-muted={props.muted ? "" : undefined}>
         <Body id={id} {...props} />
         {props.action && <span className="part-file-row-end">{props.action}</span>}
       </div>

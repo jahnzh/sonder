@@ -69,15 +69,16 @@ test("mobile Hardcover connection, shelves, custom lists, edition selection and 
   await page
     .getByRole("button", { name: "About The Quiet Shelf", exact: true })
     .click();
+  // The Book page (#532): Get for its audiobook, the main action, and no This device.
   await expect(
-    page.getByRole("button", { name: "Find audio", exact: true }),
+    page.getByRole("button", { name: "Get an audiobook", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Save offline", exact: true }),
+    page.getByRole("switch", { name: "Keep on this device", exact: true }),
   ).toHaveCount(0);
   // The book's Hardcover is one row with the shelf; it opens the Hardcover page (#529).
   await page
-    .getByRole("dialog")
+    .getByRole("region", { name: "Book", exact: true })
     .getByRole("button", { name: "Hardcover Want to read", exact: true })
     .click();
   await expect(page).toHaveURL(/#book\/[^/]+\/hardcover$/);
@@ -95,6 +96,8 @@ test("mobile Hardcover connection, shelves, custom lists, edition selection and 
   ).toHaveAttribute("aria-checked", "false");
   await expect(page.getByText("Book removed from this Hardcover list.", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Back to the book", exact: true }).click();
+  await expect(page).toHaveURL(/#book\/[^/]+$/);
+  await page.getByRole("button", { name: "Back to Library", exact: true }).click();
   await expect(page).toHaveURL(/#library$/);
   await page
     .getByRole("button", { name: "Clear Hardcover filters", exact: true })
@@ -106,7 +109,7 @@ test("mobile Hardcover connection, shelves, custom lists, edition selection and 
     })
     .click();
   await page
-    .getByRole("dialog")
+    .getByRole("region", { name: "Book", exact: true })
     .getByRole("button", { name: "Hardcover Currently reading", exact: true })
     .click();
   await expect(page.getByRole("button", { name: "Shelf Currently reading", exact: true })).toBeVisible();
@@ -128,6 +131,7 @@ test("mobile Hardcover connection, shelves, custom lists, edition selection and 
     .getByRole("button", { name: "Pause", exact: true })
     .click();
   await page.getByRole("button", { name: "Back to the book", exact: true }).click();
+  await page.getByRole("button", { name: "Back to Library", exact: true }).click();
   await expect(page).toHaveURL(/#library$/);
   // Put The Quiet Shelf back on Want to read and in Weekend escapes, here and in the Hardcover fixture, so the
   // next run on this server finds the shelf and list it filters by as this one did.
@@ -200,12 +204,13 @@ test("r6#4: a regular user is not offered to create or change the shared Hardcov
   });
   await page.goto("/#library");
   await page.getByRole("button", { name: "About Alice’s Adventures in Wonderland", exact: true }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Hardcover Currently reading", exact: true }).click();
+  await page.getByRole("region", { name: "Book", exact: true }).getByRole("button", { name: "Hardcover Currently reading", exact: true }).click();
   await expect(page.getByRole("button", { name: "Shelf Currently reading", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: /Change match/ })).toHaveCount(0);
   await page.getByRole("button", { name: "Back to the book", exact: true }).click();
+  await page.getByRole("button", { name: "Back to Library", exact: true }).click();
   await page.getByRole("button", { name: "About Frankenstein", exact: true }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Hardcover Not matched", exact: true }).click();
+  await page.getByRole("region", { name: "Book", exact: true }).getByRole("button", { name: "Hardcover Not matched", exact: true }).click();
   await expect(page.getByText("Not matched on Hardcover. The administrator can match it.", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: /Match/ })).toHaveCount(0);
   await expect(page.getByRole("searchbox")).toHaveCount(0);

@@ -41,7 +41,3 @@
   gap: var(--space-8);
   flex-wrap: wrap;
 }
-/* The Ebook row in today's book dialog: apart from the chapter list under it. */
-.ebook-file-row {
-  margin: 0 0 var(--space-24);
-}

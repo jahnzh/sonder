@@ -16,10 +16,8 @@ import {
   Plus,
   ArrowUpRight,
   ArrowRight,
-  ChevronRight,
   Headphones,
   Check,
-  List,
   Upload,
   Cloud,
   WifiOff,
@@ -31,14 +29,11 @@ import {
   FolderOpen,
   Link2,
   RefreshCw,
-  Volume2,
   Music2,
-  HardDrive,
   Menu,
 } from "lucide-react";
-import { PlayerProvider, usePlayer } from "./player";
+import { PlayerProvider } from "./player";
 import { SeriesDialog, type SeriesTarget } from "./components/Series";
-import {ReaderShortcut} from "./components/ReaderShortcut";
 import { ReaderHost } from "./components/Reader";
 import { EBOOK_DEVICE_EVENT } from "./reading";
 import {
@@ -48,7 +43,6 @@ import {
   localDB,
   authDB,
   selectUserStorage,
-  duration,
   bytes,
   percent,
   downloadTrack,
@@ -77,10 +71,8 @@ import { SignIn, type Account } from "./components/SignIn";
 import { Join } from "./components/Join";
 import { PlayerDock } from "./components/Player";
 import { AppUpdate } from "./components/AppUpdate";
-import { Chapters } from "./components/Chapters";
 import { type HardcoverFilter } from "./components/Hardcover";
-import { listeningChapters } from "./chapters";
-import { type Page, Mark, ListenButton, Empty } from "./pages/shared";
+import { type Page, Mark, Empty } from "./pages/shared";
 import { LibraryPage } from "./pages/library-page";
 import { DiscoverPage } from "./pages/discover-page";
 import { ActivityServer } from "./pages/activity-server";
@@ -90,16 +82,14 @@ import { useSideBySide } from "./pages/side-by-side";
 import { ActivityDevice } from "./pages/activity-device";
 import { SettingsPage } from "./pages/settings-page";
 import { AudiobookPage } from "./pages/audiobook-page";
-import { audiobookRowLine } from "./pages/audiobook-model";
-import { FileRow } from "./parts/FileRow";
-import { Group } from "./parts/Group";
 import { HardcoverPage } from "./pages/hardcover-page";
-import { HardcoverRow } from "./pages/hardcover-row";
-import { EbookFileRow, EbookPage, ebookSearchTarget } from "./pages/ebook-page";
+import { EbookPage, ebookSearchTarget } from "./pages/ebook-page";
+import { BookPage } from "./pages/book-page";
+import { toggleWorkFavorite } from "./pages/book-model";
 import { ReaderPages } from "./pages/reader-pages";
 import { isReaderPage } from "./reader-pages";
 import { firstPage, writeAddress, type Place, type Route } from "./routes";
-import { onPageLeftByHistory, shownSheet, startNavigation, useAddress } from "./navigation";
+import { onPageLeftByHistory, startNavigation, useAddress } from "./navigation";
 import { Gallery, isGalleryRoute } from "./gallery/Gallery";
 import { refreshLibraryWorks, startLibraryWorks, useStoredWorksWithPlaces } from "./library-works-store";
 import { bookStatus, readingPercent, workProgress } from "./work-progress";
@@ -298,7 +288,6 @@ function LibraryApp({
   const [view, setView] = useState<"grid" | "list">("grid");
   const [favorites, setFavorites] = useState<string[]>([]);
   const [showFavorites, setShowFavorites] = useState(false);
-  const [detail, setDetail] = useState<Book | null>(null);
   const [seriesTarget, setSeriesTarget] = useState<SeriesTarget | null>(null);
   const [seriesRevision, setSeriesRevision] = useState(0);
   const [importOpen, setImportOpen] = useState(false);
@@ -476,7 +465,6 @@ function LibraryApp({
     () =>
       onPageLeftByHistory(() => {
         leftByHistory.current++;
-        setDetail(null);
         setSeriesTarget(null);
         setImportOpen(false);
         setSidebarOpen(false);
@@ -499,48 +487,24 @@ function LibraryApp({
     leavePage("activity");
     address.navigate({ name: "activity", part: "device" });
   };
-  // A row of Now opens its work: today's book dialog, until the Book page exists (#522). A work that is not in the
-  // list yet (a download that just finished) is read again first.
-  const openWork = (workId: string, bookId: string | null) => {
-    const book = (bookId ? books.find((b) => b.id === bookId) : undefined) ?? books.find((b) => b.workId === workId);
-    if (book) return setDetail(book);
-    void refresh();
-    notify("Your book is joining the library. Open it in a moment.");
+  // Every opener of a book opens its Book page (#532): a Library tile, a Discover result, the player's "Open title
+  // page", This device's rows and Activity's rows (#522).
+  const openBook = (workId: string) => {
+    setSidebarOpen(false);
+    address.navigate({ name: "book", workId });
   };
+  const openWork = (workId: string) => openBook(workId);
+  const openBookOf = (book: Book) => openBook(book.workId);
   const switchPlace = (p: Place) => {
-    leftAudiobookByTab.current = true;
     leavePage(p);
     address.goPlace(p);
   };
   // The Audiobook page of a book (#530): from the player's "Audiobook", the book dialog's Audiobook row and Activity.
   const audiobookWorkId =
     address.route.name === "book-page" && address.route.page === "audiobook" ? address.route.workId : null;
-  const openAudiobook = (book: Book) => {
-    setDetail(null);
-    address.navigate({ name: "book-page", workId: book.workId, page: "audiobook" });
-  };
-  // Its back button is "Back to the book": until the Book page (#532) the book is today's dialog, so landing on the
-  // Library from the page (Back, or the parent of a page opened by a link) opens the dialog again for that work.
-  const leftAudiobookByTab = useRef(false);
-  const lastAudiobook = useRef<string | null>(null);
-  useEffect(() => {
-    const left = lastAudiobook.current;
-    lastAudiobook.current = audiobookWorkId;
-    const byTab = leftAudiobookByTab.current;
-    leftAudiobookByTab.current = false;
-    setReopenBook(!left || audiobookWorkId || byTab || address.route.name !== "library" || shownSheet() ? null : left);
-  }, [address.route]);
-  // The book's entries may still be loading after a link straight to the page: the dialog opens once they are in.
-  const [reopenBook, setReopenBook] = useState<string | null>(null);
-  useEffect(() => {
-    if (!reopenBook) return;
-    const ofWork = books.filter((b) => b.workId === reopenBook && b.inLibrary && b.tracks.length > 0);
-    if (!ofWork.length) return;
-    setReopenBook(null);
-    // The dialog shows the chosen recording, the one the page ticked.
-    const chosen = deviceWorks.get(reopenBook)?.chosenRecordingId;
-    setDetail(ofWork.find((b) => b.recordingId === chosen) ?? ofWork[0]);
-  }, [reopenBook, books]);
+  const openAudiobook = (book: Book) => address.navigate({ name: "book-page", workId: book.workId, page: "audiobook" });
+  // The Book page (#532): `#book/<workId>`, in place of the page under it.
+  const bookWorkId = address.route.name === "book" ? address.route.workId : null;
   const onProgress = useCallback(
     (p: Progress) =>
       setBooks((current) =>
@@ -556,27 +520,13 @@ function LibraryApp({
       ),
     [],
   );
+  // The cards of the Library and Discover keep the routes by edition; the Book page adds and removes by work.
   const mutateLibrary = async (
     b: Book,
     action: "add" | "remove" | "finished" | "unread",
-    options: { byWork?: boolean } = {},
   ) => {
     try {
-      // The book dialog adds and removes the whole work (#527); the cards keep the routes by edition.
-      if (options.byWork && (action === "add" || action === "remove")) {
-        await api(`/works/${encodeURIComponent(b.workId)}/library`, {
-          method: action === "add" ? "PUT" : "DELETE",
-        });
-        if (action === "remove")
-          await localDB.positionHistory.bulkDelete([
-            ...new Set([
-              b.recordingId,
-              ...books
-                .filter((entry) => entry.workId === b.workId)
-                .map((entry) => entry.recordingId),
-            ]),
-          ]);
-      } else if (action === "add")
+      if (action === "add")
         await api("/library", {
           method: "POST",
           body: JSON.stringify({ bookId: b.id }),
@@ -592,20 +542,6 @@ function LibraryApp({
       // The Library's states come from the works (#556): read them before the books, so a mark shows at once.
       await refreshLibraryWorks().catch(() => {});
       await refresh();
-      setDetail((d) =>
-        d?.id === b.id
-          ? {
-              ...d,
-              inLibrary: action !== "remove",
-              status:
-                action === "finished"
-                  ? "finished"
-                  : action === "unread"
-                    ? "unread"
-                    : d.status,
-            }
-          : d,
-      );
       notify(
         action === "add"
           ? "Added to library."
@@ -618,6 +554,14 @@ function LibraryApp({
     } catch (e) {
       notify((e as Error).message, true);
     }
+  };
+  // The Book page's heart: every entry of the work joins today's favourites list, or every one leaves it (#532).
+  const toggleFavorites = (ids: string[]) => {
+    setFavorites((current) => {
+      const next = toggleWorkFavorite(ids, current);
+      void localDB.preferences.put({ key: "favorites", value: next });
+      return next;
+    });
   };
   const toggleFavorite = (id: string) => {
     setFavorites((current) => {
@@ -736,13 +680,11 @@ function LibraryApp({
     );
   // Today's ebook search for a work (Discover's ebooks, linked to the work), until slice "Get" (S8).
   const findEbook = (target: Book) => {
-    setDetail(null);
     navigate("discover");
     setEbookTarget(target);
     setDiscoverQuery(`${target.title} ${target.author}`);
   };
   const findAudio = (b: Book) => {
-    setDetail(null);
     navigate("discover");
     setAudioTarget(b);
     setDiscoverQuery(b.title);
@@ -767,7 +709,7 @@ function LibraryApp({
   return (
     <PlayerProvider
       onProgress={onProgress}
-      fallback={detail?.tracks.length ? detail : featured}
+      fallback={featured}
       notify={notify}
     >
       <div className="app-shell">
@@ -955,9 +897,32 @@ function LibraryApp({
                 }}
               />
             )}
-            {/* A book's Hardcover page (#529) and its Ebook page (#531) stand in place of the place's page; the Book page (#532) joins the book's pages. */}
-            {/* The reader's Chapters, Bookmarks and Search (#590) are pages too. */}
-            {address.route.name === "book-page" && isReaderPage(address.route.page) ? <ReaderPages key={`${address.route.workId}:${address.route.page === "search" ? "search" : "chapters"}`} workId={address.route.workId} page={address.route.page} /> : address.route.name === "book-page" && address.route.page === "hardcover" ? <HardcoverPage key={address.route.workId} workId={address.route.workId} admin={user.role === "admin"} books={books} onChanged={() => void refresh()} /> : ebookPage ? (
+            {/* The Book page (#532), its Hardcover (#529) and Ebook (#531) pages, and the reader's Chapters, Bookmarks and Search (#590) stand in place of the place's page. */}
+            {audiobookWorkId ? null : address.route.name === "book-page" && isReaderPage(address.route.page) ? <ReaderPages key={`${address.route.workId}:${address.route.page === "search" ? "search" : "chapters"}`} workId={address.route.workId} page={address.route.page} /> : bookWorkId ? (
+              <BookPage
+                key={bookWorkId}
+                workId={bookWorkId}
+                admin={admin}
+                online={online}
+                books={books}
+                downloads={downloads}
+                downloadParts={downloadParts}
+                running={downloadJobs}
+                favorites={favorites}
+                onFavorite={toggleFavorites}
+                onSave={(book) => void startDownload(book)}
+                onPauseSave={(recordingId) => controllers.current.get(recordingId)?.abort()}
+                onFindAudio={findAudio}
+                onFindEbook={findEbook}
+                onSeries={(id) => setSeriesTarget({ id, mode: "preview" })}
+                onChanged={refresh}
+                onDevice={async () => {
+                  await refreshDownloads();
+                  await refreshOfflineEbooks();
+                }}
+                notify={notify}
+              />
+            ) : address.route.name === "book-page" && address.route.page === "hardcover" ? <HardcoverPage key={address.route.workId} workId={address.route.workId} admin={user.role === "admin"} books={books} onChanged={() => void refresh()} /> : ebookPage ? (
               <EbookPage
                 key={ebookPage}
                 workId={ebookPage}
@@ -965,7 +930,7 @@ function LibraryApp({
                 onGetEdition={(work) => findEbook(books.find((b) => b.workId === work.workId) ?? ebookSearchTarget(work))}
               />
             ) : <>
-            {page === "library" && !audiobookWorkId && (
+            {page === "library" && (
               <LibraryPage
                 admin={user.role === "admin"}
                 visible={visible}
@@ -986,7 +951,7 @@ function LibraryApp({
                 loadError={loadError}
                 seriesRevision={seriesRevision}
                 setSeriesTarget={setSeriesTarget}
-                setDetail={setDetail}
+                setDetail={openBookOf}
                 setImportOpen={setImportOpen}
                 favorites={favorites}
                 toggleFavorite={toggleFavorite}
@@ -1012,7 +977,7 @@ function LibraryApp({
                 books={visible}
                 query={query}
                 onQuery={setQuery}
-                onDetail={setDetail}
+                onDetail={openBookOf}
                 onAdd={(b) => void mutateLibrary(b, "add")}
                 notify={notify}
                 torboxConfigured={!!settings?.torboxConfigured}
@@ -1067,7 +1032,7 @@ function LibraryApp({
                   ebooks={savedEbooks.filter((e) => keptEbookEditionIds.has(e.id))}
                   online={online}
                   onPause={(recordingId) => controllers.current.get(recordingId)?.abort()}
-                  onOpen={setDetail}
+                  onOpen={openBookOf}
                   onRemove={async (row) => {
                     // Every file of the book on this device: its recordings' audio and its EPUB. The place, the
                     // bookmarks and the library entry stay (ADR 0018).
@@ -1145,7 +1110,7 @@ function LibraryApp({
             controllers.current.get(book.recordingId)?.abort()
           }
           onViewDownloads={openDevice}
-          onBookDetails={setDetail}
+          onBookDetails={openBookOf}
           onManageSources={openAudiobook}
         />
         <ReaderHost books={books} notify={notify} />
@@ -1162,47 +1127,6 @@ function LibraryApp({
             </button>
           </div>
         )}
-        <BookDetail
-          admin={user.role === "admin"}
-          onOpenAudiobook={() => detail && openAudiobook(detail)}
-          onFindAudio={() => detail && findAudio(detail)}
-          onHardcover={() => {
-            if (!detail) return;
-            const workId = detail.workId;
-            setDetail(null);
-            address.navigate({ name: "book-page", workId, page: "hardcover" });
-          }}
-          onKeepServer={() => {
-            const left = leftByHistory.current;
-            if (detail)
-              void api(`/books/${detail.id}/keep`, { method: "POST" })
-                .then(() => {
-                  notify("Saving the audio to your server’s HDD.");
-                  setDetail(null);
-                  if (left === leftByHistory.current) navigate("activity");
-                })
-                .catch((e) => notify(e.message, true));
-          }}
-          onFindEbook={() => detail && findEbook(detail)}
-          onOpenEbook={() => {
-            if (!detail) return;
-            const workId = detail.workId;
-            setDetail(null);
-            address.navigate({ name: "book-page", workId, page: "ebook" });
-          }}
-          book={
-            detail && { ...detail, ...books.find((b) => b.id === detail.id) }
-          }
-          onClose={() => setDetail(null)}
-          downloaded={detail ? downloaded(detail) : false}
-          downloadJob={detail ? downloadJobs[detail.recordingId] : undefined}
-          onDownload={() => detail && void startDownload(detail)}
-          favorite={detail ? favorites.includes(detail.id) : false}
-          onFavorite={() => detail && toggleFavorite(detail.id)}
-          onAdd={() => detail && void mutateLibrary(detail, "add", { byWork: true })}
-          onRemove={() => detail && void mutateLibrary(detail, "remove", { byWork: true })}
-          downloads={downloads}
-        />
         <SeriesDialog target={seriesTarget} onClose={() => setSeriesTarget(null)} downloads={downloads} savedEbooks={savedEbooks}
           offlineEbookEditionIds={offlineEbookEditionIds}
           canAcquire={user.role === "admin"}
@@ -1230,217 +1154,6 @@ function LibraryApp({
         />
       </div>
     </PlayerProvider>
-  );
-}
-function BookDetail({
-  admin,
-  onOpenAudiobook,
-  onFindAudio,
-  onHardcover,
-  onKeepServer,
-  onFindEbook,
-  onOpenEbook,
-  book: b,
-  onClose,
-  downloaded,
-  downloadJob,
-  onDownload,
-  favorite,
-  onFavorite,
-  onAdd,
-  onRemove,
-  downloads,
-}: {
-  admin: boolean;
-  /** The Audiobook row: opens the Audiobook page (#530). */
-  onOpenAudiobook: () => void;
-  onFindAudio: () => void;
-  /** Opens the book's Hardcover page (#529). */
-  onHardcover: () => void;
-  onKeepServer: () => void;
-  onFindEbook: () => void;
-  onOpenEbook: () => void;
-  book: Book | null;
-  onClose: () => void;
-  downloaded: boolean;
-  downloadJob?: { progress: number; chapter: number; total: number };
-  onDownload: () => void;
-  favorite: boolean;
-  onFavorite: () => void;
-  onAdd: () => void;
-  onRemove: () => void;
-  downloads: DownloadRecord[];
-}) {
-  const p = usePlayer();
-  return (
-    <Dialog
-      open={!!b}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-      title="Book details"
-      className="book-detail-dialog"
-    >
-      {b && (
-        <>
-          <div className="book-detail-intro">
-            <img className="detail-cover" src={b.cover} alt={b.title} />
-            <div>
-              <span className="eyebrow">
-                {b.genre} <span>·</span>{" "}
-                {b.year > 0 ? b.year : `${Math.abs(b.year)} BC`}
-              </span>
-              <h2>{b.title}</h2>
-              <p className="detail-author">{b.author}</p>
-              <p className="detail-narrator">
-                {b.tracks.length
-                  ? `Narrated by ${b.narrator}`
-                  : "No audiobook recording added yet."}
-              </p>
-              <div className="detail-stats">
-                {b.tracks.length ? (
-                  <>
-                    <span>
-                      <Headphones size={15} />
-                      {duration(b.duration)}
-                    </span>
-                    <span>
-                      <List size={15} />
-                      {listeningChapters(b).length} chapters
-                    </span>
-                    {b.rating > 0 && (
-                      <span className="rating">★ {b.rating}</span>
-                    )}
-                  </>
-                ) : (
-                  <span>No audio yet</span>
-                )}
-              </div>
-              <div className="detail-actions">
-                <ReaderShortcut book={b} onOpen={onClose} onMissing={onFindEbook}/>
-                {b.inLibrary ? (
-                  <ListenButton book={b} onFindAudio={onFindAudio} />
-                ) : (
-                  <button className="button primary" onClick={onAdd}>
-                    <Plus size={16} /> Add to library
-                  </button>
-                )}
-                <button
-                  className={`button square ${favorite ? "is-favorite" : ""}`}
-                  onClick={onFavorite}
-                  aria-label={
-                    favorite ? "Remove from favorites" : "Add to favorites"
-                  }
-                >
-                  <Heart size={18} fill={favorite ? "currentColor" : "none"} />
-                </button>
-              </div>
-            </div>
-          </div>
-          <div className="detail-description">
-            <h3>Description</h3>
-            <p>{b.description}</p>
-          </div>
-          {b.tracks.length > 0 && (
-            <div className="detail-audiobook">
-              <Group label="Files">
-                <FileRow kind="audiobook" name="Audiobook" status={audiobookRowLine({ narrator: b.narrator, duration: b.duration, serverStored: b.serverStored, tracks: b.tracks })} onClick={onOpenAudiobook} />
-              </Group>
-            </div>
-          )}
-          <HardcoverRow match={b.hardcover} onOpen={onHardcover} />
-          {!b.tracks.length && (
-            <div className="metadata-book-note">
-              This book is on your reading shelf. Find an audiobook recording to
-              listen here; its files and progress will stay linked to this work.
-            </div>
-          )}
-          {b.inLibrary && b.tracks.length > 0 && (
-            <div className="offline-detail">
-              <div>
-                <Download size={19} />
-                <span>
-                  <strong>
-                    {downloaded
-                      ? "Ready for offline listening"
-                      : downloadJob
-                        ? "Downloading"
-                        : "Save on this device"}
-                  </strong>
-                  <small>
-                    {downloaded
-                      ? "All chapters are saved on this device."
-                      : downloadJob
-                        ? `Chapter ${downloadJob.chapter} of ${downloadJob.total} · ${Math.round(downloadJob.progress)}%`
-                        : "A complete copy for listening without a connection."}
-                  </small>
-                </span>
-              </div>
-              <button
-                className="button subtle"
-                onClick={onDownload}
-                disabled={downloaded || !!downloadJob}
-              >
-                {downloaded ? (
-                  <>
-                    <Check size={15} /> Downloaded
-                  </>
-                ) : downloadJob ? (
-                  <>
-                    <Loader2 className="spin" size={15} /> Downloading
-                  </>
-                ) : (
-                  <>
-                    <Download size={15} /> Save offline
-                  </>
-                )}
-              </button>
-            </div>
-          )}
-          {admin && b.tracks.length > 0 && (
-            <div className="detail-ebook-action">
-              <span>
-                <HardDrive size={18} />
-                {b.serverStored
-                  ? "Saved on your server’s HDD"
-                  : "Keep a copy on your home server"}
-              </span>
-              <button
-                className="button subtle"
-                disabled={b.serverStored}
-                onClick={onKeepServer}
-              >
-                {b.serverStored ? (
-                  <>
-                    <Check size={14} /> Saved
-                  </>
-                ) : (
-                  <>
-                    <HardDrive size={14} /> Save to server
-                  </>
-                )}
-              </button>
-            </div>
-          )}
-          <EbookFileRow workId={b.workId} admin={admin} onOpen={onOpenEbook} onGet={onFindEbook} />
-          {b.tracks.length > 0 && (
-            <div className="detail-chapters">
-              <h3>
-                Inside this audiobook{" "}
-                <span>{listeningChapters(b).length} chapters</span>
-              </h3>
-              <Chapters book={b} downloads={downloads} />
-            </div>
-          )}
-          <div className="detail-source">
-            <span>{b.sourceLabel}</span>
-            {b.inLibrary && (
-              <button onClick={onRemove}>Remove from library</button>
-            )}
-          </div>
-        </>
-      )}
-    </Dialog>
   );
 }
 function ImportDialog({

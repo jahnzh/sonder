@@ -341,3 +341,54 @@ export function finishedAgo(at: number, now: number): string {
   if (minutes < 60) return `${minutes} min ago`;
   return `${Math.floor(minutes / 60)} h ago`;
 }
+
+/*
+ * The Book page's lines (#532, spec #526 "The Book page", "Files"): the Reading sync row's line while a file is missing,
+ * and the forms of a work's media state on the Audiobook row.
+ */
+
+/** The Reading sync row when the only ebook edition is a PDF (decided in #460). */
+export const NEEDS_EPUB_LINE = "Needs an EPUB";
+
+/** What the Book page knows of a work's files for its Reading sync row. */
+export type BookSyncFacts = {
+  hasRecording: boolean;
+  /** An audiobook is on its way (a queued media state): the row names the ebook first then. */
+  audioComing: boolean;
+  /** The work has an ebook edition (any format). */
+  hasEbook: boolean;
+  /** One of them is an EPUB the reader opens. */
+  hasEpub: boolean;
+  /** The chosen pair's reading sync, when one was ever queued. */
+  job: ReadingSyncJobFacts | null;
+};
+
+/**
+ * The Reading sync row of the Book page: "Needs an audiobook" first (unless one is on its way), then "Needs an ebook",
+ * or "Needs an EPUB" when the only edition is a PDF; with both files, the chosen pair's line, or null when no reading
+ * sync was ever queued for it.
+ */
+export function bookSyncLine({ hasRecording, audioComing, hasEbook, hasEpub, job }: BookSyncFacts): string | null {
+  if (!hasRecording && !audioComing) return "Needs an audiobook";
+  if (!hasEbook) return "Needs an ebook";
+  if (!hasEpub) return NEEDS_EPUB_LINE;
+  if (!hasRecording) return "Needs an audiobook";
+  return readingSyncLine({ hasEbook: true, hasRecording: true, job });
+}
+
+/** A work's media state, as the Audiobook row of a work without a recording reads it. */
+export type MediaStateFacts = {
+  state: "missing" | "queued" | "failed" | "available";
+  holdReason: "unreleased" | "empty_search" | null;
+};
+
+/**
+ * The Audiobook row's line for a work's media state without a recording: held as unreleased "Not added · not released
+ * yet", held after an empty search (or missing) "Not added", failed "Download failed". Null for a queued or available
+ * state, whose line is the download's.
+ */
+export function mediaStateLine({ state, holdReason }: MediaStateFacts): string | null {
+  if (state === "failed") return downloadLine({ status: "error" });
+  if (state !== "missing") return null;
+  return holdReason === "unreleased" ? `${downloadLine({ status: null })}${DOT}not released yet` : downloadLine({ status: null });
+}

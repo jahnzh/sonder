@@ -2,9 +2,6 @@
 // rows with their check against the narration, the chosen one ticked; a PDF opens its file in a new tab; Get another
 // edition (administrator) and Import a file; Available from (this device's copy and the server's, with sizes; the
 // device copy is removed after one question); Export the file. The rules are in src/ebook-choice.ts.
-//
-// Also the Ebook row (`EbookFileRow`) that today's book dialog shows in place of its "Find ebook" row: the edition's
-// line, or "Not added" and Get, opening this page.
 import { useRef, useState } from "react";
 import { Dialog } from "../components/ui/dialog";
 import { api, ApiError } from "../lib";
@@ -12,7 +9,6 @@ import { useWork } from "../library-works-store";
 import {
   chosenEbook,
   choiceTarget,
-  ebookRowLine,
   editionDetail,
   editionLabel,
   overruledByShared,
@@ -23,7 +19,6 @@ import { removeEbookFromDevice, setDeviceEbookChoice, useDeviceEbookChoice, useE
 import { checkingNote, type EbookSetMember } from "../ebook-set";
 import { Button } from "../parts/Button";
 import { ChoiceGroup } from "../parts/ChoiceRow";
-import { FileRow } from "../parts/FileRow";
 import { Group } from "../parts/Group";
 import { Chevron } from "../parts/icons";
 import { PageHeader } from "../parts/PageHeader";
@@ -284,51 +279,6 @@ export function EbookPage({
           </Button>
         </div>
       </Dialog>
-    </div>
-  );
-}
-
-/**
- * The Ebook row of today's book dialog (#531): the chosen edition's line, opening the Ebook page; without any
- * edition "Not added" and, for the administrator, Get, which opens today's ebook search.
- */
-export function EbookFileRow({
-  workId,
-  admin,
-  onOpen,
-  onGet,
-}: {
-  workId: string;
-  admin: boolean;
-  onOpen: () => void;
-  onGet: () => void;
-}) {
-  const { work } = useWork(workId);
-  const deviceChoice = useDeviceEbookChoice(workId);
-  const chosen = work ? chosenEbook(work, deviceChoice) : null;
-  const device = useEbookDeviceCopy(chosen?.id ?? null);
-  const ebooks = work?.ebooks ?? [];
-  const line = ebookRowLine({ ebooks, chosenEbookId: work?.chosenEbookId ?? null }, deviceChoice, device.size);
-  return (
-    <div className="ebook-file-row">
-    <Group label="Ebook">
-      {ebooks.length ? (
-        <FileRow kind="ebook" name="Ebook" status={line} onClick={onOpen} />
-      ) : (
-        <FileRow
-          kind="ebook"
-          name="Ebook"
-          status={line}
-          action={
-            admin ? (
-              <Button aria-label="Get an ebook" onClick={onGet}>
-                Get
-              </Button>
-            ) : undefined
-          }
-        />
-      )}
-    </Group>
     </div>
   );
 }

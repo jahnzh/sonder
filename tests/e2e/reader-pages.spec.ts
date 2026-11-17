@@ -229,10 +229,10 @@ test("a link straight to a page goes back to the Book page", async ({ page }) =>
     await page.goto("about:blank");
     await page.goto(`/#book/${encodeURIComponent(book.workId)}/${name}`);
     await expect(page.locator("h1")).toHaveText(name[0].toUpperCase() + name.slice(1));
-    // Nothing of the app lies behind: the button goes to the page's parent, the Book page. Until the Book page is
-    // built (#532) its address shows the Library, as every address of a page not built yet does.
+    // Nothing of the app lies behind: the button goes to the page's parent, the Book page (#532).
     await back(page).click();
-    await expect.poll(() => hashOf(page)).toBe("#library");
+    await expect.poll(() => hashOf(page)).toBe(`#book/${encodeURIComponent(book.workId)}`);
+    await expect(page.locator(".book-page-head")).toBeVisible();
   }
   // A section of a page reached by a link opens the reader on its own, there.
   await page.goto("about:blank");

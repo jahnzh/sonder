@@ -465,8 +465,12 @@ test("chapter jumps can be undone and removing the recording clears its history"
   await expect.poll(async () => (await history(page, book.recordingId)).length).toBe(1);
   await revealReaderControls(page);
   await page.locator(".inline-reader").getByRole("button", { name: "Close reader", exact: true }).click();
-  await page.getByRole("button", { name: `More options for ${book.title}`, exact: true }).click();
-  await page.getByRole("button", { name: "Remove from library", exact: true }).click();
+  // Remove from library by work, from the Book page (#532): it asks once, then the history of its recordings goes.
+  await page.getByRole("button", { name: `About ${book.title}`, exact: true }).click();
+  const bookPage = page.getByRole("region", { name: "Book", exact: true });
+  await bookPage.getByRole("button", { name: "Remove from library", exact: true }).click();
+  await bookPage.getByRole("group", { name: "Remove from library?", exact: true }).getByRole("button", { name: "Remove", exact: true }).click();
+  await expect(page).toHaveURL(/#library$/);
   await expect.poll(async () => (await history(page, book.recordingId)).length).toBe(0);
 });
 
@@ -564,8 +568,8 @@ test("Use Hardcover position can be undone through the normal progress path", as
   await startPaused(page, book.title);
   await setPosition(page, 70.25);
   await page.getByRole("button", { name: `About ${book.title}`, exact: true }).click();
-  // The book's Hardcover row opens the Hardcover page (#529), where Use Hardcover position is.
-  await page.getByRole("dialog").getByRole("button", { name: /^Hardcover / }).click();
+  // The Book page's Hardcover row (#532) opens the Hardcover page (#529), where Use Hardcover position is.
+  await page.getByRole("region", { name: "Book", exact: true }).getByRole("button", { name: /^Hardcover / }).click();
   await expect(page).toHaveURL(/#book\/[^/]+\/hardcover$/);
   await page.getByRole("button", { name: "Use Hardcover position", exact: true }).click();
   await expect.poll(async () => (await history(page, book.recordingId)).at(-1)?.kind).toBe("hardcover");
