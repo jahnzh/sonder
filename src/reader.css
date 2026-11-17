@@ -998,3 +998,226 @@
     top: 76px;
   }
 }
+
+/* The reader's page (#587, ADR 0019, spec #586 "The reader's page"): on a phone the room is a grid of a head, the
+   text band, a dock row and a foot. The head and the foot keep their boxes whether the controls show or not, so
+   the text band, and with it the epub.js view, is sized once. They carry the safe areas as padding; the two
+   --sonder-safe-* variables are read before env() so a test can give Firefox and WebKit insets. The reader
+   inside Now playing gets the same bands without the insets, which its dialog keeps clear. */
+.reader-foot-controls {
+  display: contents;
+}
+.reader-foot-rest,
+.reader-head-rest {
+  display: none;
+}
+@media (max-width: 899.98px) {
+  .reader-room {
+    --reader-safe-top: var(--sonder-safe-top, env(safe-area-inset-top, 0px));
+    --reader-safe-bottom: var(--sonder-safe-bottom, env(safe-area-inset-bottom, 0px));
+    --reader-head: calc(44px + var(--reader-safe-top));
+    --reader-foot: calc(72px + var(--reader-safe-bottom));
+    --reader-bar: var(--reader-foot);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: var(--reader-head) minmax(0, 1fr) auto var(--reader-foot);
+  }
+  .reader-room.inline-reader {
+    --reader-safe-top: 0px;
+    --reader-safe-bottom: 0px;
+  }
+  .reader-head {
+    grid-row: 1;
+    grid-column: 1;
+    min-width: 0;
+    box-sizing: border-box;
+    padding-top: var(--reader-safe-top);
+    display: grid;
+    grid-template: 44px / minmax(0, 1fr);
+    background: var(--background);
+    color: var(--text);
+  }
+  .reader-head > * {
+    grid-area: 1 / 1;
+  }
+  .reader-head-rest {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    margin: 0;
+    padding: 0 var(--space-16);
+    color: var(--muted);
+  }
+  .reader-head-rest > span {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .reader-head[data-controls="true"] .reader-head-rest,
+  .reader-head[data-controls="false"] .reader-topbar {
+    visibility: hidden;
+  }
+  .reader-topbar {
+    position: static;
+    z-index: auto;
+    height: 44px;
+    min-width: 0;
+    padding: 0 var(--space-8);
+    gap: var(--space-4);
+    background: transparent;
+    border-bottom: 0;
+  }
+  .reader-topbar .icon-button {
+    width: 44px;
+    height: 44px;
+    flex: 0 0 44px;
+    border-radius: var(--corner-control);
+  }
+  .reader-topbar-title {
+    visibility: hidden;
+  }
+  .reader-body {
+    grid-row: 2;
+    grid-column: 1;
+    padding-bottom: 0;
+    min-height: 0;
+  }
+  .reader-page-area > .reader-viewport {
+    min-height: 0;
+  }
+  .reader-dock {
+    grid-row: 3;
+    grid-column: 1;
+    min-width: 0;
+  }
+  .reader-dock > .inline-error {
+    margin: 0;
+    padding: var(--space-8) var(--space-16);
+  }
+  .reader-player {
+    grid-row: 4;
+    grid-column: 1;
+    position: relative;
+    z-index: auto;
+    min-width: 0;
+    box-sizing: border-box;
+    height: var(--reader-foot);
+    padding: var(--space-4) var(--space-16) var(--reader-safe-bottom);
+    grid-template-columns: 1fr auto 1fr;
+    grid-template-rows: 20px 44px;
+    row-gap: var(--space-4);
+    align-content: start;
+    background: var(--background);
+    border-top: 0;
+  }
+  .reader-player,
+  .reader-player[data-controls="true"] {
+    grid-template-areas:
+      "scrub scrub scrub"
+      "chapters transport extras";
+  }
+  .reader-player[data-controls="false"] .reader-foot-controls {
+    visibility: hidden;
+  }
+  .reader-player .reader-player-info,
+  .reader-player[data-controls="true"] .reader-player-info,
+  .reader-player .reader-player-line {
+    display: none;
+  }
+  .reader-player .reader-scrubber,
+  .reader-player .reader-audio-timeline {
+    display: block;
+  }
+  .reader-player .reader-scrubber {
+    width: 100%;
+    height: 20px;
+    margin: 0;
+  }
+  .reader-audio-timeline {
+    margin: 0;
+  }
+  .reader-player .reader-audio-timeline .dock-progress {
+    height: 20px;
+  }
+  .reader-player-leading,
+  .reader-transport,
+  .reader-player-extras {
+    margin: 0;
+  }
+  .reader-transport > .icon-button {
+    width: 44px;
+    height: 44px;
+  }
+  .reader-play {
+    width: 44px;
+    height: 44px;
+  }
+  .reader-foot-rest {
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 72px;
+    box-sizing: border-box;
+    padding: var(--space-8) var(--space-16) 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+  .reader-player[data-controls="true"] .reader-foot-rest {
+    visibility: hidden;
+  }
+  .reader-foot-line {
+    display: block;
+    flex: none;
+    height: 2px;
+    border-radius: var(--corner-round);
+    background: var(--border);
+    overflow: hidden;
+  }
+  .reader-foot-line > i {
+    display: block;
+    height: 100%;
+    border-radius: var(--corner-round);
+    background: var(--accent);
+  }
+  .reader-foot-row {
+    height: var(--height-control);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-12);
+    min-width: 0;
+  }
+  .reader-foot-place {
+    min-width: 0;
+    font-family: var(--font-body);
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 500;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--muted);
+  }
+  .reader-foot-row > .reader-foot-play {
+    color: var(--muted);
+  }
+  .reader-floating,
+  .reader-room[data-controls-visible="true"] .reader-floating {
+    bottom: var(--space-16);
+  }
+  .reader-room > .reading-conflict,
+  .reader-room[data-controls-visible="true"] > .reading-conflict {
+    top: calc(var(--reader-head) + var(--space-12));
+  }
+}
+@media (min-width: 900px) {
+  .reader-head {
+    display: contents;
+  }
+  .reader-dock {
+    order: -1;
+    flex-shrink: 0;
+  }
+}
