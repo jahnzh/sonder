@@ -94,108 +94,10 @@ textarea {
 }
 .inline-error,
 .error-text,
-.text-danger,
-.appearance-warning {
+.text-danger {
   color: var(--danger);
 }
-.appearance-settings {
-  max-width: 780px;
-  margin-bottom: 28px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 22px;
-  background: var(--surface);
-}
-.theme-presets {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 9px;
-  margin: 22px 0;
-}
-.theme-presets button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 46px;
-  background: var(--background);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: var(--text);
-  font-size: calc(13px * var(--ui-scale));
-}
-.theme-presets .selected {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-.appearance-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-  margin: 16px 0;
-}
-.appearance-grid label {
-  display: grid;
-  gap: 9px;
-  color: var(--text);
-  font-size: calc(13px * var(--ui-scale));
-}
-.appearance-grid input,
-.appearance-grid select {
-  width: 100%;
-  min-width: 0;
-  min-height: 44px;
-}
-.appearance-grid input[type="color"] {
-  padding: 4px;
-  border: 1px solid var(--border);
-  background: var(--background);
-  border-radius: 7px;
-}
-.appearance-advanced {
-  border-block: 1px solid var(--border);
-  padding: 16px 0;
-  margin: 20px 0;
-}
-.appearance-advanced summary {
-  cursor: pointer;
-  font-size: calc(14px * var(--ui-scale));
-}
-.appearance-advanced p {
-  font-size: 12px;
-  line-height: 1.6;
-}
-.appearance-device {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  font-size: calc(13px * var(--ui-scale));
-  margin: 20px 0;
-}
-.appearance-device input {
-  width: 20px;
-  height: 20px;
-}
-.appearance-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-.appearance-actions .button {
-  min-height: 44px;
-  font-size: calc(13px * var(--ui-scale));
-}
-.appearance-import {
-  position: relative;
-  cursor: pointer;
-}
-.appearance-import input {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  opacity: 0;
-  cursor: pointer;
-}
+
 [data-density="compact"] .book-grid {
   gap: 20px 14px;
 }
@@ -204,17 +106,7 @@ textarea {
 [data-density="compact"] .release-card {
   padding-block: 14px;
 }
-@media (max-width: 500px) {
-  .appearance-settings {
-    padding: 16px;
-  }
-  .appearance-grid {
-    gap: 14px;
-  }
-  .theme-presets {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
+
 @media (prefers-reduced-motion: no-preference) {
   body,
   .sidebar,

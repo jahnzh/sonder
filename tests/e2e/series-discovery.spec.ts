@@ -6,7 +6,7 @@ test("discover and save chosen works from the intended series, then reopen it", 
   await page.getByRole("button", { name: "Series", exact: true }).click();
   await expect(page.getByText(/Connect Hardcover to search for series/)).toBeVisible();
   await page.getByRole("button", { name: "Connect Hardcover", exact: true }).click();
-  await expect(page).toHaveURL(/#settings$/);
+  await expect(page).toHaveURL(/#settings\/connections$/);
 
   await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
   const existing = await page.request.post("/api/hardcover/books", { data: { id: 501 } });

@@ -213,6 +213,7 @@ const routeOf = (p: Page): Route => firstPage(p);
 function shownPage(route: Route, under: { current: Page }): Page {
   if (route.name === "library" || route.name === "discover" || route.name === "settings" || route.name === "activity")
     under.current = route.name;
+  else if (route.name === "settings-page") under.current = "settings";
   return under.current;
 }
 function LibraryApp({
@@ -415,6 +416,11 @@ function LibraryApp({
   const navigate = (p: Page) => {
     leavePage(p);
     address.navigate(routeOf(p));
+  };
+  // A "Connect …" link: Settings › Connections, where TorBox and Hardcover are connected.
+  const openConnections = () => {
+    leavePage("settings");
+    address.navigate({ name: "settings-page", page: "connections" });
   };
   // The tab bar and the rail: another place adds an entry, the current one returns to its first page.
   const switchPlace = (p: Place) => {
@@ -849,7 +855,7 @@ function LibraryApp({
                 onAdd={(b) => void mutateLibrary(b, "add")}
                 notify={notify}
                 torboxConfigured={!!settings?.torboxConfigured}
-                onConnect={() => navigate("settings")}
+                onConnect={openConnections}
                 onSeries={(id) => setSeriesTarget({ id, mode: "preview" })}
                 refresh={refresh}
               />
@@ -976,7 +982,7 @@ function LibraryApp({
           onOpenSeries={(id) => { setDetail(null); setSeriesTarget({ id, mode: "preview" }); }}
           onSettings={() => {
             setDetail(null);
-            navigate("settings");
+            openConnections();
           }}
           notify={notify}
           onKeepServer={() => {
@@ -1034,7 +1040,7 @@ function LibraryApp({
           torboxConfigured={!!settings?.torboxConfigured}
           onConnect={() => {
             setImportOpen(false);
-            navigate("settings");
+            openConnections();
           }}
         />
       </div>

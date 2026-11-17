@@ -37,6 +37,7 @@ import {PlaybackExtra,usePlaybackMenu} from "./PlaybackMenu";
 import { readerNeedsScripts } from "../reader-sandbox";
 import { lookupIndex, placeAt } from "../reader-lookup";
 import { keyEventContext, OPEN_SHEET_SELECTOR, readerKeyAction, typingInField } from "../keyboard";
+import { followsNarration } from "../follow-default";
 import { createReaderFollowing, type DeferredReturn, type NarrationPlace, type NarrationReturn } from "../reader-following";
 import { mapIdentityOf } from "../alignment-map-lifecycle";
 import { currentChapter, playbackTimeline } from "../chapters";
@@ -383,6 +384,10 @@ export function ReaderView({
     setMapConfirmed(!!job && confirmed);
   };
   useEffect(() => () => following.dispose(), [following]);
+  // Settings › Playback: with Follow the narration off, the reader opens paged away from the narration.
+  useEffect(() => {
+    if (!followsNarration()) following.pageAway();
+  }, [following]);
   const redrawHighlight = () => {
     if (!mountedRef.current) return;
     if (following.followed() || highlight.current) {
