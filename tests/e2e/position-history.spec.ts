@@ -1,9 +1,10 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { spawn, type ChildProcess } from "node:child_process";
+import { createServer, type AddressInfo } from "node:net";
 import { readerFixture } from "../reader-fixture";
 import { installReaderWaitBudget, READER_WAIT_MS, timedWait } from "./timing";
-import { rememberAlicesPlace } from "./alice-place";
 
 // Per-step expect ceilings are up to 45 s; leave room around history restores.
 installReaderWaitBudget(test);
@@ -30,21 +31,7 @@ async function importRecording(page: Page, name: string, tracks = 1) {
 // feature card of every later spec on the same shard server would open instead of Alice. After each test they leave
 // the library through the route the book dialog's Remove uses, so the server keeps the library it had before.
 const importedWorks: string[] = [];
-// Ebooks a test put on Alice's work. Alice with an ebook opens Now playing with the reader, where the next spec on the
-// server (media-controls: Space toggles playback, the shortcut sheet) finds no plain Pause and no Keyboard shortcuts
-// button (#529, #645). There is no route that deletes an ebook, so after the test each one moves, through the reader's
-// link route, to a work of its own that then leaves the library with this file's other imports.
-const ebooksOnAlice: string[] = [];
-// Use Hardcover position plays Alice and so moves her saved place; it goes back to where the test found it.
-let restoreAlice: (() => Promise<void>) | null = null;
 test.afterEach(async ({ page }) => {
-  await restoreAlice?.();
-  restoreAlice = null;
-  for (const ebookId of ebooksOnAlice.splice(0)) {
-    const away = await importRecording(page, "Ebook taken off Alice");
-    const moved = await page.request.post(`/api/reader/${encodeURIComponent(ebookId)}/link`, { data: { workId: away.workId } });
-    expect(moved.ok()).toBe(true);
-  }
   for (const workId of importedWorks.splice(0)) {
     const removed = await page.request.delete(`/api/works/${encodeURIComponent(workId)}/library`);
     expect(removed.ok()).toBe(true);
@@ -513,8 +500,49 @@ test("source reloads only record a jump when the new source moves the position",
   await expect.poll(async () => (await audioState(page)).position).toBe(150.25);
 });
 
-test("Use Hardcover position can be undone through the normal progress path", async ({ page }) => {
-  restoreAlice = await rememberAlicesPlace(page);
+// Hardcover's position is for Alice (the fixture's book 501), so this test needs an EPUB on Alice, which no route
+// removes again; reading it copies Alice's streamed tracks to the server, and the sync saves a Hardcover token and
+// Alice's place. On the shared server every later spec (and a repeat of this file) would find Alice opening in the
+// reader with "On server" copies. So it runs against a server of its own, which it stops afterwards.
+async function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const { port } = probe.address() as AddressInfo;
+      probe.close(() => resolve(port));
+    });
+  });
+}
+test.describe("on a server of its own", () => {
+  let server: ChildProcess | undefined;
+  let base = "";
+  test.beforeAll(async () => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const port = await freePort();
+      base = `http://127.0.0.1:${port}`;
+      server = spawn(process.execPath, ["--import", "tsx", "tests/browser-server.ts"], {
+        env: { ...process.env, PLAYWRIGHT_PORT: String(port) },
+        stdio: "ignore",
+      });
+      for (let i = 0; i < 150 && server.exitCode === null; i++) {
+        try {
+          if ((await fetch(`${base}/api/health`)).ok) return;
+        } catch {}
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      server.kill();
+    }
+    throw new Error("Browser server for the Hardcover test did not start");
+  });
+  test.afterAll(() => {
+    server?.kill();
+  });
+
+test("Use Hardcover position can be undone through the normal progress path", async ({ browser }) => {
+  const context = await browser.newContext({ baseURL: base, viewport: { width: 390, height: 844 } });
+  const page = await context.newPage();
+  try {
   await instrument(page);
   await page.goto("/#settings/connections");
   await page.getByRole("textbox", { name: /^API token/ }).fill("browser-test-token");
@@ -531,7 +559,6 @@ test("Use Hardcover position can be undone through the normal progress path", as
     multipart: { file: { name: "Companion.epub", mimeType: "application/epub+zip", buffer: await readerFixture() } },
   });
   expect(uploaded.ok()).toBe(true);
-  ebooksOnAlice.push((await uploaded.json()).id);
   await page.reload();
   await page.locator(".mobile-nav").getByRole("button", { name: "My library", exact: true }).click();
   await startPaused(page, book.title);
@@ -550,6 +577,10 @@ test("Use Hardcover position can be undone through the normal progress path", as
     const books = await (await page.request.get("/api/books")).json();
     return books.find((item: any) => item.id === book.id)?.progress?.position;
   }).toBe(70.25);
+  } finally {
+    await context.close();
+  }
+});
 });
 
 test("Listen from here records the position left and the expanded player restores it", async ({ page }) => {
