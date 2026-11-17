@@ -34,11 +34,22 @@ async function checkAlignmentPool() {
       throw new Error(`alignment pool hosts ${names}: ${command} is missing or not executable on PATH`);
     }
   }
+  // A host that cannot be reached (no answer, a dropped connection, ssh failing) is a warning while another host
+  // passes both checks: the pool dispatches to the hosts that answer. A host that answers wrongly (HTTP error, not
+  // JSON, another engine or device) is a misconfiguration and fails the deploy.
+  const unreachable = [];
+  let reachable = 0;
   for (const host of hosts) {
     const name = `${host.id} (${host.sshTarget})`;
     const healthUrl = `${host.workerUrl.replace(/\/$/, "")}/health`;
+    let response;
     try {
-      const response = await fetch(healthUrl, { signal: AbortSignal.timeout(5000) });
+      response = await fetch(healthUrl, { signal: AbortSignal.timeout(5000) });
+    } catch (error) {
+      unreachable.push(`alignment pool host ${name}: health check ${healthUrl} failed: ${error.message}`);
+      continue;
+    }
+    try {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const text = await response.text();
       let body;
@@ -56,9 +67,13 @@ async function checkAlignmentPool() {
     try {
       await execFileAsync("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host.sshTarget, "true"], { timeout: 7000 });
     } catch (error) {
-      throw new Error(`alignment pool host ${name}: ssh true failed: ${error.message}`);
+      unreachable.push(`alignment pool host ${name}: ssh true failed: ${error.message}`);
+      continue;
     }
+    reachable += 1;
   }
+  if (reachable === 0) throw new Error(unreachable.join("\n") || `alignment pool hosts ${names}: none configured`);
+  for (const line of unreachable) console.warn(`warning: ${line} (another pool host answers)`);
   console.log("image smoke passed: alignment pool health and SSH");
 }
 
