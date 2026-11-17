@@ -103,6 +103,8 @@ const desktopProjects = [
               /(^|\/)reader-foot-setting\.spec\.ts$/,
               // Every message while reading in the reader's foot (#591).
               /(^|\/)reader-messages\.spec\.ts$/,
+              // The Reading sync page and its Details (#540).
+              /(^|\/)reading-sync-page\.spec\.ts$/,
               // The Book page for a book without files or not in the library (#533).
               /(^|\/)book-page-states\.spec\.ts$/,
               // The Series page of a saved series (#562).

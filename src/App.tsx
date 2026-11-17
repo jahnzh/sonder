@@ -86,6 +86,7 @@ import { AudiobookPage } from "./pages/audiobook-page";
 import { HardcoverPage } from "./pages/hardcover-page";
 import { EbookPage, ebookSearchTarget } from "./pages/ebook-page";
 import { BookPage } from "./pages/book-page";
+import { ReadingSyncDetailsPage, ReadingSyncPage } from "./pages/reading-sync-page";
 import { toggleWorkFavorite } from "./pages/book-model";
 import { ReaderPages } from "./pages/reader-pages";
 import { isReaderPage } from "./reader-pages";
@@ -923,6 +924,11 @@ function LibraryApp({
                 }}
                 notify={notify}
               />
+            ) : address.route.name === "book-page" && address.route.page === "sync" ? (
+              // The Reading sync page and its Details (#540).
+              <ReadingSyncPage key={address.route.workId} workId={address.route.workId} admin={admin} />
+            ) : address.route.name === "sync-details" ? (
+              <ReadingSyncDetailsPage key={address.route.workId} workId={address.route.workId} />
             ) : address.route.name === "series" ? (
               <SeriesPage
                 key={address.route.id}
@@ -1023,6 +1029,7 @@ function LibraryApp({
                   serverError={admin ? serverActivity.error : null}
                   open={{
                     book: openWork,
+                    sync: (workId) => address.navigate({ name: "book-page", workId, page: "sync" }),
                     worker: (worker) => address.navigate({ name: "worker", worker }),
                     server: () => address.navigate({ name: "activity", part: "server" }),
                   }}

@@ -18,8 +18,12 @@ export function pageName(route: Route): string {
       return "Settings";
     case "settings-page":
       return "Settings";
-    case "book":
     case "book-page":
+      // Details goes back to Reading sync (#540); the book's other pages go back to the book.
+      return route.page === "sync" ? "Reading sync" : "the book";
+    case "sync-details":
+      return "Reading sync";
+    case "book":
     case "get":
     case "listen":
     case "read":

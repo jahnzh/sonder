@@ -1,0 +1,142 @@
+/* The Reading sync page and its Details (src/pages/reading-sync-page.tsx; boards ReadingSync*.dc.html). The phone's
+   column, centred on a desktop beside the rail, as the Ebook page. */
+.reading-sync-page {
+  max-width: 560px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  min-width: 0;
+}
+/* The book's title under the Title, 8 closer to the header than a group. */
+.reading-sync-book {
+  margin: calc(-1 * var(--space-8)) 0 0;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* A status block's caption, its info mark, and the time on the right edge. */
+.reading-sync-caption-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.reading-sync-caption-line > .part-group-caption {
+  padding-right: 0;
+  flex: none;
+}
+.reading-sync-caption-value {
+  margin-left: auto;
+  padding-right: var(--space-16);
+  min-width: 0;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* A status row: 52 with one line, 64 with two (a line or a bar under the name). */
+.reading-sync-row {
+  box-sizing: border-box;
+  min-height: var(--height-row);
+  padding: 0 var(--space-16);
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  list-style: none;
+  color: var(--text);
+}
+.reading-sync-row[data-lines="2"] {
+  height: var(--height-bar);
+}
+.reading-sync-row[data-lines="1"] {
+  height: var(--height-row);
+}
+.reading-sync-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.reading-sync-row-name {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.reading-sync-row-label,
+.reading-sync-row-line {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.reading-sync-row-line {
+  color: var(--muted);
+}
+.reading-sync-row-end {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.reading-sync-row-value {
+  white-space: nowrap;
+}
+.reading-sync-tick {
+  width: 20px;
+  height: 20px;
+  color: color-mix(in srgb, #3fa34d 60%, var(--text));
+}
+.reading-sync-attention {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--corner-round);
+  background: var(--danger);
+}
+/* Prepare again: a row whose name is the button, with its info mark after it. */
+.reading-sync-row-button {
+  min-width: 0;
+  min-height: var(--height-control);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.reading-sync-row-button:disabled {
+  cursor: default;
+}
+/* The state's buttons: two side by side, one alone full width. */
+.reading-sync-buttons {
+  display: flex;
+  gap: var(--space-8);
+}
+.reading-sync-buttons > .part-button {
+  flex: 1;
+}
+.reading-sync-buttons[data-alone] > .part-button {
+  width: 100%;
+}
+/* A note under the buttons, in a group note's style. */
+.reading-sync-note {
+  margin: calc(-1 * var(--space-8)) 0 0;
+  padding: 0 var(--space-16);
+  font-family: var(--font-body);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted);
+}
+/* A flag of the older engine: a sentence that wraps. */
+.reading-sync-flag {
+  list-style: none;
+  padding: var(--space-12) var(--space-16);
+  color: var(--text);
+}

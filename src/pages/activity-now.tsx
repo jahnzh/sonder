@@ -15,8 +15,10 @@ import type { Now, NowButton, NowIcon, NowOpens, NowRow } from "../activity-now"
 import "./activity-now.css";
 
 export type NowOpeners = {
-  /** Opens a work's book: today's book dialog until the Book page (S7) exists. */
+  /** Opens a work's Book page. */
   book: (workId: string, bookId: string | null) => void;
+  /** Opens a work's Reading sync page (#540). */
+  sync: (workId: string) => void;
   /** Opens a reading sync worker's page. */
   worker: (hostId: string) => void;
   /** Opens Activity's Server. */
@@ -24,15 +26,16 @@ export type NowOpeners = {
 };
 
 /**
- * What a row opens. The one function of the page that the Book page (S7) and the Reading sync page (S9) each change:
- * until they exist, a book and its reading sync both open today's book dialog for the work.
+ * What a row opens: a book its Book page, a reading sync that is running, waiting or stopped its Reading sync page
+ * (#540), a worker its page, the rest Server.
  */
 export function openNowRow(opens: NowOpens, open: NowOpeners): void {
   if (!opens) return;
   switch (opens.to) {
     case "book":
-    case "reading-sync":
       return open.book(opens.workId, opens.bookId);
+    case "reading-sync":
+      return open.sync(opens.workId);
     case "worker":
       return open.worker(opens.hostId);
     case "server":
