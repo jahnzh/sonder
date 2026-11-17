@@ -105,6 +105,8 @@ const desktopProjects = [
               /(^|\/)reader-messages\.spec\.ts$/,
               // The Book page for a book without files or not in the library (#533).
               /(^|\/)book-page-states\.spec\.ts$/,
+              // The Get audiobook sheet, and the specs that used today's release picker for a book (#601).
+              /(^|\/)(get-audiobook|releases|prowlarr|reliability)\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },
