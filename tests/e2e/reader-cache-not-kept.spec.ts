@@ -5,7 +5,8 @@ import { readerFixture } from "../reader-fixture";
 
 // #671 (spec #548, "Activity's entries"): the reader copies an EPUB it opens to the device as a reading cache, and
 // Now playing's hidden reader does so for the book in the mini player. That copy is not kept: This device lists
-// nothing under Kept on this device for a book only listened to. An ebook saved on purpose is still listed.
+// nothing under Kept on this device for a book only listened to. A book kept on purpose is still listed: since #532 the
+// Book page's Keep on this device switch keeps it (the reader's More sheet has no "Save ebook offline" any more).
 test.use({ serviceWorkers: "block" });
 
 // Firefox asks the owner whether to protect storage in a prompt nobody answers in a headless run, and the reader's
@@ -19,7 +20,7 @@ test.beforeEach(async ({ page, browserName }) => {
 
 const kept = (page: Page) => page.getByRole("list", { name: "Kept on this device", exact: true });
 
-/** A book with its own audio and EPUB, in the library; its ebook edition id. */
+/** A book with its own audio and EPUB, in the library; its ebook edition id and its work id. */
 async function bookWithEbook(page: Page, title: string) {
   const imported = await page.request.post("/api/import", {
     multipart: { title, author: "Cache QA", file: { name: "Narration.mp3", mimeType: "audio/mpeg", buffer: readFileSync("server/demo/alice-01.mp3") } },
@@ -33,7 +34,7 @@ async function bookWithEbook(page: Page, title: string) {
   });
   expect(epub.ok()).toBe(true);
   const ebooks = (await (await page.request.get("/api/ebooks")).json()) as { id: string; workId: string }[];
-  return ebooks.find((e) => e.workId === book.workId)!.id;
+  return { ebookId: ebooks.find((e) => e.workId === book.workId)!.id, workId: book.workId };
 }
 
 /** This device's record of an edition's EPUB, or null. */
@@ -64,7 +65,7 @@ async function play(page: Page, title: string) {
 
 test("a book with an ebook only listened to is not kept on this device", async ({ page }) => {
   const title = `Listened only ${randomUUID()}`;
-  const ebookId = await bookWithEbook(page, title);
+  const { ebookId } = await bookWithEbook(page, title);
   await play(page, title);
   // The reader's copy for the mini player's book is written, as a reading cache.
   await expect.poll(() => record(page, ebookId), { timeout: 20000 }).toEqual({ cache: true });
@@ -77,23 +78,25 @@ test("a book with an ebook only listened to is not kept on this device", async (
   await expect(kept(page).getByRole("listitem").filter({ hasText: title })).toHaveCount(0);
 });
 
-test("an ebook saved on purpose is still kept on this device", async ({ page }) => {
-  const title = `Saved on purpose ${randomUUID()}`;
-  const ebookId = await bookWithEbook(page, title);
+test("a book kept on purpose from the Book page is kept on this device, its EPUB too", async ({ page }) => {
+  test.setTimeout(90_000);
+  const title = `Kept on purpose ${randomUUID()}`;
+  const { ebookId, workId } = await bookWithEbook(page, title);
   await play(page, title);
   await expect.poll(() => record(page, ebookId), { timeout: 20000 }).toEqual({ cache: true });
-  // The reader's own copy does not count as saved: its More sheet still offers the save.
-  await page.goto(`/#reader/${ebookId}`);
-  const room = page.locator(".reader-room:not(.inline-reader)");
-  await expect(room.frameLocator(".reader-viewport iframe").locator("body")).toBeVisible({ timeout: 20000 });
-  if (!(await room.locator(".reader-topbar").isVisible())) {
-    const box = (await room.locator(".reader-viewport").boundingBox())!;
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  }
-  await room.locator(".reader-topbar").getByRole("button", { name: "More", exact: true }).click();
-  await page.getByRole("button", { name: "Save ebook offline", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Ebook saved offline", exact: true })).toBeDisabled();
-  expect(await record(page, ebookId)).toEqual({ cache: undefined });
+  // The reader's own copy does not count as kept: the Book page's switch is off and offers the keep.
+  await page.goto(`/#book/${encodeURIComponent(workId)}`);
+  const keep = page.getByRole("region", { name: "Book", exact: true }).getByRole("switch", { name: "Keep on this device", exact: true });
+  await expect(keep).toHaveAttribute("aria-checked", "false");
+  await keep.click();
+  await expect(keep).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator("#book-keep-line")).toHaveText(/^Audiobook and ebook · [\d.]+ (KB|MB)$/, { timeout: 30_000 });
+  // The switch's save turned the reading cache into a kept copy.
+  await expect.poll(() => record(page, ebookId), { timeout: 20000 }).toEqual({ cache: undefined });
   await page.goto("/#activity/device");
-  await expect(kept(page).getByRole("listitem").filter({ hasText: title })).toContainText(/Ebook · \d/);
+  await expect(kept(page).getByRole("listitem").filter({ hasText: title })).toContainText(/Audiobook and ebook · [\d.]+ (KB|MB)/);
+  // Read again after a reload, as a fresh start of the app does: the reader's cache writes never undo the keep.
+  await page.reload();
+  await expect(kept(page).getByRole("listitem").filter({ hasText: title })).toContainText(/Audiobook and ebook · [\d.]+ (KB|MB)/);
+  expect(await record(page, ebookId)).toEqual({ cache: undefined });
 });
