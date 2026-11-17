@@ -763,6 +763,8 @@ export function ReaderView({
             active = false;
             doc?.fonts?.removeEventListener?.("loadingdone", onFonts);
           };
+          // A tap is timed by its events' own timestamps, not by when the handlers run: a page busy laying out
+          // as the finger lifts runs pointerup late, and a short tap timed by the clock would be dropped (#589).
           let start: {x:number; y:number; time:number} | null = null;
           let hold: ReturnType<typeof setTimeout> | null = null;
           let held = false;
@@ -774,8 +776,12 @@ export function ReaderView({
             // Links may navigate without a page turn; a tap on the page itself
             // is only a potential gesture until it moves or turns the page.
             if ((event.target as Element)?.closest("a")) { gesture(); return; }
-            start = { x: event.clientX, y: event.clientY, time: Date.now() }; held = false;
-            hold = setTimeout(() => { held = true; pageAction.current("sentence", content, event); }, 550);
+            start = { x: event.clientX, y: event.clientY, time: event.timeStamp }; held = false;
+            const pressed = event.timeStamp, now = () => content.document.defaultView?.performance.now() ?? pressed + 550;
+            const longPress = () => { hold = null; held = true; pageAction.current("sentence", content, event); };
+            // The same busy page can run this timer late, while a pointerup that ended a short tap waits behind
+            // it: a late timer gives that pointerup a moment to arrive before the long press listens from here.
+            hold = setTimeout(() => { if (now() - pressed > 650) hold = setTimeout(longPress, 50); else longPress(); }, 550);
           });
           content.document.addEventListener("pointermove", (event: PointerEvent) => {
             if (start && (Math.abs(event.clientX-start.x)>12 || Math.abs(event.clientY-start.y)>12)) {
@@ -790,7 +796,7 @@ export function ReaderView({
             const dx=event.clientX-start.x, dy=event.clientY-start.y;
             if (Math.abs(dx)>50 && Math.abs(dx)>Math.abs(dy)) pageAction.current(dx>0 ? "previous" : "next");
             else if (start.y<40 && dy>80 && Math.abs(dy)>Math.abs(dx)) pageAction.current("close");
-            else if (Math.abs(dx)<12 && Math.abs(dy)<12 && Date.now()-start.time<550) {
+            else if (Math.abs(dx)<12 && Math.abs(dy)<12 && event.timeStamp-start.time<550) {
               const frame = content.document.defaultView?.frameElement?.getBoundingClientRect();
               const bounds = viewport.current?.getBoundingClientRect();
               const fraction = frame && bounds ? (frame.left + event.clientX - bounds.left) / Math.max(1, bounds.width) : event.clientX / Math.max(1, content.document.documentElement.clientWidth);
