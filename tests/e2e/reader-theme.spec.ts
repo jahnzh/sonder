@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readerFixture } from "../reader-fixture";
 import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { defaultAppearance } from "../../src/appearance";
 // Tapping the middle of the page shows the reader's top bar and slider.
 async function showControls(page: Page) {
@@ -535,7 +536,9 @@ test("Keep my place while offline keeps the conflict until reconnected and then 
         progression: 0.5,
       },
       baseRevision: 0,
-      eventId: "remote-conflict-event",
+      // Event ids are unique per user across every book, as the client's randomUUID ids are; a fixed id
+      // would be refused when the test repeats on the same server.
+      eventId: `remote-conflict-${randomUUID()}`,
       deviceId: "other-device",
       updatedAt: Date.now(),
       origin: "reading",

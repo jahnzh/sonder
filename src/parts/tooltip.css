@@ -1,0 +1,79 @@
+/* Tooltip (src/parts/Tooltip.tsx). Light fill and dark text are the palette's text and ground colours swapped, so
+   every preset and the custom palette colour it; in the light preset it is therefore dark on light ground. */
+
+/* The info mark: a 20 px circled i in a 44 by 44 target. The negative margins keep the target from growing the line
+   it stands in (a 22 px row label, a 16 px caption). */
+.part-info-mark {
+  box-sizing: border-box;
+  flex: none;
+  width: var(--height-control);
+  height: var(--height-control);
+  margin: -11px -12px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--corner-control);
+  background: transparent;
+  color: var(--muted);
+  vertical-align: middle;
+  cursor: pointer;
+}
+.part-info-mark > svg {
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+.part-info-mark:hover,
+.part-info-mark[data-state="open"] {
+  color: var(--text);
+}
+.part-info-mark:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -6px;
+}
+
+.part-tooltip-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+/* The explanation. */
+.part-tooltip {
+  box-sizing: border-box;
+  z-index: 60;
+  width: max-content;
+  max-width: min(300px, calc(100vw - 2 * var(--space-16)));
+  padding: var(--space-12);
+  border-radius: var(--corner-control);
+  background: var(--text);
+  color: var(--background);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-transform: none;
+  letter-spacing: normal;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 28%);
+}
+.part-tooltip-arrow {
+  fill: var(--text);
+}
+
+/* The name of an icon without a label: one line. */
+.part-icon-name {
+  box-sizing: border-box;
+  z-index: 60;
+  padding: 6px var(--space-8);
+  border-radius: var(--corner-control);
+  background: var(--text);
+  color: var(--background);
+  white-space: nowrap;
+  /* The board's name is not set in capitals: Caption size, not the Caption's capitals. */
+  text-transform: none;
+  letter-spacing: normal;
+  pointer-events: none;
+}

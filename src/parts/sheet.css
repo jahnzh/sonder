@@ -3,7 +3,8 @@
    desktop the screen edge is 32 and the task keeps one column, centred. */
 .part-sheet {
   position: fixed;
-  inset: 0;
+  /* The part of the screen that is shown: above a phone's keyboard (Sheet.tsx sets these from the visual viewport). */
+  inset: var(--sheet-shown-top, 0px) 0 var(--sheet-shown-bottom, 0px);
   /* Over the player and the tab bar (60, 61), under dialogs and toasts opened from it (90 and up). */
   z-index: 80;
   box-sizing: border-box;
