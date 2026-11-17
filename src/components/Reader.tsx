@@ -404,9 +404,7 @@ export function ReaderView({
       turning: boolean;
     } | null>(null),
     // The layout the theme effect last applied to a rendition: a later change of it lays the text out anew (#509).
-    laidOut = useRef<{ view: Rendition; key: string } | null>(null),
-    // Follow jumps started, to tell a jump that failed from one a newer follow jump replaced.
-    followRequests = useRef(0);
+    laidOut = useRef<{ view: Rendition; key: string } | null>(null);
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -1250,13 +1248,10 @@ export function ReaderView({
     if (interval && following.followTarget(key)) {
       // A new narrated sentence, or the same one again (Back to narration): measured anew by its jump.
       pagedSentence.current = null;
-      const request = ++followRequests.current;
+      const request = following.followRequest();
       void jumpRef.current(interval.paragraphId, false).catch(()=>false).then(shown => {
-        // A newer follow jump of ours replaced this one while it was in flight (the fonts loaded, a resize, a new
-        // layout): that one reports. Counted as a failure, each replaced jump would start a retry that replaces
-        // the next, until the reader gave up on a sentence it can show (seen in WebKit, #509).
-        if (!shown && request !== followRequests.current) return;
-        if (following.followShown(key, shown) === "failed")
+        // A jump a newer follow jump replaced while in flight is stale, not a failure (#509, seen in WebKit).
+        if (following.followShown(key, shown, request) === "failed")
           setError("Could not display the current passage. Try following audio again.");
       });
     } else if (interval) {
