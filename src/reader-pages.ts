@@ -123,6 +123,6 @@ export function narratedLine(minutes: number) {
 }
 
 /** The section a sentence is in. */
-export function sectionOfSentence(sections: readonly ReaderSection[], paragraphId: string) {
+export function sectionOfSentence<T extends Pick<ReaderSection, "paragraphs">>(sections: readonly T[], paragraphId: string) {
   return sections.find((section) => section.paragraphs.some((fragment) => fragment.id === paragraphId));
 }

@@ -749,7 +749,7 @@ test("reader-open Now Playing still exposes Position history from Playback optio
   await expect.poll(async () => (await history(page, book.recordingId)).length).toBe(0);
 });
 
-test("inline reader Chapters button opens ebook Contents, not Playback options", async ({ page }) => {
+test("inline reader Chapters button opens the ebook's Chapters page, not Playback options", async ({ page }) => {
   const book = await importWithEbook(page, "Chapters opens contents");
   await instrument(page);
   await page.goto("/");
@@ -758,8 +758,9 @@ test("inline reader Chapters button opens ebook Contents, not Playback options",
   await revealReaderControls(page);
   const player = dialog.getByRole("region", { name: "Player", exact: true });
   await player.getByRole("button", { name: "Chapters", exact: true }).click();
-  const contents = page.locator(".inline-reader").getByRole("complementary", { name: "Reader options" });
-  await expect(contents.getByRole("heading", { name: "Contents", exact: true })).toBeVisible();
+  // The Chapters page (#590) lists the ebook's sections.
+  await expect(page.getByRole("heading", { level: 1, name: "Chapters", exact: true })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Chapters", exact: true }).getByRole("button").first()).toBeVisible();
   await expect(page.getByRole("region", { name: "Playback options" })).toBeHidden();
 });
 

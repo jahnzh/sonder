@@ -1,7 +1,7 @@
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { hideOthers } from "aria-hidden";
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 export function Dialog({
   open,
   onOpenChange,
@@ -28,7 +28,14 @@ export function Dialog({
   forceMount?: boolean;
 }) {
   const descriptionId = useId();
-  const content = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement | null>(null);
+  // The portal renders its content only after it has mounted, so a dialog that mounts open (the reader on its own,
+  // #590) gets its node a render later: the effect below waits for it.
+  const [node, setNode] = useState<HTMLDivElement | null>(null);
+  const contentRef = useCallback((element: HTMLDivElement | null) => {
+    content.current = element;
+    setNode(element);
+  }, []);
   // A dialog kept mounted listens for presses outside it while closed too, and Radix answers a press only at its
   // click: a press that opened this dialog (a row of the reader's pages, #590) would close it again at once. Only
   // a press that began while the dialog was open closes it.
@@ -47,8 +54,7 @@ export function Dialog({
   // while closed. A dialog kept mounted to stay warm is therefore non-modal,
   // and hides the page and draws its overlay itself only while open.
   useEffect(() => {
-    if (!forceMount || !open || !content.current) return;
-    const node = content.current;
+    if (!forceMount || !open || !node) return;
     const previousFocus =
       document.activeElement instanceof HTMLElement &&
       document.activeElement !== document.body &&
@@ -83,7 +89,7 @@ export function Dialog({
         else (document.activeElement as HTMLElement | null)?.blur?.();
       }
     };
-  }, [forceMount, open]);
+  }, [forceMount, open, node]);
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange} modal={!forceMount}>
       <DialogPrimitive.Portal forceMount={forceMount ? true : undefined}>
@@ -91,7 +97,7 @@ export function Dialog({
           ? open && <div className="dialog-overlay" aria-hidden="true" />
           : <DialogPrimitive.Overlay className="dialog-overlay" />}
         <DialogPrimitive.Content
-          ref={content}
+          ref={contentRef}
           forceMount={forceMount ? true : undefined}
           className={`dialog-content ${className}`}
           aria-describedby={description ? descriptionId : undefined}
