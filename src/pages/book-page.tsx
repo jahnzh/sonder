@@ -1,7 +1,7 @@
 // The Book page (#532, spec #526 "The Book page"; boards Book.dc.html, BookMore.dc.html, BookGetting.dc.html,
 // BookSeries.dc.html; and #533's BookNotInLibrary.dc.html, BookNothing.dc.html, BookPdf.dc.html): `#book/<workId>`. The head (the back button named after where it goes, Favorite), the intro
 // (cover, title, author, the series line, the place line), Listen and Read; Files (Audiobook, Ebook, Reading sync);
-// This device (Keep on this device, a bridge to today's saves until slice "Keep"); About; then Hardcover, Mark as
+// This device (Keep on this device, the work's standing choice on this device, #550); About; then Hardcover, Mark as
 // finished and Remove from library. It replaces the book dialog (`BookDetail`). The words and rules are in
 // book-model.ts; the work comes from the library by work on the device (`useWork`), so it opens without a connection.
 import { useEffect, useMemo, useState } from "react";
@@ -22,6 +22,7 @@ import { usePlayer } from "../player";
 import { openReader } from "../reading";
 import { ebookDeviceCopySize, EBOOK_DEVICE_EVENT, removeEbookFromDevice, saveEbookToDevice, useDeviceEbookChoice, useEbookDeviceCopy } from "../ebook-device-copy";
 import { ebookSearchTarget } from "./ebook-page";
+import { keepSaver, tapKeep, useKeepRecord } from "../keep-runtime";
 import { hardcoverRowValue } from "../hardcover-page-model";
 import { bytes } from "../size-format";
 import { tip } from "../tooltip-texts";
@@ -50,7 +51,7 @@ type Props = {
   favorites: string[];
   /** Every entry of the work joins today's favourites list, or every one leaves it. */
   onFavorite: (entryIds: string[]) => void;
-  /** Today's save of a recording to this device (the dock's and Activity's). */
+  /** Today's save of a recording to this device (the dock's and Activity's): Resume of a book that is not kept. */
   onSave: (book: Book) => void;
   /** Stops a running save of a recording. */
   onPauseSave: (recordingId: string) => void;
@@ -143,6 +144,8 @@ export function BookPage(props: Props) {
   const { work, status, reload } = useWork(workId);
   const { state: hardcover } = useHardcover();
   const deviceChoice = useDeviceEbookChoice(workId);
+  // Keep on this device is the work's Keep record on this device (#550); undefined while it is read.
+  const keepRecord = useKeepRecord(workId);
   const [expanded, setExpanded] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [confirmKeepOff, setConfirmKeepOff] = useState(false);
@@ -176,6 +179,7 @@ export function BookPage(props: Props) {
   const job = recording ? running[recording.recordingId] : undefined;
   const epubSize = chosenEpub && epubCopy.known ? epubCopy.size : null;
   const keep = keepState({
+    keep: keepRecord?.on === true,
     hold,
     saving: job ? { filesSaved: Math.max(0, job.chapter - 1), filesTotal: job.total } : null,
     ebookSize: epubSize,
@@ -274,21 +278,33 @@ export function BookPage(props: Props) {
       else address.navigate({ name: "library" }, { replace: true });
     });
 
-  // Keep on this device, a bridge to today's saves: on starts the save of the chosen recording and the chosen EPUB.
-  // Neither save holds the switch: the audio's runs in the app (Activity shows it), the EPUB's ends by itself.
+  // Keep on this device (#550): on stores the choice and asks the saver to make this device hold the book; the saver
+  // saves the chosen recording now and whatever arrives later. Only this tap asks for persistent storage (`tap`). The chosen
+  // EPUB is saved once here, as before, until Keep saves it too.
   const keepOn = () => {
     setError("");
-    if (chosenBook && chosenBook.tracks.length) props.onSave(chosenBook);
+    void tapKeep(workId, true).catch((e: Error) => setError(e.message));
     if (chosenEpub && epubSize == null)
       void saveEbookToDevice(chosenEpub)
         .then(() => epubCopy.read())
         .catch((e: Error) => setError(e.message));
   };
+  // Resume: a kept book's save is the saver's; another is today's save.
+  const resume = () => {
+    const saver = keepSaver();
+    if (keepRecord?.on && saver) void saver.trigger("retry", workId);
+    else if (chosenBook) props.onSave(chosenBook);
+  };
   // Off removes every file of the book from this device: its recordings' audio and its EPUBs. The place stays.
   const keepOff = () =>
     run(async () => {
+      await tapKeep(workId, false);
       for (const r of work.recordings) {
-        if (running[r.recordingId]) props.onPauseSave(r.recordingId);
+        if (running[r.recordingId]) {
+          const saver = keepSaver();
+          if (saver) saver.pause(r.recordingId, "off");
+          else props.onPauseSave(r.recordingId);
+        }
         await deleteDownloads(r.recordingId);
       }
       for (const ebook of work.ebooks) if ((await ebookDeviceCopySize(ebook.id)) != null) await removeEbookFromDevice(ebook.id);
@@ -411,14 +427,14 @@ export function BookPage(props: Props) {
               </span>
               <span className="part-file-row-end">
                 {keep.resumable && !job && chosenBook && (
-                  <Button kind="quiet" disabled={busy} onClick={() => props.onSave(chosenBook)}>
+                  <Button kind="quiet" disabled={busy || !online} onClick={resume}>
                     Resume
                   </Button>
                 )}
                 <Switch
                   label="Keep on this device"
                   on={keep.on}
-                  disabled={busy}
+                  disabled={busy || keepRecord === undefined}
                   onChange={(on) => (on ? keepOn() : setConfirmKeepOff(true))}
                 />
               </span>

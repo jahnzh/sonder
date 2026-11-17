@@ -114,6 +114,8 @@ async function loadOnce() {
   if (!Array.isArray(works) || owner !== userId()) return;
   if (!(await storeLibraryWorks(owner, db, works, response.headers.get("ETag")))) return;
   publish({ owner, stored: true, works: byId(works) });
+  // A read that changed the library: Keep on this device saves what arrived (#550, `keep-runtime.ts`).
+  window.dispatchEvent(new Event("sonder:library-works-stored"));
 }
 
 /**

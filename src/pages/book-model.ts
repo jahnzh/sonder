@@ -107,7 +107,7 @@ export type BookModel = {
   ebook: { line: string; opens: boolean; action: FileAction };
   /** The Reading sync row: muted and not a link while a file is missing (and until the Reading sync page exists). */
   sync: { line: string; muted: boolean };
-  /** This device's group: for a book in the library with a recording or an EPUB. */
+  /** This device's group: for every book in the library (#550), also one with nothing to save yet. */
   device: boolean;
   /** Mark as finished, or Mark as not finished when the work is finished. */
   finished: boolean;
@@ -174,7 +174,7 @@ export function bookModel(work: LibraryWork, facts: { admin: boolean; deviceChoi
     audiobook,
     ebook,
     sync,
-    device: work.inLibrary && (listen || !!epub),
+    device: work.inLibrary,
     finished: workProgress(work) === "finished",
   };
 }
@@ -200,11 +200,14 @@ export function deviceHold(recording: Pick<WorkRecording, "recordingId" | "track
 }
 
 /**
- * The Keep on this device switch, a bridge to today's saves until slice "Keep" (S10): on when the chosen recording is
- * completely or partly on this device, or (a book without a recording) its EPUB is; its one line is what is kept and
- * its size, "Saving · 3 of 12 files" while a save runs, or nothing when off.
+ * The Keep on this device switch and its one line (#550, ADR 0018): the switch is the work's Keep record. The line is
+ * "Saving · 3 of 12 files" while a save runs; with Keep on, what is kept and its size ("Audiobook · 702 MB"),
+ * "Not complete · 3 of 12 files" while files are missing, or "Nothing to save yet" for a book with no recording;
+ * with Keep off, what is still here (a save from before, or one that is not Keep's), or nothing.
  */
 export function keepState(facts: {
+  /** The work's Keep record on this device is on. */
+  keep: boolean;
   hold: DeviceHold;
   /** A save of the chosen recording is running: files done and total. */
   saving: { filesSaved: number; filesTotal: number } | null;
@@ -212,18 +215,17 @@ export function keepState(facts: {
   ebookSize: number | null;
   hasRecording: boolean;
 }): { on: boolean; line: string | null; resumable: boolean } {
-  const { hold, saving, ebookSize, hasRecording } = facts;
-  if (saving) return { on: true, line: deviceSaveLine({ keep: true, saving: true, filesSaved: saving.filesSaved, filesTotal: saving.filesTotal, size: 0 }), resumable: false };
-  const on = hasRecording ? hold.audio !== "none" : ebookSize != null;
-  if (!on) return { on: false, line: null, resumable: false };
-  const line = deviceKeptLine({
-    audio: hold.audio,
-    filesTotal: hold.filesTotal,
-    filesSaved: hold.filesSaved,
-    ebook: ebookSize != null,
-    size: hold.audioSize + (ebookSize ?? 0),
-  });
-  return { on, line, resumable: hold.audio === "partial" };
+  const { keep, hold, saving, ebookSize, hasRecording } = facts;
+  if (saving) return { on: keep, line: deviceSaveLine({ keep: true, saving: true, filesSaved: saving.filesSaved, filesTotal: saving.filesTotal, size: 0 }), resumable: false };
+  const ebook = ebookSize != null;
+  const kept = (audio: DeviceHold["audio"]) =>
+    deviceKeptLine({ audio, filesTotal: hold.filesTotal, filesSaved: hold.filesSaved, ebook, size: hold.audioSize + (ebookSize ?? 0) });
+  if (!keep) return { on: false, line: hasRecording ? kept(hold.audio) : kept("none"), resumable: hasRecording && hold.audio === "partial" };
+  if (!hasRecording || !hold.filesTotal)
+    return { on: true, line: ebook ? kept("none") : deviceSaveLine({ keep: true, saving: false, filesTotal: 0, filesSaved: 0, size: 0 }), resumable: false };
+  // Kept, files missing: "Not complete", also before the first file arrives.
+  const audio = hold.audio === "complete" ? "complete" : "partial";
+  return { on: true, line: kept(audio), resumable: audio === "partial" };
 }
 
 /** The ids of a work's entries in today's favourites list (the editions of `GET /api/books`), and whether it is a favourite. */
