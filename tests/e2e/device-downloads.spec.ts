@@ -177,10 +177,20 @@ test("player downloads retain verified sections after connection failure and res
   await expect(
     page.getByRole("button", { name: "Find another release", exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Find ebook", exact: true }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
+  // The ebook's actions pass through the Ebook row (#531): Get when the book has no edition yet, otherwise the
+  // row opens the Ebook page, whose Get another edition opens the same search.
+  const ebookRow = page.getByRole("dialog").getByRole("list", { name: "Ebook", exact: true });
+  await expect(ebookRow.getByText("Ebook", { exact: true })).toBeVisible();
+  const getEbook = ebookRow.getByRole("button", { name: "Get an ebook", exact: true });
+  if (await getEbook.count()) {
+    await expect(ebookRow).toContainText("Not added");
+    await getEbook.click();
+  } else {
+    await ebookRow.getByRole("button", { name: /^Ebook / }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Ebook", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Get another edition", exact: true }).click();
+  }
+  await expect(page.getByText(/Downloaded editions will be linked to “.+”\./)).toBeVisible();
   await page.reload();
   await page.locator(".dock-book").click();
   await expect(

@@ -49,6 +49,8 @@ const desktopProjects = [
               /(^|\/)activity-dot\.spec\.ts$/,
               // Settings as a list with pages (#579).
               /(^|\/)settings-pages\.spec\.ts$/,
+              // The Ebook page (#531).
+              /(^|\/)ebook-page\.spec\.ts$/,
               // The worker's page (#520).
               /(^|\/)activity-worker\.spec\.ts$/,
             ]
