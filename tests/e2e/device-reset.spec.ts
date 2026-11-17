@@ -4,6 +4,12 @@ import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { test, expect } from "./fixtures";
 
+// Settings › App's Reset this device (#579): the row's Reset asks once, and its Reset resets.
+async function reset(page: Page) {
+  await page.getByRole("listitem").filter({ hasText: "Reset this device" }).getByRole("button", { name: "Reset", exact: true }).click();
+  await page.getByRole("dialog", { name: "Reset this device?", exact: true }).getByRole("button", { name: "Reset", exact: true }).click();
+}
+
 // WebKit's default context is ephemeral, like private browsing, and refuses to store a Blob in
 // IndexedDB ("Error preparing Blob/File data to be stored in object store", #37). Downloads are Blob
 // chunks, so WebKit gets a profile on disk, as Safari and an installed app have.
@@ -22,7 +28,7 @@ const withProfile = test.extend<{ devicePage: Page }>({
 });
 
 withProfile("reset refreshes the app shell while preserving device data", async ({ devicePage: page }) => {
-  await page.goto("/#settings");
+  await page.goto("/#settings/app");
   await page.evaluate(() => navigator.serviceWorker.ready);
   await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
   await page.evaluate(async () => {
@@ -49,9 +55,9 @@ withProfile("reset refreshes the app shell while preserving device data", async 
   });
   await Promise.all([
     page.waitForEvent("load"),
-    page.getByRole("button", {name:"Reset app on this device"}).click(),
+    reset(page),
   ]);
-  await expect(page.getByRole("heading", {name:"Settings",exact:true})).toBeVisible();
+  await expect(page.getByRole("heading", {name:"App",exact:true,level:1})).toBeVisible();
   await expect.poll(()=>page.evaluate(async()=>{
     const keys=await caches.keys();
     return !keys.includes("sonder-shell-test-stale") && !keys.includes("sonder-stream-test-stale");
@@ -69,12 +75,12 @@ withProfile("reset refreshes the app shell while preserving device data", async 
 });
 
 test("reset leaves the offline shell intact when the server cannot be reached", async ({ page, context }) => {
-  await page.goto("/#settings");
+  await page.goto("/#settings/app");
   await page.evaluate(() => navigator.serviceWorker.ready);
   await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
   await page.evaluate(()=>caches.open("sonder-shell-offline-test"));
   await context.setOffline(true);
-  await page.getByRole("button",{name:"Reset app on this device"}).click();
+  await reset(page);
   await expect(page.getByText("Could not reset the app. Check your connection and try again.")).toBeVisible();
   expect(await page.evaluate(async()=>(await caches.keys()).includes("sonder-shell-offline-test"))).toBe(true);
   await context.setOffline(false);

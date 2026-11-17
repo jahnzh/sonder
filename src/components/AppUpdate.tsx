@@ -1,49 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { RefreshCw, X } from "lucide-react";
 import { usePlayer } from "../player";
-import { localDB } from "../lib";
-declare const __SONDER_BUILD_ID__: string;
+import { reloadForUpdate, useAvailableUpdate } from "../app-update";
 export function AppUpdate() {
-  const [available, setAvailable] = useState<string | null>(null);
+  const available = useAvailableUpdate();
   const [applying, setApplying] = useState(false);
-  const dismissed = useRef<string | null>(null);
+  // Dismissing hides the notice for this build only; Settings › App still says an update is ready.
+  const [dismissed, setDismissed] = useState<string | null>(null);
   const player = usePlayer();
-  useEffect(() => {
-    if (!import.meta.env.PROD) return;
-    let active = true;
-    const check = async () => {
-      if (!navigator.onLine || document.visibilityState === "hidden") return;
-      try {
-        const response = await fetch("/build.json", {
-          cache: "no-store",
-          signal: AbortSignal.timeout(5000),
-        });
-        if (!response.ok) return;
-        const build = await response.json();
-        if (
-          active &&
-          typeof build.id === "string" &&
-          build.id !== __SONDER_BUILD_ID__ &&
-          build.id !== dismissed.current
-        )
-          setAvailable(build.id);
-      } catch {}
-    };
-    void check();
-    const interval = setInterval(() => void check(), 60000);
-    const visible = () => void check();
-    window.addEventListener("focus", visible);
-    window.addEventListener("online", visible);
-    document.addEventListener("visibilitychange", visible);
-    return () => {
-      active = false;
-      clearInterval(interval);
-      window.removeEventListener("focus", visible);
-      window.removeEventListener("online", visible);
-      document.removeEventListener("visibilitychange", visible);
-    };
-  }, []);
-  if (!available) return null;
+  if (!available || available === dismissed) return null;
   return (
     <aside className="app-update" role="status">
       <span>
@@ -58,12 +23,9 @@ export function AppUpdate() {
         disabled={applying}
         onClick={() => {
           setApplying(true);
-          if (player.playing) player.toggle();
-          window.dispatchEvent(new Event("pagehide"));
-          void localDB.progress
-            .toArray()
-            .then(() => location.reload())
-            .catch(() => setApplying(false));
+          void reloadForUpdate(() => {
+            if (player.playing) player.toggle();
+          }).catch(() => setApplying(false));
         }}
       >
         <RefreshCw size={14} />
@@ -72,10 +34,7 @@ export function AppUpdate() {
       <button
         className="icon-button"
         aria-label="Dismiss update notice"
-        onClick={() => {
-          dismissed.current = available;
-          setAvailable(null);
-        }}
+        onClick={() => setDismissed(available)}
       >
         <X size={15} />
       </button>
