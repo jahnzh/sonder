@@ -42,8 +42,10 @@ test("the administrator sees the pending account request in Settings", async ({ 
   await page.goto(base);
   await page.getByLabel("Password", { exact: true }).fill("admin-password");
   await page.getByRole("button", { name: "Sign in" }).click();
+  // Settings › Users (#579).
   await page.getByRole("button", { name: "Settings", exact: true }).last().click();
-  const users = page.locator("section").filter({ has: page.getByRole("heading", { name: "Users" }) });
+  await page.getByRole("navigation", { name: "Settings", exact: true }).getByRole("button", { name: /^Users\b/ }).click();
+  const users = page.locator("section").filter({ has: page.getByRole("heading", { name: "Accounts" }) });
   await expect(users.getByRole("heading", { name: "Pending account requests" })).toBeVisible();
   const row = users.getByRole("listitem").filter({ hasText: "bradley@example.com" });
   await expect(row.getByText("bradley", { exact: true })).toBeVisible();

@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   coversPage,
   firstPage,
+  isSettingsPage,
+  SETTINGS_PAGES,
   isFirstPage,
   parentOf,
   placeOf,
@@ -147,7 +149,6 @@ test("what an address shows: built pages as they are, everything else the first 
   assert.equal(shows("#series/s1/add"), "#library");
   assert.equal(shows("#listen/w1"), "#library");
   assert.equal(shows("#read/w1"), "#library");
-  assert.equal(shows("#settings/appearance"), "#settings");
   assert.equal(shows("#activity/device"), "#activity");
   assert.equal(shows("#activity/server/wsl"), "#activity");
   // Activity is everyone's place (#516); its Server part and workers are the administrator's: someone else gets Now.
@@ -155,6 +156,33 @@ test("what an address shows: built pages as they are, everything else the first 
     assert.equal(shows(address, false), "#activity", address);
   assert.equal(shows("#settings", false), "#settings");
   assert.equal(shows("#discover", false), "#discover");
+});
+
+test("#settings/<page>: each page, an unknown word, and the administrator's pages for someone else", () => {
+  const shows = (address: string, admin: boolean) => writeAddress(resolve(readAddress(address), { admin }));
+  assert.deepEqual([...SETTINGS_PAGES], ["account", "appearance", "playback", "connections", "users", "library", "app"]);
+  for (const page of SETTINGS_PAGES) {
+    const address = `#settings/${page}`;
+    assert.deepEqual(readAddress(address), { name: "settings-page", page }, address);
+    assert.equal(writeAddress({ name: "settings-page", page }), address);
+    assert.equal(placeOf(readAddress(address)), "settings", address);
+    assert.deepEqual(parentOf(readAddress(address)), { name: "settings" }, address);
+    // The administrator has every page.
+    assert.equal(shows(address, true), address, address);
+  }
+  // Someone else has every page but Users and Library and storage, which show Settings.
+  for (const page of ["account", "appearance", "playback", "connections", "app"])
+    assert.equal(shows(`#settings/${page}`, false), `#settings/${page}`, page);
+  for (const page of ["users", "library"]) assert.equal(shows(`#settings/${page}`, false), "#settings", page);
+  // A word that names no page shows Settings, for everyone.
+  for (const admin of [true, false]) {
+    assert.equal(shows("#settings/reading", admin), "#settings");
+    assert.equal(shows("#settings/keyboard", admin), "#settings");
+    assert.equal(shows("#settings/Account", admin), "#settings");
+    assert.equal(shows("#settings/account/more", admin), "#settings");
+  }
+  assert.equal(isSettingsPage("account"), true);
+  assert.equal(isSettingsPage("nothing"), false);
 });
 
 test("first pages, and what covers a page", () => {

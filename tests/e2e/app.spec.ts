@@ -296,7 +296,9 @@ test("desktop layout and server/device distinction remain usable without overflo
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     1440,
   );
-  await page.goto("/#settings");
+  // Settings shows the server's connections beside the list (spec #572, list 5).
+  await page.goto("/#settings/connections");
+  await expect(page.getByRole("navigation", { name: "Settings", exact: true })).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Your home server", exact: true }),
   ).toBeVisible();

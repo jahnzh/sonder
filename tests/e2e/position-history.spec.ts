@@ -480,7 +480,7 @@ test("source reloads only record a jump when the new source moves the position",
 
 test("Use Hardcover position can be undone through the normal progress path", async ({ page }) => {
   await instrument(page);
-  await page.goto("/#settings");
+  await page.goto("/#settings/connections");
   await page.getByRole("textbox", { name: /^API token/ }).fill("browser-test-token");
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   const mode = page.getByRole("combobox", { name: "Hardcover sync mode", exact: true });

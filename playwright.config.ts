@@ -39,6 +39,10 @@ const desktopProjects = [
               /(^|\/)(sign-in|account-requests)\.spec\.ts$/,
               // An account switch during a library write (#528 review finding 1).
               /(^|\/)library-works-user-race\.spec\.ts$/,
+              // The attention dot from Now's builder (#521).
+              /(^|\/)activity-dot\.spec\.ts$/,
+              // Settings as a list with pages (#579).
+              /(^|\/)settings-pages\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: {} },
