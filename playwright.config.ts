@@ -33,7 +33,11 @@ const desktopProjects = [
       name: browser.name(),
       testMatch:
         browser === firefox
-          ? /(now-playing-layout|device-reset|reader-frame|navigation|gallery|gallery-controls|gallery-sheet|device-save-records|gallery-tooltip)\.spec\.ts/
+          ? [
+              /(now-playing-layout|device-reset|reader-frame|navigation|gallery|gallery-controls|gallery-sheet|device-save-records|gallery-tooltip)\.spec\.ts/,
+              // Sign in, Request an account and Join (#582).
+              /(^|\/)(sign-in|account-requests)\.spec\.ts$/,
+            ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: {} },
     })),

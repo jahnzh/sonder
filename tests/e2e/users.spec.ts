@@ -124,37 +124,6 @@ test("accounts keep libraries and offline queues separate", async ({ page }) => 
     };
   }), book.recordingId)).toBe(true);
 });
-test("sign-in page shows the password toggle, busy state and error", async ({ page }) => {
-  mkdirSync("artifacts", { recursive: true });
-  await page.goto(base);
-  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
-  const password = page.getByLabel("Password", { exact: true });
-  await expect(page.getByLabel("Username")).toBeFocused();
-  await password.fill("wrong-password");
-  await expect(password).toHaveAttribute("type", "password");
-  await page.getByRole("button", { name: "Show password" }).click();
-  await expect(password).toHaveAttribute("type", "text");
-  await expect(page.getByRole("button", { name: "Hide password" })).toHaveAttribute("aria-pressed", "true");
-  let release!: () => void;
-  const held = new Promise<void>(resolve => { release = resolve; });
-  await page.route("**/api/auth/login", async route => { await held; await route.continue(); });
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("button", { name: "Signing in" })).toHaveAttribute("aria-busy", "true");
-  release();
-  await expect(page.getByRole("alert")).toHaveText("Incorrect username or password");
-  await expect(password).toHaveAttribute("aria-invalid", "true");
-  await page.screenshot({ path: "artifacts/sign-in-phone-error.png" });
-  await password.fill("admin-password");
-  await expect(page.getByRole("alert")).toHaveText("");
-  await page.setViewportSize({ width: 1440, height: 900 });
-  const art = page.locator(".signin-art");
-  await expect(art).toHaveAttribute("aria-hidden", "true");
-  const [artBox, formBox] = [await art.boundingBox(), await page.locator(".signin-panel").boundingBox()];
-  expect(formBox!.x).toBeGreaterThan(artBox!.x + artBox!.width - 1);
-  await page.screenshot({ path: "artifacts/sign-in-desktop.png" });
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("button", { name: "Settings", exact: true }).last()).toBeVisible();
-});
 async function openReaderPlayer(page: Page) {
   // Phone layouts hide dock-actions (including the list icon); the dock book row opens Now Playing there.
   const list = page.locator(".player-dock").getByRole("button", { name: "Chapters and now playing", exact: true });
