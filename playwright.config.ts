@@ -28,8 +28,7 @@ const mobileProjects = [
   // Firefox with the Pixel 7 viewport, touch and user agent. Firefox does not support isMobile, so it is dropped
   // (no meta-viewport handling); the project exists only when the Firefox binary does.
   ...(existsSync(firefox.executablePath())
-    ? [{ name: "mobile-firefox", testMatch: mobileSpecs, use: { ...pixelWithoutIsMobile, browserName: "firefox" as const, launchOptions: firefoxLaunchOptions } }]
-    ? [{ name: "mobile-firefox", testMatch: [mobileSpecs, readerPhoneSpecs], use: { ...pixelWithoutIsMobile, browserName: "firefox" as const, launchOptions: {} } }]
+    ? [{ name: "mobile-firefox", testMatch: [mobileSpecs, readerPhoneSpecs], use: { ...pixelWithoutIsMobile, browserName: "firefox" as const, launchOptions: firefoxLaunchOptions } }]
     : []),
   // iPhone 15 profile in WebKit: the closest to iOS Safari on Linux; skipped cleanly when the binary is missing.
   ...(existsSync(webkit.executablePath())
