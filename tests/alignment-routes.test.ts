@@ -4,9 +4,6 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
-import { AlignmentPoolStatusView } from "../src/components/AlignmentPoolStatusView.tsx";
 import type { AlignmentPoolStatus } from "../src/reading-types.ts";
 
 const temp = mkdtempSync(join(tmpdir(), "sonder-alignment-routes-"));
@@ -481,14 +478,6 @@ test("GET /api/alignments/pool requires admin and exposes per-host pool state an
       ],
     );
 
-    const adminMarkup = renderToStaticMarkup(
-      createElement(AlignmentPoolStatusView, { pool: body }),
-    );
-    assert.match(adminMarkup, /Alignment pool/);
-    assert.match(adminMarkup, /Last error: health: passage discovery is not ready/);
-    assert.match(adminMarkup, /cuda · float16/);
-    assert.match(adminMarkup, /cpu · float32/);
-    assert.match(adminMarkup, /Busy/);
   } finally {
     delete process.env.ALIGNMENT_POOL_ENABLED;
     setAlignmentPoolDepsForTests(null);

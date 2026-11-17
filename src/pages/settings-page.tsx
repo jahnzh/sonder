@@ -19,7 +19,6 @@ import {
   Copy,
 } from "lucide-react";
 import { ProwlarrSettings } from "../components/ProwlarrSettings";
-import { ReadingSyncSettings } from "../components/ReadingSyncSettings";
 import { AppearanceSettings } from "../components/Appearance";
 import { KeyboardHelpButton } from "../components/KeyboardHelp";
 import { PlaybackSettings } from "../components/PlaybackSettings";
@@ -436,7 +435,7 @@ export function SettingsPage({
         configured={!!settings?.hardcoverConfigured}
         notify={notify}
       />
-      {user.role === "admin" && <><SourceSettings settings={settings} onSaved={onSaved} notify={notify} /><ProwlarrSettings settings={settings} onSaved={onSaved} notify={notify} /><ReadingSyncSettings notify={notify} /></>}
+      {user.role === "admin" && <><SourceSettings settings={settings} onSaved={onSaved} notify={notify} /><ProwlarrSettings settings={settings} onSaved={onSaved} notify={notify} /></>}
       <section className="install-card">
         <div className="install-brand">
           <Mark />

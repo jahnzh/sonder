@@ -3,8 +3,6 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import {
   AlignmentPoolCoordinator,
   CTC_ENGINE,
@@ -22,7 +20,6 @@ import {
   type PoolHost,
   type PoolSshDeps,
 } from "../server/alignment-pool.ts";
-import { AlignmentPoolStatusView } from "../src/components/AlignmentPoolStatusView.tsx";
 import type { AlignmentJob } from "../src/reading-types.ts";
 
 const hosts: PoolHost[] = [
@@ -471,8 +468,6 @@ test("getAlignmentPoolStatus makes no HTTP or SSH requests when pool is disabled
         { id: "lisa", reachable: false, device: null, workerUrl: "http://lisa-worker:3012" },
       ],
     );
-    const markup = renderToStaticMarkup(createElement(AlignmentPoolStatusView, { pool: status }));
-    assert.match(markup, /Remote alignment pool is disabled\./);
   } finally {
     globalThis.fetch = originalFetch;
     if (prevPool === undefined) delete process.env.ALIGNMENT_POOL_ENABLED;
@@ -480,7 +475,7 @@ test("getAlignmentPoolStatus makes no HTTP or SSH requests when pool is disabled
   }
 });
 
-test("getAlignmentPoolStatus and AlignmentPoolStatusView show why a host was skipped and clear after recovery", async () => {
+test("getAlignmentPoolStatus shows why a host was skipped and clear after recovery", async () => {
   const prevPool = process.env.ALIGNMENT_POOL_ENABLED;
   const originalFetch = globalThis.fetch;
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "pool-admin-status-"));
@@ -543,14 +538,6 @@ test("getAlignmentPoolStatus and AlignmentPoolStatusView show why a host was ski
     assert.equal(lisa.activeJobs, 1);
     assert.equal(lisa.lastError, null);
 
-    const markup = renderToStaticMarkup(createElement(AlignmentPoolStatusView, { pool: status }));
-    assert.match(markup, /wsl/);
-    assert.match(markup, /Reachable/);
-    assert.match(markup, /cuda · float16/);
-    assert.match(markup, /Last error: staging: No space left on device/);
-    assert.match(markup, /lisa/);
-    assert.match(markup, /cpu · float32/);
-    assert.match(markup, /Busy/);
 
     getAlignmentPoolCoordinator().release("lisa", firstJob.id, firstJob.recordingId);
     failWslStaging = false;

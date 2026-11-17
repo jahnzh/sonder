@@ -149,7 +149,8 @@ test("what an address shows: built pages as they are, everything else the first 
   assert.equal(shows("#read/w1"), "#library");
   assert.equal(shows("#settings/appearance"), "#settings");
   assert.equal(shows("#activity/device"), "#activity");
-  assert.equal(shows("#activity/server/wsl"), "#activity");
+  // A worker's address is the administrator's Server until the worker's page lands (#519): it stays in the address.
+  assert.equal(shows("#activity/server/wsl"), "#activity/server/wsl");
   // Activity is everyone's place (#516); its Server part and workers are the administrator's: someone else gets Now.
   for (const address of ["#activity", "#activity/server", "#activity/server/wsl", "#activity/bogus", "#activity/device"])
     assert.equal(shows(address, false), "#activity", address);
