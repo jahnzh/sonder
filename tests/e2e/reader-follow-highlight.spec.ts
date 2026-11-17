@@ -1,5 +1,6 @@
 import {test,expect,type Page} from "@playwright/test";
 import {readFileSync} from "node:fs";
+import {randomUUID} from "node:crypto";
 import {readerFixture} from "../reader-fixture";
 import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
 // The service worker would answer the script request below before page.route sees it.
@@ -20,12 +21,13 @@ const textChapter=`<p>\n      Leading whitespace opens this block.   Then   spac
  `<p>After the code block comes this sentence. Then one more sentence ends the chapter.</p>`+
  // A line break is "\n" to the server's parser and no character in the browser: each <br> shifted every later sentence.
  `<p>Roses are red.<br/>Violets are blue.<br/>Sugar is sweet.<br/>And so are you.</p>`;
-async function fixture(page:Page,title:string){
+// `unique`: the EPUB gets a title of its own, so a repeat on the same server imports a new ebook rather than the last run's.
+async function fixture(page:Page,title:string,unique=false){
  const response=await page.request.post("/api/import",{multipart:{title,author:"Reader QA",file:{name:"Narration.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
  expect(response.ok()).toBe(true);
  const id=(await response.json()).id;
  const book=(await(await page.request.get("/api/books")).json()).find((b:any)=>b.id===id);
- const uploaded=await page.request.post(`/api/ebooks/import?workId=${book.workId}`,{multipart:{file:{name:"Offsets.epub",mimeType:"application/epub+zip",buffer:await readerFixture({bodies:[navChapter,textChapter]})}}});
+ const uploaded=await page.request.post(`/api/ebooks/import?workId=${book.workId}`,{multipart:{file:{name:"Offsets.epub",mimeType:"application/epub+zip",buffer:await readerFixture({bodies:[navChapter,textChapter],...(unique?{title:`${title} ${randomUUID()}`}:{})})}}});
  expect(uploaded.ok()).toBe(true);const ebook=(await uploaded.json()).id;
  const manifest=await(await page.request.get(`/api/reader/${ebook}`)).json();
  const created=await page.request.post("/api/alignments",{data:{ebookId:ebook,recordingId:book.recordingId,pairings:manifest.sections.map((section:any)=>({section:section.index,trackId:book.tracks[0].id,start:section.index*100,duration:95}))}});
@@ -82,6 +84,80 @@ test(`the follow highlight covers exactly the narrated sentence in ${label} mode
 
   }
   expect(wrong).toEqual([]);
+ });
+});
+// The highlight stays (#502): chapter one is narrated from 0 s and chapter two from 100 s, so after chapter one's last
+// sentence the file goes on with no sentence until 100 s. Playing through that gap, the highlight stays on chapter one's last
+// sentence and the view does not move; it moves to chapter two's first sentence once that begins. A jump into the gap
+// marks the last sentence that started before it.
+for(const [mode,label] of [["paginated","Page"],["scroll","Scroll"]] as const)
+test(`the follow highlight stays through a gap and moves when the next sentence begins in ${label} mode`,async({page},testInfo)=>{
+ await page.addInitScript(()=>{
+  const audio:HTMLAudioElement[]=[];(window as any).__gapAudio=audio;
+  const NativeAudio=window.Audio;
+  window.Audio=class extends NativeAudio{constructor(src?:string){super(src);audio.push(this);}};
+ });
+ const {book,map,manifest}=await fixture(page,`Highlight gap ${label} ${testInfo.repeatEachIndex}`,true);
+ const fragments=new Map(manifest.sections.flatMap((s:any)=>s.paragraphs.map((p:any)=>[p.id,p])));
+ const text=(interval:any)=>(fragments.get(interval.paragraphId) as any).text;
+ const last=map.intervals.filter((i:any)=>i.section===0).sort((a:any,b:any)=>b.start-a.start)[0];
+ const next=map.intervals.filter((i:any)=>i.section===1).sort((a:any,b:any)=>a.start-b.start)[0];
+ // A gap of seconds with no sentence in it: no interval covers it.
+ expect(next.start-last.end).toBeGreaterThan(3);
+ expect(map.intervals.some((i:any)=>i.start<next.start&&i.end>last.end)).toBe(false);
+ await withReader(page,{mode},async()=>{
+  // Shortly before the end of chapter one's last sentence, so the narration crosses the whole gap.
+  await open(page,book,{...last,start:Math.max(last.start,last.end-1.5)-.5});
+  expect((await highlighted(page)).normalize("NFKC").trim()).toBe(text(last));
+  await page.route("**/__epub-test.js",route=>route.fulfill({path:"node_modules/epubjs/dist/epub.min.js",contentType:"text/javascript"}));
+  if(!await page.evaluate(()=>"ePub" in window))await page.addScriptTag({url:"/__epub-test.js"});
+  const room=page.locator(".inline-reader");
+  await expect(room.locator(".reader-viewport")).not.toHaveAttribute("data-jumping",/.*/);
+  await room.getByRole("button",{name:"Play narration",exact:true}).click();
+  // The audio position, the passage followed, the text the highlight covers and where the view is scrolled, all
+  // at one instant, until the highlight has moved on or 20 s passed.
+  // The fixture's gap lasts over a minute: a second and a half into it the audio skips, still inside it, to two
+  // seconds before the next sentence, as a seek in the player would.
+  const samples:{time:number;passage:string|null;text:string|null;view:string}[]=await page.evaluate(async({previous,end,next})=>{
+   const out:any[]=[];
+   const audio=((window as any).__gapAudio as HTMLAudioElement[]).find(a=>!!a.src)!;
+   const deadline=Date.now()+20000;
+   let skipped=false;
+   for(;;){
+    if(!skipped&&audio.currentTime>end+1.5){skipped=true;audio.currentTime=next-2;}
+    const room=document.querySelector(".inline-reader")!;
+    const viewport=room.querySelector(".reader-viewport")!;
+    const follow=viewport.querySelector(".sonder-follow");
+    const iframe=viewport.querySelector("iframe") as HTMLIFrameElement|null;
+    const container=viewport.querySelector(".epub-container") as HTMLElement|null;
+    const cfi=follow?.getAttribute("data-epubcfi");
+    let text:string|null=null;
+    try{if(cfi&&iframe?.contentDocument)text=new (window as any).ePub.CFI(cfi).toRange(iframe.contentDocument).toString().replace(/\s+/g," ").trim();}catch{}
+    const passage=room.getAttribute("data-current-passage");
+    out.push({time:audio.currentTime,passage,text,view:`${container?.scrollLeft}:${container?.scrollTop}:${iframe?.contentWindow?.scrollX}:${iframe?.contentWindow?.scrollY}`});
+    if((passage&&passage!==previous)||Date.now()>deadline)break;
+    await new Promise(resolve=>setTimeout(resolve,100));
+   }
+   audio.pause();
+   return out;
+  },{previous:last.paragraphId,end:last.end,next:next.start});
+  const moved=samples.at(-1)!;
+  // It moved, to the next sentence, and only once that sentence had begun.
+  expect(moved.passage).toBe(next.paragraphId);
+  expect(moved.time).toBeGreaterThanOrEqual(next.start-.05);
+  const before=samples.slice(0,-1);
+  expect(before.every(sample=>sample.passage===last.paragraphId)).toBe(true);
+  // Through the gap: the highlight is on chapter one's last sentence the whole time, and the view stays put.
+  const gap=before.filter(sample=>sample.time>last.end+.3&&sample.time<next.start-.05);
+  expect(gap.length).toBeGreaterThan(15);
+  // Both sides of the skip are in the gap.
+  expect(gap.some(sample=>sample.time<last.end+2)&&gap.some(sample=>sample.time>next.start-2)).toBe(true);
+  expect(gap.filter(sample=>sample.text?.normalize("NFKC")!==text(last))).toEqual([]);
+  expect(new Set(gap.map(sample=>sample.view)).size).toBe(1);
+  await expect.poll(async()=>(await highlighted(page)).normalize("NFKC").trim()).toBe(text(next));
+  // A jump into the gap marks the last sentence that started before the new position.
+  await open(page,book,{...last,start:(last.end+next.start)/2-.5});
+  expect((await highlighted(page)).normalize("NFKC").trim()).toBe(text(last));
  });
 });
 test("long-press on a sentence's first letter listens from that sentence, not the one before",async({page})=>{

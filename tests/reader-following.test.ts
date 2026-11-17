@@ -11,6 +11,7 @@ import {
   OPENING_DISPLAY_MS,
   OWN_LAYOUT_SETTLE_MS,
   type FollowingClock,
+  type ReaderFollowing,
 } from "../src/reader-following";
 
 // A clock the test moves by hand; timers run when their time is reached.
@@ -1132,4 +1133,186 @@ test("a Contents choice of the section shown, a page turn into another section, 
   swipe.following.beginNavigation()();
   swipe.following.gesture();
   assert.equal(swipe.following.relocated("next chapter", true, 1), "manual");
+});
+
+// The narrated sentence and the narration highlight (#502): the sentence of the map with the latest start at or
+// before the narration's position, taking the recording's tracks in order, with no time limit.
+
+// A scripted map of recording "rec" on two tracks, "t1" then "t2". On t1 the first sentence starts at 10 s (an
+// introduction the ebook does not have before it), a silence follows a1, and between a2 and a3 the narrator
+// reads 60 s the ebook does not have. t2 starts with 5 s of music before b1. The map lists t2 first and a3
+// before a2, so its own order is not the narration's.
+const sentence = (paragraphId: string, trackId: string, start: number, end: number) => ({ paragraphId, trackId, start, end });
+const narrated = {
+  recordingId: "rec",
+  intervals: [
+    sentence("b1", "t2", 5, 9),
+    sentence("b2", "t2", 9, 14),
+    sentence("a1", "t1", 10, 14),
+    sentence("a3", "t1", 80, 85),
+    sentence("a2", "t1", 16, 20),
+  ],
+};
+const tracks = ["t1", "t2"];
+const at = (trackId: string, position: number, recordingId = "rec") => ({ recordingId, tracks, trackId, position });
+const narratedAt = (following: ReturnType<typeof setup>["following"], trackId: string, position: number) =>
+  following.narratedSentence(narrated, at(trackId, position))?.paragraphId ?? null;
+
+test("narrated sentence: inside a sentence it is that sentence, from its first moment", () => {
+  const { following } = setup();
+  assert.equal(narratedAt(following, "t1", 10), "a1");
+  assert.equal(narratedAt(following, "t1", 12.5), "a1");
+  assert.equal(narratedAt(following, "t1", 17), "a2");
+  assert.equal(narratedAt(following, "t2", 10), "b2");
+  assert.equal(following.highlightedSentence(narrated, at("t1", 12.5))?.paragraphId, "a1");
+});
+
+test("narrated sentence: in the silence after a sentence it stays on that sentence until the next one begins", () => {
+  const { following } = setup();
+  // a1 ends at 14, a2 starts at 16.
+  assert.equal(narratedAt(following, "t1", 14), "a1");
+  assert.equal(narratedAt(following, "t1", 15.99), "a1");
+  assert.equal(following.highlightedSentence(narrated, at("t1", 15))?.paragraphId, "a1");
+  assert.equal(narratedAt(following, "t1", 16), "a2");
+});
+
+test("narrated sentence: through a passage the ebook does not have it stays, with no time limit", () => {
+  const { following } = setup();
+  // a2 ends at 20; the narrator reads 60 s the ebook does not have before a3 at 80.
+  for (const position of [20, 21, 45, 79.9]) assert.equal(narratedAt(following, "t1", position), "a2", `at ${position}`);
+  assert.equal(narratedAt(following, "t1", 80), "a3");
+  // After the last sentence of the file, to its very end.
+  assert.equal(narratedAt(following, "t1", 3600), "a3");
+});
+
+test("narrated sentence: a jump into a gap marks the last sentence that started before the new position", () => {
+  const { following } = setup();
+  assert.equal(narratedAt(following, "t1", 11), "a1");
+  // Forward into the passage the ebook does not have, past a2 which the narration never played.
+  assert.equal(narratedAt(following, "t1", 50), "a2");
+  // Back into the silence after a1.
+  assert.equal(narratedAt(following, "t1", 15), "a1");
+});
+
+test("narrated sentence: at the start of a new audio file the last sentence of the file before stays until the new file's first sentence", () => {
+  const { following } = setup();
+  assert.equal(narratedAt(following, "t2", 0), "a3");
+  assert.equal(narratedAt(following, "t2", 4.99), "a3");
+  assert.equal(narratedAt(following, "t2", 5), "b1");
+  // The order is the recording's: given the other way round, t2 comes first and t1 starts after b2.
+  assert.equal(following.narratedSentence(narrated, { recordingId: "rec", tracks: ["t2", "t1"], trackId: "t1", position: 2 })?.paragraphId, "b2");
+});
+
+test("narrated sentence: before the map's first sentence there is none", () => {
+  const { following } = setup();
+  assert.equal(narratedAt(following, "t1", 0), null);
+  assert.equal(narratedAt(following, "t1", 9.99), null);
+  assert.equal(following.highlightedSentence(narrated, at("t1", 5)), null);
+  // A track the recording does not list, and a place without a track, have none either.
+  assert.equal(narratedAt(following, "t9", 50), null);
+  assert.equal(following.narratedSentence(narrated, { recordingId: "rec", tracks, position: 50 }), null);
+});
+
+test("narrated sentence: there is none with a map for another recording than the one in the player, or without a map", () => {
+  const { following } = setup();
+  assert.equal(following.narratedSentence(narrated, at("t1", 12, "other")), null);
+  assert.equal(following.highlightedSentence(narrated, at("t1", 12, "other")), null);
+  assert.equal(following.narratedSentence(narrated, { tracks, trackId: "t1", position: 12 }), null);
+  assert.equal(following.narratedSentence(null, at("t1", 12)), null);
+  assert.equal(following.highlightedSentence(undefined, at("t1", 12)), null);
+});
+
+test("narration highlight: with Follow the narration off there is none, and it comes back with following", () => {
+  const { following } = setup();
+  following.pageAway();
+  assert.equal(following.highlightedSentence(narrated, at("t1", 12)), null);
+  assert.equal(following.highlightedSentence(narrated, at("t1", 50)), null);
+  // The narration itself still has its sentence: Back to narration can return to it.
+  assert.equal(narratedAt(following, "t1", 50), "a2");
+  following.backToNarration();
+  assert.equal(following.highlightedSentence(narrated, at("t1", 50))?.paragraphId, "a2");
+});
+
+test("narration highlight: in a gap the followed sentence does not change, so the view does not move", () => {
+  const { following } = setup();
+  const key = (position: number) => `rec:${following.highlightedSentence(narrated, at("t1", position))!.paragraphId}`;
+  assert.equal(following.followTarget(key(17)), true);
+  for (const position of [20, 30, 79]) assert.equal(following.followTarget(key(position)), false, `at ${position}`);
+  assert.equal(following.followTarget(key(80)), true);
+});
+
+test("narrated sentence: a rebuilt map with the same tracks is read afresh", () => {
+  const { following } = setup();
+  assert.equal(narratedAt(following, "t1", 50), "a2");
+  const rebuilt = { recordingId: "rec", intervals: [sentence("c1", "t1", 40, 45)] };
+  assert.equal(following.narratedSentence(rebuilt, at("t1", 50))?.paragraphId, "c1");
+  assert.equal(following.narratedSentence(rebuilt, at("t1", 30)), null);
+});
+
+// The sequences for back to narration, the gap case: "a narration to follow" now means there is a narrated
+// sentence, as Reader.tsx asks it through the module's rule, so back to narration works during a gap.
+function gapSetup(position: { trackId: string; position: number }) {
+  const t = setup();
+  const place = { ...position };
+  const following: ReaderFollowing<string> = createReaderFollowing<string>({
+    clock: t.clock,
+    onManualSave: (locator) => { t.saved.push(locator); },
+    narrationToFollow: (): boolean => !!following.narratedSentence(narrated, at(place.trackId, place.position)),
+    onRetry: () => {},
+    onClearFollowError: () => {},
+  });
+  following.mapShown("map", true);
+  return { ...t, following, place };
+}
+
+test("gap case: back to narration in a gap drops every waiting manual save and follows the last narrated sentence", () => {
+  const t = gapSetup({ trackId: "t1", position: 50 });
+  const search = pendAll(t);
+  assert.equal(t.following.isFollowing(), false);
+  t.following.backToNarration();
+  assert.equal(t.following.isFollowing(), true);
+  assert.equal(t.following.pendingManual(), null);
+  search.save("search result");
+  t.clock.advance(MANUAL_SAVE_DELAY_MS * 20);
+  assert.deepEqual(t.saved, []);
+  assert.equal(t.following.highlightedSentence(narrated, at("t1", 50))?.paragraphId, "a2");
+});
+
+test("gap case: before the map's first sentence back to narration still keeps the waiting saves, and each is saved", () => {
+  const t = gapSetup({ trackId: "t1", position: 5 });
+  const search = pendAll(t);
+  t.following.backToNarration();
+  assert.equal(t.following.pendingManual(), "chapter");
+  search.save("search result");
+  t.clock.advance(MANUAL_SAVE_DELAY_MS);
+  assert.deepEqual(t.saved.sort(), ["chapter", "search result"]);
+});
+
+test("gap case: the audio scrubber released in a gap, or at the start of the next file, drops the waiting manual position", () => {
+  for (const target of [{ trackId: "t1", position: 50 }, { trackId: "t2", position: 2 }]) {
+    const t = gapSetup({ trackId: "t1", position: 5 });
+    t.following.gesture();
+    t.following.relocated("chapter", true);
+    const back = t.following.deferredReturn();
+    Object.assign(t.place, target);
+    assert.notEqual(back.run(), null);
+    t.clock.advance(MANUAL_SAVE_DELAY_MS * 4);
+    assert.deepEqual(t.saved, [], `${target.trackId} ${target.position}`);
+  }
+});
+
+test("gap case: a back to narration before the first sentence drops what it kept once the narration reaches the first sentence", () => {
+  const t = gapSetup({ trackId: "t1", position: 5 });
+  t.following.navigate();
+  t.following.beginNavigation()();
+  t.following.relocated("chapter", true);
+  t.following.backToNarration();
+  assert.equal(t.following.pendingManual(), "chapter");
+  // The narration reaches a1 inside the save pause; the follow step runs for it.
+  t.place.position = 12;
+  t.clock.advance(100);
+  const sentence = t.following.highlightedSentence(narrated, at("t1", 12))!;
+  t.following.followTarget(`rec:${sentence.paragraphId}`);
+  t.clock.advance(MANUAL_SAVE_DELAY_MS * 4);
+  assert.deepEqual(t.saved, []);
 });

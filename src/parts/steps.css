@@ -1,0 +1,70 @@
+/* Steps (src/parts/Steps.tsx). Each step 36 high, the running one with its bar too; no lines between steps.
+   The existing palette has no green that follows the presets, so the tick mixes one with the text colour: light on
+   a dark preset, dark on a light one. */
+.part-steps {
+  margin: 0;
+  padding: var(--space-4) 0;
+  list-style: none;
+  border-radius: var(--corner-group);
+  background: var(--surface);
+  --part-step-done: color-mix(in srgb, #3fa34d 60%, var(--text));
+}
+.part-step {
+  box-sizing: border-box;
+  height: 36px;
+  padding: 0 var(--space-16);
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  color: var(--text);
+}
+.part-step-mark {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.part-step-tick {
+  color: var(--part-step-done);
+}
+.part-step-dot,
+.part-step-ring {
+  box-sizing: border-box;
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--corner-round);
+}
+.part-step-dot {
+  background: var(--accent);
+}
+.part-step-ring {
+  border: 2px solid var(--muted);
+}
+.part-step-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.part-step-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.part-step[data-state="running"] .part-step-label {
+  font-weight: 600;
+}
+.part-step[data-state="waiting"] .part-step-label {
+  color: var(--muted);
+}
+.part-step-value {
+  flex: none;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.part-step[data-state="running"] .part-step-value {
+  color: var(--text);
+}
