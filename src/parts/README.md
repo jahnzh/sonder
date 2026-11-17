@@ -16,8 +16,9 @@ screens do not use them yet; each screen's slice moves it over.
 
 - **Tooltip** (`Tooltip.tsx`, on `@radix-ui/react-popover`): `InfoMark` is the circled i after a name; pass it as
   `info` to a `Row` that shows a value or a control, to a `Group` with a caption, or to a `PageHeader`. One
-  explanation is open at a time; it opens on a tap, and on a desktop on hover and keyboard focus, and is never in the
-  address. `IconName` wraps an icon-only `Button` so it shows its name on hover. Measured by
+  explanation is open at a time; it opens on a tap, and on a desktop on keyboard focus and on hover once the pointer
+  rests on the mark for `HOVER_OPEN_MS` (a pointer passing over marks opens none). A hover's explanation closes when
+  the pointer leaves the mark, the explanation and the gap between them. It is never in the address. `IconName` wraps an icon-only `Button` so it shows its name on hover. Measured by
   `tests/e2e/gallery-tooltip.spec.ts`.
 
 ## Adding a part to the gallery

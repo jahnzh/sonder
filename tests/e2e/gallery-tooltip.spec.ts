@@ -3,7 +3,8 @@ import { defaultAppearance, paletteFor, type Appearance } from "../../src/appear
 
 // The Tooltip part on the gallery (#491; spec #480, "Parts"; board Tooltips.dc.html): the info mark and its
 // explanation measured in every preset, the custom palette and both densities; a tap opens it under its entry, a tap
-// elsewhere and Escape close it, a second one closes the first; on a desktop hover and keyboard focus open it; names
+// elsewhere and Escape close it, a second one closes the first; on a desktop hover (once the pointer rests on a mark,
+// so one passing over marks opens none) and keyboard focus open it; names
 // and the announcement; an icon without a label shows its name on hover; and a tooltip is not in the address.
 
 // Taps need touch input; the desktop projects get it here, the phone projects have it already.
@@ -221,12 +222,15 @@ test("on a desktop it opens on hover and closes when the pointer leaves", async 
   // The pointer can move onto the explanation without closing it.
   const box = (await tip(page).boundingBox())!;
   const from = (await mark(page, "Recordings").boundingBox())!;
-  // Through the gap between the mark and the explanation, resting there a moment, as a hand does.
+  // Through the gap between the mark and the explanation, resting there a while, as a hand may: where the pointer
+  // is decides, not how long it takes, so a slow hand (or a slow run) keeps it open.
   await page.mouse.move(from.x + 4, (from.y + from.height + box.y) / 2, { steps: 2 });
-  await page.waitForTimeout(60);
+  await page.waitForTimeout(500);
+  await expect(tip(page)).toHaveText(texts.recordings);
+  // Onto the middle of the explanation, which lies over the next row's mark ("Available from"): that mark is covered
+  // and stays closed, however long the pointer rests there.
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 4 });
-  await page.waitForTimeout(300);
-  // Still this mark's explanation (the marks under it lie beneath the explanation and stay closed).
+  await page.waitForTimeout(500);
   await expect(tip(page)).toHaveCount(1);
   await expect(tip(page)).toHaveText(texts.recordings);
   // Leaving both closes it.
@@ -241,6 +245,41 @@ test("on a desktop it opens on hover and closes when the pointer leaves", async 
   await expect(tip(page)).toHaveText(texts.recordings);
   await page.mouse.click(2, 2);
   await expect(tip(page)).toHaveCount(0);
+});
+
+test("on a desktop a pointer passing over the marks opens none; the one it rests on opens", async ({ page }) => {
+  // The page's clock is held, so how fast the pointer passes does not depend on the run: no time passes on the page
+  // until the test lets it.
+  await page.clock.install();
+  await openWith(page);
+  await mark(page, "Available from").evaluate((element) => element.scrollIntoView({ block: "center" }));
+  const boxes = [];
+  for (const name of ["Recordings", "Available from", "Plays from"]) boxes.push((await mark(page, name).boundingBox())!);
+  const x = (box: { x: number; width: number }) => box.x + box.width / 2;
+  const y = (box: { y: number; height: number }) => box.y + box.height / 2;
+  // Down the column of marks, over the centre of each, from above the first to below the last.
+  await page.mouse.move(x(boxes[0]), boxes[0].y - 30);
+  for (const box of boxes) await page.mouse.move(x(box), y(box), { steps: 3 });
+  const last = boxes[boxes.length - 1];
+  await page.mouse.move(x(last), last.y + last.height + 30, { steps: 3 });
+  await expect(tip(page)).toHaveCount(0);
+  // Long after: the pointer only passed, so nothing opens.
+  await page.clock.runFor(2000);
+  await expect(tip(page)).toHaveCount(0);
+  for (const name of ["Recordings", "Available from", "Plays from"])
+    await expect(mark(page, name)).toHaveAttribute("aria-expanded", "false");
+  // Resting on a mark opens its explanation, not before the hover delay.
+  await page.mouse.move(x(boxes[1]), y(boxes[1]), { steps: 3 });
+  await page.clock.runFor(150);
+  await expect(tip(page)).toHaveCount(0);
+  await page.clock.runFor(300);
+  await expect(tip(page)).toHaveCount(1);
+  await expect(tip(page)).toHaveText(/^Where this recording can be played from/);
+  await expect(mark(page, "Available from")).toHaveAttribute("aria-expanded", "true");
+  // A tap still opens at once, with no delay, and takes over.
+  await tap(page, "Recordings");
+  await expect(tip(page)).toHaveCount(1);
+  await expect(tip(page)).toHaveText(texts.recordings);
 });
 
 test("on a desktop it opens on keyboard focus, and closes on Escape and when focus moves on", async ({ page, browserName }) => {
