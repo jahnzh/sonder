@@ -1,0 +1,94 @@
+/* Book row (src/parts/BookRow.tsx). 64 high, 56 with a number in front; the bar fits inside either. */
+.part-book-row-item {
+  display: block;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.part-book-row {
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--height-bar);
+  padding: 0 var(--space-16);
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+}
+.part-book-row[data-numbered] {
+  /* The series row (spec #480: "with a number in front it is 56 high"). */
+  height: 56px;
+}
+button.part-book-row {
+  cursor: pointer;
+}
+button.part-book-row:hover {
+  background: color-mix(in srgb, var(--raised) 55%, transparent);
+}
+button.part-book-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.part-book-row-number {
+  flex: none;
+  width: 20px;
+  text-align: right;
+  color: var(--muted);
+}
+.part-book-row-cover {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--corner-control);
+  background: var(--raised);
+  overflow: hidden;
+  display: block;
+}
+.part-book-row-cover > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.part-book-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* Two classes: the title is set in Body, whose weight it raises, whichever stylesheet comes first. */
+.part-book-row .part-book-row-title {
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.part-book-row-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+  color: var(--muted);
+}
+.part-book-row-mark {
+  flex: none;
+  display: flex;
+}
+.part-book-row-status {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.part-book-row-end {
+  flex: none;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+}

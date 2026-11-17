@@ -1,0 +1,16 @@
+/* ProgressBar (src/parts/ProgressBar.tsx). */
+.part-progress {
+  display: block;
+  flex: none;
+  height: var(--space-4);
+  margin-top: var(--space-4);
+  border-radius: var(--corner-round);
+  background: var(--border);
+  overflow: hidden;
+}
+.part-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--corner-round);
+  background: var(--accent);
+}

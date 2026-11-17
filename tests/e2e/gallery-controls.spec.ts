@@ -317,30 +317,38 @@ function focused(page: Page) {
 
 test("Tab reaches every enabled control once, in order: a chip each, the chosen segment, a switch each, the stepper's value", async ({ page, browserName }) => {
   await openWith(page, defaultAppearance);
-  const expected = [
-    "button:Series",
-    "button:On device",
-    "button:All",
-    "button:In progress",
-    "button:Finished",
-    "button:Favorites",
-    "radio:Pages",
-    "radio:Current chapter",
-    "radio:This device",
-    "switch:Follow the narration",
-    "switch:Keep on this device",
-    "spinbutton:Speed",
-    "spinbutton:Slowest speed",
-    "spinbutton:Fastest speed",
-  ];
-  // Start from the last thing before the chips (the Page header section's row), so the run shows what Tab reaches.
-  await page.locator('[data-gallery-section="page-header"] button').last().focus();
-  const reached: string[] = [];
-  for (let i = 0; i < expected.length; i++) {
-    await page.keyboard.press(browserName === "webkit" ? "Alt+Tab" : "Tab");
-    reached.push(await focused(page));
+  // Each of the controls' own sections, walked on its own: other sections (the rows, the steps) sit between them on
+  // the page, so the walk starts at a section's first control and stops when focus leaves the section.
+  const expected = {
+    chip: ["button:Series", "button:On device", "button:All", "button:In progress", "button:Finished", "button:Favorites"],
+    segmented: ["radio:Pages", "radio:Current chapter", "radio:This device"],
+    switch: ["switch:Follow the narration", "switch:Keep on this device"],
+    stepper: ["spinbutton:Speed", "spinbutton:Slowest speed", "spinbutton:Fastest speed"],
+  } as const;
+  const tab = browserName === "webkit" ? "Alt+Tab" : "Tab";
+  for (const [id, names] of Object.entries(expected)) {
+    const section = page.locator(`[data-gallery-section="${id}"]`);
+    const tabbable = await section.evaluate((root) =>
+      [...root.querySelectorAll<HTMLElement>("button, a[href], input, select, textarea, [tabindex]")].filter((element) => element.tabIndex >= 0 && !element.matches(":disabled")).length,
+    );
+    // Every enabled control of the section is in the list: the first by its name, the rest by Tab (the segmented
+    // control is one stop per group, for its chosen segment).
+    expect(tabbable, id).toBe(names.length);
+    await section.locator("button, [role=radio], [role=switch], [role=spinbutton]").evaluateAll((elements, name) => {
+      const first = elements.find((element) => element.tabIndex >= 0) as HTMLElement;
+      first.focus();
+      return name;
+    }, id);
+    const reached = [await focused(page)];
+    for (let i = 1; i < names.length; i++) {
+      await page.keyboard.press(tab);
+      reached.push(await focused(page));
+    }
+    expect(reached, id).toEqual([...names]);
+    // One more Tab leaves the section.
+    await page.keyboard.press(tab);
+    expect(await section.evaluate((root) => root.contains(document.activeElement)), `${id}: Tab leaves`).toBe(false);
   }
-  expect(reached).toEqual(expected);
   // Each shows it has the focus, once reached from the keyboard: the ring is on the chip, on the segment's face, on
   // the switch's track and on the stepper's value.
   const rings = [
