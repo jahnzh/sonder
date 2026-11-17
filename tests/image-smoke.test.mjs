@@ -185,29 +185,51 @@ for (const missing of ["ssh", "scp"]) {
   });
 }
 
-for (const failure of ["http", "disconnect"]) {
-  test(`image smoke names the host when its health check fails (${failure})`, async () => {
-    const f = fixture();
-    const health = await healthServer(failure === "http" ? { failPath: "/lisa/health" } : { disconnectPath: "/lisa/health" });
-    try {
-      const result = await f.run(health.env);
-      assert.notEqual(result.status, 0);
-      assert.match(result.stderr, /alignment pool host lisa \(worker@lisa\.example\): health check/);
-      assert.match(result.stderr, /\/lisa\/health failed/);
-      if (failure === "http") assert.match(result.stderr, /HTTP 503/);
-      assert.deepEqual(health.requests, ["/wsl/health", "/lisa/health"]);
-      assert.equal(f.sshCalls().length, 1);
-    } finally { await health.close(); f.cleanup(); }
-  });
-}
+test("image smoke names the host when its health check answers with an HTTP error, and fails", async () => {
+  const f = fixture();
+  const health = await healthServer({ failPath: "/lisa/health" });
+  try {
+    const result = await f.run(health.env);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /alignment pool host lisa \(worker@lisa\.example\): health check/);
+    assert.match(result.stderr, /\/lisa\/health failed/);
+    assert.match(result.stderr, /HTTP 503/);
+    assert.deepEqual(health.requests, ["/wsl/health", "/lisa/health"]);
+    assert.equal(f.sshCalls().length, 1);
+  } finally { await health.close(); f.cleanup(); }
+});
 
-test("image smoke names the host when ssh true fails", async () => {
+test("image smoke warns about a pool host that does not answer and passes while another host answers", async () => {
+  const f = fixture();
+  const health = await healthServer({ disconnectPath: "/lisa/health" });
+  try {
+    const result = await f.run(health.env);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /warning: alignment pool host lisa \(worker@lisa\.example\): health check .*\/lisa\/health failed.*another pool host answers/);
+    assert.match(result.stdout, /alignment pool health and SSH/);
+    assert.deepEqual(health.requests, ["/wsl/health", "/lisa/health"]);
+    assert.equal(f.sshCalls().length, 1);
+  } finally { await health.close(); f.cleanup(); }
+});
+
+test("image smoke fails when no pool host can be reached", async () => {
+  const f = fixture();
+  const health = await healthServer({ disconnectPath: "/lisa/health" });
+  try {
+    const result = await f.run({ ...health.env, ALIGNMENT_POOL_WSL_WORKER_URL: health.env.ALIGNMENT_POOL_LISA_WORKER_URL });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /health check .*\/lisa\/health failed/);
+    assert.deepEqual(f.sshCalls(), []);
+  } finally { await health.close(); f.cleanup(); }
+});
+
+test("image smoke warns about the host whose ssh true fails and passes while another host answers", async () => {
   const f = fixture({ failSsh: ctcTargets[1] });
   const health = await healthServer();
   try {
     const result = await f.run(health.env);
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /alignment pool host lisa \(worker@lisa\.example\): ssh true failed/);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /warning: alignment pool host lisa \(worker@lisa\.example\): ssh true failed/);
     assert.deepEqual(health.requests, ctcHosts.map((host) => `/${host}/health`));
     assert.deepEqual(f.sshCalls(), ctcTargets.map((target) => `-o BatchMode=yes -o ConnectTimeout=5 ${target} true`));
   } finally { await health.close(); f.cleanup(); }
