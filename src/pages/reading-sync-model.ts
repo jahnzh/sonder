@@ -292,8 +292,9 @@ export function readingSyncPage(input: SyncPageFacts): SyncPageModel {
   if (job === null) {
     if (input.languageMatch === false)
       return {
-        state: "not-available",
-        blocks: [{ caption: "Status", rows: [{ name: SYNC_STATE_LINES.notAvailable, line: SYNC_STATE_NOTES.languageDiffers }], steps: null }],
+        // Spec #537's table: no job and the languages differ reads "Not prepared", with the reason and no buttons.
+        state: "not-prepared",
+        blocks: [{ caption: "Status", rows: [{ name: SYNC_STATE_LINES.notPrepared, line: SYNC_STATE_NOTES.languageDiffers }], steps: null }],
         ...none,
       };
     return {

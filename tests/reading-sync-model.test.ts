@@ -173,8 +173,8 @@ test("not available: English only, no buttons, no Details, no passage list; a la
   assert.equal(model.passages, null);
   assert.equal(model.prepareAgainRow, null);
   const differs = page(null, { languageMatch: false });
-  assert.equal(differs.state, "not-available");
-  assert.deepEqual(differs.blocks[0].rows, [{ name: "Not available", line: "The recording and the edition are in different languages" }]);
+  assert.equal(differs.state, "not-prepared");
+  assert.deepEqual(differs.blocks[0].rows, [{ name: "Not prepared", line: "The recording and the edition are in different languages" }]);
   assert.deepEqual(differs.buttons, []);
 });
 
