@@ -35,6 +35,7 @@ import {
 import { PlayerProvider } from "./player";
 import { askSeriesSearch, SeriesDialog, type SeriesTarget } from "./components/Series";
 import { SeriesPage } from "./pages/series-page";
+import { REMOVED_TOAST as SERIES_REMOVED_TOAST } from "./pages/series-remove-model";
 import { useSavedSeries } from "./pages/library-series";
 import { isSavedSeries, SERIES_CHIP } from "./pages/library-series-model";
 import { ReaderHost } from "./components/Reader";
@@ -775,6 +776,7 @@ function LibraryApp({
         // The Library it lands on shows the Series chip (spec #560, "Remove series").
         setFilter(SERIES_CHIP);
         void refresh();
+        notify(SERIES_REMOVED_TOAST);
       }}
     />
   );

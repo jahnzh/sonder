@@ -96,10 +96,13 @@
   border-radius: var(--corner-round);
   background: var(--danger);
 }
-/* Prepare again: a row whose name is the button, with its info mark after it. */
+/* Prepare again: a row whose name is the button, with its info mark after it. The button keeps a 44 high target
+   but takes only its line's height, so a line under it ("Not used: …") sits right below the name, as on the board
+   ReadingSyncKept and as the Ready row's line does. */
 .reading-sync-row-button {
   min-width: 0;
   min-height: var(--height-control);
+  margin-block: calc((var(--height-control) - 22px) / -2);
   padding: 0;
   border: 0;
   background: transparent;

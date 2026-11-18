@@ -133,12 +133,18 @@ const desktopProjects = [
               /(^|\/)keep-not-complete\.spec\.ts$/,
               // Import from this device into the book, from both Get sheets (#605).
               /(^|\/)get-import\.spec\.ts$/,
+              // Prepare again on the Reading sync page with the reading sync in use kept (#542).
+              /(^|\/)reading-sync-(again|kept)\.spec\.ts$/,
+              // Remove series asks once on the Series page (#566).
+              /(^|\/)series-(removal|followups)\.spec\.ts$/,
               // Turning Keep off, and an earlier recording's copy (#553).
               /(^|\/)keep-off\.spec\.ts$/,
               // Paste a magnet link for the book, over Get audiobook (#606).
               /(^|\/)get-magnet\.spec\.ts$/,
               // The saved series without a connection (#568).
               /(^|\/)series-offline\.spec\.ts$/,
+              // More › Reading sync opens the Reading sync page; the specs that opened the card (#543).
+              /(^|\/)(reader-sync-row|chapterless-sync|one-reading-view)\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },

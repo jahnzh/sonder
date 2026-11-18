@@ -1134,25 +1134,34 @@ test("a cancel during a retry's planning stands: the retry is refused and the ke
   }
 });
 
-test("the Reading sync card offers Resume / retry for a stopped or rejected rebuild, judged by the rebuild (#379)", async () => {
-  const { readingSyncControls, rejectedRebuildReason } = await import("../src/reading-sync-controls.ts");
+/** What the Reading sync page (#540) shows for a listed job, for the administrator with a connection. */
+async function syncPageOf(job: AlignmentJob) {
+  const { readingSyncPage } = await import("../src/pages/reading-sync-model.ts");
+  return readingSyncPage({ admin: true, job, offline: false, stored: null, languageMatch: true, pool: null, now: Date.now() });
+}
+
+test("the Reading sync page judges a stopped or rejected rebuild by the rebuild, over the kept map (#379, #543)", async () => {
   const rebuild = (status: AlignmentJob["status"], outcome?: AlignmentJob["outcome"]) =>
-    ({ status, progress: 1, engine, error: outcome === "rejected" ? "The rebuild was rejected: it mapped none of the text." : null,
+    ({ id: "rebuild", status, progress: 1, engine, coverage: 0, error: outcome === "rejected" ? "The rebuild was rejected: it mapped none of the text." : null,
       ...(outcome ? { outcome } : {}), updatedAt: 1 });
   const served = (rebuildState?: ReturnType<typeof rebuild>, origin?: AlignmentJob["origin"]) =>
-    ({ status: "ready", ...(rebuildState ? { rebuild: rebuildState } : {}), ...(origin ? { origin } : {}) }) as AlignmentJob;
-  assert.equal(readingSyncControls(served(rebuild("error", "rejected"))), "resume", "a rejected rebuild over a kept ready map");
-  assert.equal(readingSyncControls(served(rebuild("paused"))), "resume");
-  assert.equal(readingSyncControls(served(rebuild("cancelled"))), "resume");
-  assert.equal(readingSyncControls(served(rebuild("processing"))), "rebuild", "a running rebuild keeps today's controls");
-  assert.equal(readingSyncControls(served()), "rebuild");
-  assert.equal(readingSyncControls(served(rebuild("error", "rejected"), "projected")), "rebuild", "a projection is not retried on its own");
-  assert.equal(readingSyncControls(undefined), "prepare");
-  assert.equal(readingSyncControls({ status: "processing" } as AlignmentJob), "running");
-  assert.equal(readingSyncControls({ status: "error" } as AlignmentJob), "resume");
-  assert.match(rejectedRebuildReason(served(rebuild("error", "rejected"))) ?? "", /mapped none of the text/);
-  assert.equal(rejectedRebuildReason(served(rebuild("error"))), null);
-  assert.equal(rejectedRebuildReason(served()), null);
+    ({ id: "kept", status: "ready", progress: 1, coverage: 1, engine, error: null, warning: null, updatedAt: 1, elapsedSeconds: 0,
+      ...(rebuildState ? { rebuild: rebuildState } : {}), ...(origin ? { origin } : {}) }) as AlignmentJob;
+  const rejected = await syncPageOf(served(rebuild("error", "rejected")));
+  assert.equal(rejected.state, "ready", "a rejected rebuild over a kept ready map reads as the kept map");
+  assert.deepEqual(rejected.buttons, []);
+  assert.equal(rejected.prepareAgainRow?.line, "Not used: it matched none of the text");
+  const paused = await syncPageOf(served(rebuild("paused")));
+  assert.equal(paused.state, "again-paused");
+  assert.deepEqual(paused.buttons, ["Resume", "Cancel"]);
+  assert.equal((await syncPageOf(served(rebuild("cancelled")))).state, "ready", "a cancelled rebuild: the page reads as before");
+  assert.equal((await syncPageOf(served(rebuild("processing")))).state, "preparing-again");
+  const plain = await syncPageOf(served());
+  assert.equal(plain.state, "ready");
+  assert.equal(plain.prepareAgainRow?.line, null);
+  const projected = await syncPageOf(served(rebuild("error", "rejected"), "projected"));
+  assert.deepEqual(projected.buttons, [], "a projection offers no Retry of its own");
+  assert.equal(projected.prepareAgainRow?.line, "Not used: it matched none of the text");
 });
 
 /** An ebook set of reader-fixture `members` with one recording of `duration` seconds, and its consensus job. */
@@ -1314,9 +1323,8 @@ test("kept intervals that no longer name a sentence of the member do not count a
   assert.equal(keptMap(better.id), null);
 });
 
-test("a rejected consensus rebuild shows its rejection on each member's Reading sync card (#379)", async () => {
+test("a rejected consensus rebuild shows its rejection on each member's Reading sync page (#379)", async () => {
   await reset();
-  const { readingSyncControls, rejectedRebuildReason } = await import("../src/reading-sync-controls.ts");
   // Too short for three anchors: the CTC early-unsynced path.
   const { consensusId, publishOld } = await ebookSet("rejected-set", ["rejected-set-1", "rejected-set-2"], 40);
   await publishOld(2, 5);
@@ -1336,8 +1344,9 @@ test("a rejected consensus rebuild shows its rejection on each member's Reading 
     assert.equal(listed.status, "partial");
     assert.equal(listed.rebuild?.status, "error");
     assert.equal(listed.rebuild?.outcome, "rejected");
-    assert.match(rejectedRebuildReason(listed) ?? "", /rejected: it mapped none of the text/, "the card shows the reason");
-    assert.equal(readingSyncControls(listed), "rebuild");
+    const shown = await syncPageOf(listed);
+    assert.equal(shown.prepareAgainRow?.line, "Not used: it matched none of the text", "the page shows why the map was not used");
+    assert.deepEqual(shown.buttons, [], "nothing to retry: the kept projection stays");
     const map = await app.inject(`/api/alignments/${listed.id}/map`);
     assert.equal(map.statusCode, 200, map.body);
     assert.equal(map.json().intervals.length, before.intervals.length);
@@ -1347,9 +1356,8 @@ test("a rejected consensus rebuild shows its rejection on each member's Reading 
 
 // The worker can answer "language not supported" while sampling (/anchor or /anchor-batch) or aligning (/align).
 for (const path of ["anchor", "anchor-batch", "align"] as const)
-  test(`a consensus rebuild that ends 'language not supported' (${path}) shows its rejection on each member's card (#379)`, async () => {
+  test(`a consensus rebuild that ends 'language not supported' (${path}) shows its rejection on each member's Reading sync page (#379)`, async () => {
     await reset();
-    const { rejectedRebuildReason } = await import("../src/reading-sync-controls.ts");
     const name = `unsupported-${path}`;
     const { consensusId, publishOld } = await ebookSet(name, [`${name}-1`, `${name}-2`]);
     await publishOld(4);
@@ -1383,7 +1391,8 @@ for (const path of ["anchor", "anchor-batch", "align"] as const)
       const listed = await servedProjectionOf(ebookId);
       assert.equal(listed.engine, aeneas, "the member keeps its projection");
       assert.equal(listed.rebuild?.outcome, "rejected", `${ebookId} shows the rejection`);
-      assert.match(rejectedRebuildReason(listed) ?? "", /does not support this language/, "the card shows the reason");
+      assert.match(listed.rebuild?.error ?? "", /does not support this language/);
+      assert.equal((await syncPageOf(listed)).prepareAgainRow?.line, "Not used: the language is not supported", "the page shows why the map was not used");
       const map = await app.inject(`/api/alignments/${listed.id}/map`);
       assert.equal(map.statusCode, 200, map.body);
       assert.equal(map.json().intervals.length, 4);

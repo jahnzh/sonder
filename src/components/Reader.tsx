@@ -29,7 +29,8 @@ import { goBackFrom, navigate as goTo, openSheet, useAddress } from "../navigati
 import { isReaderPage, openedFrom, onPlaceRequested, publishReader, takePlace, useOpenerAny, type LiveReader, type ReaderPage, type ReaderPlace } from "../reader-pages";
 import { useAppearance } from "./Appearance";
 import { fontFamilies, paletteFor } from "../appearance";
-import { ReadingSync } from "./ReadingSync";
+import { ReaderSyncRow } from "./ReaderSyncRow";
+import { useReaderMap } from "../use-reader-map";
 import { PlaybackSource } from "./PlaybackSource";
 import { FootSettingButtons, FootSettingRow, useFootSetting } from "./ReaderFootSetting";
 import { PlaybackTimeline } from "./PlaybackTimeline";
@@ -489,6 +490,8 @@ export function ReaderView({
     setMap(job);
     setMapConfirmed(!!job && confirmed);
   };
+  // The map of the ebook for the recording the reader is given or plays (#543: the card that loaded it is gone).
+  useReaderMap(book, books, recordingId, showMap);
   useEffect(() => () => following.dispose(), [following]);
   // Settings › Playback: with Follow the narration off, the reader opens paged away from the narration.
   useEffect(() => {
@@ -1884,36 +1887,20 @@ export function ReaderView({
           {panel === "more" && moreItems}
         </aside>
       )}
-      {book && (
-        <div
-          className={
-            panel === "sync" ? "reader-panel" : "reader-background-sync"
-          }
-          aria-hidden={panel !== "sync"}
-        >
-          {panel === "sync" && (
-            <>
-              <div className="reader-panel-heading">
-                <h3>Reading sync</h3>
-                <button
-                  className="icon-button"
-                  aria-label="Close reader options"
-                  onClick={() => setPanel(null)}
-                >
-                  <X size={19} />
-                </button>
-              </div>
-            </>
-          )}
-          <ReadingSync
-            book={book}
-            books={books}
-            onMap={showMap}
-            onLinked={() => void refresh()}
-            recordingId={recordingId}
-            loadOptions={panel === "sync"}
-          />
-        </div>
+      {panel === "sync" && book && (
+        <aside className="reader-panel" aria-label="Reading sync">
+          <div className="reader-panel-heading">
+            <h3>Reading sync</h3>
+            <button
+              className="icon-button"
+              aria-label="Close reader options"
+              onClick={() => setPanel(null)}
+            >
+              <X size={19} />
+            </button>
+          </div>
+          <ReaderSyncRow workId={book.workId} />
+        </aside>
       )}
     </div>
   );

@@ -5,7 +5,6 @@
 // opens the Add sheet (#563) at `#series/<id>/add`, over the page. The words and
 // rules are in series-model.ts; the books in the library come from the library by work on this device (#528).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { SeriesRemoveDialog } from "../components/SeriesRemoveDialog";
 import { SERIES_SAVED_POLL_MS } from "../components/SeriesWorkStatus";
 import { api, ApiError, userId } from "../lib";
 import { refreshLibraryWorks, useStoredWorksWithPlaces } from "../library-works-store";
@@ -23,6 +22,7 @@ import { tip } from "../tooltip-texts";
 import type { Book } from "../types";
 import { chosenRecording } from "./book-model";
 import { openAddSheet, SeriesAddSheet } from "./series-add-sheet";
+import { SeriesRemoveDialog } from "./series-remove-dialog";
 import type { SeriesAddSeries } from "./series-add-model";
 import { DISMISS_LABEL, NEW_CARD_LINE, NEW_MARK, seriesPageModel, withoutNew, type SeriesPageSeries, type SeriesRow } from "./series-model";
 import "./series-page.css";
@@ -130,6 +130,7 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
         address.navigate({ name: "library" }, { replace: true });
         return;
       }
+      if (gone.current) return;
       try {
         const value = await api<SavedSeries>(
           `/series/${seriesId}?language=${encodeURIComponent(seriesLanguage())}${refresh ? "&refresh=1" : ""}`,
@@ -354,9 +355,11 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
       {model && model.related.length > 0 && <Group caption={`Related works · ${model.related.length}`}>{model.related.map(renderRow)}</Group>}
 
       {model && (
-        <Group label="Series">
-          <Row label="Remove series" disabled={busy || model.removeOff} onClick={() => setRemoveOpen(true)} />
-        </Group>
+        <div className="series-page-remove">
+          <Group label="Series">
+            <Row label="Remove series" disabled={busy || !online || model.removeOff} onClick={() => setRemoveOpen(true)} />
+          </Group>
+        </div>
       )}
 
       {error && (
@@ -380,20 +383,26 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
         />
       )}
 
-      <SeriesRemoveDialog
-        seriesId={series ? seriesId : null}
-        open={removeOpen}
-        onClose={() => setRemoveOpen(false)}
-        onRemoved={() => {
-          gone.current = true;
-          lastRead.delete(key);
-          void forgetSeriesAnswer(seriesAnswerKey(seriesId));
-          onRemoved();
-          void refreshLibraryWorks().catch(() => {});
-          if (address.backTarget().name === "library") address.goBack();
-          else address.navigate({ name: "library" }, { replace: true });
-        }}
-      />
+      {series && (
+        <SeriesRemoveDialog
+          seriesId={seriesId}
+          name={model?.title ?? series.name}
+          admin={admin}
+          online={online}
+          open={removeOpen}
+          onClose={() => setRemoveOpen(false)}
+          onRemoved={() => {
+            gone.current = true;
+            setRemoveOpen(false);
+            lastRead.delete(key);
+            void forgetSeriesAnswer(seriesAnswerKey(seriesId));
+            onRemoved();
+            void refreshLibraryWorks().catch(() => {});
+            if (address.backTarget().name === "library") address.goBack();
+            else address.navigate({ name: "library" }, { replace: true });
+          }}
+        />
+      )}
     </section>
   );
 }
