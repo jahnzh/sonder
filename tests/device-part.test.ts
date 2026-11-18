@@ -34,7 +34,7 @@ test("a running save is in Saving now with its line and bar, and not in Kept", (
   });
   assert.equal(shown.kept.length, 0);
   assert.deepEqual(shown.saving, [{
-    workId: "w-matter", title: "Title matter", cover: "/covers/matter.jpg", bookId: "matter", recordingId: "r1",
+    workId: "w-matter", title: "Title matter", cover: "/covers/matter.jpg", bookId: "matter", recordingId: "r1", keep: false,
     status: "Saving · 3 of 12 files", progress: 3.5 / 12,
   }]);
   assert.equal(shown.used, 35 * MB);
@@ -116,11 +116,11 @@ test("a failed save that wrote nothing is not kept: nothing of it is on this dev
     books: [audioBook("matter", "w-matter", "r1", 12)],
     records: [record("r1", "w-matter", { state: "failed", reason: "The source did not return an audio file." })],
   });
-  assert.deepEqual(shown, { saving: [], kept: [], used: 0 });
+  assert.deepEqual(shown, { saving: [], kept: [], used: 0, fullNote: null });
 });
 
 test("empty: nothing saved, nothing used", () => {
-  assert.deepEqual(part({}), { saving: [], kept: [], used: 0 });
+  assert.deepEqual(part({}), { saving: [], kept: [], used: 0, fullNote: null });
 });
 
 test("the kept line: every form of the spec, and none for a work with nothing here", () => {

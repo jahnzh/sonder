@@ -102,7 +102,7 @@ import { Gallery, isGalleryRoute } from "./gallery/Gallery";
 import { refreshLibraryWorks, startLibraryWorks, useStoredWorksWithPlaces } from "./library-works-store";
 import { bookStatus, readingPercent, workProgress } from "./work-progress";
 import { classifyStop, type StopCause } from "./keep";
-import { activeSaves, claimRecording, keepSaver, tapKeep, onKeepJob, savesInOtherTabs, startKeepSaver, stopKeepSaver } from "./keep-runtime";
+import { activeSaves, claimRecording, keepSaver, pauseKeep, resumeKeep, keepOffAndRemove, onKeepJob, savesInOtherTabs, startKeepSaver, stopKeepSaver, useKeptWorks } from "./keep-runtime";
 type Notice = { text: string; error?: boolean };
 const nav = [
   { id: "library", label: "My library", icon: Library },
@@ -374,18 +374,26 @@ function LibraryApp({
     const timer = setInterval(() => setClockNow(Date.now()), 60_000);
     return () => clearInterval(timer);
   }, []);
+  // Keep on this device (#552): every kept work with what it needs; Now, This device, the Book page and the On device
+  // filter read the same. A save running in another tab of this account shows as running here too.
+  const keptWorks = useKeptWorks(deviceWorks, downloads, downloadParts);
+  const kept = useMemo(
+    () => keptWorks.map((k) => ({ workId: k.workId, pausedAt: k.entry.pausedAt ?? null, needs: k.needs })),
+    [keptWorks],
+  );
+  const savesRunning = useMemo(() => ({ ...savesInOtherTabs(saveRecords), ...downloadJobs }), [saveRecords, downloadJobs]);
   const nowState = useMemo(
     () =>
       buildNow({
         activity: serverActivity.activity,
-        saves: deviceSaveEntries({ books, downloads, downloadParts, running: downloadJobs, records: saveRecords }),
+        saves: deviceSaveEntries({ books, downloads, downloadParts, running: savesRunning, records: saveRecords, kept }),
         books,
         admin,
         // No connection: the browser says so, or the last read of the server got no answer at all.
         online: online && serverActivity.reached,
         now: Date.now(),
       }),
-    [serverActivity, books, downloads, downloadParts, downloadJobs, saveRecords, admin, online, clockNow],
+    [serverActivity, books, downloads, downloadParts, savesRunning, saveRecords, kept, admin, online, clockNow],
   );
   const attentionDot = nowState.dot;
   const notify = useCallback(
@@ -716,6 +724,9 @@ function LibraryApp({
   const downloaded = (b: Book) =>
     b.tracks.length > 0 &&
     b.tracks.every((t) => downloads.some((d) => d.trackId === t.id));
+  // The Library's Downloaded filter and badge (On device, #552): Keep on and complete, every needed file here.
+  const keptComplete = new Set(keptWorks.filter((k) => k.needs.complete).map((k) => k.workId));
+  const onDevice = (b: Book) => keptComplete.has(b.workId);
   let visible = (page === "discover" ? books : libraryBooks)
     .filter((b) => page !== "library" || !showFavorites || favorites.includes(b.id))
     .filter(
@@ -732,7 +743,7 @@ function LibraryApp({
         (filter === "Listening" && b.status === "listening") ||
         (filter === "Not started" && b.status === "unread") ||
         (filter === "Finished" && b.status === "finished") ||
-        (filter === "Downloaded" && downloaded(b)),
+        (filter === "Downloaded" && onDevice(b)),
     );
   if (page === "library")
     visible = visible.filter(
@@ -1021,7 +1032,8 @@ function LibraryApp({
                 books={books}
                 downloads={downloads}
                 downloadParts={downloadParts}
-                running={{ ...savesInOtherTabs(saveRecords), ...downloadJobs }}
+                running={savesRunning}
+                records={saveRecords}
                 favorites={favorites}
                 onFavorite={toggleFavorites}
                 onSave={(book) => void startDownload(book)}
@@ -1078,7 +1090,7 @@ function LibraryApp({
                 setImportOpen={setImportOpen}
                 favorites={favorites}
                 toggleFavorite={toggleFavorite}
-                downloaded={downloaded}
+                downloaded={onDevice}
                 readingPercentOf={readingPercentOf}
                 findAudio={findAudio}
                 mutateLibrary={mutateLibrary}
@@ -1138,7 +1150,9 @@ function LibraryApp({
                       serverActivity.reload();
                     }
                   }}
-                  onDevice={(action, recordingId, bookId) => {
+                  onDevice={(action, recordingId, bookId, keptBook) => {
+                    // A kept book (#552): Pause and Resume go through its Keep record, in whichever tab saves.
+                    if (keptBook) return void (action === "pause" ? pauseKeep(keptBook.workId, recordingId) : resumeKeep(keptBook.workId)).catch(() => {});
                     if (action === "pause") return pauseSave(recordingId);
                     // Resume and Retry carry on from the files and sections already saved.
                     const book = books.find((b) => b.recordingId === recordingId) ?? books.find((b) => b.id === bookId);
@@ -1149,20 +1163,28 @@ function LibraryApp({
                   books={books}
                   downloads={downloads}
                   downloadParts={downloadParts}
-                  running={downloadJobs}
+                  running={savesRunning}
                   records={saveRecords}
                   ebooks={savedEbooks.filter((e) => keptEbookEditionIds.has(e.id))}
+                  kept={kept}
                   online={online}
-                  onPause={pauseSave}
+                  onPause={(row) => (row.keep ? void pauseKeep(row.workId, row.recordingId).catch(() => {}) : pauseSave(row.recordingId))}
+                  onRetry={(row) => void resumeKeep(row.workId).catch(() => {})}
                   onOpen={openBookOf}
                   onRemove={async (row) => {
                     // Every file of the book on this device: its recordings' audio and its EPUB. The place, the
                     // bookmarks and the library entry stay (ADR 0018).
                     try {
-                      // Removing the book's files is Keep off for it (#550): the saver does not save them again.
-                      await tapKeep(row.workId, false).catch(() => {});
+                      // Removing the book's files is Keep off for it (#550), the same action as the switch's Off on
+                      // the Book page (#553): every recording (earlier copies included), its EPUB copies, its maps
+                      // and its save records. The rows' own ids follow for a book the stored library does not hold.
+                      await keepOffAndRemove(row.workId);
                       for (const recordingId of row.recordingIds) await deleteDownloads(recordingId);
-                      for (const editionId of row.ebookIds) await removeOfflineEbook(editionId);
+                      for (const editionId of row.ebookIds) {
+                        await removeOfflineEbook(editionId);
+                        // The save record of a kept book with only an ebook (#552).
+                        await deleteDownloads(`ebook:${editionId}`);
+                      }
                       // The reader's cache of the book's other editions goes too: every file of it (#671).
                       for (const ebook of savedEbooks)
                         if (ebook.workId === row.workId && offlineEbookEditionIds.has(ebook.id) && !row.ebookIds.includes(ebook.id))

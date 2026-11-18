@@ -435,7 +435,7 @@ export async function writeDeviceSaveRecord(
   change:
     | { state: "saving"; job?: DeviceSaveRecord["job"] }
     | { state: "paused" }
-    | { state: "failed"; reason: string }
+    | { state: "failed"; reason: string; failure?: DeviceSaveRecord["failure"] }
     | { state: "finished" }
     | { state: "interrupted"; how: "network" | "closed" },
   now = Date.now(),
@@ -453,6 +453,7 @@ export async function writeDeviceSaveRecord(
       reason: change.state === "failed" ? change.reason : null,
       finishedAt: change.state === "finished" ? now : null,
       ...(change.state === "interrupted" ? { how: change.how } : {}),
+      ...(change.state === "failed" && change.failure ? { failure: change.failure } : {}),
       ...(change.state === "saving" && change.job ? { job: change.job } : {}),
     };
     await sharedDB.preferences.put({ key, value: record });
