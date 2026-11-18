@@ -25,7 +25,7 @@ import { hardcoverRowValue } from "../hardcover-page-model";
 import { bytes } from "../size-format";
 import { tip } from "../tooltip-texts";
 import type { Book, Download, DownloadPart, LibraryWork } from "../types";
-import { addedElsewhere, addsBeforeGet, bookModel, chosenRecording, deviceHold, favoriteOf, keepState } from "./book-model";
+import { addedElsewhere, addsBeforeGet, bookModel, chosenRecording, favoriteOf } from "./book-model";
 import type { Notify } from "./shared";
 import { KeepItems } from "./keep-item";
 import "./book-page.css";
