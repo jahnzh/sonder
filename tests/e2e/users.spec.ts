@@ -39,6 +39,17 @@ async function openSettingsPage(page: Page, row: string) {
   await page.getByRole("button", { name: "Settings", exact: true }).last().click();
   await page.getByRole("navigation", { name: "Settings", exact: true }).getByRole("button", { name: new RegExp(`^${row}\\b`) }).click();
 }
+// Users › Add user (#580): a dialog with Username and Password and no role field; the account is listed as a User.
+async function addUser(page: Page, username: string, password: string) {
+  await page.locator("main").getByRole("button", { name: "Add user", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Add user", exact: true });
+  await expect(dialog.getByLabel("Role")).toHaveCount(0);
+  await dialog.getByLabel("Username").fill(username);
+  await dialog.getByLabel("Password", { exact: true }).fill(password);
+  await dialog.getByRole("button", { name: "Add user", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator("main").getByRole("button", { name: `${username} User`, exact: true })).toBeVisible();
+}
 test("accounts keep libraries and offline queues separate", async ({ page }) => {
   mkdirSync("artifacts", { recursive: true });
   await page.addInitScript(() => sessionStorage.setItem("test-load-count", String(Number(sessionStorage.getItem("test-load-count") || 0) + 1)));
@@ -55,12 +66,7 @@ test("accounts keep libraries and offline queues separate", async ({ page }) => 
   await openSettingsPage(page, "Users");
   await expect(page.getByRole("heading", { name: "Users", level: 1 })).toBeVisible();
   await expect.poll(() => bookHeaders).toContain("1");
-  const users = page.locator("section").filter({ has: page.getByRole("heading", { name: "Accounts" }) });
-  await expect(users.getByLabel("Role")).toHaveCount(0);
-  await users.getByLabel("Username").fill("reader");
-  await users.getByLabel("Password", { exact: true }).fill("reader-password");
-  await users.getByRole("button", { name: "Add user" }).click();
-  await expect(users.getByRole("listitem").filter({ hasText: "reader" }).getByText("User", { exact: true })).toBeVisible();
+  await addUser(page, "reader", "reader-password");
   await page.screenshot({ path: "artifacts/users-admin-settings.png" });
   const adminBooks = await (await page.request.get(`${base}/api/books`)).json();
   const book = adminBooks.find((b: { inLibrary: boolean; tracks: unknown[] }) => b.inLibrary && b.tracks.length);
@@ -104,6 +110,7 @@ test("accounts keep libraries and offline queues separate", async ({ page }) => 
   await list.getByRole("button", { name: /^Connections\b/ }).click();
   await expect(page.getByRole("heading", { name: "Hardcover", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "TorBox" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Prowlarr" })).toHaveCount(0);
   await page.screenshot({ path: "artifacts/users-reader-settings.png" });
   const readerBooks = await (await page.request.get(`${base}/api/books`)).json();
   expect(readerBooks.find((b: { id: string }) => b.id === book.id).inLibrary).toBe(false);
@@ -227,11 +234,7 @@ test("one account's position history is not shown to or undoable by another", as
   await page.getByLabel("Password", { exact: true }).fill("admin-password");
   await page.getByRole("button", { name: "Sign in" }).click();
   await openSettingsPage(page, "Users");
-  const users = page.locator("section").filter({ has: page.getByRole("heading", { name: "Accounts" }) });
-  await users.getByLabel("Username").fill("historian");
-  await users.getByLabel("Password", { exact: true }).fill("historian-password");
-  await users.getByRole("button", { name: "Add user" }).click();
-  await expect(users.getByRole("listitem").filter({ hasText: "historian" })).toBeVisible();
+  await addUser(page, "historian", "historian-password");
   // Import a dedicated title with an EPUB so the reader-open Now Playing path is covered.
   const audio = readFileSync("server/demo/alice-01.mp3");
   const imported = await page.request.post(`${base}/api/import`, {

@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { rememberAlicesPlace } from "./alice-place";
 import { inSortPicker } from "./library-view";
+import { connectHardcover } from "./connections";
 // The first test moves the shelf book to another shelf, takes it off the list and sets Alice's Hardcover edition.
 // Afterwards they go back through the same routes, so a repeat (or the next browser on this server) starts the same.
 // Use Hardcover position plays Alice and so moves her saved place; it goes back to where the test found it.
@@ -26,23 +27,10 @@ test("mobile Hardcover connection, shelves, custom lists, edition selection and 
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
+  // Connections (#580): the token with its own Save, then Two-way, saved when chosen.
   await page.goto("/#settings/connections");
-  await page
-    .getByRole("textbox", { name: /^API token/ })
-    .fill("browser-test-token");
-  await page.getByRole("button", { name: "Save changes", exact: true }).click();
-  await expect(
-    page.getByRole("combobox", { name: "Hardcover sync mode", exact: true }),
-  ).toBeEnabled();
-  await page
-    .getByRole("combobox", { name: "Hardcover sync mode", exact: true })
-    .selectOption("two-way");
-  await page
-    .getByRole("button", { name: "Save sync preferences", exact: true })
-    .click();
-  await expect(
-    page.getByText("@browser-reader", { exact: true }),
-  ).toBeVisible();
+  await connectHardcover(page, "Two-way");
+  await expect(page.getByRole("listitem", { name: "Status Connected", exact: true })).toBeVisible();
   // The first sync on a server imports The Quiet Shelf; a repeat on the same server finds it already there.
   const quietShelf = async () =>
     ((await (await page.request.get("/api/books")).json()) as { title: string; workId: string; hardcover?: { statusId: number | null; pending: boolean; listIds: number[] } }[])

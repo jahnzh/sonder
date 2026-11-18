@@ -153,6 +153,8 @@ const desktopProjects = [
               /(^|\/)keep-cleared\.spec\.ts$/,
               // The Library's sort-and-view control with the Hardcover shelf and list (#578).
               /(^|\/)library-picker\.spec\.ts$/,
+              // The Server pages of Settings: Connections, Users, Library and storage, and their rewritten guards (#580).
+              /(^|\/)(settings-server|hardcover-sync-form|users)\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },

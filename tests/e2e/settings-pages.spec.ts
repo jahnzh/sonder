@@ -33,7 +33,8 @@ async function measure(page: Page) {
     const wide = [...main.querySelectorAll("*")]
       .filter((element) => element.getBoundingClientRect().right > width + 1)
       .map((element) => `${element.tagName.toLowerCase()}.${String(element.className).slice(0, 40)}`);
-    const rows = [...main.querySelectorAll(".part-row")].map((row) => Math.round(row.getBoundingClientRect().height));
+    // A row with a bar under its label (Library and storage's Used, #580) is 64 high, as Row draws it.
+    const rows = [...main.querySelectorAll(".part-row:not([data-moving])")].map((row) => Math.round(row.getBoundingClientRect().height));
     return { wide, scrolls: document.documentElement.scrollWidth > width, rows, h1: main.querySelectorAll("h1").length };
   });
 }
@@ -82,14 +83,7 @@ for (const [size, viewport] of [["phone", { width: 390, height: 844 }], ["deskto
           await expect(page.getByRole("button", { name: "Back to Settings", exact: true })).toBeVisible();
           await expect(settingsList(page)).toHaveCount(0);
         }
-        await expectLaidOut(page).catch(async (error) => {
-          // The Server pages show today's sections of the long form until their slice; only the list's rows are rows.
-          if (!["connections", "users", "library"].includes(word)) throw error;
-          const shown = await measure(page);
-          expect(shown.wide).toEqual([]);
-          expect(shown.scrolls).toBe(false);
-          expect(shown.h1).toBe(1);
-        });
+        await expectLaidOut(page);
       }
       await page.goto("/#settings");
       const length = await page.evaluate(() => history.length);

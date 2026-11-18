@@ -6,6 +6,7 @@ import { createServer, type AddressInfo } from "node:net";
 import { readerFixture } from "../reader-fixture";
 import { installReaderWaitBudget, READER_WAIT_MS, timedWait } from "./timing";
 import { playFromLibrary } from "./library-play";
+import { connectHardcover } from "./connections";
 
 // Per-step expect ceilings are up to 45 s; leave room around history restores.
 installReaderWaitBudget(test);
@@ -545,12 +546,7 @@ test("Use Hardcover position can be undone through the normal progress path", as
   try {
   await instrument(page);
   await page.goto("/#settings/connections");
-  await page.getByRole("textbox", { name: /^API token/ }).fill("browser-test-token");
-  await page.getByRole("button", { name: "Save changes", exact: true }).click();
-  const mode = page.getByRole("combobox", { name: "Hardcover sync mode", exact: true });
-  await expect(mode).toBeEnabled();
-  await mode.selectOption("two-way");
-  await page.getByRole("button", { name: "Save sync preferences", exact: true }).click();
+  await connectHardcover(page, "Two-way");
   await page.getByRole("button", { name: "Sync now", exact: true }).click();
   await expect(page.getByText(/Synced/)).toBeVisible();
   await page.locator(".mobile-nav").getByRole("button", { name: "My library", exact: true }).click();

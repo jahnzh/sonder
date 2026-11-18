@@ -199,7 +199,160 @@
   align-self: flex-start;
   color: var(--danger);
 }
-/* Today's sections of the long form, on the Server pages until their own slice builds them. */
-.settings-legacy {
+/* The Server pages (#580). A text field with its own Save: the label on the left, the field and Save on the right;
+   under the label when the row is narrow (a phone). */
+.settings-field-row {
+  box-sizing: border-box;
+  padding: var(--space-12) var(--space-16);
+}
+.settings-field-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8) var(--space-16);
+  color: var(--text);
+}
+.settings-field-label {
+  flex: 1 1 140px;
+}
+.settings-field-input {
+  flex: 3 1 260px;
   min-width: 0;
+  display: flex;
+  gap: var(--space-8);
+}
+.settings-field-input input {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  height: var(--height-control);
+  padding: 0 var(--space-12);
+  border: 1px solid var(--border);
+  border-radius: var(--corner-control);
+  background: var(--background);
+  color: var(--text);
+}
+.settings-field-input input::placeholder {
+  color: var(--muted);
+}
+/* Buttons of a connection (Test, Disconnect), on the right edge. */
+.settings-actions-row {
+  box-sizing: border-box;
+  min-height: var(--height-row);
+  padding: var(--space-4) var(--space-16);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-8);
+}
+.part-button.settings-failed-action {
+  color: var(--danger);
+}
+.part-group-note.settings-page-note {
+  margin: 0;
+}
+.settings-muted {
+  color: var(--muted);
+}
+
+/* Users: account requests as cards, the line after Approve, Add user across the page. */
+.settings-requests {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.settings-request,
+.settings-requests-empty,
+.settings-approval {
+  box-sizing: border-box;
+  margin: 0;
+  padding: var(--space-16);
+  border-radius: var(--corner-group);
+  background: var(--surface);
+  color: var(--text);
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+.settings-requests-empty {
+  color: var(--muted);
+}
+.settings-request-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-wrap: anywhere;
+}
+.settings-request-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+.settings-request-name {
+  font-weight: 500;
+}
+.settings-request-actions {
+  display: flex;
+  gap: var(--space-8);
+}
+.settings-request-actions > .part-button {
+  flex: 1;
+}
+.settings-approval p {
+  margin: 0;
+}
+.settings-approval-link {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+.settings-approval > .part-button {
+  align-self: flex-start;
+}
+.part-button.settings-wide-button {
+  width: 100%;
+}
+
+/* The account's dialog and Add user. */
+.settings-dialog {
+  width: min(360px, calc(100vw - 32px));
+}
+.settings-dialog-form,
+.settings-dialog-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+.settings-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  color: var(--text);
+}
+.settings-dialog-field input {
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--height-control);
+  padding: 0 var(--space-12);
+  border: 1px solid var(--border);
+  border-radius: var(--corner-control);
+  background: var(--background);
+  color: var(--text);
+}
+.settings-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-8);
+  margin-top: var(--space-8);
+}
+.settings-dialog-column > .part-button {
+  width: 100%;
+}
+.part-button.settings-danger-primary {
+  background: var(--danger);
+  color: var(--background);
 }

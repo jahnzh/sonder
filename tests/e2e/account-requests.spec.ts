@@ -45,13 +45,17 @@ test("the administrator sees the pending account request in Settings", async ({ 
   // Settings › Users (#579).
   await page.getByRole("button", { name: "Settings", exact: true }).last().click();
   await page.getByRole("navigation", { name: "Settings", exact: true }).getByRole("button", { name: /^Users\b/ }).click();
-  const users = page.locator("section").filter({ has: page.getByRole("heading", { name: "Accounts" }) });
-  await expect(users.getByRole("heading", { name: "Pending account requests" })).toBeVisible();
-  const row = users.getByRole("listitem").filter({ hasText: "bradley@example.com" });
-  await expect(row.getByText("bradley", { exact: true })).toBeVisible();
-  await expect(row.getByText("Just want access for a while")).toBeVisible();
+  // Account requests as cards (#580): the username, the email and the note, with Decline and Approve.
+  const requests = page.locator("main").getByRole("list", { name: /^Account requests · \d+$/ });
+  const card = requests.getByRole("listitem", { name: "bradley", exact: true });
+  await expect(card.getByText("bradley", { exact: true })).toBeVisible();
+  await expect(card.getByText("bradley@example.com", { exact: true })).toBeVisible();
+  await expect(card.getByText("Just want access for a while")).toBeVisible();
   await page.screenshot({ path: "artifacts/account-request-queue.png" });
   // Approving shows the invite line (moved here from join.spec.ts, whose activation is in sign-in.spec.ts).
-  await row.getByRole("button", { name: "Approve" }).click();
-  await expect(users.locator(".request-approval-link")).toHaveText(/\/join\?token=[0-9a-f]{64}$/);
+  await card.getByRole("button", { name: "Approve" }).click();
+  const line = page.locator("main").getByRole("status").filter({ hasText: "Approved bradley." });
+  await expect(line).toContainText(/^Approved bradley\. The invite email was (not )?sent\./);
+  await expect(line.locator("code")).toHaveText(/\/join\?token=[0-9a-f]{64}$/);
+  await expect(line.getByRole("button", { name: "Copy link", exact: true })).toBeVisible();
 });
