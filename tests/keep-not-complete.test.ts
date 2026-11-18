@@ -187,7 +187,8 @@ test("This device lists every work with Keep on, the failed one first", () => {
     downloads: [...files("r1", 5), ...files("r2", 2, NOW - 10_000)],
     downloadParts: [],
     running: {},
-    records: [record("r1", { state: "failed", reason: "Full", failure: "full", startedAt: NOW - 50 * HOUR })],
+    // The interrupted save of w3 is newer than the failure of w1: the failure still comes first.
+    records: [record("r1", { state: "failed", reason: "Full", failure: "full", startedAt: NOW - 50 * HOUR }), record("r3", { workId: "w3", state: "interrupted", startedAt: NOW - 1_000 })],
     kept: [
       { ...kept({ saved: 5 }), workId: "w1" },
       { workId: "w2", needs: { ...kept({ tracks: 2, saved: 2, recordingId: "r2" }).needs } },

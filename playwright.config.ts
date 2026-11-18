@@ -125,6 +125,8 @@ const desktopProjects = [
               /(^|\/)series-new\.spec\.ts$/,
               // The Get ebook sheet (#604).
               /(^|\/)get-ebook\.spec\.ts$/,
+              // A kept book that is not complete says why and offers Retry (#552).
+              /(^|\/)keep-not-complete\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },
