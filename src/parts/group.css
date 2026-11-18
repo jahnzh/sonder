@@ -29,6 +29,9 @@
   line-height: 16px;
   color: var(--muted);
 }
+.part-group-note[data-failed] {
+  color: var(--danger);
+}
 /* A caption followed by an info mark. */
 .part-group-caption-line {
   display: flex;

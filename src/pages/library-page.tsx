@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   Search,
   Plus,
@@ -20,7 +20,6 @@ import {
   ArrowDownToLine,
 } from "lucide-react";
 import { usePlayer } from "../player";
-import { SeriesLibrary, type SeriesTarget } from "../components/Series";
 import {
   HardcoverLibraryFilters,
   type HardcoverFilter,
@@ -29,6 +28,9 @@ import { listeningChapters } from "../chapters";
 import { isAdmin, duration, percent } from "../lib";
 import type { Book } from "../types";
 import { type Page, type Notify, ListenButton, Empty } from "./shared";
+import { Chip } from "../parts/Chip";
+import { SeriesList } from "./library-series";
+import { SERIES_CHIP, type SavedSeriesItem } from "./library-series-model";
 
 export type LibraryAction = "add" | "remove" | "finished" | "unread";
 
@@ -50,8 +52,10 @@ export function LibraryPage({
   loading,
   setLoading,
   loadError,
-  seriesRevision,
-  setSeriesTarget,
+  savedSeries,
+  openSeries,
+  findSeries,
+  beside,
   setDetail,
   setImportOpen,
   favorites,
@@ -81,8 +85,14 @@ export function LibraryPage({
   loading: boolean;
   setLoading: (loading: boolean) => void;
   loadError: string;
-  seriesRevision: number;
-  setSeriesTarget: (target: SeriesTarget) => void;
+  /** `GET /api/series`, for the Series chip (#567). */
+  savedSeries: { items: SavedSeriesItem[] | undefined; error: string };
+  /** A row of the Series chip: opens `#series/<id>`. */
+  openSeries: (id: number) => void;
+  /** The chip's Find a series: Discover's series search. */
+  findSeries: () => void;
+  /** A desktop's `#series/<id>`: the Series chip's list with this series beside it (DesktopSeries.dc.html). */
+  beside?: { id: number; page: ReactNode } | null;
   setDetail: (b: Book) => void;
   setImportOpen: (open: boolean) => void;
   favorites: string[];
@@ -96,6 +106,14 @@ export function LibraryPage({
   navigate: (p: Page) => void;
   notify: Notify;
 }) {
+  // The Series chip is chosen, or a desktop shows a series beside its list: the list stands in place of the shelf.
+  const seriesShown = !!beside || (filter === SERIES_CHIP && !showFavorites);
+  const chosenFilter = beside ? SERIES_CHIP : filter;
+  const choose = (f: string) => {
+    setFilter(f);
+    // Beside a series the Library is at the series' address: a chip shows the Library again in its place.
+    if (beside) navigate("library");
+  };
   return (
     <>
       <div className="page-heading">
@@ -112,9 +130,9 @@ export function LibraryPage({
           <Plus size={17} /> Add audiobook
         </button>}
       </div>
-      {!query && !showFavorites && <SeriesLibrary revision={seriesRevision} onOpen={(id) => setSeriesTarget({ id, mode: "saved" })} />}
       {!query &&
         !showFavorites &&
+        !seriesShown &&
         filter === "All books" &&
         featured && (
           <Feature
@@ -124,7 +142,7 @@ export function LibraryPage({
           />
         )}
       <section className="library-section">
-        <div className="section-heading">
+        {!seriesShown && <div className="section-heading">
           <h2>
             {query
               ? "Search results"
@@ -151,7 +169,7 @@ export function LibraryPage({
               <List size={18} />
             </button>
           </div>
-        </div>
+        </div>}
         <div className="library-toolbar">
           <div
             className="filter-tabs"
@@ -160,17 +178,23 @@ export function LibraryPage({
           >
             {[
               "All books",
+              SERIES_CHIP,
               "Listening",
               "Not started",
               "Finished",
               "Downloaded",
-            ].map((f) => (
+            ].map((f) => f === SERIES_CHIP ? (
+              // The Series chip (#567): the Chip part; the other filters keep today's look until the Library slice.
+              <Chip key={f} tab className="library-series-chip" selected={chosenFilter === f} onClick={() => choose(f)}>
+                {f}
+              </Chip>
+            ) : (
               <button
                 key={f}
                 role="tab"
-                aria-selected={filter === f}
-                className={filter === f ? "selected" : ""}
-                onClick={() => setFilter(f)}
+                aria-selected={chosenFilter === f}
+                className={chosenFilter === f ? "selected" : ""}
+                onClick={() => choose(f)}
               >
                 {f}
                 {f === "Listening" && listening.length > 0 && (
@@ -179,7 +203,7 @@ export function LibraryPage({
               </button>
             ))}
           </div>
-          <label className="sort-control">
+          {!seriesShown && <label className="sort-control">
             <SlidersHorizontal size={14} />
             <select
               value={sort}
@@ -192,8 +216,18 @@ export function LibraryPage({
               <option value="progress">Listening progress</option>
             </select>
             <ChevronDown size={13} />
-          </label>
+          </label>}
         </div>
+        {seriesShown ? (
+          beside ? (
+            <div className="library-series-beside">
+              <SeriesList {...savedSeries} query={query} current={beside.id} beside onOpen={openSeries} onFind={findSeries} />
+              <div className="library-series-shown">{beside.page}</div>
+            </div>
+          ) : (
+            <SeriesList {...savedSeries} query={query} onOpen={openSeries} onFind={findSeries} />
+          )
+        ) : <>
         <HardcoverLibraryFilters
           filter={hardcoverFilter}
           onFilter={setHardcoverFilter}
@@ -266,6 +300,7 @@ export function LibraryPage({
             }
           />
         )}
+        </>}
       </section>
     </>
   );

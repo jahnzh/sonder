@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { openSavedSeries } from "./library-series";
 
 /**
  * A saved series opens its Series page (#562), and its Add opens the Add sheet (#563): the series dialog's saved mode,
@@ -32,7 +33,7 @@ test("a saved series keeps the provenance of a synced book and counts its comple
   expect(aliceWork?.removalDefaultSelected).toBe(false);
 
   await page.goto("/#library");
-  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
+  await openSavedSeries(page, "The Crossing", "Ada North");
   await expect(page).toHaveURL(/#series\/701$/);
   const intro = page.getByRole("region", { name: "Series", exact: true }).getByText(/^Ada North · \d+ of \d+ finished$/);
   await expect(intro).toBeVisible();
@@ -40,6 +41,15 @@ test("a saved series keeps the provenance of a synced book and counts its comple
   const aliceRow = seriesView.works.find((work: { id: number }) => work.id === 501);
   expect(aliceRow?.libraryOrigin?.source).toBe("hardcover_sync");
   expect(aliceRow?.removalDefaultSelected).toBe(false);
+  // Remove series (#566): a book from Hardcover's shelves is not offered with the series; Cancel sends nothing.
+  await page.getByRole("region", { name: "Series", exact: true }).getByRole("button", { name: "Remove series", exact: true }).click();
+  const removal = page.getByRole("dialog", { name: "Remove The Crossing?", exact: true });
+  await removal.getByRole("switch", { name: "Remove the books it added", exact: true }).click();
+  const offered = removal.getByRole("group", { name: /^Added with this series · \d+$/ });
+  await expect(offered.getByRole("checkbox").first()).toBeVisible();
+  await expect(offered.getByRole("checkbox", { name: /Alice’s Adventures in Wonderland/ })).toHaveCount(0);
+  await removal.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(removal).toHaveCount(0);
 
   // Finished on the book: kept, and the series counts it; then unread again.
   const complete = (status: string) =>

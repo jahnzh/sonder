@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { openSavedSeries, savedSeriesList, savedSeriesRow, showSavedSeries } from "./library-series";
 
 test("discover and save chosen works from the intended series, then reopen it", async ({ page }) => {
   // The test saves The Crossing (#701) and adds works of it to the library. At the end it puts the series and the
@@ -53,9 +54,11 @@ test("discover and save chosen works from the intended series, then reopen it", 
   await expect(page.getByRole("dialog").getByText("Series saved.")).toBeVisible();
   await page.getByRole("button", { name: "Close series" }).click();
   await page.goto("/#library");
-  await expect(page.getByRole("heading", { name: "Series", exact: true })).toBeVisible();
+  // The saved series is listed under the Library's Series chip (#567), not in a section above the shelf.
+  await showSavedSeries(page);
+  await expect(savedSeriesList(page).getByRole("heading", { name: "Series", level: 2, exact: true })).toBeVisible();
   // A saved series opens its Series page (#562), not the dialog.
-  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
+  await savedSeriesRow(page, "The Crossing", "Ada North").click();
   await expect(page).toHaveURL(/#series\/701$/);
   const series = page.getByRole("region", { name: "Series", exact: true });
   const bookRow = (title: string) => series.getByRole("listitem").filter({ hasText: title });
@@ -94,7 +97,7 @@ test("discover and save chosen works from the intended series, then reopen it", 
 
   await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
   await page.goto("/#library");
-  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
+  await openSavedSeries(page, "The Crossing", "Ada North");
   await expect(page.getByRole("heading", { level: 1, name: "The Crossing" })).toBeVisible();
   const added = (await crossing()).works.filter(
     (work) => work.added && !addedBefore.includes(work.id) && !before.has(work.title),

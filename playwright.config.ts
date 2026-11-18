@@ -123,14 +123,22 @@ const desktopProjects = [
               /(^|\/)series-add\.spec\.ts$/,
               // The New mark on a series and Dismiss (#565).
               /(^|\/)series-new\.spec\.ts$/,
+              // The Library's Series chip and the series beside it on a desktop (#567).
+              /(^|\/)library-series\.spec\.ts$/,
               // The line under Get this recording and replacing the download on its way (#603).
               /(^|\/)get-audiobook-line\.spec\.ts$/,
               // The Get ebook sheet (#604).
               /(^|\/)get-ebook\.spec\.ts$/,
+              // A kept book that is not complete says why and offers Retry (#552).
+              /(^|\/)keep-not-complete\.spec\.ts$/,
               // Import from this device into the book, from both Get sheets (#605).
               /(^|\/)get-import\.spec\.ts$/,
               // Prepare again on the Reading sync page with the reading sync in use kept (#542).
               /(^|\/)reading-sync-(again|kept)\.spec\.ts$/,
+              // Remove series asks once on the Series page (#566).
+              /(^|\/)series-(removal|followups)\.spec\.ts$/,
+              // Turning Keep off, and an earlier recording's copy (#553).
+              /(^|\/)keep-off\.spec\.ts$/,
               // Paste a magnet link for the book, over Get audiobook (#606).
               /(^|\/)get-magnet\.spec\.ts$/,
             ]
