@@ -1,0 +1,23 @@
+/* Paste a magnet link (src/pages/get-magnet-sheet.tsx; the Get audiobook sheet's book and foot, get-audiobook-sheet.css). */
+.get-magnet-field {
+  flex: none;
+  display: block;
+}
+/* Repeated class: above appearance.css's rule for every text field (a filled field of its own, as Get's search). */
+.get-magnet-field .get-magnet-input.get-magnet-input.get-magnet-input {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: 132px;
+  padding: var(--space-12);
+  border: 0;
+  border-radius: var(--corner-control);
+  background: var(--raised);
+  color: var(--text);
+  font: 400 16px/22px var(--font-body);
+  overflow-wrap: anywhere;
+  resize: vertical;
+}
+.get-magnet-field .get-magnet-input::placeholder {
+  color: var(--muted);
+}

@@ -2,7 +2,7 @@
 // `#book/<workId>/get/audiobook`, the administrator's. Close, the caption "Get audiobook", the book (cover, title as
 // the one heading, author), the search field (the title and author, searched on open and on Enter or the search
 // key), Recordings with one choice row per recording found, the Group of the other ways to get one (the
-// magnet link off until ticket 06; the import, get-import-row.tsx) and Get this recording with its line. The rows are get-audiobook-rows.ts, the search's
+// magnet link opening its own sheet over this one, get-magnet-sheet.tsx (#606); the import, get-import-row.tsx) and Get this recording with its line. The rows are get-audiobook-rows.ts, the search's
 // states get-audiobook-state.ts. The language button beside the field opens a Picker (#602): the choice applies at
 // once and is stored on this device; Load more recordings asks AudioBookBay's next page. The words, the rows, the
 // pages loaded, the language and the choice are kept in the history entry; a reload searches again (as many pages).
@@ -380,16 +380,14 @@ export function GetAudiobookSheet({ workId, online, prowlarrConfigured, torboxCo
 
       <div className="part-group-block">
         <ul className="part-group" role="list" aria-label="Other ways to get it">
-          {["Paste a magnet link"].map((label) => (
-            <li className="part-row-item" key={label}>
-              <button type="button" className="part-row get-sheet-off" data-opens="" aria-disabled="true">
-                <span className="part-row-label type-body">{label}</span>
-                <span className="part-row-value type-label">
-                  <Chevron />
-                </span>
-              </button>
-            </li>
-          ))}
+          <li className="part-row-item">
+            <button type="button" className="part-row" data-opens="" onClick={() => address.navigate({ name: "get-magnet", workId })}>
+              <span className="part-row-label type-body">Paste a magnet link</span>
+              <span className="part-row-value type-label">
+                <Chevron />
+              </span>
+            </button>
+          </li>
           <GetImportRow kind="audiobook" workId={workId} title={title} />
         </ul>
       </div>
