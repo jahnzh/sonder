@@ -328,8 +328,13 @@ test("measured against SeriesRemove.dc.html at 390 by 844 and on a desktop", asy
   await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
   await page.screenshot({ path: `${OUT}/series-remove-phone.png` });
 
-  // On a desktop: centred and 480 wide.
+  // Resizing moves the page into the Library's desktop column, remounting it. Open its dialog there.
   await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(dialog(page)).toHaveCount(0);
+  await removeRow(page).click();
+  await removeBooks(page).click();
+  await expect(offered(page).getByRole("checkbox")).toHaveCount(2);
+  // On a desktop: centred and 480 wide.
   await expect.poll(async () => Math.round((await dialog(page).boundingBox())!.width)).toBe(480);
   const desk = (await dialog(page).boundingBox())!;
   expect(Math.abs(desk.x + desk.width / 2 - 720)).toBeLessThanOrEqual(1);
