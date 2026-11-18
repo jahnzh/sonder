@@ -6,10 +6,16 @@
  */
 import { useEffect, useState } from "react";
 import type { DeviceSaveRecord } from "./device-saves";
-import type { KeepEntry, KeepSend, SaveStop, ServerKeep, StopCause } from "./keep";
+import { keepRecording, keptNeeds, readerFileKey, readerMapKey, type KeptNeeds, type HeldEbook, type HeldMap, type KeepEntry, type KeepSend, type SaveStop, type ServerKeep, type StopCause } from "./keep";
+import { warmMap } from "./alignment-map-lifecycle";
+import { alignmentMapDeps } from "./alignment-map-deps";
+import { deviceEbookChoice, ebookDeviceCopySize } from "./ebook-device-copy";
+import { isKeptReaderFile, type ReaderFileRecord } from "./ebook-keep";
+import { loadReader, saveEpubOffline } from "./reading";
 import { KeepSaver, type KeepJob, type KeepTrigger, type LockManager, type SaverMessage } from "./keep-saver";
-import { accountDatabase, api, downloadTrack, getDownloadedBlob, listDeviceSaveRecords, localDB, writeDeviceSaveRecord } from "./lib";
-import type { Track } from "./types";
+import { accountDatabase, api, authDB, downloadTrack, getDownloadedBlob, listDeviceSaveRecords, localDB, writeDeviceSaveRecord } from "./lib";
+import type { Download, DownloadPart, LibraryWork, Track } from "./types";
+import { EBOOK_DEVICE_EVENT } from "./reading";
 
 /** Fired when this account's Keep records on this device changed. */
 export const KEEP_EVENT = "sonder:keep-changed";
@@ -93,12 +99,14 @@ export function startKeepSaver(account: number): KeepSaver {
       const downloads = [];
       // Today's size check: a file counts only while its stored bytes add up to its size.
       for (const row of rows) if (await getDownloadedBlob(row.trackId)) downloads.push({ trackId: row.trackId, recordingId: row.recordingId, size: row.size });
+      const works = (await db.works.toArray()) as LibraryWork[];
       return {
-        works: await db.works.toArray(),
+        works,
         keep: await db.keep.toArray(),
         downloads,
         parts: await localDB.downloadParts.toArray(),
         records: await listDeviceSaveRecords().catch(() => [] as DeviceSaveRecord[]),
+        ...(await readingHeld(works)),
       };
     },
     writeChoice: (workId, on) => writeChoice(workId, on),
@@ -124,6 +132,8 @@ export function startKeepSaver(account: number): KeepSaver {
       await db.preferences.put({ key: ROLLOUT_KEY, value: true });
     },
     saveTrack: (track, signal, onProgress) => downloadTrack(track as Track, signal, onProgress),
+    saveEbook: keepEbook,
+    saveMap: keepMap,
     writeRecord: async (recordingId, workId, change) => {
       if (change.state === "off") return;
       await writeDeviceSaveRecord(recordingId, workId, change);
@@ -150,6 +160,9 @@ export function startKeepSaver(account: number): KeepSaver {
   };
   const online = () => trigger("online");
   const library = () => trigger("library");
+  // A choice of edition on this device (the Ebook page's tick) changes which EPUB a kept book needs (#551). A copy
+  // written or removed fires the same event without a work and asks for nothing.
+  const ebookChosen = (event: Event) => (event as CustomEvent<{ workId?: string }>).detail?.workId && trigger("library");
   // A closed or frozen tab interrupts its saves; they resume at the next run (here after a return, or in another tab).
   const closed = () => {
     for (const recordingId of activeSaves.keys()) created.pause(recordingId, "closed");
@@ -160,6 +173,7 @@ export function startKeepSaver(account: number): KeepSaver {
   document.addEventListener("resume", visible);
   window.addEventListener("online", online);
   window.addEventListener(LIBRARY_STORED_EVENT, library);
+  window.addEventListener(EBOOK_DEVICE_EVENT, ebookChosen);
   window.addEventListener("pagehide", closed);
   window.addEventListener("pageshow", shown);
   unwire = () => {
@@ -168,12 +182,76 @@ export function startKeepSaver(account: number): KeepSaver {
     document.removeEventListener("resume", visible);
     window.removeEventListener("online", online);
     window.removeEventListener(LIBRARY_STORED_EVENT, library);
+    window.removeEventListener(EBOOK_DEVICE_EVENT, ebookChosen);
     window.removeEventListener("pagehide", closed);
     window.removeEventListener("pageshow", shown);
     channel?.close();
   };
   created.start();
   return created;
+}
+
+/** What this device holds of the stored works' EPUBs and maps, and this user's choices of edition (#551). */
+async function readingHeld(works: readonly LibraryWork[]) {
+  const ebooks: HeldEbook[] = [];
+  const maps: Record<string, HeldMap | undefined> = {};
+  const ebookChoices: Record<string, string | null> = {};
+  for (const work of works) {
+    ebookChoices[work.workId] = deviceEbookChoice(work.workId);
+    for (const ebook of work.ebooks ?? []) {
+      if (ebook.format !== "epub") continue;
+      const stored = (await authDB.preferences.get(readerFileKey(ebook.id)).catch(() => undefined))?.value as ReaderFileRecord;
+      // Only a copy the user chose to keep counts: the reader's own reading cache is not kept (#671).
+      if (!isKeptReaderFile(stored) || !stored?.fingerprint) continue;
+      const size = await ebookDeviceCopySize(ebook.id, { kept: true });
+      if (size != null) ebooks.push({ id: ebook.id, fingerprint: stored.fingerprint, size });
+    }
+    for (const job of work.readingSync ?? []) {
+      const key = readerMapKey(job.ebookId, job.recordingId);
+      const stored = (await localDB.preferences.get(key).catch(() => undefined))?.value as HeldMap | undefined;
+      if (stored) maps[key] = stored;
+    }
+  }
+  return { ebooks, maps, ebookChoices };
+}
+
+/** The SHA-256 of a file in hex, as the server fingerprints an EPUB (`server/reader.ts`); null where the page has none. */
+export async function fingerprintFile(blob: Blob): Promise<string | null> {
+  if (!globalThis.crypto?.subtle) return null;
+  const digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** A refusal of the source (4xx other than a timeout or a rate limit): the save waits for Retry. */
+function refusal(message: string, status: number) {
+  return Object.assign(new Error(message), { refused: status >= 400 && status < 500 && status !== 408 && status !== 429 });
+}
+
+/**
+ * Keeps an EPUB on this device (#551): its details and place for the reader (`loadReader` stores them), then the
+ * file, fetched, fingerprinted on the device with SHA-256 and stored by `saveEpubOffline` as a kept copy.
+ */
+export async function keepEbook(ebookId: string, signal: AbortSignal): Promise<void> {
+  const book = await loadReader(ebookId);
+  signal.throwIfAborted();
+  const response = await fetch(`/api/ebooks/${encodeURIComponent(ebookId)}/file`, { signal });
+  if (!response.ok) throw refusal("The EPUB could not be saved on this device.", response.status);
+  const blob = await response.blob();
+  signal.throwIfAborted();
+  const fingerprint = (await fingerprintFile(blob)) ?? book.fingerprint;
+  // A file that is not the one the server describes arrived damaged: saved again at the next run.
+  if (book.fingerprint && fingerprint !== book.fingerprint) throw new Error("The EPUB arrived incomplete.");
+  await saveEpubOffline({ id: ebookId, fingerprint }, blob);
+}
+
+/** Keeps the reading sync map of a pair on this device (#551), by `warmMap`, against the kept EPUB's fingerprint. */
+export async function keepMap(ebookId: string, recordingId: string, signal: AbortSignal): Promise<void> {
+  const fingerprint = async () =>
+    ((await authDB.preferences.get(readerFileKey(ebookId)).catch(() => undefined))?.value as ReaderFileRecord)?.fingerprint;
+  const job = await warmMap(alignmentMapDeps(), { ebookId, recordingId, fingerprint, isCancelled: () => signal.aborted });
+  signal.throwIfAborted();
+  // warmMap answers null for any failure: a network failure here, tried again at the next run.
+  if (!job) throw new TypeError("The reading sync could not be saved on this device.");
 }
 
 /** Fired by the library loader when a read of `GET /api/library` stored a new body. */
@@ -247,4 +325,41 @@ export function savesInOtherTabs(records: readonly DeviceSaveRecord[]): Record<s
   const jobs: Record<string, KeepJob> = {};
   for (const record of records) if (record.state === "saving" && record.job && !activeSaves.has(record.recordingId)) jobs[record.recordingId] = record.job;
   return jobs;
+}
+
+/**
+ * What a work needs on this device (#551): the chosen recording's tracks, the chosen EPUB and the pair's map, read
+ * again when the device's files, its EPUB copies or its Keep records change.
+ */
+export function useKeptNeeds(work: LibraryWork | null, downloads: readonly Download[], parts: readonly DownloadPart[]): KeptNeeds | null {
+  const [held, setHeld] = useState<{ workId: string; value: Awaited<ReturnType<typeof readingHeld>> } | null>(null);
+  const workId = work?.workId ?? null;
+  const shape = work ? JSON.stringify([work.ebooks.map((e) => e.id), work.readingSync.map((j) => [j.id, j.updatedAt])]) : "";
+  useEffect(() => {
+    if (!work) return;
+    let live = true;
+    const read = () => void readingHeld([work]).then((value) => live && setHeld({ workId: work.workId, value })).catch(() => {});
+    read();
+    window.addEventListener(KEEP_EVENT, read);
+    window.addEventListener(EBOOK_DEVICE_EVENT, read);
+    window.addEventListener("sonder:downloads-changed", read);
+    return () => {
+      live = false;
+      window.removeEventListener(KEEP_EVENT, read);
+      window.removeEventListener(EBOOK_DEVICE_EVENT, read);
+      window.removeEventListener("sonder:downloads-changed", read);
+    };
+  }, [workId, shape]);
+  if (!work || !held || held.workId !== work.workId) return null;
+  return keptNeeds(keepRecording(work), downloads, parts, {
+    work,
+    deviceChoice: held.value.ebookChoices[work.workId] ?? null,
+    ebooks: held.value.ebooks,
+    maps: held.value.maps,
+  });
+}
+
+/** Removes this device's reading sync maps of a work (Keep off, #551): the reader fetches them again online. */
+export async function removeWorkMaps(work: Pick<LibraryWork, "readingSync">): Promise<void> {
+  for (const job of work.readingSync ?? []) await localDB.preferences.delete(readerMapKey(job.ebookId, job.recordingId)).catch(() => {});
 }

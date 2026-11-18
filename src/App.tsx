@@ -84,7 +84,7 @@ import { ActivityDevice } from "./pages/activity-device";
 import { SettingsPage } from "./pages/settings-page";
 import { AudiobookPage } from "./pages/audiobook-page";
 import { HardcoverPage } from "./pages/hardcover-page";
-import { EbookPage, ebookSearchTarget } from "./pages/ebook-page";
+import { EbookPage } from "./pages/ebook-page";
 import { BookPage } from "./pages/book-page";
 import { ReadingSyncDetailsPage, ReadingSyncPage } from "./pages/reading-sync-page";
 import { toggleWorkFavorite } from "./pages/book-model";
@@ -93,6 +93,8 @@ import { isReaderPage } from "./reader-pages";
 import { firstPage, parentOf, writeAddress, type Place, type Route } from "./routes";
 import { coveredPage, onPageLeftByHistory, startNavigation, useAddress } from "./navigation";
 import { GetAudiobookSheet } from "./pages/get-audiobook-sheet";
+import { GetEbookSheet } from "./pages/get-ebook-sheet";
+import { deviceImports } from "./device-import";
 import { Gallery, isGalleryRoute } from "./gallery/Gallery";
 import { refreshLibraryWorks, startLibraryWorks, useStoredWorksWithPlaces } from "./library-works-store";
 import { bookStatus, readingPercent, workProgress } from "./work-progress";
@@ -260,14 +262,15 @@ function LibraryApp({
   // The library by work with this device's places (#528): the Library's Listening, Not started and Finished
   // follow the work of each entry, so a book read in the reader is In progress (#556).
   const deviceWorks = useStoredWorksWithPlaces();
-  const [ebookTarget, setEbookTarget] = useState<Book | null>(null);
   // The address, read by SignedIn once the user is known. The page modules in
   // src/pages never read or write it themselves.
   const address = useAddress();
   const page = shownPage(address.route, useRef<Page>("library"));
   // The Get audiobook sheet (#601) covers the page it was opened over; opened by a link, its Book page.
   const getSheet = address.route.name === "get" && address.route.kind === "audiobook" ? address.route.workId : null;
-  const pageRoute: Route = getSheet ? (coveredPage() ?? parentOf(address.route) ?? address.route) : address.route;
+  // The Get ebook sheet (#604) likewise.
+  const getEbookSheet = address.route.name === "get" && address.route.kind === "ebook" ? address.route.workId : null;
+  const pageRoute: Route = getSheet || getEbookSheet ? (coveredPage() ?? parentOf(address.route) ?? address.route) : address.route;
   // The Ebook page (#531) is shown in place of the page under it.
   const ebookPage = pageRoute.name === "book-page" && pageRoute.page === "ebook" ? pageRoute.workId : null;
   const [loading, setLoading] = useState(true);
@@ -285,7 +288,6 @@ function LibraryApp({
   const queryOf = page === "library" || page === "discover" ? page : "other";
   const query = queries[queryOf];
   const setQuery = (value: string) => setQueries((q) => ({ ...q, [queryOf]: value }));
-  const setDiscoverQuery = (value: string) => setQueries((q) => ({ ...q, discover: value }));
   const [filter, setFilter] = useState("All books");
   const [hardcoverFilter, setHardcoverFilter] = useState<HardcoverFilter>({
     shelf: "all",
@@ -411,6 +413,19 @@ function LibraryApp({
       setLoading(false);
     }
   }, []);
+  // An import from this device into a book (#605) ends in the shell: the library is read again before its sheet
+  // closes to the Book page, and with no sheet open its end is the toast.
+  useEffect(
+    () =>
+      deviceImports.configure({
+        refresh: async () => {
+          await refreshLibraryWorks().catch(() => {});
+          window.dispatchEvent(new Event("sonder:library-changed"));
+        },
+        notify,
+      }),
+    [notify],
+  );
   // A download or a copy to the server that finishes joins the library: read it again, as the Downloads page did.
   const finishedOnServer = useRef<Set<string> | null>(null);
   useEffect(() => {
@@ -482,7 +497,6 @@ function LibraryApp({
   // The Library's shelf, list, Favorites, status filter and search are remembered when it is left (#455), so the
   // list Back returns to is the one its scroll position belongs to.
   const leavePage = (p: Page) => {
-    setEbookTarget(null);
     setQueries((q) => ({ library: q.library, discover: "", other: "" }));
     setSidebarOpen(false);
     if (p === "library" || p === "discover") void refresh();
@@ -706,12 +720,8 @@ function LibraryApp({
         (hardcoverFilter.list === "all" ||
           b.hardcover?.listIds.includes(Number(hardcoverFilter.list))),
     );
-  // Today's ebook search for a work (Discover's ebooks, linked to the work), until slice "Get" (S8).
-  const findEbook = (target: Book) => {
-    navigate("discover");
-    setEbookTarget(target);
-    setDiscoverQuery(`${target.title} ${target.author}`);
-  };
+  // Get ebook (#604): the sheet over the page it is opened from, the administrator's.
+  const findEbook = (workId: string) => address.navigate({ name: "get", workId, kind: "ebook" });
   // Get audiobook (#601): the sheet over the page it is opened from, the administrator's.
   const findAudio = (b: Book) => address.navigate({ name: "get", workId: b.workId, kind: "audiobook" });
   visible.sort((a, b) =>
@@ -921,6 +931,16 @@ function LibraryApp({
                 }}
               />
             )}
+            {getEbookSheet && admin && (
+              <GetEbookSheet
+                // Not the work's id alone: the Book page under it, a sibling, is keyed by that.
+                key={`get-ebook:${getEbookSheet}`}
+                workId={getEbookSheet}
+                online={online}
+                libgenUrl={settings?.libgenUrl || null}
+                onChanged={refresh}
+              />
+            )}
             {audiobookWorkId && (
               <AudiobookPage
                 workId={audiobookWorkId}
@@ -951,7 +971,7 @@ function LibraryApp({
                 onSave={(book) => void startDownload(book)}
                 onPauseSave={pauseSave}
                 onFindAudio={findAudio}
-                onFindEbook={findEbook}
+                onFindEbook={(b) => findEbook(b.workId)}
                 onSeries={(id, saved) => (saved ? address.navigate({ name: "series", id: String(id) }) : setSeriesTarget({ id, mode: "preview" }))}
                 onChanged={refresh}
                 onDevice={async () => {
@@ -984,7 +1004,7 @@ function LibraryApp({
                 key={ebookPage}
                 workId={ebookPage}
                 admin={user.role === "admin"}
-                onGetEdition={(work) => findEbook(books.find((b) => b.workId === work.workId) ?? ebookSearchTarget(work))}
+                onGetEdition={(work) => findEbook(work.workId)}
               />
             ) : <>
             {page === "library" && (
@@ -1026,7 +1046,6 @@ function LibraryApp({
               <DiscoverPage
                 admin={user.role === "admin"}
                 settings={settings}
-                ebookTarget={ebookTarget}
                 onQueued={() => {
                   void refresh();
                   navigate("activity");

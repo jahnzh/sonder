@@ -1,4 +1,4 @@
-import { useState, useEffect, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import {
   Compass,
   Search,
@@ -20,7 +20,6 @@ import { Empty } from "./shared";
 export function DiscoverPage({
   admin,
   settings,
-  ebookTarget,
   onQueued,
   books,
   query,
@@ -35,7 +34,6 @@ export function DiscoverPage({
 }: {
   admin: boolean;
   settings: SettingsData | null;
-  ebookTarget: Book | null;
   onQueued: () => void;
   books: Book[];
   query: string;
@@ -65,9 +63,6 @@ export function DiscoverPage({
     }[]
   >([]);
   const [error, setError] = useState("");
-  useEffect(() => {
-    if (ebookTarget) setSource("ebooks");
-  }, [ebookTarget]);
   const search = async (e: FormEvent) => {
     e.preventDefault();
     if (query.trim().length < 2) {
@@ -203,7 +198,6 @@ export function DiscoverPage({
           query={query}
           onQuery={onQuery}
           settings={settings}
-          target={ebookTarget}
           notify={notify}
         />
       ) : source === "abb" ? (
