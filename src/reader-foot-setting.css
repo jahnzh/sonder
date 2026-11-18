@@ -48,10 +48,11 @@
   color: var(--accent);
   font-weight: 600;
 }
-/* The desktop keeps today's player bar until its ticket: the row takes the transport's and the extras' cells. */
-@media (min-width: 900px) {
+/* On a desktop (#595) the row takes the footer's controls' place as it takes the foot's transport row: the timeline
+   stays beside it and the footer keeps its box. */
+@media (min-width: 760px) {
   .reader-foot-setting {
     grid-row: 1;
-    grid-column: 2 / -1;
+    grid-column: 1 / 3;
   }
 }

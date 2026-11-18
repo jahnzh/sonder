@@ -59,6 +59,7 @@ import {
 } from "../reading";
 import type { Book } from "../types";
 import type { PositionEntry } from "../position-history";
+import { useDesktop } from "../now-playing-desktop";
 import {
   countedBlocks,
   readerSkippedSelector,
@@ -366,8 +367,7 @@ export function ReaderView({
     [conflict, setConflict] = useState<ReadingCheckpoint | null>(null),
     [follow, setFollow] = useState(true),
     [controlsVisible, setControlsVisible] = useState(false),
-    [desktop, setDesktop] = useState(() => window.matchMedia("(min-width: 900px)").matches),
-    [scrub, setScrub] = useState<number | null>(null),
+        [scrub, setScrub] = useState<number | null>(null),
     [contentsHidden, setContentsHidden] = useState(() => localStorage.getItem("sonder-reader-contents") === "hidden");
   // Appearance docked under the text in place of the foot (#588); not in the address.
   const [appearanceOpen, setAppearanceOpen] = useState(false);
@@ -390,11 +390,8 @@ export function ReaderView({
   const removedBookmark = useRef<{ entry: ReaderBook["bookmarks"][number]; index: number } | null>(null);
   // The history entries the latest Listen from here wrote, so its Undo can take them back.
   const listenRecords = useRef<{ undone: boolean; entries: { recordingId: string; entry: PositionEntry }[] } | null>(null);
-  useEffect(() => {
-    const media=window.matchMedia("(min-width: 900px)");
-    const change=() => setDesktop(media.matches);
-    media.addEventListener("change",change); return () => media.removeEventListener("change",change);
-  }, []);
+  // From 760 px the reader is the desktop's (#595): the contents beside the text, the page arrows, the footer.
+  const desktop = useDesktop();
   const pageAction = useRef<(action: string, content?: Contents, event?: PointerEvent) => void>(() => {});
   const viewport = useRef<HTMLDivElement>(null),
     epub = useRef<EpubBook | null>(null),
@@ -1693,6 +1690,16 @@ export function ReaderView({
       <p className="reader-head-rest"><span className="type-caption">{headRestLine(book?.title, currentSection?.title || barChapter)}</span></p>
       <div className="reader-topbar">
         {onClose &&<button className="icon-button" aria-label="Close reader" onClick={() => { setControlsVisible(false); setAppearanceOpen(false); onClose(); }}><ChevronDown size={22} /></button>}
+        {faceControl ? (
+          <div className="reader-topbar-face">{faceControl}</div>
+        ) : (
+          <div className="reader-topbar-title">
+            <strong>{book?.title}</strong>
+            <span>{book?.author}</span>
+          </div>
+        )}
+        {/* On a desktop the head names the book and the chapter after the face control (#595). */}
+        {desktop && <span className="reader-topbar-place type-caption">{headRestLine(book?.title, currentSection?.title || barChapter)}</span>}
         {desktop && (
           <button
             className="icon-button"
@@ -1706,14 +1713,6 @@ export function ReaderView({
           >
             <PanelLeft size={20} />
           </button>
-        )}
-        {faceControl ? (
-          <div className="reader-topbar-face">{faceControl}</div>
-        ) : (
-          <div className="reader-topbar-title">
-            <strong>{book?.title}</strong>
-            <span>{book?.author}</span>
-          </div>
         )}
         <button
           className="icon-button reader-bookmark-toggle"
@@ -1731,29 +1730,29 @@ export function ReaderView({
       <div className="reader-body">
         {showContents && book && (
           <nav className="reader-desktop-contents" aria-label="Contents sidebar">
-            <h2>Contents</h2>
+            <h2 className="type-caption">Contents</h2>
             {sections.map((section) => (
               <button
                 key={section.index}
+                className="type-label"
                 aria-current={section.index === locator?.section ? "location" : undefined}
                 onClick={() => navigate((view) => view.display(section.href), section.index)}
               >
-                <span>{section.title}</span>
                 {section.index === narratedSection?.index && <Headphones size={16} role="img" aria-label="Narrating" />}
+                <span>{section.title}</span>
               </button>
             ))}
           </nav>
         )}
+        {/* On a desktop the page arrows stand in the margins, beside the text, not over it (#595). */}
         <div className="reader-page-area">
+          {desktop && <button className="reader-edge reader-edge-previous" aria-label="Previous page" onClick={()=>turn(-1)}><ArrowLeft size={20}/></button>}
           <div
             className="reader-viewport"
             ref={viewport}
             aria-label="Ebook pages"
           />
-          {desktop && <>
-            <button className="reader-edge reader-edge-previous" aria-label="Previous page" onClick={()=>turn(-1)}><ArrowLeft size={22}/></button>
-            <button className="reader-edge reader-edge-next" aria-label="Next page" onClick={()=>turn(1)}><ArrowRight size={22}/></button>
-          </>}
+          {desktop && <button className="reader-edge reader-edge-next" aria-label="Next page" onClick={()=>turn(1)}><ArrowRight size={20}/></button>}
         </div>
       </div>
       {/* The dock row (#587): a reader error, and Appearance docked in place of the foot (#588). */}
