@@ -8,6 +8,7 @@ import {highlightShown} from "./reader-view";
 import {showControls} from "./reader-bands";
 import {longSentence,pageTurnFixture,PACED_CHARACTERS_PER_SECOND} from "../page-turn-fixture";
 import {closeAppearance,openAppearance,setStepper} from "./reader-appearance";
+import {openRead} from "./now-playing";
 // The page turns inside a sentence that crosses a page (#508, spec #503): in Page mode, when the narration's
 // reported position reaches the first word on the next page. The narration's position is set on the player's
 // audio element without playing it (headless Firefox plays no audio in this suite).
@@ -78,7 +79,7 @@ async function openAt(page:Page,book:any,interval:any,position:number){
  const response=await page.request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position,duration:book.tracks[0].duration,updatedAt:Math.max(Date.now(),previous+1)}});
  expect(response.ok()).toBe(true);
  await page.goto("/");
- await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
+ await openRead(page);
  const room=page.locator(".inline-reader");
  await timedWait("follow-highlight",()=>expect(room).toHaveAttribute("data-current-passage",interval.paragraphId,{timeout:READER_WAIT_MS.followHighlight}),{testName:test.info().title});
  await expect.poll(()=>highlightShown(room),{timeout:READER_WAIT_MS.followHighlight}).toBe(true);

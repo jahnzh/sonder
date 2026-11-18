@@ -6,7 +6,8 @@ import {createReaderControls,narratedOnPage,waitForBox} from './live-reader-cont
 import {verifyBaseURL} from './live-check-target.mjs';
 import {selectReaderRecording,requestFrom,getJSON,NoSuitableRecording,NO_SUITABLE_RECORDING_EXIT,FOLLOW_WAIT_SECONDS} from './live-check-recording.mjs';
 const expect=baseExpect.configure({timeout:25000});
-process.loadEnvFile('.env');
+// A local test server (tests/browser-server.ts) has no .env and no password; production reads both from .env.
+if(fs.existsSync('.env'))process.loadEnvFile('.env');
 // The recording id is a preference: the check plays it when it qualifies and otherwise picks another (#431).
 const preferred=process.argv[2]||null;
 const baseURL=verifyBaseURL();
@@ -16,7 +17,7 @@ const report={recordingId:null,preferred,protectedWrites:0,checks:[],errors:[]};
 fs.mkdirSync('artifacts',{recursive:true});
 let page;
 try {
- const login=await context.request.post('/api/auth/login',{data:{password:process.env.APP_PASSWORD}});if(!login.ok())throw Error(`Sign-in failed (POST /api/auth/login answered ${login.status()})`);
+ if(process.env.APP_PASSWORD){const login=await context.request.post('/api/auth/login',{data:{password:process.env.APP_PASSWORD}});if(!login.ok())throw Error(`Sign-in failed (POST /api/auth/login answered ${login.status()})`);}
  // Choose the recording and map from the listing: playback starts at the owner's saved position, which this check must not move.
  // Only an empty listing or a 404/410 map can lead to "no suitable recording"; any other failed request fails the check (#431).
  // A recording chosen here that then fails below stays a failure: the check does not fall through to another one.
@@ -35,10 +36,23 @@ try {
  // The reader's controls toggle on a tap and reset when it remounts; every click on them goes through this helper (#413).
  const room=page.locator('.inline-reader'),controls=createReaderControls({page,room});
  const actual=()=>page.evaluate(()=>{const a=window.__audio.find(a=>a.src);return a&&{position:a.currentTime,paused:a.paused,ready:a.readyState,error:a.error?.message};});
+ // Now playing is one screen with Listen and Read (#593): the mini player opens it on its face rule (the face last
+ // shown for the work on this device, Listen the first time); Read is the reader, reached from Listen's head.
+ const listenFace=page.locator('.now-playing-listen');
+ const openRead=async()=>{
+  await page.locator('.player-dock .dock-book').click();
+  await expect(page.getByRole('dialog',{name:'Now playing',exact:true})).toBeVisible();
+  await expect.poll(()=>page.evaluate(()=>location.hash.split('/')[0])).toMatch(/^#(listen|read)$/);
+  if(await page.evaluate(()=>location.hash.startsWith('#listen/'))){
+   await expect(listenFace).toBeVisible();
+   await listenFace.getByRole('radiogroup',{name:'Listen or read',exact:true}).getByRole('radio',{name:'Read',exact:true}).click();
+  }
+  await expect.poll(()=>page.evaluate(()=>location.hash.split('/')[0])).toBe('#read');
+ };
  await page.goto('/');
  const dockBook=await page.locator('.dock-cover-button').getAttribute('aria-label');
  if(dockBook?.includes(book.title) && book.progress){
-  await page.getByRole('button',{name:'Open ebook reader',exact:true}).click();
+  await openRead();
   await expect.poll(async()=>{const a=await actual();return a&&a.ready>=1&&a.paused;},{timeout:30000}).toBe(true);
   expect(Math.abs((await actual()).position-book.progress.position)).toBeLessThan(10);
   await expect(page.locator('.inline-reader .reader-viewport iframe')).toBeVisible();
@@ -56,12 +70,11 @@ try {
  if(!book.tracks.some(t=>decodeURIComponent(playing).includes(t.id)))throw Error(`Listen played ${playing}, not the selected recording ${pick.recordingId}: choose it on the book's Audiobook page or pass it as the recording id`);
  await page.evaluate(()=>window.__audio.find(a=>a.src)?.pause());
  await page.goto('/');
- await page.locator('.dock-book').click();
- await expect(page.getByRole('dialog',{name:'Now playing',exact:true})).toBeVisible();
+ await openRead();
  await expect(page.locator('.inline-reader .reader-viewport iframe')).toBeVisible();
  const full=page.getByRole('dialog',{name:'Now playing',exact:true});
- // With an ebook, Now Playing is the full-screen reader with one player bar (#22).
- await expect(full.locator('.now-playing-transport')).toBeHidden();
+ // The Read face is the reader's page with one player bar, its foot (#22, #593): none of Listen's face is drawn.
+ await expect(full.locator('.now-playing-listen')).toHaveCount(0);
  await expect(room.locator('.reader-topbar')).toBeHidden();
  const surface=await room.evaluate(el=>getComputedStyle(el).backgroundColor);
  await expect(page.frameLocator('.inline-reader .reader-viewport iframe').locator('body')).toHaveCSS('background-color',surface);
@@ -79,7 +92,7 @@ try {
  // Following the narration, Back to narration has nothing to return to.
  await expect(room.getByRole('button',{name:'Back to narration',exact:true})).toBeDisabled();
  await page.screenshot({path:'artifacts/live-reader-options-mobile.png'});
- report.checks.push({name:'EPUB fills Now Playing; the head has no More, there is no view switch, Back to narration is off while following',ebookId:ebook.id});
+ report.checks.push({name:'Now playing opens its Read face with the EPUB; the head has no More, there is no view switch, Back to narration is off while following',ebookId:ebook.id});
  // Sample the audio element directly and check that Page mode follows.
  const seek=position=>page.evaluate(position=>{const a=window.__audio.find(a=>a.src);a.currentTime=position;},position);
  // Seeking the audio element stays within the loaded file: the file of the saved position, whose passages the sequence samples.

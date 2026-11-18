@@ -147,6 +147,8 @@ const desktopProjects = [
               /(^|\/)series-offline\.spec\.ts$/,
               // More › Reading sync opens the Reading sync page; the specs that opened the card (#543).
               /(^|\/)(reader-sync-row|chapterless-sync|one-reading-view)\.spec\.ts$/,
+              // Now playing as one screen with Listen and Read, and the specs of the screens it replaces (#593).
+              /(^|\/)(now-playing-faces|playback-workflow|media-controls|playback-speed|playback-speed-rate|position-history|integrated-reader)\.spec\.ts$/,
               // The More sheet goes; Back to narration locates the passage without a map (#592).
               /(^|\/)(reader-more-gone|back-to-narration)\.spec\.ts$/,
               // A device whose browser cleared Sonder's files saves its kept books again (#554).

@@ -301,6 +301,9 @@ function built(route: Route): boolean {
     case "gallery":
     case "gallery-child":
     case "gallery-sheet":
+    // Now playing, its Listen and Read faces (#593).
+    case "listen":
+    case "read":
       return true;
     case "settings-page":
       return isSettingsPage(route.page);

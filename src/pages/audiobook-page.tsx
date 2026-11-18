@@ -71,7 +71,7 @@ type Pick<T extends string> = { value: T; label: string; disabled?: boolean };
  * A short list to choose one from, in a dialog: one radio row per choice; a choice that is ruled out is off. With
  * `caption` its name is shown above it, as a Group's caption.
  */
-function PickList<T extends string>({ label, caption, options, value, onChoose }: { label: string; caption?: boolean; options: Pick<T>[]; value: T | null; onChoose: (value: T) => void }) {
+export function PickList<T extends string>({ label, caption, options, value, onChoose }: { label: string; caption?: boolean; options: Pick<T>[]; value: T | null; onChoose: (value: T) => void }) {
   const id = useId();
   const list = (
     <ul className="audiobook-picks" role="radiogroup" aria-label={caption ? undefined : label} aria-labelledby={caption ? id : undefined}>
