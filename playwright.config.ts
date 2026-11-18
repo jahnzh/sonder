@@ -129,6 +129,8 @@ const desktopProjects = [
               /(^|\/)get-ebook\.spec\.ts$/,
               // Import from this device into the book, from both Get sheets (#605).
               /(^|\/)get-import\.spec\.ts$/,
+              // Remove series asks once on the Series page (#566).
+              /(^|\/)series-(removal|followups)\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },
