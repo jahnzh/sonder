@@ -690,18 +690,19 @@ test("the fallback rule follows the configured device and rank, not the host's n
   assert.equal(await hostOf(true), "lisa");
 });
 
-test("the stored job keeps the worker's counts for the stage it is in, which the Reading sync card shows", async () => {
-  const { syncProgressLine } = await import("../src/reading-sync-status.ts");
+test("the stored job keeps the worker's counts for the stage it is in, which the Reading sync page shows", async () => {
+  const { runPoint, readingSyncPage } = await import("../src/pages/reading-sync-model.ts");
   const encoding = await heldJob("encoding");
   assert.deepEqual(alignmentJob(encoding.id).bookJob?.counts, { tracksTotal: 1, tracksDecoded: 1, tracksEncoded: 0, encodeQueuePosition: 0 });
-  assert.equal(syncProgressLine(alignmentJob(encoding.id)), "Encoding audio: 0 of 1 file");
+  assert.deepEqual(runPoint(alignmentJob(encoding.id)), { step: "encoding", value: "0 of 1 file", progress: 0 });
   fake.hosts.wsl.holdAt = "aligning";
   await until(() => alignmentJob(encoding.id).bookJob?.state === "aligning", "aligning stored");
   assert.deepEqual(alignmentJob(encoding.id).bookJob?.counts, { tracksTotal: 1, tracksDecoded: 1, tracksEncoded: 1, groupsTotal: 2, groupsDone: 0 });
-  assert.equal(syncProgressLine(alignmentJob(encoding.id)), "Aligning text: 0 of 2 parts");
+  assert.deepEqual(runPoint(alignmentJob(encoding.id)), { step: "aligning", value: "0 of 2 parts", progress: 0 });
   fake.hosts.wsl.holdAt = null;
   const done = await settled(encoding.id);
-  assert.equal(syncProgressLine(done), `${Math.round(done.coverage * 100)}% of text mapped`);
+  const page = readingSyncPage({ admin: true, job: done, offline: false, stored: null, languageMatch: true, pool: null, now: Date.now() });
+  assert.ok(["ready", "partial", "no-match"].includes(page.state), page.state);
 });
 
 test("with the pool off the rebuild scan queues no whole-book rebuild", async () => {

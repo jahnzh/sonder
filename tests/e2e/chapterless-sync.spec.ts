@@ -19,22 +19,27 @@ test("a single audio file without chapter markers gets reading sync prepared aut
  await page.mouse.click(viewport.x+viewport.width/2,viewport.y+viewport.height/2);
  await reader.getByRole("button",{name:"More",exact:true}).click();
  await reader.locator(".reader-more").getByRole("button",{name:"Reading sync",exact:true}).click();
- await page.getByRole("combobox",{name:"Reading sync audiobook release"}).selectOption(book.recordingId);
- await expect(page.locator(".sync-release-info")).toContainText("No chapter markers");
- await expect(page.locator("#reading-sync-help")).toContainText("samples the narration");
  // Importing with a workId queues the backfill job; the alignment stub finishes it almost at once.
  await expect.poll(async()=>{
   const jobs=(await(await page.request.get(`/api/alignments?ebookId=${id}`)).json()).jobs;
   return jobs.some((j:any)=>j.recordingId===book.recordingId&&j.origin==="backfill"&&j.mode==="anchored"&&j.anchoring?.anchors?.length>0);
  },{timeout:20000}).toBe(true);
- await expect(page.locator(".alignment-status")).toContainText(/Ready · Estimated timings|Partial alignment/,{timeout:20000});
- await expect(page.locator(".alignment-status")).toContainText(/\d+ anchors · (\d+) of \1 passages aligned/);
+ // More › Reading sync opens the Reading sync page (#543): Ready or Partly ready there.
+ await reader.locator(".reader-panel").getByRole("button",{name:/^Reading sync/}).click();
+ const sync=page.locator(".reading-sync-page");
+ await expect(sync).toHaveAttribute("data-state",/^(ready|partial)$/,{timeout:20000});
+ await expect(sync.locator(".reading-sync-block .part-group > li").first()).toHaveText(/^(Ready|Partly ready)/);
  const job=(await(await page.request.get(`/api/alignments?ebookId=${id}`)).json()).jobs.find((j:any)=>j.origin==="backfill");
  expect(job.mode).toBe("anchored");
  expect(job.anchoring.anchors.length).toBeGreaterThanOrEqual(3);
  expect(job.coverage).toBeGreaterThan(.5);
- if(job.anchoring.flags.length)await expect(page.locator(".alignment-flags li")).toHaveCount(job.anchoring.flags.length);
  await expect(page.getByRole("button",{name:"Mark alignment reviewed",exact:true})).toHaveCount(0);
- await expect.poll(async()=>(await(await page.request.get(`/api/alignments/${job.id}/map`)).json()).intervals.every((i:any)=>i.verified===undefined)).toBe(true);
  await page.screenshot({path:"artifacts/chapterless-sync.png"});
+ // Details: the older engine's line and its flags.
+ await sync.getByRole("button",{name:/^Details/}).click();
+ const details=page.locator(".reading-sync-details");
+ await expect(details.getByRole("heading",{level:1,name:"Details",exact:true})).toBeVisible();
+ await expect(details).toContainText(/\d+ anchors · (\d+) of \1 passages aligned/);
+ await expect(details.locator(".reading-sync-flag")).toHaveCount(job.anchoring.flags.length);
+ await expect.poll(async()=>(await(await page.request.get(`/api/alignments/${job.id}/map`)).json()).intervals.every((i:any)=>i.verified===undefined)).toBe(true);
 });
