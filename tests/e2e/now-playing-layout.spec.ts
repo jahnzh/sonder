@@ -165,7 +165,7 @@ for(const size of sizes){
   // The bar is the narration's position; the page follows it.
   await expect(player.getByRole("slider",{name:/^Seek in /})).toBeVisible();
   await expect(player.getByRole("slider",{name:"Position in book"})).toHaveCount(0);
-  const names=["Close reader","Bookmark current sentence","Search this book","Reader appearance","More","Back to narration","Back 30 seconds","Play narration","Forward 30 seconds",/^Sleep timer: /];
+  const names=["Close reader","Bookmark current sentence","Search this book","Reader appearance","Back to narration","Back 30 seconds","Play narration","Forward 30 seconds",/^Sleep timer: /];
   if(width<900)names.push("Chapters");
   for(const name of names){
    // The transport button reads "Play narration" or "Pause narration" depending on whether the tap above started playback.
@@ -431,9 +431,10 @@ test.describe("#122 reader Back to narration layout",()=>{
       expect(box.x+box.width).toBeLessThanOrEqual(width);
      }
      await showReaderTopbar(page,dialog.locator(".inline-reader"));
-     const more=await boxOf(dialog.locator(".inline-reader").getByRole("button",{name:"More",exact:true}));
-     expect(more.x).toBeGreaterThanOrEqual(0);
-     expect(more.x+more.width).toBeLessThanOrEqual(width);
+     // Reader appearance is the head's last control since More left it (#592).
+     const last=await boxOf(dialog.locator(".inline-reader .reader-topbar").getByRole("button",{name:"Reader appearance",exact:true}));
+     expect(last.x).toBeGreaterThanOrEqual(0);
+     expect(last.x+last.width).toBeLessThanOrEqual(width);
     }
    }
   });

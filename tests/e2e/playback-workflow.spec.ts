@@ -64,10 +64,10 @@ async function showReaderControls(page: Page) {
 async function manage(page: Page) {
   await page.locator(".dock-book").click();
   await expect(page.getByText("Loading ebook…",{exact:true})).toBeHidden();
-  // With an ebook, Playback options open from the reader's More button.
+  // With an ebook, Playback options open from the dialog heading's ⋯ (the reader's head has no More, #592); a DOM
+  // click, as the heading is clipped under the reader (#22).
   if(await page.locator(".inline-reader").count()){
-    await showReaderControls(page);
-    await page.locator(".inline-reader .reader-topbar").getByRole("button",{name:"More",exact:true}).click();
+    await page.locator(".playback-menu-trigger").evaluate((el:HTMLButtonElement)=>el.click());
   }
   // The player's "Audiobook" opens the Audiobook page (#530).
   await page.getByRole("button",{name:"Audiobook",exact:true}).click();

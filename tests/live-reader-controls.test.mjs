@@ -250,7 +250,7 @@ test("click starts again from the reveal when the click fails because the bar hi
     if (control.clicks === 0) state.visible = false;
     return click(...args);
   };
-  await controls.click(control, "More");
+  await controls.click(control, "Reader appearance");
   assert.equal(control.clicks, 2);
   assert.equal(state.taps.length, 2);
   assert.equal(state.visible, true);

@@ -141,16 +141,10 @@ async function openPlaybackOptions(page: Page) {
   await expect(dialog).toBeVisible();
   const options = page.locator(".playback-options-panel");
   if (!(await options.isVisible())) {
-    // With the reader, the dialog heading ⋯ (aria-label "Playback options") is clipped under
-    // the reader chrome (#22); the reader's top-bar ⋯ (aria-label "More") opens the same panel.
-    // Never use the Chapters button. DOM click avoids the clipped heading's hit-target.
-    const inline = dialog.locator(".inline-reader");
-    if (await inline.count()) {
-      await revealReaderControls(page);
-      await inline.getByRole("button", { name: "More", exact: true }).evaluate((el: HTMLButtonElement) => el.click());
-    } else {
-      await dialog.locator(".playback-menu-trigger").evaluate((el: HTMLButtonElement) => el.click());
-    }
+    // The dialog heading ⋯ (aria-label "Playback options"); with the reader it is clipped under the reader chrome
+    // (#22), and the reader's head has no More since #592. Never use the Chapters button. DOM click avoids the
+    // clipped heading's hit-target.
+    await dialog.locator(".playback-menu-trigger").evaluate((el: HTMLButtonElement) => el.click());
   }
   await expect(options).toBeVisible();
   return options;
@@ -587,6 +581,26 @@ test("Use Hardcover position can be undone through the normal progress path", as
 });
 });
 
+// Listen from here is the long-press on a sentence (#592). Long-press a sentence that is on the page. The reader may
+// still be moving to the new position's passage, so look again until one is on the page.
+async function listenFromHere(page: Page, room: Locator) {
+  const paragraphs = page.frameLocator(".inline-reader .reader-viewport iframe").locator("p");
+  await paragraphs.first().waitFor();
+  const view = (await room.locator(".reader-viewport").boundingBox())!;
+  let box: { x: number; y: number; width: number; height: number } | null = null;
+  await expect.poll(async () => {
+    for (let i = 0; i < await paragraphs.count() && !box; i++) {
+      const candidate = await paragraphs.nth(i).boundingBox();
+      if (candidate && candidate.x >= view.x && candidate.x + 100 <= view.x + view.width && candidate.y >= view.y && candidate.y + 20 <= view.y + view.height) box = candidate;
+    }
+    return box !== null;
+  }, { timeout: 15000 }).toBe(true);
+  await page.mouse.move(box!.x + Math.min(box!.width / 2, 80), box!.y + Math.min(box!.height / 2, 10));
+  await page.mouse.down();
+  await page.waitForTimeout(650);
+  await page.mouse.up();
+}
+
 test("Listen from here records the position left and the expanded player restores it", async ({ page }) => {
   const book = await narratedRecording(page, "Undo narration");
   await instrument(page);
@@ -596,9 +610,7 @@ test("Listen from here records the position left and the expanded player restore
   const room = page.locator(".inline-reader");
   await setPosition(page, 170.25);
   await expect(room).toHaveAttribute("data-current-passage", /.+/);
-  await revealReaderControls(page);
-  await page.locator(".inline-reader .reader-topbar").getByRole("button", { name: "More", exact: true }).evaluate((el: HTMLButtonElement) => el.click());
-  await page.locator(".playback-options-panel").getByRole("button", { name: "Listen from here", exact: true }).click();
+  await listenFromHere(page, room);
   await expect.poll(async () => (await history(page, book.recordingId)).length).toBe(1);
   expect((await history(page, book.recordingId))[0]).toMatchObject({ trackId: book.tracks[0].id, position: 170.25 });
   const pause = room.getByRole("button", { name: "Pause narration", exact: true });
@@ -617,28 +629,12 @@ test("a toast Undo for Listen from here takes back what it recorded and is not r
   const room = page.locator(".inline-reader");
   await setPosition(page, 170.25);
   await expect(room).toHaveAttribute("data-current-passage", /.+/);
-  const paragraphs = page.frameLocator(".inline-reader .reader-viewport iframe").locator("p");
-  await paragraphs.first().waitFor();
-  const view = (await room.locator(".reader-viewport").boundingBox())!;
-  let box: { x: number; y: number; width: number; height: number } | null = null;
-  // Long-press a sentence that is on the page. The reader may still be moving to the new position's passage, so
-  // look again until one is on the page.
-  await expect.poll(async () => {
-    for (let i = 0; i < await paragraphs.count() && !box; i++) {
-      const candidate = await paragraphs.nth(i).boundingBox();
-      if (candidate && candidate.x >= view.x && candidate.x + 100 <= view.x + view.width && candidate.y >= view.y && candidate.y + 20 <= view.y + view.height) box = candidate;
-    }
-    return box !== null;
-  }, { timeout: 15000 }).toBe(true);
-  await page.mouse.move(box!.x + Math.min(box!.width / 2, 80), box!.y + Math.min(box!.height / 2, 10));
-  await page.mouse.down();
-  await page.waitForTimeout(650);
-  await page.mouse.up();
+  await listenFromHere(page, room);
   const toast = room.getByRole("status").filter({ hasText: "Listening from here" });
   await expect(toast).toBeVisible();
   await expect.poll(async () => (await history(page, book.recordingId)).map((entry: any) => entry.position)).toEqual([170.25]);
-  // Undo is the foot's message action (#591). Opening Playback options first would end the notice: the head's More
-  // is a control, and the next tap on a control ends a notice with Undo (spec #586 "How long").
+  // Undo is the foot's message action (#591). Opening Playback options first would end the notice: the next tap on a
+  // control ends a notice with Undo (spec #586 "How long").
   await room.locator(".reader-message").getByRole("button", { name: "Undo", exact: true }).click();
   await expect(toast).toBeHidden();
   await room.getByRole("button", { name: "Pause narration", exact: true }).click();
