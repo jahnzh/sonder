@@ -4,7 +4,8 @@ import type { Page } from "@playwright/test";
 
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-export const seriesChip = (page: Page) => page.getByRole("tab", { name: "Series", exact: true });
+// The Library's chips are toggle buttons in the group "Filter your library" (#577).
+export const seriesChip = (page: Page) => page.getByRole("group", { name: "Filter your library", exact: true }).getByRole("button", { name: "Series", exact: true });
 export const savedSeriesList = (page: Page) => page.getByRole("region", { name: "Saved series", exact: true });
 /** The row of a saved series, by its name and author. */
 export const savedSeriesRow = (page: Page, name: string, author: string) =>

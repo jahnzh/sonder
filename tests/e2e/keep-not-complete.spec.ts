@@ -2,7 +2,7 @@
 // KeepFull.dc.html). A save refused by the source (a routed answer) shows "Not complete" in the failed colour, the
 // reason and Retry on the Book page, lights the dot and sits under Needs attention; Retry finishes it. A quota error
 // shows "This device is full" on the book and the full-device note on This device. A paused save waits with Resume
-// after a reload and resumes on Resume. A book missing a file is not under Downloaded.
+// after a reload and resumes on Resume. A book missing a file is not under the Library's On device chip (#577).
 import { test, expect, type Page, type Request, type Route } from "@playwright/test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -186,7 +186,7 @@ test("a full device: This device is full on the book, and the note under Storage
   await expect(kept).toContainText("Audiobook · 5.1 MB", { timeout: 30_000 });
 });
 
-test("a paused save waits with Resume after a reload and resumes on Resume; a book missing a file is not under Downloaded", async ({ page }) => {
+test("a paused save waits with Resume after a reload and resumes on Resume; a book missing a file is not under On device", async ({ page }) => {
   test.setTimeout(120_000);
   const book = await importBook(page, unique("Paused"));
   const done = await importBook(page, unique("Complete"));
@@ -246,10 +246,11 @@ test("a paused save waits with Resume after a reload and resumes on Resume; a bo
   await page.waitForTimeout(500);
   expect(requests).toBe(before);
 
-  // The book missing its file is not under Downloaded; the complete one is.
+  // The book missing its file is not under On device; the complete one is.
   await page.goto("/#library");
-  await page.getByRole("tab", { name: "Downloaded" }).click();
-  await expect(page.getByRole("tab", { name: "Downloaded" })).toHaveAttribute("aria-selected", "true");
+  const onDevice = page.getByRole("group", { name: "Filter your library", exact: true }).getByRole("button", { name: "On device", exact: true });
+  await onDevice.click();
+  await expect(onDevice).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByLabel(`About ${done.title}`)).toBeVisible();
   await expect(page.getByLabel(`About ${book.title}`)).toHaveCount(0);
   await expect(page.getByLabel(`About ${partial.title}`)).toHaveCount(0);
@@ -260,9 +261,9 @@ test("a paused save waits with Resume after a reload and resumes on Resume; a bo
   await region(page).getByRole("button", { name: "Resume" }).click();
   await expect(line(page)).toHaveText(/^Audiobook · 5\.1 MB$/, { timeout: 30_000 });
   expect(requests).toBeGreaterThan(before);
-  // Complete: now under Downloaded.
+  // Complete: now under On device (the chip is remembered).
   await page.goto("/#library");
-  await page.getByRole("tab", { name: "Downloaded" }).click();
+  await expect(onDevice).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByLabel(`About ${book.title}`)).toBeVisible();
 });
 
