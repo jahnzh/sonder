@@ -125,6 +125,12 @@ export function rememberRecording(remembered: readonly KeptRecording[] | undefin
   return [...list, { recordingId: recording.recordingId, narrator: recording.narrator }];
 }
 
+/** The Keep record's remembered EPUBs with `ebookId` among them; the same array when it is already there. */
+export function rememberEbook(remembered: readonly string[] | undefined, ebookId: string): string[] {
+  const list = remembered ?? [];
+  return list.includes(ebookId) ? (list as string[]) : [...list, ebookId];
+}
+
 /** The books a merge turned off: on in the device's records before it, off after it (Remove from library elsewhere). */
 export function turnedOffFromServer(before: readonly Pick<KeepEntry, "workId" | "on">[], after: readonly Pick<KeepEntry, "workId" | "on">[]): string[] {
   const was = new Map(before.map((entry) => [entry.workId, entry.on]));

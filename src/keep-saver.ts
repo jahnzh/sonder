@@ -36,7 +36,7 @@ import {
   type ServerKeep,
   type StopCause,
 } from "./keep";
-import { rememberRecording, turnedOffFromServer, type KeptRecording } from "./keep-device";
+import { rememberEbook, rememberRecording, turnedOffFromServer, type KeptRecording } from "./keep-device";
 
 /** Why a run was asked for. */
 export type KeepTrigger = "open" | "foreground" | "online" | "library" | "switch" | "retry";
@@ -104,7 +104,7 @@ export type SaverDeps = {
    */
   removeWork?: (workId: string) => Promise<void>;
   /** Stores the recordings saved for a book on its Keep record (#553), so an earlier copy keeps its name. */
-  remember?: (workId: string, recordings: KeptRecording[]) => Promise<void>;
+  remember?: (workId: string, saved: { recordings: KeptRecording[]; ebookIds: string[] }) => Promise<void>;
   online: () => boolean;
   /**
    * Runs `save` while this tab holds the recording's own lock, so no other tab (nor the app's own save button)
@@ -331,12 +331,15 @@ export class KeepSaver {
       const forced = this.forced.delete(entry.workId);
       // The kept recording is remembered on the record (#553): after a change of recording it is an earlier copy,
       // named even when its recording has left the library.
+      // Its EPUB likewise, so Off finds it after the book left the stored library.
       const chosen = keepRecording(work);
-      if (chosen && this.deps.remember) {
-        const recordings = rememberRecording(entry.recordings, { recordingId: chosen.recordingId, narrator: chosen.narrator ?? "" });
-        if (recordings !== entry.recordings) {
+      if (this.deps.remember) {
+        const recordings = chosen ? rememberRecording(entry.recordings, { recordingId: chosen.recordingId, narrator: chosen.narrator ?? "" }) : entry.recordings ?? [];
+        const ebookIds = needs.ebook ? rememberEbook(entry.ebookIds, needs.ebook.id) : entry.ebookIds ?? [];
+        if (recordings !== entry.recordings || ebookIds !== entry.ebookIds) {
           entry.recordings = recordings;
-          await this.deps.remember(entry.workId, recordings).catch(() => {});
+          entry.ebookIds = ebookIds;
+          await this.deps.remember(entry.workId, { recordings, ebookIds }).catch(() => {});
         }
       }
       if (!needs.filesTotal) continue;

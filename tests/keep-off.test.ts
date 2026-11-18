@@ -4,7 +4,7 @@
 // the files of a book whose Keep record a merge turned off, against fakes.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { deviceBook, rememberRecording, turnedOffFromServer, type DeviceBookInput } from "../src/keep-device.ts";
+import { deviceBook, rememberEbook, rememberRecording, turnedOffFromServer, type DeviceBookInput } from "../src/keep-device.ts";
 import { mergeKeep, type KeepEntry, type KeepWork, type NeededTrack, type ServerKeep } from "../src/keep.ts";
 import { KeepSaver, type SaverDeps } from "../src/keep-saver.ts";
 
@@ -120,6 +120,13 @@ test("rememberRecording adds a recording once and brings its narrator up to date
   assert.deepEqual(rememberRecording(one, { recordingId: "r1", narrator: "Annie" }), [{ recordingId: "r1", narrator: "Annie" }]);
 });
 
+test("rememberEbook adds an EPUB once", () => {
+  const one = rememberEbook(undefined, "e1");
+  assert.deepEqual(one, ["e1"]);
+  assert.equal(rememberEbook(one, "e1"), one);
+  assert.deepEqual(rememberEbook(one, "e2"), ["e1", "e2"]);
+});
+
 test("turnedOffFromServer: on before the merge and off after it; an off made here or a record never on is not", () => {
   const before = [
     { workId: "a", on: true },
@@ -136,9 +143,12 @@ test("turnedOffFromServer: on before the merge and off after it; an off made her
 });
 
 test("the merge keeps the recordings this device saved for the book when the server's record wins", () => {
-  const local: KeepEntry[] = [{ workId: "w1", on: true, at: 5, completeAt: null, pending: false, recordings: [{ recordingId: "r1", narrator: "Ann" }] }];
+  const local: KeepEntry[] = [{ workId: "w1", on: true, at: 5, completeAt: null, pending: false, recordings: [{ recordingId: "r1", narrator: "Ann" }], ebookIds: ["e1"] }];
   const merged = mergeKeep(local, [{ workId: "w1", on: true, at: 9, completeAt: 10 }]);
   assert.deepEqual(merged.records[0].recordings, [{ recordingId: "r1", narrator: "Ann" }]);
+  assert.deepEqual(merged.records[0].ebookIds, ["e1"]);
+  // Turned off from the server, the record still names what to remove.
+  assert.deepEqual(mergeKeep(local, [{ workId: "w1", on: false, at: 9, completeAt: null }]).records[0].ebookIds, ["e1"]);
 });
 
 // The saver against fakes: a merge that turns a kept book off removes its files; a change of recording saves the
@@ -240,5 +250,5 @@ test("a change of recording saves the new one and leaves the earlier one's files
   assert.deepEqual(s.saved, ["r2-0"]);
   assert.deepEqual(s.removed, []);
   assert.ok(s.downloads.some((d) => d.recordingId === "r1"), "the earlier copy stays");
-  assert.deepEqual(s.remembered, [["w1", [{ recordingId: "r1", narrator: "Ann" }, { recordingId: "r2", narrator: "Bo" }]]]);
+  assert.deepEqual(s.remembered, [["w1", { recordings: [{ recordingId: "r1", narrator: "Ann" }, { recordingId: "r2", narrator: "Bo" }], ebookIds: [] }]]);
 });

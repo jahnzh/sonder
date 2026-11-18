@@ -37,6 +37,8 @@ export type KeepEntry = {
    * here after its recording left the library. Kept on this device only; the server's record has no such field.
    */
   recordings?: { recordingId: string; narrator: string }[];
+  /** The EPUBs saved for this book on this device (#553): Off finds them after the book left the stored library. */
+  ebookIds?: string[];
 };
 
 /** A record of `GET /api/device/keep` (`server/device-keep.ts`). */
@@ -74,7 +76,7 @@ export function mergeKeep(local: readonly KeepEntry[], server: readonly ServerKe
     // A pause is this device's (#552): it stays while the book stays kept, whichever record wins.
     // The recordings saved here are this device's too (#553): an earlier copy keeps its name.
     const paused = (record: KeepEntry): KeepEntry => {
-      const named = entry.recordings ? { ...record, recordings: entry.recordings } : record;
+      const named = { ...record, ...(entry.recordings ? { recordings: entry.recordings } : {}), ...(entry.ebookIds ? { ebookIds: entry.ebookIds } : {}) };
       return named.on && entry.pausedAt ? { ...named, pausedAt: entry.pausedAt } : named;
     };
     if (theirs.at > entry.at || theirs.on !== entry.on) {

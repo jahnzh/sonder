@@ -131,7 +131,8 @@ export function startKeepSaver(account: number): KeepSaver {
             const pausedAt = record.on ? stored.get(record.workId)?.pausedAt ?? null : null;
             // The recordings saved here (#553) belong to `remember`, likewise.
             const recordings = record.recordings ?? stored.get(record.workId)?.recordings;
-            return { ...record, pausedAt, ...(recordings ? { recordings } : {}) };
+            const ebookIds = record.ebookIds ?? stored.get(record.workId)?.ebookIds;
+            return { ...record, pausedAt, ...(recordings ? { recordings } : {}), ...(ebookIds ? { ebookIds } : {}) };
           }),
         );
       });
@@ -159,10 +160,10 @@ export function startKeepSaver(account: number): KeepSaver {
       await writeDeviceSaveRecord(recordingId, workId, change);
     },
     removeWork: (workId) => removeBookFiles(workId),
-    remember: async (workId, recordings) => {
+    remember: async (workId, saved) => {
       await db.transaction("rw", db.keep, async () => {
         const entry = await db.keep.get(workId);
-        if (entry) await db.keep.put({ ...entry, recordings });
+        if (entry) await db.keep.put({ ...entry, recordings: saved.recordings, ebookIds: saved.ebookIds });
       });
     },
     online: () => navigator.onLine,
@@ -456,7 +457,8 @@ export async function readDeviceBook(workId: string, work?: Pick<LibraryWork, "r
   const entry = await localDB.keep.get(workId).catch(() => undefined);
   const recordings = (stored?.recordings ?? []).map((r) => ({ recordingId: r.recordingId, narrator: r.narrator }));
   const chosen = stored ? keepRecording(stored as never)?.recordingId ?? null : null;
-  const ebookIds = (stored?.ebooks ?? []).map((e) => e.id);
+  // The work's EPUBs, and those the Keep record remembers (the stored work may have left with the library entry).
+  const ebookIds = [...new Set([...(stored?.ebooks ?? []).map((e) => e.id), ...(entry?.ebookIds ?? [])])];
   const downloads = (await localDB.downloads.toArray()).map((row) => ({ trackId: row.trackId, recordingId: row.recordingId, size: row.size }));
   const parts = (await localDB.downloadParts.toArray()).map((row) => ({ trackId: row.trackId, recordingId: row.recordingId, loaded: row.loaded }));
   const records = await listDeviceSaveRecords().catch(() => [] as DeviceSaveRecord[]);
