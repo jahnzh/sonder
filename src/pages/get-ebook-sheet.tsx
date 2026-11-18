@@ -2,7 +2,7 @@
 // `#book/<workId>/get/ebook`, the administrator's. Close, the caption "Get ebook", the book (cover, title as the one
 // heading, author), the search field "Search for an edition" (the title and author, searched on open and on Enter or
 // the search key), Editions with one choice row per file Library Genesis lists, the Group of the other ways in
-// (Import a file from this device, off until ticket 05; Search on Library Genesis, the mirror's own search in a new
+// (Import a file from this device, get-import-row.tsx; Search on Library Genesis, the mirror's own search in a new
 // tab) and Get this edition with its line. The rows are get-ebook-rows.ts, the search's states get-ebook-state.ts,
 // the parts both Get sheets share get-sheet-parts.tsx. The words, the rows and the choice are kept in the history
 // entry; a reload searches again.
@@ -33,6 +33,7 @@ import {
   type EbookSearch,
 } from "./get-ebook-state";
 import { GetSheetBook, GetSheetSearch, LeavingMark, RowChevron, SourceFailureLine } from "./get-sheet-parts";
+import { GetImportRow } from "./get-import-row";
 import "./get-ebook-sheet.css";
 
 /** Today's Library Genesis mirror when the settings name none (as Discover's ebook search). */
@@ -241,15 +242,7 @@ export function GetEbookSheet({ workId, online, libgenUrl, onChanged }: Props) {
 
       <div className="part-group-block">
         <ul className="part-group" role="list" aria-label="Other ways to get it">
-          <li className="part-row-item">
-            {/* Off until ticket 05 (an ebook imported into the book). */}
-            <button type="button" className="part-row get-sheet-off" data-opens="" aria-disabled="true">
-              <span className="part-row-label type-body">Import a file from this device</span>
-              <span className="part-row-value type-label">
-                <RowChevron />
-              </span>
-            </button>
-          </li>
+          <GetImportRow kind="ebook" workId={workId} title={work?.title ?? ""} />
           <li className="part-row-item">
             <a className="part-row get-sheet-out" href={libgenSearchUrl(libgenUrl, words)} target="_blank" rel="noopener noreferrer">
               <span className="part-row-label type-body">Search on Library Genesis</span>

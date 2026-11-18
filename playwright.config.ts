@@ -127,6 +127,8 @@ const desktopProjects = [
               /(^|\/)get-ebook\.spec\.ts$/,
               // A kept book that is not complete says why and offers Retry (#552).
               /(^|\/)keep-not-complete\.spec\.ts$/,
+              // Import from this device into the book, from both Get sheets (#605).
+              /(^|\/)get-import\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },

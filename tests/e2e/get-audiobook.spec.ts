@@ -145,9 +145,10 @@ test("from the Book page: the search with title and author, rows from both sourc
   // Nothing chosen at first: Get is off and has no line.
   for (const row of await rows(page).all()) await expect(row).toHaveAttribute("aria-checked", "false");
   await expect(getButton(page)).toBeDisabled();
-  // The other ways are drawn, named and off until tickets 05 and 06.
-  for (const name of ["Paste a magnet link", "Import files from this device"])
+  // The other ways are drawn and named; the magnet link is off until ticket 06, the import is on (#605).
+  for (const name of ["Paste a magnet link"])
     await expect(sheet(page).getByRole("button", { name, exact: true })).toHaveAttribute("aria-disabled", "true");
+  await expect(sheet(page).getByRole("button", { name: "Import files from this device", exact: true })).not.toHaveAttribute("aria-disabled", "true");
   // A tap only chooses.
   await indexed.click();
   await expect(indexed).toHaveAttribute("aria-checked", "true");
