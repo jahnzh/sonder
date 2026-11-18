@@ -1,0 +1,91 @@
+/* Remove series (src/pages/series-remove-dialog.tsx; board SeriesRemove.dc.html). On a phone the dialog stands 16
+   from the sides and the foot of the screen; on a desktop it is centred and 480 wide. Tokens from
+   src/parts/tokens.css, colours from the existing variables. */
+.series-remove-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: color-mix(in srgb, var(--background) 72%, transparent);
+}
+.series-remove {
+  position: fixed;
+  z-index: 91;
+  left: var(--space-16);
+  right: var(--space-16);
+  bottom: calc(var(--space-16) + env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
+  max-height: calc(100dvh - 2 * var(--space-16));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-16);
+  border-radius: var(--corner-group);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+.series-remove:focus {
+  outline: none;
+}
+@media (min-width: 760px) {
+  .series-remove {
+    left: 50%;
+    right: auto;
+    top: 50%;
+    bottom: auto;
+    width: 480px;
+    transform: translate(-50%, -50%);
+  }
+}
+.series-remove-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.series-remove-title {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.series-remove-note {
+  margin: 0;
+  font-weight: 400;
+  color: var(--muted);
+}
+/* The switch's row on the raised fill, as the board draws it on the dialog's surface. */
+.series-remove-switch .part-group {
+  background: var(--raised);
+}
+.series-remove-books {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.series-remove-caption {
+  margin: 0;
+  padding: 0 var(--space-16);
+  color: var(--muted);
+}
+/* The books' card on the page's fill, under the dialog's surface. */
+.series-remove-books .part-choice-group {
+  background: var(--background);
+}
+.series-remove-error {
+  margin: 0;
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+.series-remove-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.series-remove-actions > .part-button {
+  width: 100%;
+}
+/* The destructive button: the raised fill and the destructive colour. */
+.series-remove-confirm.part-button[data-kind="secondary"] {
+  color: var(--danger);
+  font-weight: 600;
+}

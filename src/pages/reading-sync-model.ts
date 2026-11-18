@@ -169,7 +169,7 @@ const STEP_ORDER = Object.keys(SYNC_STEP_LINES) as SyncStep[];
  * The seven steps with the running one. Copying audio comes before a worker is leased, so while a processing run
  * waits for a worker the copying step is done.
  */
-export function stepsOf(point: NonNullable<RunPoint>, status: string): Step[] {
+export function stepsOf(point: NonNullable<RunPoint>, status: string, counts: BookJobCounts = {}): Step[] {
   const at = STEP_ORDER.indexOf(point.step);
   return STEP_ORDER.map((step, index) => {
     const state: Step["state"] =
@@ -179,8 +179,21 @@ export function stepsOf(point: NonNullable<RunPoint>, status: string): Step[] {
       if (point.value) shown.value = point.value;
       if (point.progress != null) shown.progress = point.progress;
     }
+    // A finished step that counts keeps its count, as the boards draw it ("Decoding audio · 43 of 43 files").
+    if (state === "done") {
+      const value = doneCount(step, counts);
+      if (value) shown.value = value;
+    }
     return shown;
   });
+}
+
+/** The count a finished step shows: its own files or parts, when the worker reported them. */
+function doneCount(step: SyncStep, counts: BookJobCounts): string | undefined {
+  if (step === "decoding" && counts.tracksDecoded != null) return of(counts.tracksDecoded, counts.tracksTotal, "file");
+  if (step === "encoding" && counts.tracksEncoded != null) return of(counts.tracksEncoded, counts.tracksTotal, "file");
+  if (step === "aligning" && counts.groupsDone != null) return of(counts.groupsDone, counts.groupsTotal, "part");
+  return undefined;
 }
 
 /** The step a stopped run stopped in, from the worker's last state; null when it never reached a worker step. */
@@ -224,7 +237,8 @@ function runningBlock(caption: string, run: ListedJob, admin: boolean): StatusBl
   }
   const point = runPoint(run);
   if (!point) return { caption, tip: "preparing", value, rows: [{ name: `Preparing${DOT}${mappedShare(run.progress)}`, progress: Math.min(1, Math.max(0, run.progress || 0)) }], steps: null };
-  return { caption, tip: "preparing", value, rows: [], steps: stepsOf(point, run.status) };
+  const worker = run.bookJob && run.bookJob.id === bookWorkerJobId(run) ? run.bookJob : undefined;
+  return { caption, tip: "preparing", value, rows: [], steps: stepsOf(point, run.status, worker?.counts ?? {}) };
 }
 
 const passagesOf = (job: Pick<ListedJob, "unsyncedPassages">) =>
@@ -288,8 +302,16 @@ export function needsPoolCount(job: ListedJob | null | undefined): boolean {
   return (job.status === "ready" || job.status === "partial") && job.rebuild?.status === "error" && job.rebuild.outcome !== "rejected";
 }
 
-/** What the page shows for the pair. */
+/**
+ * What the page shows for the pair. Someone who is not the administrator sees the pair, the status and the passages:
+ * no buttons, no worker names and no Details (spec #537 "The page").
+ */
 export function readingSyncPage(input: SyncPageFacts): SyncPageModel {
+  const model = pageModel(input);
+  return input.admin || !model.details ? model : { ...model, details: false };
+}
+
+function pageModel(input: SyncPageFacts): SyncPageModel {
   const { admin, job, now } = input;
   const none: Omit<SyncPageModel, "state" | "blocks"> = { buttons: [], note: null, prepareAgainRow: null, workers: null, details: false, passages: null };
   const only = (buttons: SyncButton[]) => (admin ? buttons : []);
