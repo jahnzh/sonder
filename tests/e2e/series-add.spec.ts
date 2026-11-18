@@ -246,6 +246,13 @@ test("the preferred language picks the book at each number; a number the user un
       works: [work(1, "English first", 1, "en", true), work(2, "French first", 1, "fr", false), work(3, "English second", 2, "en", true), work(4, "French second", 2, "fr", false)],
     } }),
   );
+  // The page asks the saved series whether 701 is saved (#564): the faked series is.
+  await page.route(/\/api\/series$/, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const list = (await (await route.fetch()).json()) as { id: number }[];
+    const saved = list.some((item) => item.id === 701) ? list : [...list, { id: 701, name: "The Crossing", author: "Ada North", count: 4, finished: 0, total: 2, covers: [] }];
+    await route.fulfill({ json: saved }).catch(() => {});
+  });
   await page.goto("/#series/701/add");
   await expect.poll(() => offered(page)).toEqual(["English first Book 1", "English second Book 2"]);
   await expect(choice(page, "English first", "Book 1")).toBeChecked();

@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { openSeriesResult, searchSeries, seriesResult } from "./discover-search";
 import { openSavedSeries, savedSeriesList, savedSeriesRow, showSavedSeries } from "./library-series";
+import { unsaveSeries } from "./series-save";
 
 test("discover and save chosen works from the intended series, then reopen it", async ({ page }) => {
   // The test saves The Crossing (#701) and adds works of it to the library. At the end it puts the series and the
@@ -19,6 +20,8 @@ test("discover and save chosen works from the intended series, then reopen it", 
   );
   // Another spec on the server may have saved it already (series-acquisition does).
   const addedBefore = savedBefore ? (await crossing()).works.filter((work) => work.added).map((work) => work.id) : [];
+  // The series is saved through its page (#564): not saved when the test starts; it is saved back at the end.
+  await unsaveSeries(page, 701);
   await page.request.put("/api/hardcover/token", { data: { token: "" } });
   await page.goto("/#discover");
   await page.getByRole("radio", { name: "Series", exact: true }).click();
@@ -34,24 +37,52 @@ test("discover and save chosen works from the intended series, then reopen it", 
   await searchSeries(page, "Crossing");
   await expect(seriesResult(page, "The Crossing", "Ada North")).toHaveAccessibleName(/ · Hardcover #701$/);
   await expect(seriesResult(page, "The Crossing", "Bea South")).toHaveAccessibleName(/ · Hardcover #702$/);
+  // The series opens as a page (#564): not saved, the same page with Save series; no dialog.
   await seriesResult(page, "The Crossing", "Ada North").click();
-  await expect(
-    page
-      .getByRole("dialog")
-      .locator(".series-work")
-      .filter({ hasText: "Alice’s Adventures in Wonderland" })
-      .getByText("Already in your library", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByRole("checkbox", { name: /Alice’s Adventures in Wonderland/ })).toBeChecked();
-  await expect(page.getByRole("checkbox", { name: /Crossing Two/ })).toBeChecked();
-  await expect(page.getByRole("checkbox", { name: /Crossing Companion/ })).not.toBeChecked();
-  await expect(page.getByRole("checkbox", { name: /Future Crossing/ })).not.toBeChecked();
-  await expect(page.getByText("Unreleased", { exact: true })).toBeVisible();
-  await page.getByRole("checkbox", { name: /Crossing Two/ }).uncheck();
-  await page.getByRole("checkbox", { name: /Crossing Companion/ }).check();
-  await page.getByRole("button", { name: "Add selected works" }).click();
-  await expect(page.getByRole("dialog").getByText("Series saved.")).toBeVisible();
-  await page.getByRole("button", { name: "Close series" }).click();
+  await expect(page).toHaveURL(/#series\/701$/);
+  const notSaved = page.getByRole("region", { name: "Series", exact: true });
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(["The Crossing"]);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(notSaved.getByRole("button", { name: "Back to Discover", exact: true })).toBeVisible();
+  // Three numbers: Alice, Crossing Two and Future Crossing; the related Crossing Companion is not counted.
+  await expect(notSaved.getByText("Ada North · 3 books", { exact: true })).toBeVisible();
+  const notSavedRow = (title: string) => notSaved.getByRole("listitem").filter({ hasText: title });
+  // The book already in the library stands on its line as a book of the library: it opens its Book page.
+  await expect(notSavedRow("Alice’s Adventures in Wonderland").getByRole("button", { name: /^1 Alice’s Adventures in Wonderland / })).toBeVisible();
+  await expect(notSavedRow("Crossing Two")).toHaveAccessibleName(/Crossing Two Not in your library$/);
+  await expect(notSavedRow("Future Crossing")).toHaveAccessibleName(/Future Crossing Not released yet$/);
+  // Rows of books not in the library have no Add; there is no Remove series.
+  await expect(notSaved.getByRole("button", { name: /^Add / })).toHaveCount(0);
+  await expect(notSaved.getByRole("button", { name: "Remove series", exact: true })).toHaveCount(0);
+
+  // Save series opens the sheet captioned Save series with the defaults chosen.
+  await notSaved.getByRole("button", { name: "Save series", exact: true }).click();
+  await expect(page).toHaveURL(/#series\/701\/add$/);
+  const saveSheet = page.getByRole("dialog", { name: "Save series" });
+  const choice = (name: string) => saveSheet.getByRole("checkbox", { name, exact: true });
+  await expect(choice("Crossing Two Book 2")).toBeChecked();
+  await expect(choice("Crossing Companion Related work")).not.toBeChecked();
+  await expect(choice("Future Crossing Book 3")).not.toBeChecked();
+  // The book in the library is not offered again.
+  await expect(saveSheet.getByRole("checkbox", { name: /Alice’s Adventures in Wonderland/ })).toHaveCount(0);
+  await expect(saveSheet.getByRole("button", { name: "Save series and add 1 book", exact: true })).toBeVisible();
+  await choice("Crossing Two Book 2").click();
+  await expect(choice("Crossing Two Book 2")).not.toBeChecked();
+  await expect(saveSheet.getByRole("button", { name: "Save series", exact: true })).toBeVisible();
+  await choice("Crossing Companion Related work").click();
+  const posted = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/series");
+  await saveSheet.getByRole("button", { name: "Save series and add 1 book", exact: true }).click();
+  // The chosen book, plus the book already in the library (linked, not added again).
+  const body = (await posted).postDataJSON() as { id: number; bookIds: number[] };
+  expect(body.id).toBe(701);
+  expect([...body.bookIds].sort()).toEqual([501, 504]);
+  // Then the page shows the saved series.
+  await expect(saveSheet).toHaveCount(0);
+  await expect(page).toHaveURL(/#series\/701$/);
+  await expect(notSaved.getByText(/^Ada North · \d+ of \d+ finished$/)).toBeVisible();
+  await expect(notSaved.getByRole("button", { name: "Save series", exact: true })).toHaveCount(0);
+  await expect(notSaved.getByRole("button", { name: "Remove series", exact: true })).toBeVisible();
+  await expect(notSaved.getByRole("list", { name: "Related works · 1" }).getByRole("button", { name: /^Crossing Companion / })).toBeVisible();
   await page.goto("/#library");
   // The saved series is listed under the Library's Series chip (#567), not in a section above the shelf.
   await showSavedSeries(page);
@@ -126,22 +157,34 @@ test("preferred series language changes defaults and preserves manual choices", 
   });
   await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
   await openSeriesResult(page, "Crossing", "The Crossing", "Ada North");
-  const englishFirst = page.getByRole("checkbox", { name: /English first/ });
-  const frenchFirst = page.getByRole("checkbox", { name: /French first/ });
-  const englishSecond = page.getByRole("checkbox", { name: /English second/ });
-  const frenchSecond = page.getByRole("checkbox", { name: /French second/ });
-  await expect(englishFirst).toBeChecked();
-  await expect(frenchFirst).not.toBeChecked();
-  await englishFirst.uncheck();
-  await frenchFirst.check();
-  await page.getByLabel("Preferred language").selectOption("fr");
-  await expect(englishFirst).not.toBeChecked();
-  await expect(frenchFirst).toBeChecked();
-  await expect(englishSecond).not.toBeChecked();
-  await expect(frenchSecond).toBeChecked();
-  await page.getByLabel("Preferred language").selectOption("en");
-  await expect(englishFirst).not.toBeChecked();
-  await expect(frenchFirst).toBeChecked();
-  await expect(englishSecond).toBeChecked();
-  await expect(frenchSecond).not.toBeChecked();
+  await expect(page).toHaveURL(/#series\/701$/);
+  // The page stands the English book at each number.
+  const shown = page.getByRole("region", { name: "Series", exact: true });
+  await expect(shown.getByRole("listitem").filter({ hasText: "English first" })).toBeVisible();
+  await expect(shown.getByRole("listitem").filter({ hasText: "French first" })).toHaveCount(0);
+  await shown.getByRole("button", { name: "Save series", exact: true }).click();
+  // The sheet lists the book at each number in the preferred language; a number the user unticked stays unticked
+  // when the language changes and changes back.
+  const sheet = page.getByRole("dialog", { name: "Save series" });
+  const choice = (name: string) => sheet.getByRole("checkbox", { name, exact: true });
+  await expect(choice("English first Book 1")).toBeChecked();
+  await expect(choice("English second Book 2")).toBeChecked();
+  await expect(sheet.getByRole("checkbox", { name: /French/ })).toHaveCount(0);
+  await choice("English first Book 1").click();
+  await expect(choice("English first Book 1")).not.toBeChecked();
+  await sheet.getByLabel("Preferred language").selectOption("fr");
+  await expect(choice("French first Book 1")).not.toBeChecked();
+  await expect(choice("French second Book 2")).toBeChecked();
+  await expect(sheet.getByRole("checkbox", { name: /English/ })).toHaveCount(0);
+  await choice("French first Book 1").click();
+  await expect(choice("French first Book 1")).toBeChecked();
+  await sheet.getByLabel("Preferred language").selectOption("en");
+  await expect(choice("English first Book 1")).toBeChecked();
+  await expect(choice("English second Book 2")).toBeChecked();
+  await expect(sheet.getByRole("button", { name: "Save series and add 2 books", exact: true })).toBeVisible();
+  // The language holds for the page under the sheet too.
+  await sheet.getByLabel("Preferred language").selectOption("fr");
+  await sheet.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(sheet).toHaveCount(0);
+  await expect(shown.getByRole("listitem").filter({ hasText: "French first" })).toBeVisible();
 });

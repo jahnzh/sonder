@@ -6,6 +6,7 @@
 // (`lookOnlyBook`, ids from 800000), in series 701 "The Crossing" at 9.
 import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync, readFileSync } from "node:fs";
+import { test as ownServer } from "./own-server";
 
 test.use({ serviceWorkers: "block" });
 
@@ -128,14 +129,24 @@ test("Get on such a page adds the book first, then opens Get for the work", asyn
   expect(await libraryIds(page)).toContain(book.workId);
 });
 
-test("the series line opens the series' page", async ({ page }) => {
+// Its own server (own-server.ts): series 701 is not saved there, and this test's preview of it does not count toward
+// the fixture's Crossing Three on the suite's server, which the series specs after this one read. A series that is not
+// saved opens through `GET /api/hardcover/series/<id>` since the series dialog went (#569); a saved one through
+// `GET /api/series/<id>` (series-page.spec.ts, "a book's series line opens the saved series").
+ownServer("the series line opens the series' page, not saved", async ({ page }) => {
   await connect(page);
   const book = lookBook();
+  expect(((await (await page.request.get("/api/series")).json()) as { id: number }[]).map((series) => series.id)).not.toContain(701);
   await page.goto(`/#book/${book.workId}`);
-  const series = page.waitForRequest((request) => new URL(request.url()).pathname === "/api/series/701");
+  const series = page.waitForRequest((request) => new URL(request.url()).pathname === "/api/hardcover/series/701");
   const address = page.waitForURL(/#series\/701$/);
   await region(page).getByRole("button", { name: "The Crossing · Book 9", exact: true }).click();
   await address;
   await series;
+  const page701 = page.getByRole("region", { name: "Series", exact: true });
+  await expect(page701.getByRole("heading", { name: "The Crossing", level: 1 })).toBeVisible();
+  await expect(page701.getByRole("button", { name: "Save series", exact: true })).toBeVisible();
+  // Opening the series wrote nothing: the book is not on the server and the series is still not saved.
   expect(await onServer(page, book.title)).toBe(false);
+  expect(((await (await page.request.get("/api/series")).json()) as { id: number }[]).map((series) => series.id)).not.toContain(701);
 });

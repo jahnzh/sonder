@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
-import { openSeriesResult } from "./discover-search";
 import { openSavedSeries } from "./library-series";
+import { saveSeriesOnPage, unsaveSeries, viewSeriesFromDiscover } from "./series-save";
 
 /**
  * A saved series opens its Series page (#562), and its Add opens the Add sheet (#563): the series dialog's saved mode,
@@ -17,10 +17,10 @@ test("a saved series keeps the provenance of a synced book and counts its comple
   );
   if (seededAlice?.id) await page.request.delete(`/api/library/${seededAlice.id}`);
   await page.request.post("/api/hardcover/books", { data: { id: 501 } });
-  await openSeriesResult(page, "Crossing", "The Crossing", "Ada North");
-  await page.getByRole("button", { name: "Add selected works" }).click();
-  await expect(page.getByRole("dialog").getByText("Series saved.")).toBeVisible();
-  await page.getByRole("button", { name: "Close series" }).click();
+  // Saved through its page and Save series with the defaults (#564).
+  await unsaveSeries(page, 701);
+  await viewSeriesFromDiscover(page, "Crossing", "The Crossing", "Ada North");
+  await saveSeriesOnPage(page);
   const books = await (await page.request.get("/api/books")).json();
   const alice = books.find((book: { title: string; inLibrary: boolean }) =>
     book.title === "Alice’s Adventures in Wonderland" && book.inLibrary);

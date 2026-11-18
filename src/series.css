@@ -1,7 +1,0 @@
-.series-dialog { max-height: 90dvh; overflow-y: auto; }
-.series-works { list-style: none; padding: 0; margin: 0 0 1.25rem; }
-.series-work { padding: .75rem 0; border-bottom: 1px solid var(--border, #ddd); }
-.series-work-new { background: color-mix(in srgb, var(--accent, #2563eb) 8%, transparent); margin-inline: -.5rem; padding-inline: .5rem; border-radius: .35rem; }
-.series-work label { display: flex; align-items: flex-start; gap: .6rem; cursor: pointer; }
-.series-work input { margin-top: .3rem; }
-.series-work-meta { display: flex; flex-wrap: wrap; gap: .35rem 1rem; margin: .35rem 0 0 1.5rem; font-size: .85rem; opacity: .8; }
