@@ -38,7 +38,6 @@ body,
 .mobile-nav,
 .player-dock,
 .dialog-content,
-.option-menu,
 .book-menu,
 .toast,
 .topbar {
@@ -86,7 +85,6 @@ textarea {
 }
 .settings-form label,
 .settings-section h2,
-.chapter-row,
 .book-title,
 .sidebar-link {
   color: var(--text);

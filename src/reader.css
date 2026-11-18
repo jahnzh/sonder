@@ -580,17 +580,6 @@
   align-items: center;
   margin: 2px 10px 12px 0;
 }
-.reader-player-extras .player-text-button {
-  min-width: 44px;
-  min-height: 44px;
-  font-weight: 700;
-}
-.reader-player-extras .option-menu {
-  left: auto;
-  right: 0;
-  transform: none;
-  bottom: 52px;
-}
 .reader-player .reader-back-narration {
   flex: 0 0 auto;
 }
@@ -656,7 +645,6 @@
 .reader-edge-previous { left: 24px; }
 .reader-edge-next { right: 24px; }
 .reader-legacy-controls { display: none; }
-.playback-options-panel .reader-legacy-controls { display: contents; }
 @media (min-width: 900px) {
   .reader-room {
     --reader-bar: 0px;

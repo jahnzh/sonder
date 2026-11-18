@@ -127,88 +127,11 @@
 .dock-actions {
   gap: 9px;
 }
-.reader-shortcut {
-  position: relative;
-}
-.dock-reader-shortcut > button {
-  width: 44px;
-  height: 44px;
-  color: var(--accent);
-}
-.player-quick-links {
-  display: flex;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-.player-quick-links .button {
-  min-height: 44px;
-  font-size: 12px;
-  padding: 9px 11px;
-}
-.now-playing-dialog {
-  width: min(1240px, calc(100vw - 32px));
-  max-width: 1240px;
-}
-.now-playing-dialog[data-state="closed"],
-.now-playing-dialog[data-state="closed"] * {
-  visibility: hidden !important;
-  pointer-events: none !important;
-}
-.now-playing-layout {
-  grid-template-columns: minmax(0, 1.6fr) minmax(260px, 0.8fr);
-}
-.now-playing-main {
-  padding-inline: 8px;
-}
-
-.player-option .option-menu.speed-menu {
-  width: 200px;
-}
-.speed-control {
-  display: grid;
-  gap: 4px;
-  padding: 4px 4px 8px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 3px;
-}
-.speed-stepper {
-  display: grid;
-  grid-template-columns: 44px 1fr 44px;
-  align-items: center;
-}
-.option-menu .speed-stepper button {
-  justify-content: center;
-  min-height: 44px;
-  padding: 0;
-  color: var(--text);
-}
-.speed-stepper button:disabled {
-  opacity: 0.4;
-}
-.speed-stepper output {
-  text-align: center;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-.speed-control input[type="range"] {
-  width: 100%;
-  min-height: 32px;
-}
 .full-timestamps .timeline-speed-left {
   color: var(--muted);
   text-align: center;
 }
-@media (max-width: 1200px) and (min-width: 651px) {
-  .dock-actions .volume-control {
-    display: none;
-  }
-}
 @media (max-width: 850px) and (min-width: 651px) {
-  .dock-actions .player-option {
-    display: none;
-  }
   .player-dock {
     padding-inline: 16px;
     gap: 10px;
@@ -238,9 +161,6 @@
     max-width: 74px;
     flex-shrink: 0;
   }
-  .dock-reader-shortcut {
-    flex-shrink: 0;
-  }
   .compact-timeline .dock-progress {
     position: absolute;
     top: -22px;
@@ -258,57 +178,13 @@
     width: 12px;
     height: 12px;
   }
-  .now-playing-dialog {
-    width: calc(100vw - 24px);
-    max-width: 620px;
-  }
-  .now-playing-layout {
-    display: block;
-  }
-  .now-playing-main {
-    padding-inline: 0;
-  }
-  .player-quick-links {
-    justify-content: flex-start;
-  }
   .timeline-scope {
     font-size: 11px;
   }
 }
 
 /* Reader and transport share the normal Now Playing surface. */
-.now-playing-dialog.with-reader {
-  height: calc(100dvh - 24px);
-  max-height: none;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  padding: 18px;
-}
-.with-reader .dialog-heading { flex-shrink: 0; margin-bottom: 10px; }
-.with-reader .now-playing-layout { flex: 1; min-height: 0; overflow: hidden; gap: 24px; }
-.with-reader .now-playing-main { display: flex; flex-direction: column; min-height: 0; text-align: left; padding: 0; }
-.with-reader .now-playing-main > p { flex-shrink: 0; margin: 3px 0 6px; }
-.with-reader .player-quick-links { flex-shrink: 0; justify-content: flex-start; margin-bottom: 8px; }
-.playback-reader.has-ebook { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.playback-reader:not(.has-ebook) { margin-block: 10px; }
-.playback-ebook-edition { display: flex; gap: 10px; align-items: center; flex-shrink: 0; font-size: 12px; }
-.playback-ebook-edition select { min-width: 0; flex: 1; min-height: 36px; width: 100%; }
-.now-playing-transport { flex-shrink: 0; }
-.with-reader .chapter-playing { margin-top: 6px; }
-.with-reader .playback-source { margin-block: 4px; justify-content: center; }
-.with-reader .timeline-scope { margin-top: 4px; }
-.with-reader .transport.large { margin-top: 4px; }
-.with-reader .transport.large .play-button { width: 48px; height: 48px; }
-.with-reader .full-options { margin-top: 6px; padding: 4px 0; }
-.player-extra-options { margin-top: 10px; }
-.player-extra-options > summary { cursor: pointer; padding: 8px; text-align: left; font-size: 13px; }
-.with-reader .player-extra-options { flex-shrink: 0; margin-top: 0; max-height: 160px; overflow: auto; }
-.with-reader .player-extra-options > summary { padding: 4px; }
-.with-reader .now-playing-chapters { overflow: auto; min-height: 0; }
-.with-reader .reader-viewport { min-height: 100px; }
-.with-reader .reader-toolbar { padding: 0; }
-.with-reader .reader-toolbar .icon-button { height: 40px; }
+
 .reader-display-options { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 0; flex-shrink: 0; font-size: 12px; }
 .reader-display-options label { display: flex; align-items: center; gap: 5px; }
 .reader-display-options select { min-height: 36px; padding: 5px; }
@@ -329,83 +205,17 @@
 }
 .inline-reader .reader-toolbar,
 .inline-reader .reader-listen-controls { border: 0; }
-@media (max-width: 850px) {
-  .with-reader .now-playing-layout { display: flex; }
-  .with-reader .now-playing-main { flex: 1; }
-  .with-reader .now-playing-chapters { display: none; }
-}
-@media (max-width: 650px) {
-  .now-playing-dialog.with-reader { width: 100vw; height: 100dvh; padding: 10px; border: 0; border-radius: 0; }
-  .with-reader .dialog-heading { margin-bottom: 4px; }
-  .with-reader .player-quick-links .button { min-height: 36px; padding-block: 5px; }
-  .with-reader .reader-toolbar { justify-content: flex-start; gap: 2px; }
-  .with-reader .reader-toolbar .icon-button { flex-basis: 38px; width: 38px; }
-  .with-reader .reader-display-options { gap: 4px; }
-  .with-reader .reader-follow-toggle { font-size: 10px; padding-inline: 5px; }
-  .with-reader .playback-ebook-edition { font-size: 11px; }
-}
-.mobile-reader-chapters, .close-reader-chapters { display: none; }
-@media (max-width: 850px) {
-  .with-reader .mobile-reader-chapters { display: inline-flex; }
-  .with-reader .now-playing-chapters.open { display: block; position: absolute; z-index: 8; inset: 60px 0 0 auto; width: min(400px,100%); padding: 18px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
-  .with-reader .close-reader-chapters { display: flex; margin-left: auto; }
-}
 @media (max-width: 360px) {
   .inline-reader .reader-follow-toggle > span { display: none; }
   .inline-reader .reader-display-options input { width: 46px; }
 }
-.with-reader .transport-info { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding-top: 5px; }
-.with-reader .transport-info .chapter-playing { min-width: 0; max-width: 58%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; margin: 0; }
-.with-reader .transport-info .playback-source { margin: 0; flex-shrink: 0; }
-@media (max-width: 650px) {
-  .with-reader .player-quick-links { gap: 5px; }
-  .with-reader .player-quick-links .button { font-size: 11px; padding-inline: 7px; gap: 5px; }
-}
 
 /* Reading is the default surface; secondary controls live in the options sheet. */
-.with-reader .now-playing-layout { display: flex; flex-direction: column; gap: 0; }
-.with-reader .now-playing-main { flex: 1; }
-.with-reader > .dialog-heading { min-height: 44px; margin: 0 0 4px; align-items: center; gap: 4px; }
-.with-reader > .dialog-heading > div:not(.dialog-actions) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-.with-reader > .dialog-heading > button { width: 44px; height: 44px; margin: 0; }
+
 /* Book title, options trigger and close button share the heading row so they stay aligned. */
-.with-reader .dialog-actions { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; }
-.dialog-actions .now-playing-heading-title { flex: 1; min-width: 0; margin: 0; font-size: 16px; line-height: 22px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.playback-menu-trigger { position: relative; z-index: 11; flex-shrink: 0; width: 44px; height: 44px; }
-.playback-options-panel { position: absolute; z-index: 10; top: 60px; right: 14px; bottom: 128px; width: min(480px,calc(100% - 28px)); overflow-y: auto; padding: 16px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 12px 40px #0006; overscroll-behavior: contain; }
-.playback-options-panel[hidden] { display: none !important; }
-.playback-options-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.playback-options-heading h3 { font-size: 16px; }
-.playback-options-panel > * { flex-shrink: 0; }
-.playback-options-panel .player-quick-links { justify-content: flex-start; }
-.playback-options-panel .now-playing-author { font-size: 13px; margin: 8px 0; }
-.playback-options-panel .playback-ebook-edition { display: grid; margin: 14px 0; }
-.playback-options-panel .reader-display-options { margin: 10px 0; }
-.playback-options-panel .reader-toolbar { justify-content: flex-start; }
-.playback-options-panel .now-playing-chapters { display: block !important; position: static !important; width: auto !important; margin-top: 16px; border: 0 !important; padding: 0 !important; }
-.playback-options-panel .close-reader-chapters { display: none !important; }
-.playback-options-panel .chapter-list { max-height: none; }
-.playback-options-panel .full-options { display: flex; justify-content: space-between; }
-.playback-options-panel .option-menu { position: static; transform: none; margin: 8px 0; }
-.playback-options-panel .player-extra-options { max-height: none; }
-.playback-options-panel .mobile-reader-chapters { display: inline-flex; }
-.with-reader .now-playing-transport .timeline-scope { display: none; }
-.with-reader .now-playing-transport { padding-top: 8px; }
-.with-reader .now-playing-transport .transport.large { margin-top: 3px; }
-.player-transport-row { position: relative; padding-inline: 56px; }
-.player-transport-timer { position: absolute; z-index: 5; top: 0; bottom: 0; display: flex; align-items: center; }
-.player-transport-timer { right: 0; }
-.player-transport-timer .player-text-button { min-width: 44px; min-height: 44px; }
-.player-transport-timer .option-menu { left: auto; right: 0; transform: none; bottom: 48px; }
-.with-reader .reader-viewport { min-height: 0; }
-.with-reader .reader-panel { top: 0; }
-@media (max-width: 650px) {
-  .playback-options-panel { left: 8px; right: 8px; width: auto; top: 58px; bottom: 120px; padding: 12px; }
-}
-.playback-options-backdrop { position: absolute; inset: 60px 0 120px; z-index: 9; background: transparent; border: 0; cursor: default; }
+
 /* Center the 30-second labels on the arrow icons at every viewport size. */
-.player-dock .seek-button,
-.now-playing-dialog .transport.large > .seek-button {
+.player-dock .seek-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -416,9 +226,7 @@
   flex-shrink: 0;
 }
 .player-dock .seek-button > svg { width: 23px; height: 23px; }
-.now-playing-dialog .transport.large .seek-button > svg { width: 30px; height: 30px; }
-.player-dock .seek-button > span,
-.now-playing-dialog .transport.large .seek-button > span {
+.player-dock .seek-button > span {
   font-size: clamp(8px, calc(8px * var(--ui-scale, 1)), 10px);
   line-height: 1;
   font-variant-numeric: tabular-nums;
@@ -432,33 +240,6 @@
 
 /* With an ebook, Now Playing is the full-screen reader: its heading and large
    transport give way to the reader's top bar and player bar (#22). */
-.now-playing-dialog.with-reader {
-  width: 100vw;
-  height: 100dvh;
-  max-width: none;
-  max-height: none;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-}
-.with-reader > .dialog-heading {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: 0;
-  overflow: hidden;
-  clip-path: inset(50%);
-}
-.with-reader .now-playing-transport {
-  display: none;
-}
-.with-reader .playback-options-panel {
-  top: 8px;
-  bottom: 76px;
-}
-.with-reader .playback-options-backdrop {
-  inset: 0;
-}
 
 .position-history-dialog {
   width: min(420px, calc(100vw - 32px));
@@ -483,8 +264,4 @@
   margin: 8px 0;
   color: var(--muted);
   font-size: 14px;
-}
-.option-menu button.speed-default {
-  border-top: 1px solid var(--border);
-  margin-top: 3px;
 }
