@@ -277,7 +277,7 @@ test("PUT of a work with no audio edition makes its placeholder and adds its row
   ]);
   assert.equal(first.statusCode, 200, first.body);
   assert.equal(second.statusCode, 200, second.body);
-  assert.deepEqual(first.json(), { ok: true });
+  assert.deepEqual(first.json(), { ok: true, workId: "w-race" });
   assert.deepEqual(editionsOf("w-race"), [
     { id: "placeholder-w-race", narrator: "Audio not added", cover: "/covers/meditations.svg", recordings: "recording-placeholder-w-race" },
   ]);

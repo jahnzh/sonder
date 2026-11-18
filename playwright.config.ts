@@ -151,6 +151,8 @@ const desktopProjects = [
               /(^|\/)keep-cleared\.spec\.ts$/,
               // A series that is not saved opens its page with Save series; the specs that saved through the dialog (#564).
               /(^|\/)series-(not-saved|discovery|acquisition)\.spec\.ts$/,
+              // A Hardcover book opens its Book page before it is a work on the server (#574).
+              /(^|\/)hardcover-book-look\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },
