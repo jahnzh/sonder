@@ -197,11 +197,17 @@ test.describe("routed library answers", () => {
     test.setTimeout(150_000);
     const book = await fixture(page, unique("Map later"));
     let notReady = true;
-    await routeWork(page, book.workId, (work) =>
-      notReady ? { ...work, readingSync: work.readingSync.map((j: any) => ({ ...j, status: "processing", intervalCount: 0, coverage: 0 })) } : work,
-    );
+    // Only this book's jobs count: another book left in the player by an earlier spec may warm its own map.
+    const jobs = new Set<string>();
+    await routeWork(page, book.workId, (work) => {
+      for (const job of work.readingSync ?? []) jobs.add(String(job.id));
+      return notReady ? { ...work, readingSync: work.readingSync.map((j: any) => ({ ...j, status: "processing", intervalCount: 0, coverage: 0 })) } : work;
+    });
     const maps: string[] = [];
-    page.on("request", (request) => /\/api\/alignments\/[^/]+\/map/.test(request.url()) && maps.push(request.url()));
+    page.on("request", (request) => {
+      const id = /\/api\/alignments\/([^/]+)\/map/.exec(request.url())?.[1];
+      if (id && jobs.has(decodeURIComponent(id))) maps.push(request.url());
+    });
     await page.goto(address(book.workId));
     await keep(page).click();
     await expect(line(page)).toHaveText(KEPT_BOTH, { timeout: 60_000 });
