@@ -144,7 +144,10 @@ test("the picker on a phone: Sort, View and Hardcover; Want to read narrows the 
   const shelfChip = clearChip(page, "Clear the Hardcover shelf: Want to read");
   await expect(shelfChip).toHaveText("Want to read");
   expect((await shelfChip.boundingBox())!.height).toBe(44);
-  expect((await shelfChip.boundingBox())!.y).toBeGreaterThan(heading.y + heading.height);
+  // Measured again: a Continue card above the shelf (a book in progress on this server) is not shown while a
+  // Hardcover filter is in use, so the heading has moved up.
+  const narrowedHeading = (await page.getByRole("heading", { level: 2, name: "All books", exact: true }).boundingBox())!;
+  expect((await shelfChip.boundingBox())!.y).toBeGreaterThan(narrowedHeading.y + narrowedHeading.height);
   if (test.info().project.name === "chromium") await page.screenshot({ path: `${OUT}/library-shelf-phone.png` });
 
   // The list too: shelf and list together, each with its chip.
@@ -235,12 +238,25 @@ test("on a desktop the picker opens under its button, and Escape closes it", asy
   await openLibrary(page);
   await sortAndView(page).click();
   await expect(sortPicker(page)).toBeVisible();
-  // By its class: the page under a dialog is hidden from its roles.
-  const button = (await page.locator(".library-control").boundingBox())!;
-  const panel = (await sortPicker(page).boundingBox())!;
-  expect(Math.round(panel.y)).toBe(Math.round(button.y + button.height + 8));
-  expect(Math.round(panel.x + panel.width)).toBe(Math.round(button.x + button.width));
-  expect(panel.width).toBe(360);
+  // By its class: the page under a dialog is hidden from its roles. Button and panel are read in one frame: the
+  // Library's works (and a Continue card above the shelf) may still arrive and move the button down.
+  const placed = () =>
+    page.evaluate(() => {
+      const button = document.querySelector(".library-control")!.getBoundingClientRect();
+      const panel = document.querySelector(".part-picker")!.getBoundingClientRect();
+      return { top: Math.round(panel.top - button.bottom), right: Math.round(panel.right - button.right), width: panel.width };
+    });
+  await expect.poll(placed).toEqual({ top: 8, right: 0, width: 360 });
+  // The page above the button grows while the picker is open: the picker stays under its button.
+  await page.evaluate(() => {
+    const spacer = document.createElement("div");
+    spacer.id = "picker-spec-spacer";
+    spacer.style.height = "120px";
+    document.querySelector(".library-shelf")!.before(spacer);
+  });
+  await expect.poll(placed).toEqual({ top: 8, right: 0, width: 360 });
+  await page.evaluate(() => document.getElementById("picker-spec-spacer")!.remove());
+  await expect.poll(placed).toEqual({ top: 8, right: 0, width: 360 });
   await expect(sortPicker(page).locator(".part-picker-caption")).toHaveText(["Sort", "View", "Hardcover"]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(1280);
   if (test.info().project.name === "chromium") await page.screenshot({ path: `${OUT}/library-picker-desktop.png` });

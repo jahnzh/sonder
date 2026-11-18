@@ -88,9 +88,13 @@ export function PickerDialog({ open, title, onClose, anchor, sub, children, clas
     // The window resized, or the page under it scrolled after it opened (the button moved): stand under it again.
     window.addEventListener("resize", placeIt);
     window.addEventListener("scroll", placeIt, true);
+    // The page above the button grew or shrank after it opened (a card that arrived late moved the button).
+    const grown = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => placeIt());
+    grown?.observe(document.body);
     return () => {
       window.removeEventListener("resize", placeIt);
       window.removeEventListener("scroll", placeIt, true);
+      grown?.disconnect();
     };
   });
   // Opening or leaving the second list moves the focus to its first control, so a keyboard follows the change.
