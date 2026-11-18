@@ -1,6 +1,6 @@
 // Favourites by work (#577, spec #572 "The Library": "Favourites by work"). Until this version the device kept the
 // favourites as audio edition ids (the `favorites` preference, one id per Library row of `GET /api/books`); the
-// Library by work keeps work ids under `workFavorites`. The device database's version 7 maps the one to the other
+// Library by work keeps work ids under `workFavorites`. The device database's version 8 maps the one to the other
 // once, through the device's `books` table (which holds placeholder editions too); the old preference stays as it
 // is, so an older tab keeps its own list until it reloads. Pure apart from the upgrade, which gets its tables.
 // A page module: the server imports none of it.
@@ -28,7 +28,7 @@ export function migrateFavorites(ids: readonly unknown[], books: readonly { id: 
 type Preferences = { get(key: string): Promise<{ key: string; value: unknown } | undefined>; put(row: { key: string; value: unknown }): Promise<unknown> };
 
 /**
- * The upgrade to version 7: writes `workFavorites` from `favorites`. A device that already has favourites by work
+ * The upgrade to version 8: writes `workFavorites` from `favorites`. A device that already has favourites by work
  * (the version ran before) keeps them. Nothing else is read or written: places, downloads and position history stay.
  */
 export async function upgradeFavoritesToWorks(preferences: Preferences, books: { toArray(): Promise<{ id: string; workId?: string | null }[]> }) {
