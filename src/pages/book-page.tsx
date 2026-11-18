@@ -322,6 +322,8 @@ export function BookPage(props: Props) {
       // A book with only an ebook saves under its EPUB's name (#551).
       for (const ebook of work.ebooks) keepSaver()?.pause(`ebook:${ebook.id}`, "off");
       for (const ebook of work.ebooks) if ((await ebookDeviceCopySize(ebook.id)) != null) await removeEbookFromDevice(ebook.id);
+      // The save record of a book with only an ebook goes with it (#552), so a failure does not outlive the switch.
+      for (const ebook of work.ebooks) await deleteDownloads(`ebook:${ebook.id}`);
       await removeWorkMaps(work);
       window.dispatchEvent(new Event("sonder:downloads-changed"));
       await props.onDevice();

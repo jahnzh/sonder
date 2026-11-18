@@ -242,26 +242,26 @@ test("the This device switch is the Keep record; its line says what is kept, sav
   const none = deviceHold(r, [], []);
   assert.equal(none.audio, "none");
   // Off: nothing here, nothing said.
-  assert.deepEqual(keepState({ keep: false, hold: none, saving: null, ebookSize: null, hasRecording: true }), { on: false, line: null, resumable: false });
+  assert.deepEqual(keepState({ keep: false, hold: none, saving: null, ebookSize: null, hasRecording: true }), { on: false, line: null, resumable: false, failed: false, reason: null });
   // Another recording's files do not count.
   assert.equal(deviceHold(r, [file("r2", 1)], []).audio, "none");
   const complete = deviceHold(r, [file("r1", 1), file("r1", 2), file("r1", 3)], []);
-  assert.deepEqual(keepState({ keep: true, hold: complete, saving: null, ebookSize: 1_000_000, hasRecording: true }), { on: true, line: "Audiobook and ebook · 4 MB", resumable: false });
+  assert.deepEqual(keepState({ keep: true, hold: complete, saving: null, ebookSize: 1_000_000, hasRecording: true }), { on: true, line: "Audiobook and ebook · 4 MB", resumable: false, failed: false, reason: null });
   assert.deepEqual(keepState({ keep: true, hold: complete, saving: null, ebookSize: null, hasRecording: true }).line, "Audiobook · 3 MB");
   // Files on the device do not turn the switch on: the record does.
-  assert.deepEqual(keepState({ keep: false, hold: complete, saving: null, ebookSize: null, hasRecording: true }), { on: false, line: "Audiobook · 3 MB", resumable: false });
+  assert.deepEqual(keepState({ keep: false, hold: complete, saving: null, ebookSize: null, hasRecording: true }), { on: false, line: "Audiobook · 3 MB", resumable: false, failed: false, reason: null });
   const partly = deviceHold(r, [file("r1", 1)], [part("r1", 2, 5)]);
-  assert.deepEqual(keepState({ keep: true, hold: partly, saving: null, ebookSize: null, hasRecording: true }), { on: true, line: "Not complete · 1 of 3 files", resumable: true });
+  assert.deepEqual(keepState({ keep: true, hold: partly, saving: null, ebookSize: null, hasRecording: true }), { on: true, line: "Not complete · 1 of 3 files", resumable: true, failed: false, reason: null });
   // Kept with nothing saved yet (offline, or before the first run): not complete.
-  assert.deepEqual(keepState({ keep: true, hold: none, saving: null, ebookSize: null, hasRecording: true }), { on: true, line: "Not complete · 0 of 3 files", resumable: true });
+  assert.deepEqual(keepState({ keep: true, hold: none, saving: null, ebookSize: null, hasRecording: true }), { on: true, line: "Not complete · 0 of 3 files", resumable: true, failed: false, reason: null });
   // Some saved bytes of one file make it partly here.
   assert.equal(deviceHold(r, [], [part("r1", 1, 4)]).audio, "partial");
   assert.equal(deviceHold(r, [], [part("r1", 1, 0)]).audio, "none");
   // A save that runs: "Saving · 3 of 12 files".
-  assert.deepEqual(keepState({ keep: true, hold: none, saving: { filesSaved: 3, filesTotal: 12 }, ebookSize: null, hasRecording: true }), { on: true, line: "Saving · 3 of 12 files", resumable: false });
+  assert.deepEqual(keepState({ keep: true, hold: none, saving: { filesSaved: 3, filesTotal: 12 }, ebookSize: null, hasRecording: true }), { on: true, line: "Saving · 3 of 12 files", resumable: false, failed: false, reason: null });
   // A book without a recording: "Nothing to save yet"; its kept EPUB is named.
-  assert.deepEqual(keepState({ keep: true, hold: deviceHold(null, [], []), saving: null, ebookSize: null, hasRecording: false }), { on: true, line: "Nothing to save yet", resumable: false });
-  assert.deepEqual(keepState({ keep: true, hold: deviceHold(null, [], []), saving: null, ebookSize: 600_000, hasRecording: false }), { on: true, line: "Ebook · 600 KB", resumable: false });
+  assert.deepEqual(keepState({ keep: true, hold: deviceHold(null, [], []), saving: null, ebookSize: null, hasRecording: false }), { on: true, line: "Nothing to save yet", resumable: false, failed: false, reason: null });
+  assert.deepEqual(keepState({ keep: true, hold: deviceHold(null, [], []), saving: null, ebookSize: 600_000, hasRecording: false }), { on: true, line: "Ebook · 600 KB", resumable: false, failed: false, reason: null });
   assert.equal(keepState({ keep: false, hold: deviceHold(null, [], []), saving: null, ebookSize: null, hasRecording: false }).on, false);
 });
 
@@ -279,7 +279,7 @@ test("the Keep row counts the tracks, the EPUB and the map, and names what is ke
   // Every track here, the EPUB here, the map missing: not complete, counting all five files.
   assert.deepEqual(
     keepState({ keep: true, hold: complete, saving: null, ebookSize: 600_000, hasRecording: true, needs: needs(4, 5, { complete: true, size: 600_000 }) }),
-    { on: true, line: "Not complete · 4 of 5 files", resumable: true },
+    { on: true, line: "Not complete · 4 of 5 files", resumable: true, failed: false, reason: null },
   );
   // All five: the audiobook and the ebook and their size.
   assert.equal(

@@ -1119,7 +1119,11 @@ function LibraryApp({
                       // Removing the book's files is Keep off for it (#550): the saver does not save them again.
                       await tapKeep(row.workId, false).catch(() => {});
                       for (const recordingId of row.recordingIds) await deleteDownloads(recordingId);
-                      for (const editionId of row.ebookIds) await removeOfflineEbook(editionId);
+                      for (const editionId of row.ebookIds) {
+                        await removeOfflineEbook(editionId);
+                        // The save record of a kept book with only an ebook (#552).
+                        await deleteDownloads(`ebook:${editionId}`);
+                      }
                       // The reader's cache of the book's other editions goes too: every file of it (#671).
                       for (const ebook of savedEbooks)
                         if (ebook.workId === row.workId && offlineEbookEditionIds.has(ebook.id) && !row.ebookIds.includes(ebook.id))
