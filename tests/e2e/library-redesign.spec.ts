@@ -179,11 +179,11 @@ test("the Library against its boards at 390 by 844 and on a desktop: one tile pe
   // One tile for the work's two recordings.
   await expect(tile(page, left.title)).toHaveCount(1);
   // The marks of each kind (#556's cover-mark function): audiobook and reading sync; an EPUB; a PDF; nothing; the percentage.
-  await expect(tile(page, left.title).getByRole("img")).toHaveAccessibleName("Audiobook, Reading sync ready");
-  await expect(tile(page, `Piranesi ${run}`).getByRole("img")).toHaveAccessibleName("Ebook");
-  await expect(tile(page, `Capitalist Realism ${run}`).getByRole("img")).toHaveAccessibleName("Ebook");
+  await expect(tile(page, left.title).locator(".library-marks")).toHaveAttribute("aria-label", "Audiobook, Reading sync ready");
+  await expect(tile(page, `Piranesi ${run}`).locator(".library-marks")).toHaveAttribute("aria-label", "Ebook");
+  await expect(tile(page, `Capitalist Realism ${run}`).locator(".library-marks")).toHaveAttribute("aria-label", "Ebook");
   await expect(tile(page, `Kindred ${run}`).locator(".library-marks")).toHaveCount(0);
-  await expect(tile(page, `Snow Crash ${run}`).getByRole("img")).toHaveAccessibleName("Downloading · 43%");
+  await expect(tile(page, `Snow Crash ${run}`).locator(".library-marks")).toHaveAttribute("aria-label", "Downloading · 43%");
   await expect(tile(page, `Snow Crash ${run}`).locator(".library-marks")).toHaveText("43%");
   await expect(tile(page, `Snow Crash ${run}`).locator(".library-marks svg")).toHaveCount(1);
   // The tile: the title on one line with an ellipsis, the author under it.
@@ -277,6 +277,7 @@ test("each chip, the chip kept after a reload, Continue, Search, the plus and th
   await expect(card.getByRole("button", { name: "Play", exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
   expect(await card.locator(".library-continue-title").evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+  if (test.info().project.name === "chromium") await card.screenshot({ path: `${OUT}/library-continue-phone.png` });
   expect((await box(page, card.locator(".library-continue-cover"))).width).toBe(72);
 
   // Search: on the device, by title (words, any case); Continue stays away while a search is in use.

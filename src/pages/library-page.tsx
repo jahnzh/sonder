@@ -256,7 +256,7 @@ function MarksPill({ marks }: { marks: CoverMarks }) {
   if (!marks.marks.length) return null;
   const names = marks.marks.map((mark) => COVER_MARK_NAMES[mark]).join(", ");
   return (
-    <span className="library-marks" role="img" aria-label={marks.marks.map((mark) => COVER_MARK_NAMES[mark]).join(", ")}>
+    <span className="library-marks" role="img" aria-label={names} title={names}>
       {marks.marks.map((mark) => (
         <FileIcon key={mark} kind={MARK_KIND[mark]} size={12} />
       ))}
