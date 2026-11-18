@@ -18,6 +18,7 @@ import { Row } from "../parts/Row";
 import { InfoMark } from "../parts/Tooltip";
 import { usePlayer } from "../player";
 import { normalizeSeriesLanguage } from "../series-selection";
+import { forgetSeriesAnswer, isNoConnection, keepSeriesAnswer, seriesAnswerKey, storedSeriesAnswer } from "../series-store";
 import { tip } from "../tooltip-texts";
 import type { Book } from "../types";
 import { chosenRecording } from "./book-model";
@@ -37,6 +38,9 @@ export function seriesLanguage(): string {
 }
 
 type SavedSeries = SeriesAddSeries;
+
+/** Without a connection the page asks for the series again this often, until it is answered (#568). */
+export const SERIES_OFFLINE_RETRY_MS = 5000;
 
 /**
  * The series last read, by account and id: Back to the page shows it at once (and so at its scroll position) while
@@ -92,6 +96,9 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
   const [series, setSeries] = useState<SavedSeries | null>(() => lastRead.get(key) ?? null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // The server could not be reached: the page shows the series this device kept, with the No connection card (#568).
+  // The browser going offline says so at once; a read that is answered says the connection is back.
+  const [offline, setUnreached] = useState(!online);
   // The page is left or its series was removed: an answer still on its way changes nothing. Without this, removing
   // the series read it once more (the revision grows), and its "could not be found" opened today's dialog for the
   // series just removed, over the Library (#567).
@@ -131,11 +138,28 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
         lastRead.set(key, value);
         setSeries(value);
         setError("");
+        setUnreached(false);
+        // The last answer of a saved series opened on this device: shown without a connection (#568).
+        void keepSeriesAnswer(seriesAnswerKey(seriesId), value);
       } catch (reason) {
         if (gone.current) return;
+        // No connection: the series this page holds, else the one this device kept; a series this device never opened
+        // (or one that is not saved, which needs a connection) shows the Library.
+        if (isNoConnection(reason)) {
+          const kept = lastRead.get(key) ?? (await storedSeriesAnswer<SavedSeries>(seriesAnswerKey(seriesId)));
+          if (gone.current) return;
+          if (kept) {
+            lastRead.set(key, kept);
+            setSeries(kept);
+            setError("");
+            setUnreached(true);
+          } else address.navigate({ name: "library" }, { replace: true });
+          return;
+        }
         // Not saved by this account: today's dialog shows the series, over the Library.
         if (reason instanceof ApiError && reason.status < 500 && /could not be found/i.test(reason.message)) {
           lastRead.delete(key);
+          void forgetSeriesAnswer(seriesAnswerKey(seriesId));
           address.navigate({ name: "library" }, { replace: true });
           onNotSaved(seriesId);
           return;
@@ -156,6 +180,20 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
     void load();
     void refreshLibraryWorks().catch(() => {});
   }, [revision]);
+  // The connection is back: the page reads the series again (#568). The browser's word is not always given (a network
+  // that answers nothing, a browser that does not say it is back online), so without a connection it also asks again
+  // every few seconds.
+  const wasOnline = useRef(online);
+  useEffect(() => {
+    if (!online) setUnreached(true);
+    else if (!wasOnline.current) void load();
+    wasOnline.current = online;
+  }, [online, load]);
+  useEffect(() => {
+    if (!offline) return;
+    const timer = setInterval(() => void load(), SERIES_OFFLINE_RETRY_MS);
+    return () => clearInterval(timer);
+  }, [offline, load]);
   const isMoving = moving(series);
   useEffect(() => {
     if (!isMoving) return;
@@ -164,8 +202,8 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
   }, [isMoving, load]);
 
   const model = useMemo(
-    () => (series ? seriesPageModel(series, { library, admin, language }) : null),
-    [series, library, admin, language],
+    () => (series ? seriesPageModel(series, { library, admin, language, offline }) : null),
+    [series, library, admin, language, offline],
   );
 
   const run = async (action: () => Promise<void>) => {
@@ -226,11 +264,11 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
     const open = row.workId ? () => address.navigate({ name: "book", workId: row.workId! }) : undefined;
     const action =
       row.action?.kind === "add" ? (
-        <Button kind="secondary" aria-label={`Add ${row.title}`} disabled={!online} onClick={() => openAddSheet(seriesId, row.bookId)}>
+        <Button kind="secondary" aria-label={`Add ${row.title}`} disabled={row.actionOff} onClick={() => openAddSheet(seriesId, row.bookId)}>
           Add
         </Button>
       ) : row.action?.kind === "retry-search" || row.action?.kind === "retry-download" ? (
-        <Button kind="secondary" aria-label={`Retry ${row.title}`} disabled={busy || !online} onClick={() => void retry(row)}>
+        <Button kind="secondary" aria-label={`Retry ${row.title}`} disabled={busy || row.actionOff} onClick={() => void retry(row)}>
           Retry
         </Button>
       ) : row.action?.kind === "play" ? (
@@ -269,6 +307,14 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
         </>
       )}
 
+      {model?.noConnection && (
+        <div className="series-page-card" role="group" aria-label={model.noConnection}>
+          <p className="type-label" role="status">
+            {model.noConnection}
+          </p>
+        </div>
+      )}
+
       {model?.refreshError && (
         <div className="series-page-card" role="group" aria-label="Hardcover could not be read">
           <p className="type-label" role="alert">
@@ -291,7 +337,7 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
               </span>
             )}
           </div>
-          <Button kind="quiet" disabled={dismissing || !online} onClick={() => void dismiss(model.newCard!.bookIds)}>
+          <Button kind="quiet" disabled={dismissing || model.dismissOff} onClick={() => void dismiss(model.newCard!.bookIds)}>
             {DISMISS_LABEL}
           </Button>
         </div>
@@ -306,7 +352,7 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
 
       {model && (
         <Group label="Series">
-          <Row label="Remove series" disabled={busy || !online} onClick={() => setRemoveOpen(true)} />
+          <Row label="Remove series" disabled={busy || model.removeOff} onClick={() => setRemoveOpen(true)} />
         </Group>
       )}
 
@@ -321,7 +367,7 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
           seriesId={seriesId}
           series={series}
           admin={admin}
-          online={online}
+          online={!offline}
           language={language}
           onLanguage={changeLanguage}
           onAdded={() => {
@@ -338,6 +384,7 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
         onRemoved={() => {
           gone.current = true;
           lastRead.delete(key);
+          void forgetSeriesAnswer(seriesAnswerKey(seriesId));
           onRemoved();
           void refreshLibraryWorks().catch(() => {});
           if (address.backTarget().name === "library") address.goBack();
