@@ -223,7 +223,7 @@ test("at 3× the follow highlight stays within one sentence of the audio and the
     await reader.getByRole("spinbutton", { name: "Playback speed", exact: true }).press("End");
     await reader.getByRole("button", { name: "Done", exact: true }).click();
     await expect(speed).toHaveText("3×");
-    await playFromLibrary(page, "narration");
+    await page.getByRole("button", { name: "Play narration", exact: true }).click();
     await expect.poll(() => audioRate(page)).toBe(3);
     // Samples the audio position, the passage the reader follows and the text the highlight covers, all
     // at the same instant, until the narration is past the last sentence of the chapter.

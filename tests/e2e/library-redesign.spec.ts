@@ -241,7 +241,8 @@ test("each chip, the chip kept after a reload, Continue, Search, the plus and th
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   const run = `Shelf ${randomUUID().slice(0, 6)}`;
-  const listening = await importRecording(page, `${run} Listening`);
+  // A title long enough to run past the Continue card's edge: it is cut, the page does not widen.
+  const listening = await importRecording(page, `${run} Listening, a title long enough to run past the card's edge`);
   const finished = await importRecording(page, `${run} Finished`);
   const fresh = await importRecording(page, `${run} Fresh`);
   const reading = await importEbookOnly(page, `${run} Reading`, "epub");
@@ -272,8 +273,10 @@ test("each chip, the chip kept after a reload, Continue, Search, the plus and th
   // Listening later makes the audiobook the newest place: Continue shows it, with Play.
   await listen(page, listening, 25);
   await page.reload();
-  await expect(card.getByRole("button", { name: `Continue ${run} Listening`, exact: true })).toBeVisible();
+  await expect(card.getByRole("button", { name: `Continue ${listening.title}`, exact: true })).toBeVisible();
   await expect(card.getByRole("button", { name: "Play", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  expect(await card.locator(".library-continue-title").evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
   expect((await box(page, card.locator(".library-continue-cover"))).width).toBe(72);
 
   // Search: on the device, by title (words, any case); Continue stays away while a search is in use.
@@ -284,12 +287,12 @@ test("each chip, the chip kept after a reload, Continue, Search, the plus and th
   await expect(tile(page, `${run} Fresh`)).toBeVisible();
   await expect(card).toHaveCount(0);
   await field.fill("library qa");
-  await expect(tile(page, `${run} Listening`)).toBeVisible();
+  await expect(tile(page, listening.title)).toBeVisible();
   await page.getByRole("button", { name: "Close search", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Library", level: 1 })).toBeVisible();
   await expect(card).toBeVisible();
 
-  const mine = [`${run} Listening`, `${run} Finished`, `${run} Fresh`, `${run} Reading`];
+  const mine = [listening.title, `${run} Finished`, `${run} Fresh`, `${run} Reading`];
   const shownOfMine = async () => {
     const shown: string[] = [];
     for (const title of mine) if ((await tile(page, title).count()) > 0) shown.push(title);
@@ -302,7 +305,7 @@ test("each chip, the chip kept after a reload, Continue, Search, the plus and th
     await expect(card).toHaveCount(name === "All" ? 1 : 0);
     await expect.poll(shownOfMine).toEqual(titles);
   };
-  await expectUnder("In progress", "In progress", [`${run} Listening`, `${run} Reading`]);
+  await expectUnder("In progress", "In progress", [listening.title, `${run} Reading`]);
   await expectUnder("Not started", "Not started", [`${run} Fresh`]);
   await expectUnder("Finished", "Finished", [`${run} Finished`]);
   // Nothing of these is kept on this device; Keep's own spec (keep-not-complete) fills On device.
@@ -513,6 +516,9 @@ test.describe("two accounts on one device", () => {
     if (username) await page.getByLabel("Username").fill(username);
     await page.getByLabel("Password", { exact: true }).fill(password);
     await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page.getByRole("heading", { name: "Sign in" })).toBeHidden();
+    // Signing in lands on the address asked for (Settings › Account after Sign out); the Library is the test's.
+    await page.goto(`${base}/#library`);
     await expect(page.getByRole("heading", { name: "Library", exact: true, level: 1 })).toBeVisible();
   }
   async function signOut(page: Page) {
