@@ -420,6 +420,10 @@ export type ActivityFacts =
       stage: string | null;
       /** The worker's file counts for a stage that counts files (decoding, encoding); null otherwise. */
       files: { done: number; total: number } | null;
+      /** The job's EPUB is a spare edition: not the work's chosen one and nobody has a place in it (#718). */
+      spare?: boolean;
+      /** Queued by itself (the backfill, an ebook-set check, new audio), not by a Prepare (#718). */
+      background?: boolean;
     }
   | { kind: "hardcover"; status: "waiting" | "failing"; queue: "status" | "listening" | "reading" }
   /** An ebook's check against the narration: the member's status, with the reason it is held when it is. */

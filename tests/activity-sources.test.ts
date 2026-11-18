@@ -297,13 +297,15 @@ test("the pause switches import no feature, and the Activity modules do not open
     "series-acquisition-activity.ts", "alignment-activity.ts", "hardcover-activity.ts", "ebook-set-activity.ts", "backups-activity.ts"]) {
     const imports = runtimeImports(source(file));
     assert.ok(imports.every((path) => path === "./activity-source.ts" || path === "./activity-pause-model.ts" || path === "./activity-sources.ts"
-      || /^\.\/[a-z-]+-activity\.ts$/.test(path) || path === "fastify" || path === "./backup-schedule.ts" || path === "./work-cover.ts" || path === "../src/reading-types.ts"),
+      || /^\.\/[a-z-]+-activity\.ts$/.test(path) || path === "fastify" || path === "./backup-schedule.ts" || path === "./work-cover.ts" || path === "./ebook-chosen.ts" || path === "../src/reading-types.ts"),
       `${file} imports ${imports.join(", ")}`);
   }
   assert.deepEqual(runtimeImports(source("backup-schedule.ts")), [], "the backup rules are pure");
   // The cover rule takes the database it is given (#514): it opens none, so the sources stay free of the database.
   assert.deepEqual(runtimeImports(source("work-cover.ts")), ["./placeholder-edition.ts"]);
   assert.deepEqual(runtimeImports(source("placeholder-edition.ts")), []);
+  // The read-editions rule (#718) takes the database it is given as well.
+  assert.deepEqual(runtimeImports(source("ebook-chosen.ts")), []);
 });
 
 // Series acquisition reads its vocabulary from the CHECK constraint of a real database built here.

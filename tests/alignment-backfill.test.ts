@@ -179,6 +179,26 @@ test("re-queue policy: skip ready/partial/in-progress/paused, re-queue error and
   }
 });
 
+test("a spare edition is never queued by itself; once someone has a place in it, it is (#718)", async () => {
+  wipe();
+  enableWorker();
+  try {
+    // ebook-other is work-good's second EPUB: a spare edition.
+    assert.equal(await autoQueueAlignmentForPair("ebook-other", "recording-good"), false);
+    await autoQueueAlignmentsForWork("work-good");
+    assert.deepEqual(rows().map((row) => row.ebook_id), ["ebook-good"], "only the read edition is queued");
+    sqlite.prepare("INSERT INTO ebook_progress(edition_id,cfi,chapter,updated_at) VALUES('ebook-other','epubcfi(/6/2)',0,?)").run(Date.now());
+    try {
+      assert.equal(await autoQueueAlignmentForPair("ebook-other", "recording-good"), true);
+    } finally {
+      sqlite.prepare("DELETE FROM ebook_progress WHERE edition_id='ebook-other'").run();
+    }
+  } finally {
+    disableWorker();
+    wipe();
+  }
+});
+
 test("origin is absent on reader-panel jobs, and a job without it round-trips", async () => {
   wipe();
   const job = await createAlignment("ebook-good", "recording-good");

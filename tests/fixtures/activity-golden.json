@@ -322,7 +322,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -576,7 +578,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": "The worker stopped.",
         "permanent": false,
@@ -692,7 +696,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": "The job record could not be read: Expected property name or '}' in JSON at position 1 (line 1 column 2)",
         "permanent": false,
@@ -750,7 +756,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": "Unknown status \"exploded\"",
         "permanent": false,
@@ -862,7 +870,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -1144,7 +1154,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -1175,7 +1187,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -1317,7 +1331,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -1432,7 +1448,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -1490,7 +1508,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -1548,7 +1568,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -1579,7 +1601,9 @@
           "coverage": 0,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": "The rebuild was rejected: it mapped none of the text. The previous map (82% of the text mapped) stays published.",
         "permanent": false,
@@ -2059,7 +2083,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": "The worker stopped.",
         "permanent": false,
@@ -2175,7 +2201,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": "The job record could not be read: Expected property name or '}' in JSON at position 1 (line 1 column 2)",
         "permanent": false,
@@ -2233,7 +2261,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": "Unknown status \"exploded\"",
         "permanent": false,
@@ -2345,7 +2375,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -2574,7 +2606,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -2739,7 +2773,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -2770,7 +2806,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -2912,7 +2950,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -3027,7 +3067,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -3085,7 +3127,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -3143,7 +3187,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -3174,7 +3220,9 @@
           "coverage": 0,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": "The rebuild was rejected: it mapped none of the text. The previous map (82% of the text mapped) stays published.",
         "permanent": false,
@@ -3635,7 +3683,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": "The worker stopped.",
         "permanent": false,
@@ -3751,7 +3801,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": "The job record could not be read: Expected property name or '}' in JSON at position 1 (line 1 column 2)",
         "permanent": false,
@@ -3809,7 +3861,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": "Unknown status \"exploded\"",
         "permanent": false,
@@ -3921,7 +3975,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -4150,7 +4206,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -4315,7 +4373,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -4346,7 +4406,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -4488,7 +4550,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -4603,7 +4667,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -4661,7 +4727,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -4719,7 +4787,9 @@
           "coverage": null,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": null,
         "permanent": false,
@@ -4750,7 +4820,9 @@
           "coverage": 0,
           "wholeBook": false,
           "stage": null,
-          "files": null
+          "files": null,
+          "spare": false,
+          "background": false
         },
         "error": "The rebuild was rejected: it mapped none of the text. The previous map (82% of the text mapped) stays published.",
         "permanent": false,

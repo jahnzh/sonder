@@ -218,6 +218,15 @@ export function readingSyncLine({ hasEbook, hasRecording, job, mapInUse }: Readi
   return shown ? jobLine(shown) : null;
 }
 
+/**
+ * The line of a book's syncs of its spare editions (#718): EPUBs nobody reads, queued by themselves. One reads
+ * "Checking another edition"; several are one line with the one being checked ("Checking 4 other editions · 1 of 4").
+ */
+export function spareEditionsLine({ total, current }: { total: number; current: number }): string {
+  if (total <= 1) return "Checking another edition";
+  return `Checking ${total} other editions${DOT}${Math.min(Math.max(current, 1), total)} of ${total}`;
+}
+
 /** A book's files on this device. */
 export type DeviceSaveFacts = {
   /** Keep on this device is on. */
