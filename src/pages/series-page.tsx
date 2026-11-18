@@ -357,7 +357,7 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
       {model && (
         <div className="series-page-remove">
           <Group label="Series">
-            <Row label="Remove series" disabled={busy || !online || model.removeOff} onClick={() => setRemoveOpen(true)} />
+            <Row label="Remove series" disabled={busy || model.removeOff} onClick={() => setRemoveOpen(true)} />
           </Group>
         </div>
       )}
