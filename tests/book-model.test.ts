@@ -3,7 +3,7 @@
 // media state's forms, what is shown for a work outside the library, the This device switch and the heart.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bookModel, deviceHold, favoriteOf, keepState, placeLine, seriesLine, toggleWorkFavorite } from "../src/pages/book-model.ts";
+import { addedElsewhere, addsBeforeGet, bookModel, deviceHold, favoriteOf, keepState, placeLine, seriesLine, toggleWorkFavorite } from "../src/pages/book-model.ts";
 import { bookSyncLine, mediaStateLine, NEEDS_EPUB_LINE } from "../src/status-lines.ts";
 import type { Download, DownloadPart, LibraryWork, Progress, ReadingSyncSummary, Track, WorkEbook, WorkRecording } from "../src/types.ts";
 
@@ -402,4 +402,24 @@ test("#533 only a PDF: Read off, the PDF line opening the Ebook page; the Readin
   const both = bookModel(work({ recordings: [recording("r1")], ebooks: [ebook("p1", "pdf"), ebook("e1")] }), { admin: true });
   assert.equal(both.readEbookId, "e1");
   assert.notEqual(both.ebook.line, "PDF · opens in another app");
+});
+
+// A Hardcover book that is not on the server (#574, ADR 0022).
+test("after Add to library the page moves only to another work the add answered", () => {
+  assert.equal(addedElsewhere("work-hc-503", { workId: "w-companion" }), "w-companion");
+  assert.equal(addedElsewhere("work-hc-503", { workId: "work-hc-503" }), null);
+  // A server from before #574 answers `{ ok: true }` only.
+  assert.equal(addedElsewhere("work-hc-503", {}), null);
+  assert.equal(addedElsewhere("work-hc-503", undefined), null);
+  assert.equal(addedElsewhere("work-hc-503", { workId: "" }), null);
+  assert.equal(addedElsewhere("work-hc-503", { workId: 7 }), null);
+});
+
+test("Get adds first only on a Hardcover book outside the library", () => {
+  assert.equal(addsBeforeGet({ workId: "work-hc-503", inLibrary: false }), true);
+  assert.equal(addsBeforeGet({ workId: "work-hc-503", inLibrary: true }), false);
+  // A work on the server outside the library is added by the Get sheet when a file is chosen (#601).
+  assert.equal(addsBeforeGet({ workId: "work-war", inLibrary: false }), false);
+  assert.equal(addsBeforeGet({ workId: "work-hc-503x", inLibrary: false }), false);
+  assert.equal(addsBeforeGet({ workId: "my-work-hc-503", inLibrary: false }), false);
 });

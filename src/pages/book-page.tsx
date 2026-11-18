@@ -25,7 +25,7 @@ import { hardcoverRowValue } from "../hardcover-page-model";
 import { bytes } from "../size-format";
 import { tip } from "../tooltip-texts";
 import type { Book, Download, DownloadPart, LibraryWork } from "../types";
-import { bookModel, chosenRecording, favoriteOf } from "./book-model";
+import { addedElsewhere, addsBeforeGet, bookModel, chosenRecording, deviceHold, favoriteOf, keepState } from "./book-model";
 import type { Notify } from "./shared";
 import { KeepItems } from "./keep-item";
 import "./book-page.css";
@@ -206,8 +206,34 @@ export function BookPage(props: Props) {
     if (p.book?.workId === workId) address.navigate({ name: "read", workId });
     else openReader(model.readEbookId);
   };
-  const getAudiobook = () => searchTarget && props.onFindAudio(searchTarget);
-  const getEbook = () => searchTarget && props.onFindEbook(searchTarget);
+  /**
+   * Add to library (#527): the work the server added, which for a Hardcover book not on the server is the work its
+   * import made or matched (ADR 0022). When that is another work, the page's address becomes its address.
+   */
+  const addToLibrary = async () => {
+    const answer = await api<{ ok: true; workId?: string }>(`/works/${encodeURIComponent(workId)}/library`, { method: "PUT" });
+    await reload();
+    await props.onChanged();
+    window.dispatchEvent(new Event("sonder:library-changed"));
+    const elsewhere = addedElsewhere(workId, answer);
+    if (elsewhere) address.navigate({ name: "book", workId: elsewhere }, { replace: true });
+    return elsewhere ?? workId;
+  };
+  // Get on a Hardcover book not in the library adds it first (#467, ADR 0022), then opens Get for the work that was added.
+  const getFile = (kind: "audiobook" | "ebook") => {
+    if (!addsBeforeGet(work)) {
+      if (!searchTarget) return;
+      if (kind === "audiobook") props.onFindAudio(searchTarget);
+      else props.onFindEbook(searchTarget);
+      return;
+    }
+    void run(async () => {
+      const added = await addToLibrary();
+      address.navigate({ name: "get", workId: added, kind });
+    });
+  };
+  const getAudiobook = () => getFile("audiobook");
+  const getEbook = () => getFile("ebook");
   const retry = () =>
     run(async () => {
       await api(`/works/${encodeURIComponent(workId)}/media/retry`, { method: "POST" });
@@ -215,10 +241,7 @@ export function BookPage(props: Props) {
     });
   const add = () =>
     run(async () => {
-      await api(`/works/${encodeURIComponent(workId)}/library`, { method: "PUT" });
-      await reload();
-      await props.onChanged();
-      window.dispatchEvent(new Event("sonder:library-changed"));
+      await addToLibrary();
     });
   const markFinished = () =>
     run(async () => {
@@ -277,7 +300,14 @@ export function BookPage(props: Props) {
           <p className="book-page-muted type-label">{work.author}</p>
           {model.series &&
             (model.series.id != null ? (
-              <button type="button" className="book-page-series type-label" onClick={() => props.onSeries(model.series!.id!, model.series!.saved)}>
+              <button
+                type="button"
+                className="book-page-series type-label"
+                onClick={() =>
+                  // A book not in the library opens its series' page (ADR 0022), which shows it saved or not saved.
+                  model.inLibrary ? props.onSeries(model.series!.id!, model.series!.saved) : address.navigate({ name: "series", id: String(model.series!.id) })
+                }
+              >
                 {model.series.label}
               </button>
             ) : (

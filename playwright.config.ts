@@ -151,6 +151,8 @@ const desktopProjects = [
               /(^|\/)(reader-more-gone|back-to-narration)\.spec\.ts$/,
               // A device whose browser cleared Sonder's files saves its kept books again (#554).
               /(^|\/)keep-cleared\.spec\.ts$/,
+              // A Hardcover book opens its Book page before it is a work on the server (#574).
+              /(^|\/)hardcover-book-look\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },
