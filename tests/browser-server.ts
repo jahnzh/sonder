@@ -40,7 +40,7 @@ const { installHardcoverFixture } = await import(
   "./hardcover-browser-fixture.ts"
 );
 installHardcoverFixture();
-const { installAlignmentFixture } = await import("./alignment-browser-fixture.ts");
+const { installAlignmentFixture, holdAlignment, heldAlignmentRequests } = await import("./alignment-browser-fixture.ts");
 await installAlignmentFixture();
 const { installProwlarrFixture } = await import("./prowlarr-browser-fixture.ts");
 installProwlarrFixture();
@@ -54,6 +54,12 @@ const { installSeriesReleaseBrowserFixture } = await import(
 installSeriesReleaseBrowserFixture();
 const { createApp } = await import("../server/app.ts");
 const app = await createApp();
+// The alignment fixture's hold (#542): a spec keeps a real job's worker requests waiting, then lets them go.
+app.post("/api/__fixture/alignment-hold", async (request) => {
+  const { token, hold } = request.body as { token: string; hold: boolean };
+  return { released: holdAlignment(String(token), !!hold) };
+});
+app.get("/api/__fixture/alignment-hold", async (request) => ({ held: heldAlignmentRequests(String((request.query as { token?: string }).token)) }));
 await app.listen({ port: Number(process.env.PLAYWRIGHT_PORT || 4173), host: "127.0.0.1" });
 const stop = async () => {
   await app.close();
