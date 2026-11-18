@@ -78,7 +78,8 @@ function StackedCover({ covers }: { covers: (string | null)[] }) {
   );
 }
 
-function SeriesListItem({ row, beside, onOpen }: { row: SeriesListRow; beside: boolean; onOpen: (id: number) => void }) {
+/** One series row; Discover's series search lists its results with it too (#575). */
+export function SeriesListItem({ row, beside, onOpen }: { row: SeriesListRow; beside: boolean; onOpen: (id: number) => void }) {
   const id = useId();
   return (
     <li className="library-series-item">

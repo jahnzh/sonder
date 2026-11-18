@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 import { readerFixture } from "../reader-fixture";
+import { listenFace, nowPlaying, openRead, showReadControls } from "./now-playing";
 import { playFromLibrary } from "./library-play";
 
 // Ask the OS for a free port so this spec never collides with the shared run or another shard.
@@ -38,6 +39,21 @@ test.afterAll(() => { server?.kill(); });
 async function openSettingsPage(page: Page, row: string) {
   await page.getByRole("button", { name: "Settings", exact: true }).last().click();
   await page.getByRole("navigation", { name: "Settings", exact: true }).getByRole("button", { name: new RegExp(`^${row}\\b`) }).click();
+}
+/**
+ * Discover's search for a shared book (#575): its row under "On the server", no recording row for someone who is not
+ * the administrator, and Add to library on the Book page the row opens.
+ */
+async function addFromDiscover(page: Page, title: string) {
+  const discover = page.getByRole("region", { name: "Discover", exact: true });
+  await discover.getByRole("searchbox", { name: "Search for a book", exact: true }).fill(title);
+  await discover.getByRole("searchbox", { name: "Search for a book", exact: true }).press("Enter");
+  const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const result = discover.getByRole("list", { name: "On the server", exact: true }).getByRole("button", { name: new RegExp(`^${escaped} `) });
+  await expect(result).toBeVisible();
+  await expect(discover.getByRole("button", { name: /^Search for a recording/ })).toHaveCount(0);
+  await result.click();
+  await page.getByRole("region", { name: "Book", exact: true }).getByRole("button", { name: "Add to library", exact: true }).click();
 }
 test("accounts keep libraries and offline queues separate", async ({ page }) => {
   mkdirSync("artifacts", { recursive: true });
@@ -109,9 +125,9 @@ test("accounts keep libraries and offline queues separate", async ({ page }) => 
   expect(readerBooks.find((b: { id: string }) => b.id === book.id).inLibrary).toBe(false);
   expect(readerBooks.find((b: { id: string }) => b.id === book.id).progress?.position || 0).not.toBe(123);
   await page.getByRole("button", { name: "Discover", exact: true }).last().click();
-  await expect(page.getByRole("button", { name: "Audiobooks" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Ebooks" })).toHaveCount(0);
-  await page.getByRole("button", { name: `Add ${book.title} to library` }).click();
+  // Guard 8 (spec #572): Discover offers someone who is not the administrator no recording row; they add a shared
+  // book from its Book page, opened from Discover.
+  await addFromDiscover(page, book.title);
   await expect.poll(async () => (await (await page.request.get(`${base}/api/books`)).json()).find((b: { id: string }) => b.id === book.id).inLibrary).toBe(true);
   // A legacy reader-local device fault is migrated to shared device storage
   // before automatic playback, so the service worker can see it too.
@@ -134,20 +150,15 @@ test("accounts keep libraries and offline queues separate", async ({ page }) => 
     };
   }), book.recordingId)).toBe(true);
 });
+// Now playing on its Read face (#593): the reader inside Now playing.
 async function openReaderPlayer(page: Page) {
-  // Phone layouts hide dock-actions (including the list icon); the dock book row opens Now Playing there.
-  const list = page.locator(".player-dock").getByRole("button", { name: "Chapters and now playing", exact: true });
-  if (await list.isVisible()) await list.click();
-  else await page.locator(".player-dock .dock-book").click();
-  const dialog = page.getByRole("dialog", { name: "Now playing", exact: true });
-  await expect(dialog).toBeVisible();
-  await expect(dialog.locator(".playback-reader.has-ebook")).toBeVisible({ timeout: 20000 });
-  await expect(dialog).toHaveClass(/with-reader/, { timeout: 20000 });
+  await openRead(page);
   await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible({ timeout: 20000 });
-  return dialog;
+  return nowPlaying(page);
 }
 
 async function revealReaderControls(page: Page) {
+  await closePlaybackOptions(page);
   const room = page.locator(".inline-reader");
   await expect(room.locator(".reader-viewport iframe")).toBeVisible();
   const topbar = room.locator(".reader-topbar");
@@ -158,35 +169,26 @@ async function revealReaderControls(page: Page) {
   await expect(topbar).toBeVisible();
 }
 
-async function openPlaybackOptions(page: Page) {
-  const dialog = page.getByRole("dialog", { name: "Now playing", exact: true });
-  await expect(dialog).toBeVisible();
-  const options = page.locator(".playback-options-panel");
-  if (!(await options.isVisible())) {
-    // The dialog heading ⋯ (aria-label "Playback options"); with the reader it is clipped under the reader chrome
-    // (#22), and the reader's head has no More since #592. Never use the Chapters button. DOM click avoids the
-    // clipped heading's hit-target.
-    await dialog.locator(".playback-menu-trigger").evaluate((el: HTMLButtonElement) => el.click());
-  }
-  await expect(options).toBeVisible();
-  return options;
-}
-
+// Position history is Earlier positions on the Listen face (#593); from Read it is reached by switching to Listen.
 async function positionHistoryButton(page: Page) {
-  return (await openPlaybackOptions(page)).getByRole("button", { name: "Position history", exact: true });
+  if (!(await listenFace(page).isVisible())) {
+    await showReadControls(page);
+    await page.locator(".now-playing-screen .reader-topbar").getByRole("radio", { name: "Listen", exact: true }).click();
+  }
+  await expect(listenFace(page)).toBeVisible();
+  return listenFace(page).getByRole("button", { name: "Earlier positions", exact: true });
 }
 
+// Back to the Read face.
 async function closePlaybackOptions(page: Page) {
-  const options = page.locator(".playback-options-panel");
-  if (await options.isVisible()) {
-    await options.getByRole("button", { name: "Close playback options", exact: true }).click();
-    await expect(options).toBeHidden();
+  if (await listenFace(page).isVisible()) {
+    await listenFace(page).getByRole("radio", { name: "Read", exact: true }).click();
+    await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible({ timeout: 20000 });
   }
 }
 
 async function openPositionHistory(page: Page) {
-  const options = await openPlaybackOptions(page);
-  await options.getByRole("button", { name: "Position history", exact: true }).click();
+  await (await positionHistoryButton(page)).click();
   const historyDialog = page.getByRole("dialog", { name: "Position history", exact: true });
   await expect(historyDialog).toBeVisible();
   return historyDialog;
@@ -271,7 +273,7 @@ test("one account's position history is not shown to or undoable by another", as
   await page.getByLabel("Password", { exact: true }).fill("historian-password");
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.getByRole("button", { name: "Discover", exact: true }).last().click();
-  await page.getByRole("button", { name: `Add ${book.title} to library` }).click();
+  await addFromDiscover(page, book.title);
   await page.getByRole("button", { name: "My library", exact: true }).last().click();
   dialog = await openNowPlaying(book.title);
   // Same recording, other account: empty Position history and no row in either database.

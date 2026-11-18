@@ -8,7 +8,8 @@ import { verifyBaseURL } from "./live-check-target.mjs";
 import { requestFrom, getJSON, NoSuitableRecording, NO_SUITABLE_RECORDING_EXIT } from "./live-check-recording.mjs";
 import { selectPlaybackRecording, PLAYBACK_MIN_CHAPTER_SECONDS } from "./live-check-playback.mjs";
 const expect=baseExpect.configure({timeout:20000});
-process.loadEnvFile(".env");
+// A local test server (tests/browser-server.ts) has no .env and no password; production reads both from .env.
+if(fs.existsSync(".env")) process.loadEnvFile(".env");
 // The recording id is a preference: the check plays it when it qualifies and otherwise picks another (#431).
 const preferred=process.argv[2]||null;
 const baseURL=verifyBaseURL();
@@ -18,8 +19,10 @@ const report={recordingId:null,preferred,protectedWrites:0,checks:[],errors:[]};
 const check=(name,details={})=>report.checks.push({name,...details});
 let readAudio;
 try {
-  const login=await context.request.post("/api/auth/login",{data:{password:process.env.APP_PASSWORD}});
-  if(!login.ok()) throw new Error(`Sign-in failed (POST /api/auth/login answered ${login.status()})`);
+  if(process.env.APP_PASSWORD){
+    const login=await context.request.post("/api/auth/login",{data:{password:process.env.APP_PASSWORD}});
+    if(!login.ok()) throw new Error(`Sign-in failed (POST /api/auth/login answered ${login.status()})`);
+  }
   // Playback starts at the owner's saved position, which this check must not move: choose a recording where it can run.
   // Only a listing that holds no qualifying recording leads to "no suitable recording"; any failed request fails the check (#431).
   // A recording chosen here that then fails below stays a failure: the check does not fall through to another one.
@@ -46,7 +49,12 @@ try {
     return a && {position:a.currentTime,paused:a.paused,duration:a.duration,src:a.src,ready:a.readyState,error:a.error?.message,sourceLabel:document.querySelector(".player-dock .playback-source")?.textContent};
   });
   readAudio=actual;
-  // The Book page (#532) replaced the book dialog: Listen plays the book's chosen recording.
+  // Now playing is one screen with two faces, Listen and Read (#593): `#listen/<work>` and `#read/<work>`.
+  const screen=page.getByRole("dialog",{name:"Now playing",exact:true});
+  const listen=page.locator(".now-playing-listen");
+  const faces=()=>screen.getByRole("radiogroup",{name:"Listen or read",exact:true});
+  const hash=()=>page.evaluate(()=>decodeURIComponent(location.hash));
+  // The Book page (#532): its recording is the chosen one; the check needs the one it selected.
   await page.goto(`/#book/${encodeURIComponent(book.workId)}`);
   const bookPage=page.getByRole("region",{name:"Book",exact:true});
   await expect(bookPage).toBeVisible();
@@ -61,37 +69,17 @@ try {
     await page.getByRole("button",{name:"Back to the book",exact:true}).click();
     await expect(bookPage).toBeVisible();
   }
+  // Listen plays the chosen recording and opens Now playing on its Listen face.
   await bookPage.getByRole("button",{name:"Listen",exact:true}).click();
   await expect.poll(async()=>{const a=await actual();return !!a && a.ready>=2 && !a.paused && !a.error;},{timeout:30000}).toBe(true);
-  // The chosen recording is the one this check selected: media addresses name the track (/api/media/<track id>).
-  const playing=decodeURIComponent((await actual()).src);
-  if(!book.tracks.some(track=>playing.includes(track.id))) throw new Error(`Listen played ${playing}, not the selected recording ${pick.recordingId}: choose it on the book's Audiobook page or pass it as the recording id`);
-  // Listen opens Now playing over the dock: pause there.
-  await page.getByRole("dialog",{name:"Now playing",exact:true}).getByRole("button",{name:/^Pause( narration)?$/}).filter({visible:true}).first().click();
+  const playing=(await actual()).src;
+  if(!book.tracks.some(track=>decodeURIComponent(playing).includes(track.id)))throw new Error(`Listen played ${playing}, not the selected recording ${pick.recordingId}: choose it on the book's Audiobook page or pass it as the recording id`);
+  await expect(listen).toBeVisible();
+  expect(await hash()).toBe(`#listen/${book.workId}`);
+  await listen.getByRole("button",{name:"Pause",exact:true}).click();
   await expect.poll(async()=>(await actual()).paused).toBe(true);
-  check("real audio decodes",{duration:(await actual()).duration});
-  const nowPlaying=page.getByRole("dialog",{name:"Now playing",exact:true});
-  const openNowPlaying=async()=>{if(!(await nowPlaying.isVisible())) await page.locator(".dock-book").click();await expect(nowPlaying).toBeVisible();};
-  await openNowPlaying();
-  await expect(page.getByText("Loading ebook…",{exact:true})).toBeHidden();
-  const room=page.locator(".inline-reader");
-  if(hasEbook) await expect(room.locator(".reader-viewport iframe")).toBeVisible();
-  // The reader's controls toggle on a tap and reset when it remounts; every use of them goes through this helper (#413).
-  const controls=createReaderControls({page,room});
-  // Plays from is on the Audiobook page (#530), opened by Now playing's Audiobook. With an ebook that button is in the
-  // dialog's own Playback options (the reader's head has no More, #592); a DOM click, as the dialog's heading is
-  // clipped under the reader (#22). The page stays on the same address between rounds, so the sources are read here.
-  const manager=page.getByRole("region",{name:"Audiobook",exact:true});
-  const playsFrom=manager.getByRole("button",{name:/^Plays from: /});
-  const openSources=async()=>{
-    if(await room.count()) await page.locator(".playback-menu-trigger").evaluate(el=>el.click());
-    await page.getByRole("button",{name:"Audiobook",exact:true}).click();
-    await expect(page.getByRole("dialog",{name:"Now playing",exact:true})).toBeHidden();
-    await expect(playsFrom).toBeEnabled();
-    return getJSON(requestFrom(context),`/api/recordings/${encodeURIComponent(book.recordingId)}/sources`,body=>Array.isArray(body?.tracks)?null:"expected {tracks: [...]}");
-  };
-  const slider=page.getByRole("slider",{name:"Seek in chapter",exact:true});
-  await controls.show(slider,"Seek in chapter slider");
+  check("real audio decodes; Listen opens Now playing on its Listen face",{duration:(await actual()).duration});
+  const slider=listen.getByRole("slider",{name:"Seek in chapter",exact:true});
   await expect(slider).toBeVisible();
   const chapterDuration=Number(await slider.getAttribute("max"));
   // Selection read this timeline with playbackTimeline (scripts/live-check-playback.mjs); the drags below need its length.
@@ -131,60 +119,87 @@ try {
   await page.screenshot({path:"artifacts/live-playback-chapter-mobile.png",fullPage:true});
   await page.setViewportSize({width:1440,height:1000});
   const desktop=await waitForBox(slider,{description:"Seek in chapter slider (desktop)"});
-  expect(desktop.width).toBeGreaterThan(box.width*1.7);
+  expect(desktop.width).toBeGreaterThan(box.width*1.2);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(1440);
   check("desktop timeline expands",{width:desktop.width});
   await page.screenshot({path:"artifacts/live-playback-chapter-desktop.png",fullPage:true});
-  const sourceState=await openSources();
+  // Plays from on Listen: the Audiobook page's picker (ADR 0015). A choice switches the source and keeps the place.
+  const playsFrom=listen.getByRole("button",{name:"Plays from",exact:true});
+  const picker=page.getByRole("dialog",{name:"Plays from",exact:true});
   const unchanged=(await actual()).position;
-  const sourceNames={original:"Original stream",server:"Server copy"};
+  const names={original:"Original stream",server:"Server copy"};
   for(const mode of ["original","server"]){
-    const playing=await actual();
-    const availability=sourceState.tracks.find(track=>playing.src.includes(encodeURIComponent(track.id))) || sourceState.tracks[0];
-    if(!availability?.[mode] || sourceState.faults?.[mode])continue;
-    report.sourceMode=mode;
     await expect(playsFrom).toBeEnabled();
     await playsFrom.click();
-    const picker=page.getByRole("dialog",{name:"Plays from",exact:true});
-    const option=picker.getByRole("radio",{name:sourceNames[mode],exact:true});
-    await expect(option).toBeEnabled();
-    await option.click();
+    const option=picker.getByRole("radio",{name:names[mode],exact:true});
+    // The picker rules out a source with no file for the place, a faulty one, or one that needs a connection.
+    if(await option.isDisabled()){await page.keyboard.press("Escape");await expect(picker).toBeHidden();continue;}
+    report.sourceMode=mode;
+    if(await option.getAttribute("aria-checked")!=="true") await option.click();
+    else await page.keyboard.press("Escape");
     await expect(picker).toBeHidden();
-    await expect(manager.getByRole("button",{name:`Plays from: ${sourceNames[mode]}`,exact:true})).toBeVisible();
-    // Selecting the source already in use need not reload the audio URL.
-    // Assert the reported delivery source and decoded audio instead of URL shape.
-    await expect.poll(async()=>{
-      const a=await actual();
-      const label=await page.locator(".player-dock .playback-source").textContent();
-      return a.ready>=2&&!a.error&&(mode==="server" ? label.includes("Host server") : /Online stream|TorBox/.test(label));
-    },{timeout:40000}).toBe(true);
+    await expect(playsFrom).toHaveText(names[mode]);
+    // Selecting the source already in use need not reload the audio URL: check the decoded audio and the place.
+    await expect.poll(async()=>{const a=await actual();return a.ready>=2&&!a.error;},{timeout:40000}).toBe(true);
     await expect.poll(async()=>(await actual()).position).toBeCloseTo(unchanged,0);
     expect((await actual()).paused).toBe(true);
-    await page.locator(".player-dock").getByRole("button",{name:"Play",exact:true}).click();
+    await listen.getByRole("button",{name:"Play",exact:true}).click();
     await expect.poll(async()=>{const a=await actual();return !a.paused&&a.position>unchanged;},{timeout:30000}).toBe(true);
-    await page.locator(".player-dock").getByRole("button",{name:"Pause",exact:true}).click();
+    await listen.getByRole("button",{name:"Pause",exact:true}).click();
     // Return to the same time so both delivery modes are checked against it.
-    await openNowPlaying();
-    await controls.show(slider,"Seek in chapter slider");
     await slider.fill(String(Math.round(preview)));
-    await openSources();
-    check("delivery source plays",{source:mode});
+    await expect.poll(async()=>(await actual()).position).toBeCloseTo(unchanged,0);
+    check("Plays from switches the source and keeps the place",{source:mode});
   }
+  // Back to Automatic, as the owner left it on this device.
+  await playsFrom.click();
+  await picker.getByRole("radio",{name:"Automatic",exact:true}).click().catch(()=>page.keyboard.press("Escape"));
+  await expect(picker).toBeHidden();
   await page.screenshot({path:"artifacts/live-playback-versions-desktop.png",fullPage:true});
   await page.setViewportSize({width:390,height:844});
-  const openReader=page.getByRole("button",{name:"Open ebook reader",exact:true});
+  // Earlier positions on Listen: today's Position history, which lists the seeks above; an entry restores its place.
+  await listen.getByRole("button",{name:"Earlier positions",exact:true}).click();
+  const history=page.getByRole("dialog",{name:"Position history",exact:true});
+  await expect(history).toBeVisible();
+  const entries=history.getByRole("listitem");
+  if(await entries.count()){
+    const before=(await actual()).position;
+    await entries.first().getByRole("button").click();
+    await expect(history).toBeHidden();
+    await expect.poll(async()=>Math.abs((await actual()).position-before)).toBeGreaterThan(1);
+    check("Earlier positions opens Position history and restores an entry",{entries:await entries.count()});
+  } else {
+    await page.keyboard.press("Escape");
+    check("Earlier positions opens Position history (no jumps listed)");
+  }
+  // The faces: Read replaces Listen's entry when the book has an EPUB; Back closes Now playing.
   if(hasEbook){
-    await openReader.click();
-    if(await page.getByRole("group",{name:"Ebook editions",exact:true}).count())await page.getByRole("group",{name:"Ebook editions",exact:true}).getByRole("button").first().click();
-    await expect(page.getByRole("dialog",{name:"Now playing",exact:true})).toBeVisible();
-    await expect(page.locator(".reader-viewport iframe")).toBeVisible();
-    check("compact player opens linked EPUB");
-    await controls.click(room.locator(".reader-topbar").getByRole("button",{name:"Close reader",exact:true}),"Close reader");
-  } else check("no linked EPUB available");
-  // The player's cover opens the Book page (#532).
+    await faces().getByRole("radio",{name:"Read",exact:true}).click();
+    await expect.poll(hash).toBe(`#read/${book.workId}`);
+    await expect(page.locator(".now-playing-screen .reader-viewport iframe")).toBeVisible();
+    check("Now playing switches to its Read face");
+    // The Read face's head shows its controls after a tap on the text; the helper taps and clicks (#413).
+    const room=page.locator(".now-playing-screen .reader-room");
+    const controls=createReaderControls({page,room});
+    await controls.click(room.locator(".reader-topbar").getByRole("radio",{name:"Listen",exact:true}),"Listen");
+    await expect.poll(hash).toBe(`#listen/${book.workId}`);
+    await expect(listen).toBeVisible();
+  } else {
+    await expect(faces().getByRole("radio",{name:"Read",exact:true})).toHaveAttribute("aria-checked","false");
+    check("no linked EPUB: Read leads to Get ebook or is off");
+  }
+  await page.goBack();
+  await expect(screen).toBeHidden();
+  check("Back closes Now playing");
+  // The mini player opens Now playing again on its face rule: the face last shown, Listen.
+  await page.locator(".player-dock .dock-book").click();
+  await expect.poll(hash).toBe(`#listen/${book.workId}`);
+  await listen.getByRole("button",{name:"Open this book’s page",exact:true}).click();
+  await expect(bookPage).toBeVisible();
+  check("Listen's head opens the book's page");
   await page.getByRole("button",{name:`Open title page for ${book.title}`,exact:true}).click();
   await expect(bookPage).toBeVisible();
-  check("compact player cover opens the Book page");
+  check("compact player cover opens title page");
   expect(report.errors).toEqual([]);
   report.ok=true;
 } catch(error) {

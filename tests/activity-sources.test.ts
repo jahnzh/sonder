@@ -56,11 +56,11 @@ const hardcoverRow = (error: string | null) => ({ userId: 1, user: "admin", queu
 
 test("acquisitions: every status the writers use maps to its Activity state", () => {
   const expected = {
-    checking: "running", preparing: "running", downloading: "running", paused: "paused", ready: "done", error: "failed",
+    checking: "running", preparing: "running", downloading: "running", paused: "paused", ready: "done", error: "failed", cancelled: "done",
   } satisfies Record<AcquisitionJobStatus, ActivityState>;
   // Retry when it failed, Resume when it is paused, through the server queue's control in Activity's Now (#515, #516).
   const actions = {
-    checking: [], preparing: [], downloading: [], paused: ["resume"], ready: [], error: ["retry"],
+    checking: [], preparing: [], downloading: [], paused: ["resume"], ready: [], error: ["retry", "cancel"], cancelled: [],
   } satisfies Record<AcquisitionJobStatus, ActivityItemAction[]>;
   assert.deepEqual(Object.keys(expected).sort(), [...ACQUISITION_STATUSES].sort(), "the walk covers the whole vocabulary");
   for (const status of ACQUISITION_STATUSES) {

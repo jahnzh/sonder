@@ -355,8 +355,11 @@ export type ActivityKind =
   | "ebook-set"
   | "backup";
 export type ActivityState = "running" | "queued" | "paused" | "failed" | "done";
-/** An item's action, sent to `/api/activity/items/<action>`: Retry after a failure, Resume after a pause, Discard. */
-export type ActivityItemAction = "retry" | "discard" | "resume";
+/**
+ * An item's action, sent to `/api/activity/items/<action>`: Retry after a failure, Resume after a pause, Discard, and
+ * Cancel of a stuck or failing download (#716).
+ */
+export type ActivityItemAction = "retry" | "discard" | "resume" | "cancel";
 export type ActivityItem = {
   id: string;
   kind: ActivityKind;
@@ -376,7 +379,11 @@ export type ActivityItem = {
   permanent: boolean;
   /** What the administrator can do with this item now. An older client ignores an action it does not know (#515). */
   actions: ActivityItemAction[];
-  stuck: { reason: string } | null;
+  /**
+   * Why the item does not move. `known` is set when the source named the cause (#716: "No peers", from the torrent
+   * client) rather than "No change for …" or "Blocked by …"; Now then leads the line with it, so a narrow row shows it.
+   */
+  stuck: { reason: string; known?: true } | null;
   /** The background process this item cannot move without, while that process is down. */
   blockedBy: string | null;
   /** The work the item concerns; null for an acquisition with no work yet, a Hardcover queue and a backup (#514). */
@@ -395,6 +402,12 @@ export type ActivityItem = {
    * (`buildActivity`); `ActivityResponse.attention` counts these plus the processes that are down (#514).
    */
   attention: boolean;
+  /**
+   * A download that made no progress while its work already has a ready copy from another download (#716): not
+   * stuck and not needing attention, but it offers Cancel and Now says "This book already has a copy". Absent
+   * otherwise; an older client ignores it.
+   */
+  superseded?: true;
 };
 /**
  * The facts of an item's status line (#514), one shape per kind: the feature's own status word as it is stored (a

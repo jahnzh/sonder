@@ -183,7 +183,7 @@ test("a reload keeps the entry's place in the stack", async () => {
 test("an address the app did not write counts as a step, and one that names nothing is replaced by what it shows", async () => {
   const browser = new FakeBrowser("/#library");
   const nav = await load(browser);
-  browser.followHash("#listen/w1");
+  browser.followHash("#book/w1/nothing");
   await settle();
   assert.deepEqual(browser.hashes, ["#library", "#library"]);
   browser.followHash("#settings/nothing");
@@ -408,7 +408,7 @@ test("a list that does not grow back in time is left alone rather than set to a 
   assert.equal(browser.scrollY, 0);
 });
 
-test("Discover starts at its top after Back: its results are gone, so an old offset would point into another list", async () => {
+test("Discover returns to where it was scrolled after Back: its results are kept in its entry since #575", async () => {
   const browser = new FakeBrowser("/#discover");
   const nav = await load(browser);
   browser.scrollY = 900;
@@ -417,7 +417,7 @@ test("Discover starts at its top after Back: its results are gone, so an old off
   nav.goBack();
   await until(() => browser.url.hash === "#discover", "#discover");
   await settle();
-  assert.equal(browser.scrollY, 0);
+  assert.equal(browser.scrollY, 900);
 });
 
 test("Now playing has an entry of its own: Back closes it and leaves the page where it was", async () => {

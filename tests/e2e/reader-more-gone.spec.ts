@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 import { expectTextUncovered, showControls } from "./reader-bands";
+import { openRead } from "./now-playing";
 // The reader's More sheet goes (#592, spec #586 "The More sheet goes"): no More button in the head and nothing added
 // in its place; Read from audio is Back to narration's fallback. Without a narrated sentence the administrator's
 // Back to narration locates the passage from the audio (`/api/alignments/recover`) with "Finding the place in the
@@ -50,7 +51,8 @@ async function openAt(page: Page, book: any, position: number) {
   const saved = await page.request.post("/api/progress", { data: { recordingId: book.recordingId, trackId: book.tracks[0].id, position, duration: book.tracks[0].duration, updatedAt: Math.max(Date.now(), previous + 1) } });
   expect(saved.ok()).toBe(true);
   await page.goto("/");
-  await page.locator(".player-dock").getByRole("button", { name: "Open ebook reader", exact: true }).click();
+  // Now playing on its Read face (#593: the dock's "Open ebook reader" went).
+  await openRead(page);
   const room = page.locator(".inline-reader");
   await expect(page.frameLocator(".inline-reader .reader-viewport iframe").locator("p").first()).toBeAttached({ timeout: 20000 });
   return room;

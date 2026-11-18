@@ -262,6 +262,10 @@ for (const size of [
     await serve(page);
     await page.goto(`/#book/${WAR.workId}/get/audiobook/magnet`);
     await field(page).fill(MAGNET);
+    // The cover is a placeholder until the work is read, then its image: measured before that swap, the box is of a
+    // detached node and null (Firefox at desktop size in the check of 374a95e).
+    await expect(magnetSheet(page).getByRole("heading", { level: 1 })).toHaveText(WAR.title);
+    await expect(magnetSheet(page).locator("img.get-sheet-cover")).toBeVisible();
     const box = async (locator: ReturnType<Page["locator"]>) => (await locator.boundingBox())!;
     const close = await box(magnetSheet(page).getByRole("button", { name: "Close", exact: true }));
     const cover = await box(magnetSheet(page).locator(".get-sheet-cover"));

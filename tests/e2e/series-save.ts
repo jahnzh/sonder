@@ -1,17 +1,14 @@
-// Saving a series through its page (#564): Discover's series search, View series, then Save series and its sheet.
+// Saving a series through its page (#564): Discover's series search, a series row, then Save series and its sheet.
 // The specs that saved The Crossing through the series dialog's preview save it here.
 import { expect, type Page } from "@playwright/test";
+import { openSeriesResult } from "./discover-search";
 
 /** The Save series sheet over the page of a series that is not saved. */
 export const saveSheet = (page: Page) => page.getByRole("dialog", { name: "Save series" });
 
-/** Opens `#series/<id>` from Discover's series search: View `<name> by <author>`. */
+/** Opens `#series/<id>` from Discover's series search (#575): the row of `<name>` by `<author>`. */
 export async function viewSeriesFromDiscover(page: Page, query: string, name: string, author: string) {
-  await page.goto("/#discover");
-  await page.getByRole("button", { name: "Series", exact: true }).click();
-  await page.getByRole("textbox", { name: "Search series" }).fill(query);
-  await page.getByRole("button", { name: "Search series", exact: true }).click();
-  await page.getByRole("button", { name: `View ${name} by ${author}` }).click();
+  await openSeriesResult(page, query, name, author);
   await expect(page).toHaveURL(/#series\/\d+$/);
 }
 

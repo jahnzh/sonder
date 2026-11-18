@@ -7,8 +7,8 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  NOT_IN_LIBRARY_LINE, QUEUE_OFF_LINE, WORKER_OFF_LINE,
-  deviceSaveLine, downloadLine, ebookCheckLine, readingSyncLine, serverCopyLine, spareEditionsLine,
+  NOT_IN_LIBRARY_LINE, QUEUE_OFF_LINE, WORKER_OFF_LINE, ALREADY_HAS_COPY_LINE,
+  deviceSaveLine, downloadLine, ebookCheckLine, readingSyncLine, serverCopyLine, spareEditionsLine, withReason,
   type EbookCheckFacts, type ReadingSyncJobFacts,
 } from "../src/status-lines.ts";
 import { ALIGNMENT_OUTCOMES, ALIGNMENT_STATUSES } from "../src/reading-types.ts";
@@ -32,6 +32,7 @@ test("a download: every line of the table, with its percentage", () => {
   assert.equal(downloadLine({ status: "ready", backend: "copy" }), "On server");
   assert.equal(downloadLine({ status: "ready", backend: "torbox" }), "Streams from TorBox");
   assert.equal(downloadLine({ status: "error" }), "Download failed");
+  assert.equal(downloadLine({ status: "cancelled" }), "Download cancelled");
 });
 
 test("a percentage is a whole number, from 0 to 100, and a missing figure is 0%", () => {
@@ -111,7 +112,7 @@ test("the fixed lines", () => {
 // The walk: every status the server can write has a line. The lists are the server's own, not copies.
 
 test("every acquisition status the server can write has a line", () => {
-  assert.deepEqual([...ACQUISITION_STATUSES], ["checking", "preparing", "downloading", "paused", "ready", "error"]);
+  assert.deepEqual([...ACQUISITION_STATUSES], ["checking", "preparing", "downloading", "paused", "ready", "error", "cancelled"]);
   for (const status of ACQUISITION_STATUSES) {
     for (const backend of ["local", "torbox", "copy"] as const) {
       const line = downloadLine({ status, progress: 0.5, backend });
@@ -307,4 +308,9 @@ test("the syncs of a book's spare editions: one line, with the one being checked
   assert.equal(spareEditionsLine({ total: 4, current: 1 }), "Checking 4 other editions · 1 of 4");
   assert.equal(spareEditionsLine({ total: 5, current: 3 }), "Checking 5 other editions · 3 of 5");
   assert.equal(spareEditionsLine({ total: 4, current: 9 }), "Checking 4 other editions · 4 of 4", "never past the last");
+});
+
+test("a stalled download of a book that already has a copy: the line leads with it (#716)", () => {
+  assert.equal(ALREADY_HAS_COPY_LINE, "This book already has a copy");
+  assert.equal(withReason(ALREADY_HAS_COPY_LINE, downloadLine({ status: "downloading", progress: 0.0011 })), "This book already has a copy · Downloading to server · 0%");
 });
