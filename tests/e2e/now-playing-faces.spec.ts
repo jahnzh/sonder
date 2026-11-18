@@ -266,7 +266,20 @@ test("Listen at 390 by 844: the rows in the board's order with their names and t
   for (const gone of ["Playback options", "Title page", "Manage versions and sources", "Volume", "Mute", "Keyboard shortcuts", "Open ebook reader"])
     await expect(page.getByRole("button", { name: gone, exact: true }).or(page.getByRole("slider", { name: gone, exact: true }))).toHaveCount(0);
   await expect(page.locator(".player-dock").getByRole("button", { name: "Open ebook reader", exact: true })).toHaveCount(0);
-  await page.screenshot({ path: "artifacts/now-playing-listen-390.png" });
+  await page.screenshot({ path: `artifacts/now-playing-listen-390-${test.info().project.name}.png` });
+  // The same screen at a desktop width, and the Read face at both sizes: screenshots for the report.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expect(face.getByRole("button", { name: "Close now playing", exact: true })).toBeVisible();
+  await page.screenshot({ path: `artifacts/now-playing-listen-1280-${test.info().project.name}.png` });
+  await faces(page).getByRole("radio", { name: "Read", exact: true }).click();
+  const text = page.frameLocator(".now-playing-screen .reader-viewport iframe").getByText("Alice was beginning", { exact: false });
+  await expect(text).toBeVisible();
+  await showReadControls(page);
+  await page.screenshot({ path: `artifacts/now-playing-read-1280-${test.info().project.name}.png` });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(text).toBeVisible();
+  await showReadControls(page);
+  await page.screenshot({ path: `artifacts/now-playing-read-390-${test.info().project.name}.png` });
 });
 
 test("the sleep timer picker offers today's choices and the row shows the minutes left", async ({ page }) => {
