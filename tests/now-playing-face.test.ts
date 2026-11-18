@@ -62,3 +62,10 @@ test("a stored value that is not a face counts as none", () => {
   assert.equal(readFace(""), null);
   assert.equal(faceKeyName("w 1"), "face:w 1");
 });
+
+test("the rule's order: without a recording comes first, so a work with neither file is Read (its Book page is shown)", () => {
+  const w = work([], [ebook("p1", "pdf")]);
+  assert.deepEqual(facts(w), { recording: false, epub: false });
+  assert.equal(faceToOpen(facts(w), null), "read");
+  assert.equal(faceToOpen(facts(w), "listen"), "read");
+});
