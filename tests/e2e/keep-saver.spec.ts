@@ -16,7 +16,7 @@ const CHUNK = 4 * 1024 * 1024;
 
 const made: string[] = [];
 test.afterEach(async ({ page }) => {
-  await page.unrouteAll({ behavior: "ignoreErrors" });
+  if (!page.isClosed()) await page.unrouteAll({ behavior: "ignoreErrors" });
   for (const workId of made.splice(0))
     expect((await page.request.delete(`/api/works/${encodeURIComponent(workId)}/library`)).ok()).toBe(true);
 });
@@ -343,9 +343,10 @@ test("the rollout turns Keep on for a recording saved before the upgrade, withou
   expect(await persistCalls(page)).toBe(0);
 });
 
-test("cleared files are saved again and This device explains until complete", async ({ page }) => {
+test("cleared files are saved again and This device explains until complete", async ({ page: initialPage, context }) => {
+  let page = initialPage;
   test.setTimeout(90_000);
-  await page.addInitScript(() => {
+  await context.addInitScript(() => {
     (window as any).__persistCalls = 0;
     navigator.storage.persisted = async () => false;
     navigator.storage.persist = async () => { (window as any).__persistCalls++; return true; };
@@ -354,6 +355,8 @@ test("cleared files are saved again and This device explains until complete", as
   await page.goto(address(book.workId));
   await keep(page).click();
   await expect.poll(async () => (await serverKeep(page, book.workId))?.completeAt, { timeout: 30_000 }).toEqual(expect.any(Number));
+  await page.close();
+  page = await context.newPage();
   await page.goto("/favicon.ico");
   await page.evaluate(async () => {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
