@@ -6,8 +6,7 @@
 // book-model.ts; the work comes from the library by work on the device (`useWork`), so it opens without a connection.
 import { useEffect, useMemo, useState } from "react";
 import { useHardcover } from "../components/Hardcover";
-import { Dialog } from "../components/ui/dialog";
-import { api, deleteDownloads, localDB } from "../lib";
+import { api, localDB } from "../lib";
 import { refreshLibraryWorks, useWork } from "../library-works-store";
 import { openSheet, useAddress } from "../navigation";
 import { Button } from "../parts/Button";
@@ -20,9 +19,10 @@ import { InfoMark } from "../parts/Tooltip";
 import { backName } from "../parts/back-name";
 import { usePlayer } from "../player";
 import { openReader } from "../reading";
-import { ebookDeviceCopySize, EBOOK_DEVICE_EVENT, removeEbookFromDevice, useDeviceEbookChoice, useEbookDeviceCopy } from "../ebook-device-copy";
+import { useDeviceEbookChoice, useEbookDeviceCopy } from "../ebook-device-copy";
 import { ebookSearchTarget } from "./ebook-page";
-import { keepSaver, removeWorkMaps, tapKeep, useKeepRecord, useKeptNeeds } from "../keep-runtime";
+import { keepOffAndRemove, keepSaver, removeBookFiles, removeEarlierCopy, resumeKeep, tapKeep, useDeviceBook, useKeepRecord, useKeptNeeds } from "../keep-runtime";
+import type { DeviceSaveRecord } from "../device-saves";
 import { hardcoverRowValue } from "../hardcover-page-model";
 import { bytes } from "../size-format";
 import { tip } from "../tooltip-texts";
@@ -31,8 +31,14 @@ import { bookModel, chosenRecording, deviceHold, favoriteOf, keepState } from ".
 import type { Notify } from "./shared";
 import "./book-page.css";
 
-/** Removing the book's files from this device keeps these. */
-export const KEEP_OFF_KEEPS = "Your place, bookmarks and the library entry stay.";
+/** Removing the book's files from this device keeps these (board KeepOff.dc.html). */
+export const KEEP_OFF_KEEPS = "Your place, bookmarks and library entry stay.";
+/** Turning Keep off asks this, with the size of every file of the book on this device. */
+export const keepOffQuestion = (size: number) => `Remove ${bytes(size)} from this device? ${KEEP_OFF_KEEPS}`;
+/** An earlier copy's Remove asks this (board KeepEarlier.dc.html). */
+export const earlierQuestion = (size: number) => `Remove ${bytes(size)} from this device?`;
+/** Remove from library's question adds this when this device holds files of the book. */
+export const removedFromDevice = (size: number) => `It is also removed from this device, ${bytes(size)}.`;
 /** Remove from library keeps these. */
 export const REMOVE_KEEPS = "Your place and the files stay.";
 
@@ -48,6 +54,8 @@ type Props = {
   downloadParts: DownloadPart[];
   /** Saves to this device that are running now, by recording. */
   running: Running;
+  /** The device's records of its saves (#517): how a kept book's last save stopped (#552). */
+  records?: readonly DeviceSaveRecord[];
   favorites: string[];
   /** Every entry of the work joins today's favourites list, or every one leaves it. */
   onFavorite: (entryIds: string[]) => void;
@@ -111,32 +119,6 @@ function ExpandIcon() {
   );
 }
 
-/** The bytes of a work's files on this device: every recording's audio (whole files and saved sections) and its EPUBs. */
-function useDeviceSize(work: LibraryWork | null, downloads: Download[], parts: DownloadPart[]) {
-  const [ebookBytes, setEbookBytes] = useState(0);
-  const ebookIds = work?.ebooks.map((ebook) => ebook.id).join(" ") ?? "";
-  useEffect(() => {
-    let live = true;
-    const read = () =>
-      void Promise.all(ebookIds.split(" ").filter(Boolean).map((id) => ebookDeviceCopySize(id))).then((sizes) => {
-        if (live) setEbookBytes(sizes.reduce<number>((sum, size) => sum + (size ?? 0), 0));
-      });
-    read();
-    window.addEventListener(EBOOK_DEVICE_EVENT, read);
-    return () => {
-      live = false;
-      window.removeEventListener(EBOOK_DEVICE_EVENT, read);
-    };
-  }, [ebookIds]);
-  const recordings = new Set(work?.recordings.map((r) => r.recordingId) ?? []);
-  const whole = downloads.filter((file) => recordings.has(file.recordingId));
-  const done = new Set(whole.map((file) => file.trackId));
-  const audio =
-    whole.reduce((sum, file) => sum + (file.size || 0), 0) +
-    parts.filter((part) => recordings.has(part.recordingId) && !done.has(part.trackId)).reduce((sum, part) => sum + (part.loaded || 0), 0);
-  return audio + ebookBytes;
-}
-
 export function BookPage(props: Props) {
   const { workId, admin, online, books, downloads, downloadParts, running, favorites, notify } = props;
   const address = useAddress();
@@ -149,6 +131,8 @@ export function BookPage(props: Props) {
   const [expanded, setExpanded] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [confirmKeepOff, setConfirmKeepOff] = useState(false);
+  // The earlier copy whose Remove asks in place (#553), by recording.
+  const [confirmEarlier, setConfirmEarlier] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -159,6 +143,7 @@ export function BookPage(props: Props) {
   useEffect(() => {
     setConfirmRemove(false);
     setConfirmKeepOff(false);
+    setConfirmEarlier(null);
     setExpanded(false);
     setError("");
   }, [workId]);
@@ -176,9 +161,19 @@ export function BookPage(props: Props) {
   const chosenBook = (recording && entries.find((b) => b.recordingId === recording.recordingId)) ?? null;
   const searchTarget = chosenBook ?? entries[0] ?? (work ? ebookSearchTarget(work) : null);
   const hold = deviceHold(recording, downloads, downloadParts);
-  const job = recording ? running[recording.recordingId] : undefined;
   const epubSize = chosenEpub && epubCopy.known ? epubCopy.size : null;
   const needs = useKeptNeeds(work, downloads, downloadParts);
+  // The save of the book: its recording's, or for a book with only an ebook its EPUB's (#551).
+  const saveId = recording ? recording.recordingId : needs?.ebook ? `ebook:${needs.ebook.id}` : null;
+  const job = saveId ? running[saveId] : undefined;
+  const saveRecord = saveId ? props.records?.find((r) => r.recordingId === saveId) : undefined;
+  // How the kept book's last save stopped (#552): a failure waits for Retry, a pause (on any tab) for Resume.
+  const stop =
+    saveRecord?.state === "failed"
+      ? { why: "failed" as const, failure: saveRecord.failure ?? null }
+      : keepRecord?.pausedAt || saveRecord?.state === "paused"
+        ? { why: "paused" as const }
+        : null;
   const keep = keepState({
     keep: keepRecord?.on === true,
     hold,
@@ -186,8 +181,10 @@ export function BookPage(props: Props) {
     ebookSize: epubSize,
     hasRecording: !!recording && recording.tracks.length > 0,
     needs,
+    stop,
   });
-  const deviceSize = useDeviceSize(work, downloads, downloadParts);
+  // Every file of the book on this device (#553): what Off frees and the earlier copies.
+  const onDevice = useDeviceBook(work);
   const hardcoverValue = hardcoverRowValue(hardcover, work?.hardcover ?? null);
 
   const back = address.backTarget();
@@ -269,6 +266,11 @@ export function BookPage(props: Props) {
   const remove = () =>
     run(async () => {
       await api(`/works/${encodeURIComponent(workId)}/library`, { method: "DELETE" });
+      // Its files leave this device (#553): the server turned Keep off for the book on every device, and the question
+      // said so. Another device removes them at its next run.
+      if (keepRecord?.on) await keepOffAndRemove(workId, work);
+      else await removeBookFiles(workId, work);
+      await props.onDevice();
       // The history of the work's recordings goes with it, as removing a library row did; the places stay.
       const recordingIds = new Set([...work.recordings.map((r) => r.recordingId), ...entries.map((b) => b.recordingId)].filter(Boolean));
       await localDB.positionHistory.bulkDelete([...recordingIds]).catch(() => {});
@@ -288,30 +290,30 @@ export function BookPage(props: Props) {
     void tapKeep(workId, true).catch((e: Error) => setError(e.message));
   };
   // Resume: a kept book's save is the saver's; another is today's save.
+  // Resume and Retry of a kept book clear its pause and ask the tab that saves to save it again (#552).
   const resume = () => {
-    const saver = keepSaver();
-    if (keepRecord?.on && saver) void saver.trigger("retry", workId);
+    if (keepRecord?.on && keepSaver()) void resumeKeep(workId).catch((e: Error) => setError(e.message));
     else if (chosenBook) props.onSave(chosenBook);
   };
-  // Off removes every file of the book from this device: its recordings' audio and its EPUBs. The place stays.
+  // Off (#553): removes every file of the book from this device (its recordings, complete and partial, earlier copies
+  // included, its EPUB copies, its maps and its save records) and writes off. The place, bookmarks and library entry
+  // stay. Remove on Activity's This device is the same action.
   const keepOff = () =>
     run(async () => {
-      await tapKeep(workId, false);
-      for (const r of work.recordings) {
-        if (running[r.recordingId]) {
-          const saver = keepSaver();
-          if (saver) saver.pause(r.recordingId, "off");
-          else props.onPauseSave(r.recordingId);
-        }
-        await deleteDownloads(r.recordingId);
-      }
-      // A book with only an ebook saves under its EPUB's name (#551).
-      for (const ebook of work.ebooks) keepSaver()?.pause(`ebook:${ebook.id}`, "off");
-      for (const ebook of work.ebooks) if ((await ebookDeviceCopySize(ebook.id)) != null) await removeEbookFromDevice(ebook.id);
-      await removeWorkMaps(work);
-      window.dispatchEvent(new Event("sonder:downloads-changed"));
+      await keepOffAndRemove(workId, work);
       await props.onDevice();
       setConfirmKeepOff(false);
+    });
+  // The switch turned off asks in place with the size; with nothing on the device it turns off without asking.
+  const switchOff = () => {
+    if (onDevice?.any) setConfirmKeepOff(true);
+    else void keepOff();
+  };
+  const removeEarlier = (recordingId: string) =>
+    run(async () => {
+      await removeEarlierCopy(workId, recordingId);
+      await props.onDevice();
+      setConfirmEarlier(null);
     });
 
   const audiobookAction =
@@ -424,14 +426,14 @@ export function BookPage(props: Props) {
                   <InfoMark name="Keep on this device" text={tip("keep")} />
                 </span>
                 {keep.line && (
-                  <span id="book-keep-line" className="part-file-row-status type-label">
+                  <span id="book-keep-line" className="part-file-row-status type-label" data-failed={keep.failed ? "" : undefined}>
                     {keep.line}
                   </span>
                 )}
                 {job && <ProgressBar progress={job.progress / 100} />}
               </span>
               <span className="part-file-row-end">
-                {keep.resumable && !job && chosenBook && (
+                {keep.resumable && !job && (chosenBook || keepRecord?.on) && (
                   <Button kind="quiet" disabled={busy || !online} onClick={resume}>
                     Resume
                   </Button>
@@ -440,11 +442,52 @@ export function BookPage(props: Props) {
                   label="Keep on this device"
                   on={keep.on}
                   disabled={busy || keepRecord === undefined}
-                  onChange={(on) => (on ? keepOn() : setConfirmKeepOff(true))}
+                  onChange={(on) => (on ? keepOn() : switchOff())}
                 />
               </span>
             </div>
           </li>
+          {/* A failed save: its reason in one line and Retry (board KeepNotComplete.dc.html). */}
+          {keep.failed && keep.reason && !job && (
+            <li className="part-file-row book-page-keep-failure">
+              <span className="part-file-row-text">
+                <span className="part-file-row-status type-label" id="book-keep-reason">
+                  {keep.reason}
+                </span>
+              </span>
+              <span className="part-file-row-end">
+                <Button aria-label="Retry saving on this device" aria-describedby="book-keep-reason" disabled={busy || !online} onClick={resume}>
+                  Retry
+                </Button>
+              </span>
+            </li>
+          )}
+          {/* Turning the switch off asks in place under the row (board KeepOff.dc.html); the switch stays on until Remove. */}
+          {confirmKeepOff && (
+            <li className="book-page-device-confirm" role="group" aria-label="Turn off Keep on this device">
+              <span className="type-body">{keepOffQuestion(onDevice?.size ?? 0)}</span>
+              <span className="book-page-device-confirm-buttons">
+                <Button onClick={() => setConfirmKeepOff(false)}>Cancel</Button>
+                <Button className="book-page-device-remove" disabled={busy} onClick={() => void keepOff()}>
+                  Remove
+                </Button>
+              </span>
+            </li>
+          )}
+          {/* An earlier copy (board KeepEarlier.dc.html): a row per copy with Remove, which asks once in place. */}
+          {keep.on &&
+            (onDevice?.earlier ?? []).map((copy) => (
+              <EarlierRow
+                key={copy.recordingId}
+                narrator={copy.narrator}
+                size={copy.size}
+                asking={confirmEarlier === copy.recordingId}
+                busy={busy}
+                onAsk={() => setConfirmEarlier(copy.recordingId)}
+                onCancel={() => setConfirmEarlier(null)}
+                onRemove={() => void removeEarlier(copy.recordingId)}
+              />
+            ))}
         </Group>
       )}
 
@@ -476,7 +519,10 @@ export function BookPage(props: Props) {
       )}
       {confirmRemove && (
         <div className="book-page-confirm" role="group" aria-label="Remove from library?">
-          <p className="type-label">Remove from library? {REMOVE_KEEPS}</p>
+          <p className="type-label">
+            Remove from library? {REMOVE_KEEPS}
+            {onDevice?.any ? ` ${removedFromDevice(onDevice.size)}` : ""}
+          </p>
           <div className="book-page-confirm-actions">
             <Button kind="secondary" onClick={() => setConfirmRemove(false)}>
               Cancel
@@ -494,22 +540,37 @@ export function BookPage(props: Props) {
         </p>
       )}
 
-      <Dialog
-        open={confirmKeepOff}
-        onOpenChange={(next) => !next && setConfirmKeepOff(false)}
-        title="Remove from this device?"
-        description={`${bytes(deviceSize)} on this device. ${KEEP_OFF_KEEPS}`}
-        className="book-page-dialog"
-      >
-        <div className="book-page-confirm-actions">
-          <Button kind="secondary" onClick={() => setConfirmKeepOff(false)}>
-            Cancel
-          </Button>
-          <Button kind="primary" disabled={busy} onClick={() => void keepOff()}>
+    </section>
+  );
+}
+
+/** An earlier copy's row: "Earlier recording", the narrator and its size, and Remove that asks once in place. */
+function EarlierRow(props: { narrator: string; size: number; asking: boolean; busy: boolean; onAsk: () => void; onCancel: () => void; onRemove: () => void }) {
+  const status = [props.narrator, bytes(props.size)].filter(Boolean).join(" · ");
+  return (
+    <>
+      <li className="part-file-row book-page-earlier" data-asking={props.asking ? "" : undefined}>
+        <span className="part-file-row-text">
+          <span className="part-file-row-name type-body">Earlier recording</span>
+          <span className="part-file-row-status type-label">{status}</span>
+        </span>
+        <span className="part-file-row-end">
+          <Button aria-label="Remove the earlier recording from this device" aria-expanded={props.asking} disabled={props.busy} onClick={props.onAsk}>
             Remove
           </Button>
-        </div>
-      </Dialog>
-    </section>
+        </span>
+      </li>
+      {props.asking && (
+        <li className="book-page-device-confirm" role="group" aria-label="Remove the earlier recording from this device">
+          <span className="type-body">{earlierQuestion(props.size)}</span>
+          <span className="book-page-device-confirm-buttons">
+            <Button onClick={props.onCancel}>Cancel</Button>
+            <Button className="book-page-device-remove" disabled={props.busy} onClick={props.onRemove}>
+              Remove
+            </Button>
+          </span>
+        </li>
+      )}
+    </>
   );
 }

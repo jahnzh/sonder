@@ -38,6 +38,8 @@ export type DeviceSaveRecord = {
   job?: { progress: number; chapter: number; total: number; loaded: number; size: number } | null;
   /** Why the last attempt failed. */
   reason?: string | null;
+  /** Which failure it was (#552): the source refused, the account is signed out, or the device is full. */
+  failure?: "source" | "signed-out" | "full" | null;
   /** When the save finished. */
   finishedAt?: number | null;
 };
@@ -58,6 +60,7 @@ export function readDeviceSaveRecord(value: unknown): DeviceSaveRecord | null {
     finishedAt: typeof row.finishedAt === "number" ? row.finishedAt : null,
     // Only on the records that have them, so an older record reads back as it was stored.
     ...(row.how === "network" || row.how === "closed" ? { how: row.how } : {}),
+    ...(row.failure === "source" || row.failure === "signed-out" || row.failure === "full" ? { failure: row.failure } : {}),
     ...(job && typeof job === "object" && typeof job.chapter === "number" && typeof job.total === "number"
       ? {
           job: {
@@ -95,19 +98,50 @@ export type DeviceSaveInput = {
   records: readonly DeviceSaveRecord[];
   /** Ebook editions saved for reading offline, with their work and size. */
   ebooks?: readonly { id: string; workId: string; size: number }[];
+  /**
+   * The works with Keep on on this device (#552), with what each needs (`keptNeeds`): the chosen recording's tracks,
+   * the chosen EPUB and the pair's map. Its entry counts those files, whichever is missing.
+   */
+  kept?: readonly KeptInput[];
 };
+
+/** A kept work as the entries read it: its pause (#552) and what it needs on this device. */
+export type KeptInput = {
+  workId: string;
+  pausedAt?: number | null;
+  needs: {
+    recordingId: string | null;
+    tracks: readonly { id: string }[];
+    ebook: { id: string; complete: boolean; size: number } | null;
+    filesTotal: number;
+    filesSaved: number;
+    size: number;
+    sections: number;
+    complete: boolean;
+  };
+};
+
+/** The save id of a kept work: its chosen recording, or `ebook:<id>` for a book with only an ebook (#551). */
+export function keptSaveId(needs: KeptInput["needs"]): string {
+  return needs.recordingId ?? (needs.ebook ? `ebook:${needs.ebook.id}` : "");
+}
 
 /** The state of one recording's save. */
 export type RecordingSave = {
   recordingId: string;
   /** The audio edition this recording belongs to. */
   bookId: string;
-  /** `saving`: running in this tab. `not-complete`: files are missing. `complete`: every file is here. */
-  state: "saving" | "not-complete" | "complete";
+  /**
+   * `saving`: running in this tab (or, for a kept work, on this device). `not-complete`: files are missing.
+   * `complete`: every file is here. `nothing`: a kept work with no file to save yet (#552).
+   */
+  state: "saving" | "not-complete" | "complete" | "nothing";
   /** Why a save that is not complete stopped. */
   why: "failed" | "paused" | "interrupted" | null;
   /** The reason of a failed save. */
   reason: string | null;
+  /** Which failure it was (#552): the source refused, the account is signed out, the device is full. */
+  failure?: "source" | "signed-out" | "full" | null;
   filesDone: number;
   filesTotal: number;
   /** Bytes on the device for this recording: complete files and saved sections. */
@@ -124,6 +158,12 @@ export type RecordingSave = {
 /** One work's files on this device. */
 export type DeviceSaveEntry = RecordingSave & {
   workId: string;
+  /** Keep on this device is on for the work (#552): the entry counts what the kept book needs. */
+  keep?: boolean;
+  /** The id its Pause, Resume and Retry act on: the recording, or `ebook:<id>` for a book with only an ebook. */
+  saveId?: string;
+  /** The audio files of the kept book are among its files (it has a chosen recording with tracks). */
+  hasAudio?: boolean;
   /** Every recording of the work with files or a save on this device, the shown one first. */
   recordings: RecordingSave[];
   /** The work's ebook saved for reading offline, if any. */
@@ -135,7 +175,7 @@ export type DeviceSaveEntry = RecordingSave & {
 /** An ebook-only entry has no audio: its audio fields describe nothing saved. */
 export type DeviceSaveEntries = (DeviceSaveEntry & { audio: boolean })[];
 
-const URGENCY: Record<string, number> = { saving: 0, failed: 1, paused: 2, interrupted: 3, complete: 4 };
+const URGENCY: Record<string, number> = { saving: 0, failed: 1, paused: 2, interrupted: 3, complete: 4, nothing: 5 };
 const urgency = (save: RecordingSave) => URGENCY[save.state === "not-complete" ? save.why ?? "interrupted" : save.state];
 
 function recordingSave(
@@ -168,7 +208,7 @@ function recordingSave(
   }
   // A failure stays until the user retries or removes the save, also with nothing saved yet: it is what they must see.
   if (record?.state === "failed")
-    return { ...base, state: "not-complete", why: "failed", reason: record.reason || null, progress, finishedAt: null };
+    return { ...base, state: "not-complete", why: "failed", reason: record.reason || null, failure: record.failure ?? null, progress, finishedAt: null };
   // Nothing of this recording is left (its files were removed, or the save stopped before its first section).
   if (!files.length && !sections) return null;
   const why = record?.state === "paused" ? "paused" : "interrupted";
@@ -199,7 +239,32 @@ export function deviceSaveEntries(input: DeviceSaveInput): DeviceSaveEntries {
   }
   const changed = (save: RecordingSave) => Math.max(save.finishedAt ?? 0, save.startedAt ?? 0);
   const entries: DeviceSaveEntries = [];
+  const keptWorks = new Set<string>();
+  for (const kept of input.kept ?? []) {
+    if (keptWorks.has(kept.workId)) continue;
+    keptWorks.add(kept.workId);
+    const save = keptSave(kept, input, records);
+    // The work's other recordings with files here are its earlier copies: listed, and what Remove frees.
+    const others = (byWork.get(kept.workId) ?? []).filter((r) => r.recordingId !== save.recordingId);
+    const ebook = ebooks.get(kept.workId) ?? null;
+    // The kept EPUB is in the needs' size once it is here; any other kept edition of the work adds its own.
+    const counted = kept.needs.ebook?.complete ? kept.needs.ebook.id : null;
+    const otherEbooks = (input.ebooks ?? []).filter((e) => e.workId === kept.workId && e.id !== counted).reduce((sum, e) => sum + (e.size || 0), 0);
+    const totalSize = save.bytesSaved + others.reduce((sum, r) => sum + r.bytesSaved, 0) + otherEbooks;
+    entries.push({
+      ...save,
+      workId: kept.workId,
+      keep: true,
+      saveId: keptSaveId(kept.needs),
+      hasAudio: kept.needs.tracks.length > 0,
+      recordings: [...(save.recordingId ? [save] : []), ...others],
+      ebook,
+      totalSize,
+      audio: kept.needs.tracks.length > 0 || others.length > 0,
+    });
+  }
   for (const workId of new Set([...byWork.keys(), ...ebooks.keys()])) {
+    if (keptWorks.has(workId)) continue;
     const recordings = [...(byWork.get(workId) ?? [])].sort((a, b) => urgency(a) - urgency(b) || changed(b) - changed(a));
     const ebook = ebooks.get(workId) ?? null;
     const audioSize = recordings.reduce((sum, r) => sum + r.bytesSaved, 0);
@@ -210,6 +275,47 @@ export function deviceSaveEntries(input: DeviceSaveInput): DeviceSaveEntries {
     entries.push({ ...shown, workId, recordings, ebook, totalSize: audioSize + (ebook?.size ?? 0), audio: recordings.length > 0 });
   }
   return entries.sort((a, b) => changed(b) - changed(a) || a.workId.localeCompare(b.workId));
+}
+
+/**
+ * The save of a kept work (#552), from what it needs: saving while a save of it runs on this device; complete when
+ * every needed file is here (finished at its recording's last file, so Finished today lists a recording only);
+ * `nothing` without a file to save; otherwise not complete: failed (with its reason), paused (its Keep record or its
+ * save record says so) or interrupted.
+ */
+function keptSave(kept: KeptInput, input: DeviceSaveInput, records: ReadonlyMap<string, DeviceSaveRecord>): RecordingSave {
+  const { needs } = kept;
+  const saveId = keptSaveId(needs);
+  const record = saveId ? records.get(saveId) : undefined;
+  const book = (needs.recordingId && input.books.find((b) => b.recordingId === needs.recordingId)) || input.books.find((b) => b.workId === kept.workId);
+  const base = {
+    recordingId: needs.recordingId ?? "",
+    bookId: book?.id ?? "",
+    filesDone: needs.filesSaved,
+    filesTotal: needs.filesTotal,
+    bytesSaved: needs.size + needs.sections,
+    size: needs.size,
+    startedAt: record?.startedAt || null,
+    failure: null,
+  };
+  if (needs.filesTotal <= 0) return { ...base, state: "nothing", why: null, reason: null, progress: 0, finishedAt: null };
+  const running = saveId ? input.running[saveId] : undefined;
+  if (running && !needs.complete) {
+    const share = running.size ? Math.min(1, (running.loaded ?? 0) / running.size) : 0;
+    const progress = Math.min(1, (needs.filesSaved + share) / needs.filesTotal);
+    return { ...base, state: "saving", why: null, reason: null, progress, finishedAt: null };
+  }
+  if (needs.complete) {
+    const trackIds = new Set(needs.tracks.map((t) => t.id));
+    const files = needs.recordingId ? input.downloads.filter((d) => d.recordingId === needs.recordingId && trackIds.has(d.trackId)) : [];
+    const finishedAt = files.length ? Math.max(0, ...files.map((f) => f.completedAt)) || null : null;
+    return { ...base, state: "complete", why: null, reason: null, progress: 1, finishedAt };
+  }
+  const progress = needs.filesSaved / needs.filesTotal;
+  if (record?.state === "failed")
+    return { ...base, state: "not-complete", why: "failed", reason: record.reason || null, failure: record.failure ?? "source", progress, finishedAt: null };
+  const why = kept.pausedAt || record?.state === "paused" ? "paused" : "interrupted";
+  return { ...base, state: "not-complete", why, reason: null, progress, finishedAt: null };
 }
 
 /** The status line of an entry's audiobook save, from the status-line module. */

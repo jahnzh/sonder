@@ -11,7 +11,7 @@
  */
 import type { DeviceSaveEntries } from "./device-saves";
 import { deviceSaveEntryLine } from "./device-saves";
-import { deviceKeptLine } from "./status-lines";
+import { DEVICE_FULL_NOTE, deviceKeptLine, deviceSaveLine } from "./status-lines";
 import { bytes } from "./size-format";
 
 /** A book as This device needs it: the audio edition a row opens, its work, title and cover. */
@@ -25,8 +25,10 @@ export type DeviceSavingRow = {
   cover: string | null;
   /** The book a row opens; null when the device knows no book of the work. */
   bookId: string | null;
-  /** The recording whose save runs (Pause stops it). */
+  /** The recording whose save runs (Pause stops it), or `ebook:<id>` for a kept book with only an ebook. */
   recordingId: string;
+  /** Keep is on for the work (#552): Pause goes through its Keep record. */
+  keep: boolean;
   /** "Saving · 3 of 12 files". */
   status: string;
   /** 0 to 1, for the bar. */
@@ -42,6 +44,10 @@ export type DeviceKeptRow = {
   status: string;
   /** The audiobook's save is not complete: the line has the audiobook's mark. */
   notComplete: boolean;
+  /** The save failed (#552): the line is in the failed colour and the row offers Retry instead of Remove. */
+  failed: boolean;
+  /** Keep is on for the work. */
+  keep: boolean;
   /** Everything of the work on this device, in bytes: what Remove frees. */
   size: number;
   /** What Remove deletes: every recording with files here, and every saved ebook edition of the work. */
@@ -56,6 +62,11 @@ export type DevicePart = {
   kept: DeviceKeptRow[];
   /** What the device's saves take, in bytes. */
   used: number;
+  /**
+   * A kept book's save failed because the device is full (#552): Storage shows this note in the failed colour. The
+   * bar of Used by Sonder does not decide it.
+   */
+  fullNote: string | null;
 };
 
 export function buildDevicePart({
@@ -80,12 +91,34 @@ export function buildDevicePart({
     const title = book?.title ?? ebookTitle ?? "";
     const common = { workId: entry.workId, title, cover: book?.cover ?? null, bookId: book?.id ?? null };
     // A save runs only with a connection; without one it waits as not complete, with no bar.
-    if (entry.audio && entry.state === "saving" && online) {
+    if ((entry.audio || entry.keep) && entry.state === "saving" && online) {
       saving.push({
         ...common,
-        recordingId: entry.recordingId,
+        recordingId: entry.keep ? entry.saveId ?? entry.recordingId : entry.recordingId,
+        keep: !!entry.keep,
         status: deviceSaveEntryLine(entry) ?? "",
         progress: entry.progress,
+      });
+      continue;
+    }
+    // Every work with Keep on is listed (#552), also before its first file: what it keeps, or why it is not complete.
+    if (entry.keep) {
+      const failed = entry.state === "not-complete" && entry.why === "failed";
+      const status =
+        entry.state === "nothing"
+          ? deviceSaveLine({ keep: true, saving: false, filesTotal: 0, filesSaved: 0, size: 0 }) ?? ""
+          : entry.state === "complete"
+            ? deviceKeptLine({ audio: entry.hasAudio ? "complete" : "none", filesTotal: entry.filesTotal, filesSaved: entry.filesDone, ebook: !!entry.ebook || !entry.hasAudio, size: entry.totalSize }) ?? ""
+            : deviceKeptLine({ audio: "partial", filesTotal: entry.filesTotal, filesSaved: entry.filesDone, ebook: false, size: entry.totalSize }) ?? "";
+      kept.push({
+        ...common,
+        status,
+        notComplete: entry.state === "not-complete" || entry.state === "saving",
+        failed,
+        keep: true,
+        size: entry.totalSize,
+        recordingIds: entry.recordings.map((r) => r.recordingId).filter(Boolean),
+        ebookIds: entry.ebook?.editionIds ?? [],
       });
       continue;
     }
@@ -105,14 +138,17 @@ export function buildDevicePart({
       ...common,
       status,
       notComplete: audio === "partial",
+      failed: false,
+      keep: false,
       size: entry.totalSize,
       recordingIds: entry.recordings.map((r) => r.recordingId),
       ebookIds: entry.ebook?.editionIds ?? [],
     });
   }
-  // A stable sort: entries come newest change first, and an unfinished save goes before every complete one.
-  kept.sort((a, b) => Number(b.notComplete) - Number(a.notComplete));
-  return { saving, kept, used };
+  // A stable sort: entries come newest change first; a failed save first (#552), then an unfinished one, then the rest.
+  kept.sort((a, b) => Number(b.failed) - Number(a.failed) || Number(b.notComplete) - Number(a.notComplete));
+  const full = entries.some((entry) => entry.keep && entry.state === "not-complete" && entry.why === "failed" && entry.failure === "full");
+  return { saving, kept, used, fullNote: full ? DEVICE_FULL_NOTE : null };
 }
 
 /** "2.1 GB of 12 GB": what Sonder uses out of what the browser allows, or the use alone when the browser does not say. */

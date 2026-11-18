@@ -35,7 +35,16 @@ export type NowIcon = "audiobook" | "ebook" | "reading-sync" | "server" | null;
 
 /** What a row's one button does, and to what. */
 export type NowButton =
-  | { action: "pause" | "resume" | "retry"; source: "device"; recordingId: string; bookId: string }
+  | {
+      action: "pause" | "resume" | "retry";
+      source: "device";
+      /** The save it acts on: the recording, or `ebook:<id>` for a kept book with only an ebook. */
+      recordingId: string;
+      bookId: string;
+      /** The work, and whether Keep is on for it (#552): a kept book's Pause and Resume go through its Keep record. */
+      workId?: string;
+      keep?: boolean;
+    }
   | { action: ActivityItemAction; source: "server"; itemId: string };
 
 /**
@@ -281,15 +290,22 @@ function processEntry(process: ActivityProcess, checkedAt: number): Entry | null
 
 function saveEntry(save: DeviceSaveEntry, books: readonly NowBook[], online: boolean, now: number): Entry | null {
   const book = books.find((b) => b.id === save.bookId) ?? books.find((b) => b.workId === save.workId);
+  // A kept book with only an ebook saves its EPUB and has the ebook's icon (#552).
+  const icon: NowIcon = save.keep && !save.hasAudio ? "ebook" : "audiobook";
   const base = {
     book: true, workId: save.workId, bookId: save.bookId, title: book?.title ?? "", cover: book?.cover ?? null,
-    entry: "device-save" as const, icon: "audiobook" as const, finishedAt: null,
+    entry: "device-save" as const, icon, finishedAt: null,
     opens: { to: "book" as const, workId: save.workId, bookId: save.bookId || null },
     changedAt: Math.max(save.finishedAt ?? 0, save.startedAt ?? 0),
   };
-  const target = { source: "device" as const, recordingId: save.recordingId, bookId: save.bookId };
+  const target = save.keep
+    ? { source: "device" as const, recordingId: save.saveId ?? save.recordingId, bookId: save.bookId, workId: save.workId, keep: true }
+    : { source: "device" as const, recordingId: save.recordingId, bookId: save.bookId };
+  if (save.state === "nothing") return null;
   const notComplete = failedLine({ entry: "device-save", filesDone: save.filesDone, filesTotal: save.filesTotal });
   if (save.state === "complete") {
+    // Finished today lists a save only when a recording completed (#552): a kept book's finish is its recording's last
+    // file, so an EPUB or a map topping it up later, or a book with only an ebook, lists nothing.
     if (!save.finishedAt || now - save.finishedAt > FINISHED_TODAY_MS) return null;
     return {
       ...base, group: "finished", line: finishedLine({ entry: "device-save", size: save.size }) ?? "",
@@ -328,9 +344,9 @@ export function buildNow({ activity, saves, books, admin, online, now }: NowInpu
       if (entry) entries.push({ key: process.id, entry });
     }
   }
-  // Only audiobook saves are entries on Now; an ebook kept for reading offline is This device's.
+  // Audiobook saves and kept books are entries on Now (#552); an ebook the reader copied is This device's.
   for (const save of saves) {
-    if (save.audio === false || !save.recordingId) continue;
+    if (!save.keep && (save.audio === false || !save.recordingId)) continue;
     const entry = saveEntry(save, books, online, now);
     if (entry) entries.push({ key: `work:${save.workId}`, entry });
   }

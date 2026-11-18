@@ -11,7 +11,7 @@ import { Button } from "../parts/Button";
 import { InfoMark } from "../parts/Tooltip";
 import { tip } from "../tooltip-texts";
 import { bytes } from "../size-format";
-import { buildDevicePart, protectedLine, usedLine, usedShare, type DeviceKeptRow } from "../device-part";
+import { buildDevicePart, protectedLine, usedLine, usedShare, type DeviceKeptRow, type DeviceSavingRow } from "../device-part";
 import { deviceSaveEntries, type DeviceSaveInput } from "../device-saves";
 import type { Book, SavedEbook } from "../types";
 import "./activity-device.css";
@@ -24,9 +24,13 @@ export type ActivityDeviceProps = {
   records: DeviceSaveInput["records"];
   /** Ebook editions saved on this device for reading offline. */
   ebooks: SavedEbook[];
+  /** The works with Keep on and what each needs (#552): every one is listed. */
+  kept?: DeviceSaveInput["kept"];
   online: boolean;
-  /** Stops the save of one recording; what is saved stays. */
-  onPause: (recordingId: string) => void;
+  /** Stops a running save; what is saved stays. A kept book's pause is its Keep record's. */
+  onPause: (row: DeviceSavingRow) => void;
+  /** Retry of a kept book whose save failed (#552). */
+  onRetry?: (row: DeviceKeptRow) => void;
   /** Opens a book (today's book dialog, until the Book page exists). */
   onOpen: (book: Book) => void;
   /** Removes every file of a work from this device; the place, the bookmarks and the library entry stay. */
@@ -84,7 +88,7 @@ function Note({ title, text, icon }: { title: string; text: string; icon?: React
   );
 }
 
-function KeptRow({ row, book, onOpen, onRemove }: { row: DeviceKeptRow; book: Book | undefined; onOpen: (book: Book) => void; onRemove: ActivityDeviceProps["onRemove"] }) {
+function KeptRow({ row, book, online, onOpen, onRemove, onRetry }: { row: DeviceKeptRow; book: Book | undefined; online: boolean; onOpen: (book: Book) => void; onRemove: ActivityDeviceProps["onRemove"]; onRetry?: ActivityDeviceProps["onRetry"] }) {
   const [asking, setAsking] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
@@ -96,9 +100,19 @@ function KeptRow({ row, book, onOpen, onRemove }: { row: DeviceKeptRow; book: Bo
         status={row.status}
         cover={row.cover}
         marks={row.notComplete ? ["audiobook"] : []}
+        failed={row.failed}
         onClick={book ? () => onOpen(book) : undefined}
         action={
-          <Button kind="quiet" icon={<Trash2 size={20} />} label={name} aria-expanded={asking} onClick={() => setAsking((open) => !open)} />
+          // A failed save offers Retry (board KeepFull.dc.html) and keeps its Remove: Remove here is Keep off
+          // (spec #548), and a failed book is the one most likely to be given up.
+          <span className="activity-device-actions">
+            {row.failed && onRetry && (
+              <Button aria-label={`Retry saving ${row.title}`} disabled={!online} onClick={() => onRetry(row)}>
+                Retry
+              </Button>
+            )}
+            <Button kind="quiet" icon={<Trash2 size={20} />} label={name} aria-expanded={asking} onClick={() => setAsking((open) => !open)} />
+          </span>
         }
       />
       {asking && (
@@ -132,7 +146,7 @@ function KeptRow({ row, book, onOpen, onRemove }: { row: DeviceKeptRow; book: Bo
   );
 }
 
-export function ActivityDevice({ books, downloads, downloadParts, running, records, ebooks, online, onPause, onOpen, onRemove }: ActivityDeviceProps) {
+export function ActivityDevice({ books, downloads, downloadParts, running, records, ebooks, kept, online, onPause, onRetry, onOpen, onRemove }: ActivityDeviceProps) {
   const entries = deviceSaveEntries({
     books,
     downloads,
@@ -140,6 +154,7 @@ export function ActivityDevice({ books, downloads, downloadParts, running, recor
     running,
     records,
     ebooks: ebooks.map((e) => ({ id: e.id, workId: e.workId, size: e.size })),
+    kept,
   });
   const shown = buildDevicePart({ entries, books, ebooks, online });
   const storage = useStorage(shown.used);
@@ -154,7 +169,7 @@ export function ActivityDevice({ books, downloads, downloadParts, running, recor
         </div>
       )}
       <div className="activity-device-column">
-        <Group caption="Storage">
+        <Group caption="Storage" note={shown.fullNote ?? undefined} noteFailed={!!shown.fullNote}>
           <Row
             label="Used by Sonder"
             info={<InfoMark name="Used by Sonder" text={tip("used")} />}
@@ -187,7 +202,7 @@ export function ActivityDevice({ books, downloads, downloadParts, running, recor
                   marks={["audiobook"]}
                   progress={row.progress}
                   onClick={book ? () => onOpen(book) : undefined}
-                  action={<Button aria-label={`Pause saving ${row.title}`} onClick={() => onPause(row.recordingId)}>Pause</Button>}
+                  action={<Button aria-label={`Pause saving ${row.title}`} onClick={() => onPause(row)}>Pause</Button>}
                 />
               );
             })}
@@ -197,7 +212,7 @@ export function ActivityDevice({ books, downloads, downloadParts, running, recor
       <div className="activity-device-column">
         <Group caption="Kept on this device" info={<InfoMark name="Kept on this device" text={tip("kept")} />}>
           {shown.kept.length ? (
-            shown.kept.map((row) => <KeptRow key={row.workId} row={row} book={bookOf(row.bookId)} onOpen={onOpen} onRemove={onRemove} />)
+            shown.kept.map((row) => <KeptRow key={row.workId} row={row} book={bookOf(row.bookId)} online={online} onOpen={onOpen} onRemove={onRemove} onRetry={onRetry} />)
           ) : (
             <Note title="No books kept on this device" text="Turn on Keep on this device on a book’s page." />
           )}
