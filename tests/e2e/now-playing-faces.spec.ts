@@ -6,7 +6,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
-import { playFromLibrary } from "./library-play";
+import { playFromContinue } from "./library-play";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -66,9 +66,12 @@ const seekAudio = (page: Page, value: number) =>
     element.dispatchEvent(new Event("timeupdate"));
   }, value);
 
-/** Plays the book from the Library and pauses it in the mini player. */
+/**
+ * Plays the book from the Library's Continue card and pauses it in the mini player. The Continue card plays without
+ * leaving the Library (#577), so no entries of other pages stay ahead in the history the face tests count.
+ */
 async function playAndPause(page: Page, title: string) {
-  await playFromLibrary(page, title);
+  await playFromContinue(page, title);
   const pause = page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true });
   await expect(pause).toBeVisible();
   await pause.click();
