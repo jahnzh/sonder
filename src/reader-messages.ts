@@ -69,8 +69,12 @@ export function clearNotice(state: ReaderMessages, which?: ReaderNotice): Reader
   return { ...state, notice: null };
 }
 
-/** The next tap on a control (any but the message's own buttons) ends a notice; what needs an answer stays. */
-export function controlTapped(state: ReaderMessages): ReaderMessages {
+/**
+ * The next tap on a control (any but the message's own buttons) ends a notice; what needs an answer stays. With
+ * `seen`, only that notice ends: the tap is handled after the control's own click, which may have posted a newer one.
+ */
+export function controlTapped(state: ReaderMessages, seen?: ReaderMessages["notice"]): ReaderMessages {
+  if (seen !== undefined && state.notice !== seen) return state;
   return clearNotice(state);
 }
 

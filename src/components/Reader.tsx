@@ -1669,8 +1669,12 @@ export function ReaderView({
     dismissUpdate,
   };
   // The next tap on a control ends a notice with Undo (spec #586 "How long").
+  // The notice leaves on the next task, not in the capture phase: React would unmount the message's own Play or Pause
+  // before its click reached it, and the narration would not stop (#592, found with Listen from here's long-press).
+  // Only the notice shown at the tap leaves, not one the control's own click posted (removing a bookmark).
   const tapControls = (event: { target: EventTarget | null }) => {
-    if (tappedControl(event.target)) messages.tapped();
+    const seen = messages.state.notice;
+    if (seen && tappedControl(event.target)) setTimeout(() => messages.tapped(seen), 0);
   };
   return (
     <div className={`reader-room ${inline ? "inline-reader" : ""}`} data-controls-visible={controls} data-appearance={appearanceOpen ? "docked" : undefined} data-contents={showContents} data-current-passage={follow ? currentInterval?.paragraphId : undefined}>

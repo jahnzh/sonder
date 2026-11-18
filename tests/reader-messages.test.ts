@@ -136,6 +136,18 @@ test("the next tap on a control ends a notice, not a message that needs an answe
   assert.equal(messageToShow(controlTapped(notice), at(1, { update: "b" }))?.kind, "update");
 });
 
+test("a tap ends only the notice shown when it was tapped, not a newer one the control posted", () => {
+  const listening = postNotice(noMessages, "listening", 0);
+  // The head's bookmark button removed one: its own notice is newer than the tap's.
+  const removed = postNotice(listening, "bookmark-removed", 1);
+  assert.equal(controlTapped(removed, listening.notice), removed);
+  assert.equal(messageToShow(controlTapped(removed, listening.notice), at(2))?.kind, "notice");
+  // A newer notice of the same kind is newer too.
+  assert.equal(controlTapped(postNotice(listening, "listening", 1), listening.notice).notice?.at, 1);
+  // The notice seen is still the one shown: it ends.
+  assert.equal(controlTapped(listening, listening.notice).notice, null);
+});
+
 test("errors and a place saved elsewhere stay until answered, however long", () => {
   const state = postError(noMessages, "bookmark-save", 0);
   assert.equal(messageToShow(state, at(10 * 60_000))?.kind, "error");
