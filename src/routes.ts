@@ -17,6 +17,8 @@ export function isSettingsPage(page: string): page is SettingsPage {
 export type Route =
   | { name: "library" }
   | { name: "discover" }
+  /** The Get sheet without a book (#575, spec #572 "Addresses"): a recording search for the words, over Discover. */
+  | { name: "discover-get"; query: string }
   | { name: "activity"; part: ActivityPart }
   | { name: "worker"; worker: string }
   | { name: "settings" }
@@ -62,8 +64,12 @@ export function readAddress(hash: string): Route {
   const [head, ...rest] = text.split("/");
   const nothing = (place: Place): Route => ({ name: "unknown", place });
   switch (head) {
+    case "discover": {
+      const query = rest.length === 2 && rest[0] === "get" ? decode(rest[1]) : null;
+      if (query) return { name: "discover-get", query };
+      return rest.length ? nothing(head) : { name: head };
+    }
     case "library":
-    case "discover":
       return rest.length ? nothing(head) : { name: head };
     // Old name: the Downloads page, which Activity replaced (#516). It opens Now; the redirect replaces the entry.
     case "downloads":
@@ -136,6 +142,8 @@ export function writeAddress(route: Route): string {
       return route.part === "now" ? "#activity" : `#activity/${route.part}`;
     case "worker":
       return `#activity/server/${part(route.worker)}`;
+    case "discover-get":
+      return `#discover/get/${part(route.query)}`;
     case "settings-page":
       return `#settings/${part(route.page)}`;
     case "book":
@@ -174,6 +182,8 @@ export function placeOf(route: Route): Place {
     case "discover":
     case "settings":
       return route.name;
+    case "discover-get":
+      return "discover";
     case "settings-page":
       return "settings";
     case "activity":
@@ -218,6 +228,8 @@ export function parentOf(route: Route): Route | null {
       return { name: "activity", part: "server" };
     case "settings-page":
       return { name: "settings" };
+    case "discover-get":
+      return { name: "discover" };
     case "gallery-child":
     case "gallery-sheet":
       return { name: "gallery" };
@@ -228,16 +240,15 @@ export function parentOf(route: Route): Route | null {
 
 /** A sheet, Now playing or the reader: shown over a page rather than in place of it. */
 export function coversPage(route: Route): boolean {
-  return ["get", "get-magnet", "series-add", "listen", "read", "reader", "gallery-sheet"].includes(route.name);
+  return ["get", "get-magnet", "discover-get", "series-add", "listen", "read", "reader", "gallery-sheet"].includes(route.name);
 }
 
 /**
- * Whether Back may return this page to where it was scrolled: its list is shown again as it was left. Discover's
- * search results live in the page and are gone once it is left (they come back with the Discover slice), so an
- * old offset would point into another list: it starts at its top instead.
+ * Whether Back may return this page to where it was scrolled: its list is shown again as it was left. Every page's
+ * is; Discover's results are kept in its history entry since #575, so its offset points into the same list.
  */
 export function keepsScroll(route: Route): boolean {
-  return route.name !== "discover";
+  return !!route;
 }
 
 export function sameRoute(a: Route, b: Route): boolean {
@@ -283,6 +294,8 @@ function built(route: Route): boolean {
     case "series-add":
     case "library":
     case "discover":
+    // The recording search without a book (#575): ReleasePicker in a sheet until Get's own form lands.
+    case "discover-get":
     case "settings":
     case "reader":
     case "gallery":
@@ -311,8 +324,8 @@ function built(route: Route): boolean {
 function allowed(route: Route, admin: boolean): boolean {
   if (admin) return true;
   if (route.name === "settings-page") return !(ADMIN_SETTINGS_PAGES as readonly string[]).includes(route.page);
-  // Getting files is the administrator's (#601, #604).
-  if (route.name === "get" || route.name === "get-magnet") return false;
+  // Getting files is the administrator's (#601, #604), with or without a book (#575).
+  if (route.name === "get" || route.name === "get-magnet" || route.name === "discover-get") return false;
   return !(route.name === "worker" || (route.name === "activity" && route.part === "server"));
 }
 

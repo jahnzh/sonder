@@ -1,382 +1,320 @@
-import { useState, type FormEvent } from "react";
+// Discover (#575, spec #572 "Discover"; boards Discover.dc.html, DiscoverResults.dc.html, DiscoverNothing.dc.html,
+// DiscoverSeries.dc.html): one search field with Books or Series under it. Before a search it lists the works on the
+// server outside the user's library; a book search asks the server and Hardcover at once and shows each group when
+// its answer arrives; every row opens its Book page, a series its Series page. For the administrator the last row is
+// "Search for a recording". The query, the segment and the answers are kept in the history entry, so Back from a
+// book shows them; a reload runs the kept query again. What it shows for which answers is discover-model.ts.
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { BookRow } from "../parts/BookRow";
+import { Button } from "../parts/Button";
+import { Group } from "../parts/Group";
+import { PageHeader } from "../parts/PageHeader";
+import { Segmented } from "../parts/Segmented";
+import { api } from "../lib";
+import { pageData, setPageData } from "../navigation";
+import type { WorkResult } from "../types";
 import {
-  Compass,
-  Search,
-  Plus,
-  ArrowUpRight,
-  ArrowRight,
-  Check,
-  BookOpen,
-  Loader2,
-  ExternalLink,
-} from "lucide-react";
-import { ReleasePicker } from "../components/ReleasePicker";
-import { SeriesDiscovery, seriesSearchWanted } from "../components/Series";
-import { hardcoverChanged } from "../components/Hardcover";
-import { EbookDiscovery } from "../components/SourceWorkflow";
-import { api, duration } from "../lib";
-import type { Book, Settings as SettingsData } from "../types";
-import { Empty } from "./shared";
+  bookResults,
+  keptOf,
+  searchWords,
+  seriesLine,
+  startRows,
+  type Answer,
+  type DiscoverRow,
+  type DiscoverSegment,
+  type HardcoverHit,
+  type SeriesResult,
+} from "./discover-model";
+import { SeriesListItem } from "./library-series";
+import "./discover-page.css";
+
+/** The Library's plus (or Find a series) asked for the search: Discover shown next focuses its field on that segment. */
+let searchAsked: DiscoverSegment | null = null;
+export function askDiscoverSearch(segment: DiscoverSegment) {
+  searchAsked = segment;
+}
+
+/**
+ * This load of the app. Answers kept in a history entry are shown again by Back within the same load; a reload (a new
+ * load) runs the kept query again instead of showing what an earlier load received.
+ */
+const LOAD = Math.random().toString(36).slice(2);
+
+export const HARDCOVER_FAILED_LINE = "Hardcover could not be searched.";
+export const SERVER_FAILED_LINE = "The server could not be searched.";
+export const OFFLINE_SEARCH_LINE = "Searching needs a connection.";
+export const CONNECT_HARDCOVER_LINE = "Connect Hardcover in Settings to search its books too";
+export const CONNECT_HARDCOVER_SERIES_LINE = "Connect Hardcover to search for series.";
+
+const waiting = { state: "waiting" } as const;
+const answered = <T,>(value: T): Answer<T> => ({ state: "done", value });
+
+type State = {
+  segment: DiscoverSegment;
+  text: string;
+  searched: string | null;
+  works: Answer<WorkResult[]>;
+  hits: Answer<HardcoverHit[]>;
+  series: Answer<SeriesResult[]>;
+};
+
+/** The entry's kept state, its answers only when they came in this load. */
+function initialState(): { state: State; rerun: boolean } {
+  const data = pageData();
+  const kept = keptOf(data);
+  const sameLoad = (data as { discoverLoad?: unknown } | null | undefined)?.discoverLoad === LOAD;
+  const asked = searchAsked;
+  if (!kept || asked)
+    return {
+      state: { segment: asked ?? "books", text: "", searched: null, works: waiting, hits: waiting, series: waiting },
+      rerun: false,
+    };
+  const keep = <T,>(value: T[] | undefined): Answer<T[]> => (sameLoad && value ? answered(value) : waiting);
+  return {
+    state: { segment: kept.segment, text: kept.text, searched: kept.searched, works: keep(kept.works), hits: keep(kept.hits), series: keep(kept.series) },
+    rerun: !!kept.searched && !sameLoad,
+  };
+}
+
 export function DiscoverPage({
   admin,
-  settings,
-  onQueued,
-  books,
-  query,
-  onQuery,
-  onDetail,
-  onAdd,
-  notify,
-  torboxConfigured,
-  onConnect,
+  online,
+  hardcoverConnected,
+  settingsRead,
+  onBook,
   onSeries,
-  refresh,
+  onRecording,
+  onConnect,
 }: {
   admin: boolean;
-  settings: SettingsData | null;
-  onQueued: () => void;
-  books: Book[];
-  query: string;
-  onQuery: (q: string) => void;
-  onDetail: (b: Book) => void;
-  onAdd: (b: Book) => void;
-  notify: (text: string, error?: boolean) => void;
-  torboxConfigured: boolean;
-  onConnect: () => void;
+  online: boolean;
+  hardcoverConnected: boolean;
+  /** The settings are read: whether Hardcover is connected is known. */
+  settingsRead: boolean;
+  onBook: (workId: string) => void;
   onSeries: (id: number) => void;
-  refresh: () => Promise<void>;
+  onRecording: (query: string) => void;
+  onConnect: () => void;
 }) {
-  const [genre, setGenre] = useState("All genres");
-  const [source, setSource] = useState<
-    "curated" | "abb" | "hardcover" | "ebooks" | "series"
-  >(() => (seriesSearchWanted() ? "series" : "curated"));
-  const [busy, setBusy] = useState(false);
-  const [external, setExternal] = useState<
-    {
-      id: string;
-      title: string;
-      author: string;
-      cover?: string;
-      description?: string;
-      genre?: string;
-      url?: string;
-    }[]
-  >([]);
-  const [error, setError] = useState("");
-  const search = async (e: FormEvent) => {
-    e.preventDefault();
-    if (query.trim().length < 2) {
-      setError("Enter at least two characters to search.");
-      return;
-    }
-    setBusy(true);
-    setError("");
-    setExternal([]);
-    try {
-      if (source === "abb")
-        setExternal(await api("/discover/abb?q=" + encodeURIComponent(query)));
-      else {
-        const result = await api<
-          | {
-              hits?: {
-                document: {
-                  id: string;
-                  title: string;
-                  author_names?: string[];
-                  image?: { url: string };
-                  description?: string;
-                  url?: string;
-                };
-              }[];
-            }
-          | string
-        >("/discover/hardcover?q=" + encodeURIComponent(query));
-        const data = typeof result === "string" ? JSON.parse(result) : result;
-        setExternal(
-          (data.hits || []).map(
-            (h: {
-              document: {
-                id: string;
-                title: string;
-                author_names?: string[];
-                image?: { url: string };
-                description?: string;
-                url?: string;
-              };
-            }) => ({
-              ...h.document,
-              author: h.document.author_names?.join(", ") || "Unknown author",
-              cover: h.document.image?.url,
-              url: h.document.url,
-            }),
-          ),
-        );
-      }
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
+  const [{ state: first, rerun }] = useState(initialState);
+  const [state, setState] = useState<State>(first);
+  const [start, setStart] = useState<Answer<WorkResult[]>>(waiting);
+  const field = useRef<HTMLInputElement>(null);
+  // Each search counts up; an answer for an earlier search than the latest is dropped.
+  const searchId = useRef(0);
+  const { segment, text, searched } = state;
+
+  useEffect(() => {
+    if (!searchAsked) return;
+    searchAsked = null;
+    field.current?.focus();
+  }, []);
+
+  // The entry keeps the query, the segment and the answers (#455): Back to it shows them as they were left.
+  useEffect(() => {
+    const done = <T,>(answer: Answer<T>) => (answer.state === "done" ? answer.value : undefined);
+    setPageData({
+      discover: { segment, text, searched, works: done(state.works), hits: done(state.hits), series: done(state.series) },
+      discoverLoad: LOAD,
+    });
+  }, [segment, text, searched, state.works, state.hits, state.series]);
+
+  // Before a search: the works on the server that are not in the user's library.
+  useEffect(() => {
+    if (!online) return;
+    let active = true;
+    api<{ works: WorkResult[] }>("/works")
+      .then((answer) => active && setStart(answered(answer.works)))
+      .catch(() => active && setStart({ state: "failed" }));
+    return () => {
+      active = false;
+    };
+  }, [online]);
+
+  const searchBooks = (words: string, groups: { server: boolean; hardcover: boolean } = { server: true, hardcover: true }) => {
+    const id = ++searchId.current;
+    const current = () => id === searchId.current;
+    const q = encodeURIComponent(words);
+    setState((s) => ({
+      ...s,
+      searched: words,
+      works: groups.server ? waiting : s.works,
+      hits: groups.hardcover ? waiting : s.hits,
+    }));
+    // Both requests go at once; each group shows when its own answer arrives.
+    if (groups.server)
+      api<{ works: WorkResult[] }>(`/works?q=${q}`)
+        .then((answer) => current() && setState((s) => ({ ...s, works: answered(answer.works) })))
+        .catch(() => current() && setState((s) => ({ ...s, works: { state: "failed" } })));
+    if (groups.hardcover && hardcoverConnected)
+      api<{ hits?: HardcoverHit[] }>(`/discover/hardcover?q=${q}`)
+        .then((answer) => current() && setState((s) => ({ ...s, hits: answered(answer.hits ?? []) })))
+        .catch(() => current() && setState((s) => ({ ...s, hits: { state: "failed" } })));
   };
-  const addCatalog = async (id: string) => {
-    setBusy(true);
-    try {
-      await api("/hardcover/books", {
-        method: "POST",
-        body: JSON.stringify({ id: Number(id) }),
-      });
-      hardcoverChanged();
-      await refresh();
-      notify(
-        "Added to your library. Match or find audio whenever you’re ready.",
-      );
-    } catch (e) {
-      notify((e as Error).message, true);
-    } finally {
-      setBusy(false);
-    }
+  const searchSeries = (words: string) => {
+    const id = ++searchId.current;
+    setState((s) => ({ ...s, searched: words, series: waiting }));
+    api<SeriesResult[]>(`/discover/series?q=${encodeURIComponent(words)}`)
+      .then((answer) => id === searchId.current && setState((s) => ({ ...s, series: answered(answer) })))
+      .catch(() => id === searchId.current && setState((s) => ({ ...s, series: { state: "failed" } })));
   };
-  const visible = books
-    .filter((b) => admin ? b.sourceLabel.startsWith("LibriVox") : !b.inLibrary)
-    .filter((b) => genre === "All genres" || b.genre === genre);
-  return (
-    <>
-      <div className="page-heading">
-        <div>
-          <h1>Discover</h1>
-        </div>
-      </div>
-      <div className="discovery-sources">
-        <button
-          className={source === "curated" ? "selected" : ""}
-          onClick={() => {
-            setSource("curated");
-            setError("");
-          }}
-        >
-          Classics
+  const run = (seg: DiscoverSegment, words: string) => {
+    if (seg === "books") searchBooks(words);
+    else if (hardcoverConnected) searchSeries(words);
+  };
+
+  // A reload runs the kept query again, once the settings say whether Hardcover is searched.
+  const reran = useRef(!rerun);
+  useEffect(() => {
+    if (reran.current || !settingsRead || !online || !searched) return;
+    reran.current = true;
+    run(segment, searched);
+  });
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const words = searchWords(text);
+    if (!words || !online) return;
+    field.current?.blur();
+    run(segment, words);
+  };
+  const choose = (next: DiscoverSegment) => {
+    searchId.current++;
+    const words = searchWords(text);
+    setState((s) => ({ ...s, segment: next, searched: null, works: waiting, hits: waiting, series: waiting }));
+    // The words in the field are searched again in the other segment.
+    if (words && online) run(next, words);
+  };
+  const changeText = (value: string) => {
+    setState((s) => (value.trim() ? { ...s, text: value } : { ...s, text: value, searched: null, works: waiting, hits: waiting, series: waiting }));
+    if (!value.trim()) searchId.current++;
+  };
+
+  const rows = (list: DiscoverRow[]) =>
+    list.map((row) => <BookRow key={row.workId} title={row.title} status={row.status} cover={row.cover} onClick={() => onBook(row.workId)} />);
+  const failed = (line: string, retry: () => void) => (
+    <div className="discover-failed" role="alert">
+      <p className="type-label">{line}</p>
+      <Button kind="secondary" disabled={!online} onClick={retry}>
+        Retry
+      </Button>
+    </div>
+  );
+  const recordingRow = searched && admin && (
+    <Group label="Search for a recording">
+      <li className="part-book-row-item">
+        <button type="button" className="discover-recording" onClick={() => onRecording(searched)}>
+          <span className="discover-recording-text">
+            <span className="type-body">Search for a recording</span>
+            <span className="discover-recording-line type-label">of “{searched}”</span>
+          </span>
+          <svg className="discover-chevron" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 6l6 6-6 6" />
+          </svg>
         </button>
-        {admin && (
-        <button
-          className={source === "abb" ? "selected" : ""}
-          onClick={() => {
-            setSource("abb");
-            setError("");
-            setExternal([]);
-          }}
-        >
-          Audiobooks <ArrowUpRight size={13} />
-        </button>
-        )}
-        <button
-          className={source === "hardcover" ? "selected" : ""}
-          onClick={() => {
-            setSource("hardcover");
-            setError("");
-            setExternal([]);
-          }}
-        >
-          Hardcover <ArrowUpRight size={13} />
-        </button>
-        <button className={source === "series" ? "selected" : ""} onClick={() => { setSource("series"); setError(""); }}>Series</button>
-        {admin && (
-        <button
-          className={source === "ebooks" ? "selected" : ""}
-          onClick={() => {
-            setSource("ebooks");
-            setError("");
-          }}
-        >
-          Ebooks <BookOpen size={13} />
-        </button>
-        )}
-      </div>
-      {source === "series" ? (
-        <SeriesDiscovery configured={!!settings?.hardcoverConfigured} onConnect={onConnect} onOpen={onSeries} />
-      ) : source === "ebooks" ? (
-        <EbookDiscovery
-          query={query}
-          onQuery={onQuery}
-          settings={settings}
-          notify={notify}
-        />
-      ) : source === "abb" ? (
-        <ReleasePicker
-          query={query}
-          onQuery={onQuery}
-          prowlarrConfigured={!!settings?.prowlarrConfigured}
-          onQueued={onQueued}
-          refresh={refresh}
-          notify={notify}
-        />
-      ) : source === "curated" ? (
-        <section id="discover-books">
-          <div className="section-heading">
-            <h2>{admin ? "Classics" : "Shared catalogue"}</h2>
-            <span className="muted small">
-              Public-domain recordings · LibriVox
-            </span>
+      </li>
+    </Group>
+  );
+
+  let body: React.ReactNode = null;
+  if (!searched) {
+    const list = start.state === "done" ? startRows(start.value) : [];
+    body = list.length ? <Group caption="On the server, not in your library">{rows(list)}</Group> : null;
+  } else if (segment === "books") {
+    const results = bookResults({ server: state.works, hardcover: state.hits, hardcoverConnected, admin });
+    body = (
+      <>
+        {results.nothing ? (
+          <div className="discover-nothing" role="status">
+            <p className="discover-nothing-title type-body">No books found</p>
+            <p className="type-label">Nothing on the server or on Hardcover matches “{searched}”.</p>
           </div>
-          <div className="genre-chips">
-            {[
-              "All genres",
-              "Fiction",
-              "Fantasy",
-              "Mystery",
-              "Science fiction",
-              "Mind & life",
-            ].map((g) => (
-              <button
-                key={g}
-                className={genre === g ? "selected" : ""}
-                onClick={() => setGenre(g)}
-              >
-                {g}
-              </button>
+        ) : (
+          <>
+            {results.serverFailed && failed(SERVER_FAILED_LINE, () => searchBooks(searched, { server: true, hardcover: false }))}
+            {!!results.server?.length && <Group caption="On the server">{rows(results.server)}</Group>}
+            {results.hardcoverFailed && failed(HARDCOVER_FAILED_LINE, () => searchBooks(searched, { server: false, hardcover: true }))}
+            {!!results.hardcover?.length && <Group caption="From Hardcover">{rows(results.hardcover)}</Group>}
+          </>
+        )}
+        {recordingRow}
+      </>
+    );
+  } else if (hardcoverConnected) {
+    const found = state.series;
+    body =
+      found.state === "failed" ? (
+        failed(HARDCOVER_FAILED_LINE, () => searchSeries(searched))
+      ) : found.state === "done" ? (
+        found.value.length ? (
+          <Group caption={`Series · ${found.value.length}`}>
+            {found.value.map((series) => (
+              <SeriesListItem
+                key={series.id}
+                row={{ id: series.id, name: series.name, line: seriesLine(series, found.value), covers: [series.cover, null, null], current: false }}
+                beside={false}
+                onOpen={onSeries}
+              />
             ))}
+          </Group>
+        ) : (
+          <div className="discover-nothing" role="status">
+            <p className="type-label">No series found.</p>
           </div>
-          {visible.length ? (
-            <div className="books-grid discover-grid">
-              {visible.map((b) => (
-                <article className="discover-book" key={b.id}>
-                  <button className="book-cover" onClick={() => onDetail(b)}>
-                    <img src={b.cover} alt={b.title} />
-                  </button>
-                  <span className="discovery-genre">{b.genre}</span>
-                  <button className="book-title" onClick={() => onDetail(b)}>
-                    {b.title}
-                  </button>
-                  <p className="book-author">{b.author}</p>
-                  <div className="discovery-book-footer">
-                    <span>{duration(b.duration)}</span>
-                    <button
-                      onClick={() => (b.inLibrary ? onDetail(b) : onAdd(b))}
-                      className={b.inLibrary ? "saved" : ""}
-                      aria-label={
-                        b.inLibrary
-                          ? `View ${b.title}`
-                          : `Add ${b.title} to library`
-                      }
-                    >
-                      {b.inLibrary ? <Check size={16} /> : <Plus size={18} />}
-                    </button>
-                  </div>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <Empty
-              icon={Search}
-              title="Try a different trail"
-              text="No books match this search and genre. Try another title or choose All genres."
+        )
+      ) : null;
+  }
+  const busy = !!searched && (segment === "books" ? state.works.state === "waiting" || (hardcoverConnected && state.hits.state === "waiting") : state.series.state === "waiting");
+
+  return (
+    <section className="discover-page" aria-label="Discover">
+      <PageHeader title="Discover" />
+      <div className="discover-head">
+        <form role="search" onSubmit={submit}>
+          <label className="discover-field">
+            <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="7" />
+              <path d="M20 20l-3.5-3.5" />
+            </svg>
+            <input
+              ref={field}
+              type="search"
+              enterKeyHint="search"
+              aria-label={segment === "books" ? "Search for a book" : "Search for a series"}
+              placeholder="Title or author"
+              value={text}
+              maxLength={150}
+              onChange={(event) => changeText(event.target.value)}
             />
-          )}
-          {admin && (
-          <div className="discover-ebook-callout">
-            <div>
-              <BookOpen size={23} />
-              <span>
-                <strong>Prefer turning pages?</strong>
-                <p>
-                  Find ebook editions on Library Genesis.
-                </p>
-              </span>
-            </div>
-            <button
-              className="button subtle"
-              onClick={() => setSource("ebooks")}
-            >
-              Explore ebooks <ArrowRight size={14} />
-            </button>
-          </div>
-          )}
-        </section>
-      ) : (
-        <section className="external-search">
-          <div className="section-heading">
-            <h2>Search Hardcover</h2>
-          </div>
-          {!settings?.hardcoverConfigured && <p>Add your Hardcover token in Settings to search books.</p>}
-          <form onSubmit={(e) => void search(e)}>
-            <label className="search-input">
-              <Search size={18} />
-              <input
-                aria-label="Search Hardcover"
-                value={query}
-                onChange={(e) => onQuery(e.target.value)}
-                placeholder="Book title or author"
-                minLength={2}
-              />
-            </label>
-            <button className="button primary" disabled={busy}>
-              {busy ? (
-                <Loader2 className="spin" size={17} />
-              ) : (
-                <Search size={17} />
-              )}{" "}
-              Search
-            </button>
-          </form>
-          {error && (
-            <p className="inline-error" role="alert">
-              {error}
+          </label>
+        </form>
+        <Segmented
+          label="Search for"
+          options={[
+            { value: "books", label: "Books" },
+            { value: "series", label: "Series" },
+          ]}
+          value={segment}
+          onChange={choose}
+        />
+        {!online ? (
+          <p className="discover-line type-label" role="status">
+            {OFFLINE_SEARCH_LINE}
+          </p>
+        ) : (
+          settingsRead &&
+          !hardcoverConnected && (
+            <p className="discover-line type-label">
+              <button type="button" className="discover-link" onClick={onConnect}>
+                {segment === "books" ? CONNECT_HARDCOVER_LINE : CONNECT_HARDCOVER_SERIES_LINE}
+              </button>
             </p>
-          )}
-          {busy && !external.length ? (
-            <div className="external-loading">
-              <Loader2 className="spin" /> Searching…
-            </div>
-          ) : external.length ? (
-            <div className="external-results">
-              {external.map((b) => (
-                <article key={b.id}>
-                  <img
-                    src={b.cover || "/covers/time.svg"}
-                    alt=""
-                    onError={(e) => {
-                      e.currentTarget.src = "/covers/time.svg";
-                    }}
-                  />
-                  <div>
-                    <h3>{b.title}</h3>
-                    <p>{b.author}</p>
-                    {b.description && (
-                      <small>{b.description.slice(0, 180)}</small>
-                    )}
-                  </div>
-                  <div className="discovery-actions">
-                    {b.url && (
-                      <a
-                        className="button subtle"
-                        href={b.url}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        View book <ExternalLink size={14} />
-                      </a>
-                    )}
-                    <button
-                      className="button subtle"
-                      disabled={busy}
-                      onClick={() => void addCatalog(b.id)}
-                    >
-                      <Plus size={15} /> Add to library
-                    </button>
-                  </div>
-                </article>
-              ))}
-            </div>
-          ) : (
-            !error && (
-              <Empty
-                icon={Compass}
-                title="Search books"
-                text="Enter a book title or author."
-              />
-            )
-          )}
-        </section>
-      )}
-    </>
+          )
+        )}
+      </div>
+      <div className="discover-results" aria-busy={busy || undefined}>
+        {body}
+      </div>
+    </section>
   );
 }

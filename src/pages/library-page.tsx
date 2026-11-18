@@ -55,6 +55,7 @@ export function LibraryPage({
   savedSeries,
   openSeries,
   findSeries,
+  findBook,
   beside,
   setDetail,
   setImportOpen,
@@ -91,6 +92,8 @@ export function LibraryPage({
   openSeries: (id: number) => void;
   /** The chip's Find a series: Discover's series search. */
   findSeries: () => void;
+  /** The plus, "Add a book" (#575): Discover with its field focused. */
+  findBook: () => void;
   /** A desktop's `#series/<id>`: the Series chip's list with this series beside it (DesktopSeries.dc.html). */
   beside?: { id: number; page: ReactNode } | null;
   setDetail: (b: Book) => void;
@@ -123,6 +126,9 @@ export function LibraryPage({
             <span className="heading-dot">.</span>
           </h1>
         </div>
+        <button className="icon-button library-find-book" aria-label="Add a book" onClick={findBook}>
+          <Plus size={20} />
+        </button>
         {admin && <button
           className="button primary"
           onClick={() => setImportOpen(true)}
