@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { openSavedSeries } from "./library-series";
 
 /**
  * A saved series opens its Series page (#562), and its Add opens the Add sheet (#563): the series dialog's saved mode,
@@ -32,7 +33,7 @@ test("a saved series keeps the provenance of a synced book and counts its comple
   expect(aliceWork?.removalDefaultSelected).toBe(false);
 
   await page.goto("/#library");
-  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
+  await openSavedSeries(page, "The Crossing", "Ada North");
   await expect(page).toHaveURL(/#series\/701$/);
   const intro = page.getByRole("region", { name: "Series", exact: true }).getByText(/^Ada North · \d+ of \d+ finished$/);
   await expect(intro).toBeVisible();

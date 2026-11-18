@@ -52,7 +52,13 @@ export type ActivityNowProps = {
   /** Sends Retry, Resume or Discard of a server item; rejects with the server's reason. */
   onServer: (action: Extract<NowButton, { source: "server" }>["action"], itemId: string) => Promise<void>;
   /** Pauses, resumes or retries a save to this device. */
-  onDevice: (action: Extract<NowButton, { source: "device" }>["action"], recordingId: string, bookId: string) => void;
+  onDevice: (
+    action: Extract<NowButton, { source: "device" }>["action"],
+    recordingId: string,
+    bookId: string,
+    /** A kept book (#552): its work, whose Keep record Pause and Resume go through. */
+    kept?: { workId: string } | null,
+  ) => void;
 };
 
 const MARK: Partial<Record<NonNullable<NowIcon>, FileKind>> = { audiobook: "audiobook", ebook: "ebook", "reading-sync": "sync" };
@@ -93,7 +99,7 @@ function Row({ row, at, open, onServer, onDevice }: { row: NowRow; at: number } 
     if (!button) return;
     if (button.source === "device") {
       setFailure(null);
-      return onDevice(button.action, button.recordingId, button.bookId);
+      return onDevice(button.action, button.recordingId, button.bookId, button.keep && button.workId ? { workId: button.workId } : null);
     }
     // Discard asks once, in place.
     if (button.action === "discard") return setAsking((shown) => !shown);

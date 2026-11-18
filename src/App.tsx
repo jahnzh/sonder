@@ -33,9 +33,11 @@ import {
   Menu,
 } from "lucide-react";
 import { PlayerProvider } from "./player";
-import { SeriesDialog, type SeriesTarget } from "./components/Series";
+import { askSeriesSearch, SeriesDialog, type SeriesTarget } from "./components/Series";
 import { SeriesPage } from "./pages/series-page";
 import { REMOVED_TOAST as SERIES_REMOVED_TOAST } from "./pages/series-remove-model";
+import { useSavedSeries } from "./pages/library-series";
+import { isSavedSeries, SERIES_CHIP } from "./pages/library-series-model";
 import { ReaderHost } from "./components/Reader";
 import { EBOOK_DEVICE_EVENT } from "./reading";
 import {
@@ -94,13 +96,14 @@ import { isReaderPage } from "./reader-pages";
 import { firstPage, parentOf, writeAddress, type Place, type Route } from "./routes";
 import { coveredPage, onPageLeftByHistory, startNavigation, useAddress } from "./navigation";
 import { GetAudiobookSheet } from "./pages/get-audiobook-sheet";
+import { GetMagnetSheet } from "./pages/get-magnet-sheet";
 import { GetEbookSheet } from "./pages/get-ebook-sheet";
 import { deviceImports } from "./device-import";
 import { Gallery, isGalleryRoute } from "./gallery/Gallery";
 import { refreshLibraryWorks, startLibraryWorks, useStoredWorksWithPlaces } from "./library-works-store";
 import { bookStatus, readingPercent, workProgress } from "./work-progress";
 import { classifyStop, type StopCause } from "./keep";
-import { activeSaves, claimRecording, keepSaver, tapKeep, onKeepJob, savesInOtherTabs, startKeepSaver, stopKeepSaver } from "./keep-runtime";
+import { activeSaves, claimRecording, keepSaver, pauseKeep, resumeKeep, keepOffAndRemove, onKeepJob, savesInOtherTabs, startKeepSaver, stopKeepSaver, useKeptWorks } from "./keep-runtime";
 type Notice = { text: string; error?: boolean };
 const nav = [
   { id: "library", label: "My library", icon: Library },
@@ -268,10 +271,15 @@ function LibraryApp({
   const address = useAddress();
   const page = shownPage(address.route, useRef<Page>("library"));
   // The Get audiobook sheet (#601) covers the page it was opened over; opened by a link, its Book page.
-  const getSheet = address.route.name === "get" && address.route.kind === "audiobook" ? address.route.workId : null;
+  // Paste a magnet link (#606) is a sheet over it: Get stays mounted under it, so Back shows Get as it was left.
+  const magnetSheet = address.route.name === "get-magnet" ? address.route.workId : null;
+  const getSheet = address.route.name === "get" && address.route.kind === "audiobook" ? address.route.workId : magnetSheet;
   // The Get ebook sheet (#604) likewise.
   const getEbookSheet = address.route.name === "get" && address.route.kind === "ebook" ? address.route.workId : null;
-  const pageRoute: Route = getSheet || getEbookSheet ? (coveredPage() ?? parentOf(address.route) ?? address.route) : address.route;
+  const pageRoute: Route =
+    getSheet || getEbookSheet
+      ? (coveredPage() ?? (magnetSheet ? { name: "book", workId: magnetSheet } : parentOf(address.route)) ?? address.route)
+      : address.route;
   // The Ebook page (#531) is shown in place of the page under it.
   const ebookPage = pageRoute.name === "book-page" && pageRoute.page === "ebook" ? pageRoute.workId : null;
   const [loading, setLoading] = useState(true);
@@ -300,6 +308,21 @@ function LibraryApp({
   const [showFavorites, setShowFavorites] = useState(false);
   const [seriesTarget, setSeriesTarget] = useState<SeriesTarget | null>(null);
   const [seriesRevision, setSeriesRevision] = useState(0);
+  // The Library's Series chip (#567): the saved series, read again whenever the Library or a series is shown.
+  const savedSeries = useSavedSeries(
+    seriesRevision,
+    address.route.name === "library" ? "library" : address.route.name === "series" || address.route.name === "series-add" ? `series` : "other",
+  );
+  const seriesRouteId = pageRoute.name === "series" || pageRoute.name === "series-add" ? pageRoute.id : null;
+  // A desktop shows a saved series beside the chip's list (DesktopSeries.dc.html); a series that is not saved stays one
+  // column. Until the list is read the series is taken as saved: the page itself sends one that is not to the Library.
+  const seriesBeside = seriesRouteId !== null && sideBySide && (savedSeries.items === undefined || isSavedSeries(savedSeries.items, seriesRouteId));
+  // On a desktop choosing a series replaces the entry, as choosing a worker beside the Server list does (ADR 0020).
+  const openSeries = (id: number) => address.navigate({ name: "series", id: String(id) }, { replace: sideBySide });
+  const findSeries = () => {
+    askSeriesSearch();
+    navigate("discover");
+  };
   const [importOpen, setImportOpen] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
@@ -351,18 +374,26 @@ function LibraryApp({
     const timer = setInterval(() => setClockNow(Date.now()), 60_000);
     return () => clearInterval(timer);
   }, []);
+  // Keep on this device (#552): every kept work with what it needs; Now, This device, the Book page and the On device
+  // filter read the same. A save running in another tab of this account shows as running here too.
+  const keptWorks = useKeptWorks(deviceWorks, downloads, downloadParts);
+  const kept = useMemo(
+    () => keptWorks.map((k) => ({ workId: k.workId, pausedAt: k.entry.pausedAt ?? null, needs: k.needs })),
+    [keptWorks],
+  );
+  const savesRunning = useMemo(() => ({ ...savesInOtherTabs(saveRecords), ...downloadJobs }), [saveRecords, downloadJobs]);
   const nowState = useMemo(
     () =>
       buildNow({
         activity: serverActivity.activity,
-        saves: deviceSaveEntries({ books, downloads, downloadParts, running: downloadJobs, records: saveRecords }),
+        saves: deviceSaveEntries({ books, downloads, downloadParts, running: savesRunning, records: saveRecords, kept }),
         books,
         admin,
         // No connection: the browser says so, or the last read of the server got no answer at all.
         online: online && serverActivity.reached,
         now: Date.now(),
       }),
-    [serverActivity, books, downloads, downloadParts, downloadJobs, saveRecords, admin, online, clockNow],
+    [serverActivity, books, downloads, downloadParts, savesRunning, saveRecords, kept, admin, online, clockNow],
   );
   const attentionDot = nowState.dot;
   const notify = useCallback(
@@ -693,6 +724,9 @@ function LibraryApp({
   const downloaded = (b: Book) =>
     b.tracks.length > 0 &&
     b.tracks.every((t) => downloads.some((d) => d.trackId === t.id));
+  // The Library's Downloaded filter and badge (On device, #552): Keep on and complete, every needed file here.
+  const keptComplete = new Set(keptWorks.filter((k) => k.needs.complete).map((k) => k.workId));
+  const onDevice = (b: Book) => keptComplete.has(b.workId);
   let visible = (page === "discover" ? books : libraryBooks)
     .filter((b) => page !== "library" || !showFavorites || favorites.includes(b.id))
     .filter(
@@ -709,7 +743,7 @@ function LibraryApp({
         (filter === "Listening" && b.status === "listening") ||
         (filter === "Not started" && b.status === "unread") ||
         (filter === "Finished" && b.status === "finished") ||
-        (filter === "Downloaded" && downloaded(b)),
+        (filter === "Downloaded" && onDevice(b)),
     );
   if (page === "library")
     visible = visible.filter(
@@ -725,6 +759,26 @@ function LibraryApp({
   const findEbook = (workId: string) => address.navigate({ name: "get", workId, kind: "ebook" });
   // Get audiobook (#601): the sheet over the page it is opened from, the administrator's.
   const findAudio = (b: Book) => address.navigate({ name: "get", workId: b.workId, kind: "audiobook" });
+  // The Series page (#562), alone or beside the Library's list of saved series (a desktop, #567).
+  const seriesPage = (id: string, beside: boolean) => (
+    <SeriesPage
+      key={id}
+      id={id}
+      admin={admin}
+      online={online}
+      books={books}
+      revision={seriesRevision}
+      beside={beside}
+      onNotSaved={(seriesId) => setSeriesTarget({ id: seriesId, mode: "preview" })}
+      onRemoved={() => {
+        setSeriesRevision((value) => value + 1);
+        // The Library it lands on shows the Series chip (spec #560, "Remove series").
+        setFilter(SERIES_CHIP);
+        void refresh();
+        notify(SERIES_REMOVED_TOAST);
+      }}
+    />
+  );
   visible.sort((a, b) =>
     sort === "title"
       ? a.title.localeCompare(b.title)
@@ -933,6 +987,18 @@ function LibraryApp({
                 }}
               />
             )}
+            {magnetSheet && admin && (
+              <GetMagnetSheet
+                key={`get-magnet:${magnetSheet}`}
+                workId={magnetSheet}
+                online={online}
+                torboxConfigured={!!settings?.torboxConfigured}
+                onChanged={async () => {
+                  await refresh();
+                  await refreshDownloads();
+                }}
+              />
+            )}
             {getEbookSheet && admin && (
               <GetEbookSheet
                 // Not the work's id alone: the Book page under it, a sibling, is keyed by that.
@@ -967,7 +1033,8 @@ function LibraryApp({
                 books={books}
                 downloads={downloads}
                 downloadParts={downloadParts}
-                running={{ ...savesInOtherTabs(saveRecords), ...downloadJobs }}
+                running={savesRunning}
+                records={saveRecords}
                 favorites={favorites}
                 onFavorite={toggleFavorites}
                 onSave={(book) => void startDownload(book)}
@@ -987,21 +1054,8 @@ function LibraryApp({
               <ReadingSyncPage key={pageRoute.workId} workId={pageRoute.workId} admin={admin} />
             ) : pageRoute.name === "sync-details" ? (
               <ReadingSyncDetailsPage key={pageRoute.workId} workId={pageRoute.workId} />
-            ) : pageRoute.name === "series" || pageRoute.name === "series-add" ? (
-              <SeriesPage
-                key={pageRoute.id}
-                id={pageRoute.id}
-                admin={admin}
-                online={online}
-                books={books}
-                revision={seriesRevision}
-                onNotSaved={(id) => setSeriesTarget({ id, mode: "preview" })}
-                onRemoved={() => {
-                  setSeriesRevision((value) => value + 1);
-                  void refresh();
-                  notify(SERIES_REMOVED_TOAST);
-                }}
-              />
+            ) : seriesRouteId !== null && !seriesBeside ? (
+              seriesPage(seriesRouteId, false)
             ) : pageRoute.name === "book-page" && pageRoute.page === "hardcover" ? <HardcoverPage key={pageRoute.workId} workId={pageRoute.workId} admin={user.role === "admin"} books={books} onChanged={() => void refresh()} /> : ebookPage ? (
               <EbookPage
                 key={ebookPage}
@@ -1010,7 +1064,7 @@ function LibraryApp({
                 onGetEdition={(work) => findEbook(work.workId)}
               />
             ) : <>
-            {page === "library" && (
+            {(page === "library" || seriesBeside) && (
               <LibraryPage
                 admin={user.role === "admin"}
                 visible={visible}
@@ -1029,14 +1083,15 @@ function LibraryApp({
                 loading={loading}
                 setLoading={setLoading}
                 loadError={loadError}
-                seriesRevision={seriesRevision}
-                // A saved series opens its page (#562); the dialog stays for one that is not saved.
-                setSeriesTarget={(target) => (target.mode === "saved" ? address.navigate({ name: "series", id: String(target.id) }) : setSeriesTarget(target))}
+                savedSeries={savedSeries}
+                openSeries={openSeries}
+                findSeries={findSeries}
+                beside={seriesBeside && seriesRouteId !== null ? { id: Number(seriesRouteId), page: seriesPage(seriesRouteId, true) } : null}
                 setDetail={openBookOf}
                 setImportOpen={setImportOpen}
                 favorites={favorites}
                 toggleFavorite={toggleFavorite}
-                downloaded={downloaded}
+                downloaded={onDevice}
                 readingPercentOf={readingPercentOf}
                 findAudio={findAudio}
                 mutateLibrary={mutateLibrary}
@@ -1096,7 +1151,9 @@ function LibraryApp({
                       serverActivity.reload();
                     }
                   }}
-                  onDevice={(action, recordingId, bookId) => {
+                  onDevice={(action, recordingId, bookId, keptBook) => {
+                    // A kept book (#552): Pause and Resume go through its Keep record, in whichever tab saves.
+                    if (keptBook) return void (action === "pause" ? pauseKeep(keptBook.workId, recordingId) : resumeKeep(keptBook.workId)).catch(() => {});
                     if (action === "pause") return pauseSave(recordingId);
                     // Resume and Retry carry on from the files and sections already saved.
                     const book = books.find((b) => b.recordingId === recordingId) ?? books.find((b) => b.id === bookId);
@@ -1107,20 +1164,28 @@ function LibraryApp({
                   books={books}
                   downloads={downloads}
                   downloadParts={downloadParts}
-                  running={downloadJobs}
+                  running={savesRunning}
                   records={saveRecords}
                   ebooks={savedEbooks.filter((e) => keptEbookEditionIds.has(e.id))}
+                  kept={kept}
                   online={online}
-                  onPause={pauseSave}
+                  onPause={(row) => (row.keep ? void pauseKeep(row.workId, row.recordingId).catch(() => {}) : pauseSave(row.recordingId))}
+                  onRetry={(row) => void resumeKeep(row.workId).catch(() => {})}
                   onOpen={openBookOf}
                   onRemove={async (row) => {
                     // Every file of the book on this device: its recordings' audio and its EPUB. The place, the
                     // bookmarks and the library entry stay (ADR 0018).
                     try {
-                      // Removing the book's files is Keep off for it (#550): the saver does not save them again.
-                      await tapKeep(row.workId, false).catch(() => {});
+                      // Removing the book's files is Keep off for it (#550), the same action as the switch's Off on
+                      // the Book page (#553): every recording (earlier copies included), its EPUB copies, its maps
+                      // and its save records. The rows' own ids follow for a book the stored library does not hold.
+                      await keepOffAndRemove(row.workId);
                       for (const recordingId of row.recordingIds) await deleteDownloads(recordingId);
-                      for (const editionId of row.ebookIds) await removeOfflineEbook(editionId);
+                      for (const editionId of row.ebookIds) {
+                        await removeOfflineEbook(editionId);
+                        // The save record of a kept book with only an ebook (#552).
+                        await deleteDownloads(`ebook:${editionId}`);
+                      }
                       // The reader's cache of the book's other editions goes too: every file of it (#671).
                       for (const ebook of savedEbooks)
                         if (ebook.workId === row.workId && offlineEbookEditionIds.has(ebook.id) && !row.ebookIds.includes(ebook.id))

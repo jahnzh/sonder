@@ -98,6 +98,44 @@
   margin: 0;
   padding: 0;
 }
+/* A failed save (#552, board KeepNotComplete.dc.html): the Keep line in the failed colour, and a row under it with the
+   reason (muted) and Retry. */
+.book-page-keep .part-file-row-status[data-failed] {
+  color: var(--danger);
+}
+.book-page-keep-failure {
+  list-style: none;
+  margin: 0;
+  /* The reason may take two lines: the row grows from 64 as the board's (padding 10, min-height 64). */
+  height: auto;
+  min-height: var(--height-bar);
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+.book-page-keep-failure .part-file-row-status {
+  white-space: normal;
+}
+/* Off and an earlier copy's Remove ask in place under their row (#553, boards KeepOff.dc.html, KeepEarlier.dc.html):
+   the question, then Cancel and Remove (failed colour) side by side. */
+.book-page-device-confirm {
+  list-style: none;
+  padding: var(--space-12) var(--space-16) var(--space-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  color: var(--text);
+}
+.book-page-device-confirm-buttons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-8);
+}
+.book-page-device-confirm-buttons > .part-button.book-page-device-remove {
+  color: var(--danger);
+}
+.book-page-earlier .part-file-row-status {
+  white-space: normal;
+}
 /* About: the description collapsed to three lines in a button, expanding in place. */
 .book-page-about {
   box-sizing: border-box;

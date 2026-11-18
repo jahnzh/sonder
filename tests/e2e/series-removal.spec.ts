@@ -10,6 +10,7 @@ import { noOverflow } from "./overflow";
 const OUT = "OUT";
 mkdirSync(OUT, { recursive: true });
 const ALICE = "Alice’s Adventures in Wonderland";
+import { openSavedSeries, showSavedSeries, savedSeriesRow } from "./library-series";
 
 async function saveCrossingSeries(page: import("@playwright/test").Page) {
   await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
@@ -92,7 +93,7 @@ test("remove a saved series while keeping its works", async ({ page }) => {
   const refreshed = page.waitForResponse(
     (response) => new URL(response.url()).pathname === "/api/series/701",
   );
-  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
+  await openSavedSeries(page, "The Crossing", "Ada North");
   await refreshed;
   // Remove series is the page's last row; it opens one question over the page, with no address of its own.
   await removeRow(page).click();
@@ -103,12 +104,13 @@ test("remove a saved series while keeping its works", async ({ page }) => {
   await dialog(page).getByRole("button", { name: "Remove series", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "Series removed" })).toBeVisible();
   await expect(page).toHaveURL(/#library$/);
-  await expect(page.getByRole("button", { name: "Open The Crossing by Ada North" })).toHaveCount(0);
+  await expect(savedSeriesRow(page, "The Crossing", "Ada North")).toHaveCount(0);
   expect(sent).toEqual([{ path: "/api/series/701", body: {} }]);
   // After a reload too.
   await page.reload();
   await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
-  await expect(page.getByRole("button", { name: "Open The Crossing by Ada North" })).toHaveCount(0);
+  await showSavedSeries(page);
+  await expect(savedSeriesRow(page, "The Crossing", "Ada North")).toHaveCount(0);
 
   const after = (await (await page.request.get("/api/books")).json()).filter(
     (book: { inLibrary: boolean }) => book.inLibrary,
@@ -130,7 +132,7 @@ test("a book added on its own is not offered; Cancel and Back send nothing", asy
   const sent = deletes(page);
 
   await page.goto("/#library");
-  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
+  await openSavedSeries(page, "The Crossing", "Ada North");
   await removeRow(page).click();
   await removeBooks(page).click();
   await expect(removeBooks(page)).toBeChecked();
@@ -161,7 +163,7 @@ test("a book also in the other saved series is offered unchosen and names it, fr
   expect((await page.request.post("/api/series", { data: { id: 701, bookIds: [501, 503] } })).ok()).toBe(true);
   expect((await page.request.post("/api/series", { data: { id: 702, bookIds: [501] } })).ok()).toBe(true);
   await page.goto("/#library");
-  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).first().click();
+  await openSavedSeries(page, "The Crossing", "Ada North");
   await removeRow(page).click();
   await removeBooks(page).click();
   await expect.poll(() => offeredNames(page)).toEqual([`${ALICE} Also in The Crossing`, "Crossing Two Leaves your library"]);
@@ -177,7 +179,7 @@ test("a book also in the other saved series is offered unchosen and names it, fr
   expect((await page.request.post("/api/series", { data: { id: 702, bookIds: [501] } })).ok()).toBe(true);
   expect((await page.request.post("/api/series", { data: { id: 701, bookIds: [501, 503] } })).ok()).toBe(true);
   await page.goto("/#library");
-  await page.getByRole("button", { name: "Open The Crossing by Bea South" }).click();
+  await openSavedSeries(page, "The Crossing", "Bea South");
   await removeRow(page).click();
   await removeBooks(page).click();
   await expect.poll(() => offeredNames(page)).toEqual([`${ALICE} Also in The Crossing`]);
@@ -203,7 +205,7 @@ test("work-removal confirmation lists audio to delete", async ({ page }) => {
     },
   });
   await page.goto("/#library");
-  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
+  await openSavedSeries(page, "The Crossing", "Ada North");
   await removeRow(page).click();
   await removeBooks(page).click();
   await expect(offered(page).getByRole("checkbox", { name: "Crossing Companion Its audiobook is deleted from the server", exact: true })).toBeChecked();
@@ -230,13 +232,13 @@ test("admin can remove a selected work from the confirmation dialog", async ({ p
   );
   const sent = deletes(page);
   await page.goto("/#library");
-  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
+  await openSavedSeries(page, "The Crossing", "Ada North");
   await removeRow(page).click();
   await removeBooks(page).click();
   await expect(offered(page).getByRole("checkbox", { name: /^Crossing Companion / })).toBeChecked();
   await dialog(page).getByRole("button", { name: "Remove series and 1 book", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "Series removed" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Open The Crossing by Ada North" })).toHaveCount(0);
+  await expect(savedSeriesRow(page, "The Crossing", "Ada North")).toHaveCount(0);
   expect(sent).toEqual([{ path: "/api/series/701", body: { bookIds: [504] } }]);
   const after = (await (await page.request.get("/api/books")).json()).filter(
     (book: { inLibrary: boolean }) => book.inLibrary,

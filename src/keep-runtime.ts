@@ -13,7 +13,9 @@ import { deviceEbookChoice, ebookDeviceCopySize } from "./ebook-device-copy";
 import { isKeptReaderFile, type ReaderFileRecord } from "./ebook-keep";
 import { loadReader, saveEpubOffline } from "./reading";
 import { KeepSaver, type KeepJob, type KeepTrigger, type LockManager, type SaverMessage } from "./keep-saver";
-import { accountDatabase, api, authDB, downloadTrack, getDownloadedBlob, listDeviceSaveRecords, localDB, writeDeviceSaveRecord } from "./lib";
+import { accountDatabase, api, authDB, deleteDownloads, downloadTrack, getDownloadedBlob, listDeviceSaveRecords, localDB, removeOfflineEbook, writeDeviceSaveRecord } from "./lib";
+import { deviceBook, type DeviceBook } from "./keep-device";
+import { removeEbookFromDevice } from "./ebook-device-copy";
 import type { Download, DownloadPart, LibraryWork, Track } from "./types";
 import { EBOOK_DEVICE_EVENT } from "./reading";
 
@@ -110,10 +112,29 @@ export function startKeepSaver(account: number): KeepSaver {
       };
     },
     writeChoice: (workId, on) => writeChoice(workId, on),
+    writePause: async (workId, pausedAt) => {
+      await db.transaction("rw", db.keep, async () => {
+        const entry = await db.keep.get(workId);
+        if (entry) await db.keep.put({ ...entry, pausedAt });
+      });
+      keepChanged();
+    },
+    isPaused: async (workId) => !!(await db.keep.get(workId))?.pausedAt,
     persist: askPersist,
     storeKeep: async (records) => {
       await db.transaction("rw", db.keep, async () => {
-        await db.keep.bulkPut(records);
+        // A pause belongs to the pause and resume writers (#552): a merge that read the records before another tab
+        // paused or resumed must not undo it. A record that turned off has no pause.
+        const stored = new Map((await db.keep.bulkGet(records.map((r) => r.workId))).flatMap((e) => (e ? [[e.workId, e] as const] : [])));
+        await db.keep.bulkPut(
+          records.map((record) => {
+            const pausedAt = record.on ? stored.get(record.workId)?.pausedAt ?? null : null;
+            // The recordings saved here (#553) belong to `remember`, likewise.
+            const recordings = record.recordings ?? stored.get(record.workId)?.recordings;
+            const ebookIds = record.ebookIds ?? stored.get(record.workId)?.ebookIds;
+            return { ...record, pausedAt, ...(recordings ? { recordings } : {}), ...(ebookIds ? { ebookIds } : {}) };
+          }),
+        );
       });
       keepChanged();
     },
@@ -137,6 +158,13 @@ export function startKeepSaver(account: number): KeepSaver {
     writeRecord: async (recordingId, workId, change) => {
       if (change.state === "off") return;
       await writeDeviceSaveRecord(recordingId, workId, change);
+    },
+    removeWork: (workId) => removeBookFiles(workId),
+    remember: async (workId, saved) => {
+      await db.transaction("rw", db.keep, async () => {
+        const entry = await db.keep.get(workId);
+        if (entry) await db.keep.put({ ...entry, recordings: saved.recordings, ebookIds: saved.ebookIds });
+      });
     },
     online: () => navigator.onLine,
     claim: async (recordingId, save) => {
@@ -222,9 +250,10 @@ export async function fingerprintFile(blob: Blob): Promise<string | null> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-/** A refusal of the source (4xx other than a timeout or a rate limit): the save waits for Retry. */
+/** A refusal of the source (4xx other than a timeout or a rate limit): the save waits for Retry. A 401 is a sign-out. */
 function refusal(message: string, status: number) {
-  return Object.assign(new Error(message), { refused: status >= 400 && status < 500 && status !== 408 && status !== 429 });
+  const refused = status >= 400 && status < 500 && status !== 408 && status !== 429;
+  return Object.assign(new Error(message), { refused, status, ...(refused ? { failure: status === 401 ? "signed-out" : "source" } : {}) });
 }
 
 /**
@@ -359,7 +388,163 @@ export function useKeptNeeds(work: LibraryWork | null, downloads: readonly Downl
   });
 }
 
-/** Removes this device's reading sync maps of a work (Keep off, #551): the reader fetches them again online. */
-export async function removeWorkMaps(work: Pick<LibraryWork, "readingSync">): Promise<void> {
-  for (const job of work.readingSync ?? []) await localDB.preferences.delete(readerMapKey(job.ebookId, job.recordingId)).catch(() => {});
+/**
+ * Pause of a kept book from any tab (#552): `pausedAt` on its Keep record, and its running save stops wherever it
+ * runs. `saveId` is the recording (or `ebook:<id>` for a book with only an ebook).
+ */
+export async function pauseKeep(workId: string, saveId: string | null): Promise<void> {
+  if (saver) return saver.pauseWork(workId, saveId);
+}
+
+/** Resume or Retry of a kept book from any tab: the pause goes and the tab that saves saves it again. */
+export async function resumeKeep(workId: string): Promise<void> {
+  if (saver) return saver.resumeWork(workId);
+}
+
+/** A kept work with what it needs on this device, for Activity's entries and the On device filter (#552). */
+export type KeptWork = { workId: string; entry: KeepEntry; needs: KeptNeeds };
+
+/**
+ * Every work this account keeps on this device (Keep on, in the stored library) with what it needs, read again when
+ * the Keep records, the EPUB copies or the device's files change.
+ */
+export function useKeptWorks(works: ReadonlyMap<string, LibraryWork>, downloads: readonly Download[], parts: readonly DownloadPart[]): KeptWork[] {
+  const [state, setState] = useState<{ keep: KeepEntry[]; held: Awaited<ReturnType<typeof readingHeld>> } | null>(null);
+  const shape = JSON.stringify([...works.values()].map((w) => [w.workId, w.ebooks?.map((e) => e.id), w.readingSync?.map((j) => [j.id, j.updatedAt])]));
+  useEffect(() => {
+    let live = true;
+    const read = () =>
+      void (async () => {
+        const keep = await localDB.keep.toArray();
+        const kept = keep.filter((entry) => entry.on).map((entry) => works.get(entry.workId)).filter((w): w is LibraryWork => !!w);
+        const held = await readingHeld(kept);
+        if (live) setState({ keep, held });
+      })().catch(() => {});
+    read();
+    window.addEventListener(KEEP_EVENT, read);
+    window.addEventListener(EBOOK_DEVICE_EVENT, read);
+    window.addEventListener("sonder:downloads-changed", read);
+    return () => {
+      live = false;
+      window.removeEventListener(KEEP_EVENT, read);
+      window.removeEventListener(EBOOK_DEVICE_EVENT, read);
+      window.removeEventListener("sonder:downloads-changed", read);
+    };
+  }, [shape]);
+  if (!state) return [];
+  const kept: KeptWork[] = [];
+  for (const entry of state.keep) {
+    const work = works.get(entry.workId);
+    if (!entry.on || !work || !work.inLibrary) continue;
+    const needs = keptNeeds(keepRecording(work), downloads, parts, {
+      work,
+      deviceChoice: state.held.ebookChoices[work.workId] ?? null,
+      ebooks: state.held.ebooks,
+      maps: state.held.maps,
+    });
+    kept.push({ workId: entry.workId, entry, needs });
+  }
+  return kept;
+}
+
+/**
+ * Every file of a book this device holds (#553): its recordings' files and sections (earlier copies included), its
+ * EPUB copies (kept or the reader's own) and its maps, read from the device database. `work` is the stored work when
+ * the caller has it; otherwise it is read.
+ */
+export async function readDeviceBook(workId: string, work?: Pick<LibraryWork, "recordings" | "ebooks" | "chosenRecordingId"> | null): Promise<DeviceBook> {
+  const stored = work ?? ((await localDB.works.get(workId).catch(() => undefined)) as LibraryWork | undefined) ?? null;
+  const entry = await localDB.keep.get(workId).catch(() => undefined);
+  const recordings = (stored?.recordings ?? []).map((r) => ({ recordingId: r.recordingId, narrator: r.narrator }));
+  const chosen = stored ? keepRecording(stored as never)?.recordingId ?? null : null;
+  // The work's EPUBs, and those the Keep record remembers (the stored work may have left with the library entry).
+  const ebookIds = [...new Set([...(stored?.ebooks ?? []).map((e) => e.id), ...(entry?.ebookIds ?? [])])];
+  const downloads = (await localDB.downloads.toArray()).map((row) => ({ trackId: row.trackId, recordingId: row.recordingId, size: row.size }));
+  const parts = (await localDB.downloadParts.toArray()).map((row) => ({ trackId: row.trackId, recordingId: row.recordingId, loaded: row.loaded }));
+  const records = await listDeviceSaveRecords().catch(() => [] as DeviceSaveRecord[]);
+  const ebookCopies: { id: string; size: number }[] = [];
+  for (const id of ebookIds) {
+    const size = await ebookDeviceCopySize(id);
+    if (size != null) ebookCopies.push({ id, size });
+  }
+  const maps: { key: string; size: number }[] = [];
+  const keys = (await localDB.preferences.where("key").startsWith("reader-map:").primaryKeys().catch(() => [])) as string[];
+  const held = new Set([...recordings.map((r) => r.recordingId), ...(entry?.recordings ?? []).map((r) => r.recordingId), ...records.filter((r) => r.workId === workId).map((r) => r.recordingId)]);
+  for (const key of keys) {
+    const [, ebookId, recordingId] = key.split(":");
+    if (!ebookIds.includes(ebookId) && !held.has(recordingId)) continue;
+    const value = (await localDB.preferences.get(key).catch(() => undefined))?.value;
+    maps.push({ key, size: value ? JSON.stringify(value).length : 0 });
+  }
+  return deviceBook({ workId, recordings, chosenRecordingId: chosen, ebookIds, remembered: entry?.recordings, records, downloads, parts, ebookCopies, maps });
+}
+
+/** Removes the files `plan` names: the saves running stop first, wherever they run. */
+async function removePlan(plan: Pick<DeviceBook, "recordingIds" | "ebookIds" | "saveIds" | "mapKeys">): Promise<void> {
+  for (const id of plan.saveIds) {
+    const running = activeSaves.get(id);
+    if (running && saver) saver.pause(id, "off");
+    else if (running) running.abort();
+    else saver?.pause(id, "off");
+  }
+  // A save of this tab stops at its next step: wait for it (briefly), so it writes no section after the removal.
+  for (let i = 0; i < 40 && plan.saveIds.some((id) => activeSaves.has(id)); i++) await new Promise((resolve) => setTimeout(resolve, 50));
+  for (const id of plan.recordingIds) await deleteDownloads(id);
+  for (const id of plan.saveIds) await deleteDownloads(id);
+  for (const id of plan.ebookIds) {
+    await removeEbookFromDevice(id);
+    await removeOfflineEbook(id);
+  }
+  for (const key of plan.mapKeys) await localDB.preferences.delete(key).catch(() => {});
+  window.dispatchEvent(new Event("sonder:downloads-changed"));
+  keepChanged();
+}
+
+/** Removes every file of a book from this device (#553), without touching its Keep record. */
+export async function removeBookFiles(workId: string, work?: Pick<LibraryWork, "recordings" | "ebooks" | "chosenRecordingId"> | null): Promise<void> {
+  await removePlan(await readDeviceBook(workId, work));
+}
+
+/**
+ * Off (#553, spec #548 "Off"): writes Keep off, then removes the book's recordings (complete and partial, earlier
+ * copies included), its EPUB copies, its maps and its save records. The place, the bookmarks and the library entry
+ * stay. Remove on Activity's This device is the same action.
+ */
+export async function keepOffAndRemove(workId: string, work?: Pick<LibraryWork, "recordings" | "ebooks" | "chosenRecordingId"> | null): Promise<void> {
+  await tapKeep(workId, false);
+  await removeBookFiles(workId, work);
+}
+
+/** Removes an earlier copy (#553): one recording's files, sections, save record and maps; the kept one stays. */
+export async function removeEarlierCopy(workId: string, recordingId: string): Promise<void> {
+  const plan = await readDeviceBook(workId);
+  await removePlan({
+    recordingIds: [recordingId],
+    ebookIds: [],
+    saveIds: [recordingId],
+    mapKeys: plan.mapKeys.filter((key) => key.endsWith(`:${recordingId}`)),
+  });
+}
+
+/** A book's files on this device, read again when the device's files, EPUB copies or Keep records change. */
+export function useDeviceBook(work: LibraryWork | null): DeviceBook | null {
+  const [book, setBook] = useState<{ workId: string; value: DeviceBook } | null>(null);
+  const workId = work?.workId ?? null;
+  const shape = work ? JSON.stringify([work.chosenRecordingId, work.recordings.map((r) => [r.recordingId, r.narrator]), work.ebooks.map((e) => e.id)]) : "";
+  useEffect(() => {
+    if (!work) return;
+    let live = true;
+    const read = () => void readDeviceBook(work.workId, work).then((value) => live && setBook({ workId: work.workId, value })).catch(() => {});
+    read();
+    window.addEventListener(KEEP_EVENT, read);
+    window.addEventListener(EBOOK_DEVICE_EVENT, read);
+    window.addEventListener("sonder:downloads-changed", read);
+    return () => {
+      live = false;
+      window.removeEventListener(KEEP_EVENT, read);
+      window.removeEventListener(EBOOK_DEVICE_EVENT, read);
+      window.removeEventListener("sonder:downloads-changed", read);
+    };
+  }, [workId, shape]);
+  return book && work && book.workId === work.workId ? book.value : null;
 }
