@@ -123,6 +123,8 @@ const desktopProjects = [
               /(^|\/)series-add\.spec\.ts$/,
               // The New mark on a series and Dismiss (#565).
               /(^|\/)series-new\.spec\.ts$/,
+              // The Library's Series chip and the series beside it on a desktop (#567).
+              /(^|\/)library-series\.spec\.ts$/,
               // The line under Get this recording and replacing the download on its way (#603).
               /(^|\/)get-audiobook-line\.spec\.ts$/,
               // The Get ebook sheet (#604).
@@ -133,6 +135,8 @@ const desktopProjects = [
               /(^|\/)get-import\.spec\.ts$/,
               // Turning Keep off, and an earlier recording's copy (#553).
               /(^|\/)keep-off\.spec\.ts$/,
+              // Paste a magnet link for the book, over Get audiobook (#606).
+              /(^|\/)get-magnet\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },

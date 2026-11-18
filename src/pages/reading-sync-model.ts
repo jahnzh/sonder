@@ -9,6 +9,7 @@
 import {
   mappedShare,
   notUsedLine,
+  type NotUsedReason,
   passageLine,
   readingSyncLine,
   readsAsReady,
@@ -79,8 +80,8 @@ export type SyncButton = "Prepare" | "Prepare again" | "Pause" | "Pause after se
 export type SyncPageModel = {
   /** The state, for tests and the page's `data-state`. */
   state:
-    | "not-prepared" | "preparing" | "preparing-again" | "ready" | "partial" | "no-match" | "paused" | "cancelled"
-    | "stopped" | "not-available" | "offline" | "loading";
+    | "not-prepared" | "preparing" | "preparing-again" | "again-paused" | "again-stopped" | "ready" | "partial"
+    | "no-match" | "paused" | "cancelled" | "stopped" | "not-available" | "offline" | "loading";
   blocks: StatusBlock[];
   /** The buttons under the Status, in order: the first is primary when it stands alone. */
   buttons: SyncButton[];
@@ -269,6 +270,24 @@ const facts = (job: Pick<ListedJob, "status" | "outcome" | "coverage" | "progres
   wholeBook: isWholeBook(job),
 });
 
+/**
+ * Why the server did not use a new map (#379): its rejection reason names the language or "none of the text"
+ * (server/alignment-rebuild.ts `rebuildRejection`); otherwise it matched clearly less, by its coverage.
+ */
+export function notUsedReason(rebuild: Pick<NonNullable<ListedJob["rebuild"]>, "error" | "coverage" | "outcome">): NotUsedReason {
+  const reason = rebuild.error ?? "";
+  if (rebuild.outcome === "language_not_supported" || /does not support this language/i.test(reason)) return "language";
+  if (/mapped none of the text/i.test(reason) || rebuild.coverage === 0) return "none";
+  return "less";
+}
+
+/** The pool's count is read for the administrator on a stopped job, or a stopped Prepare again over the map in use. */
+export function needsPoolCount(job: ListedJob | null | undefined): boolean {
+  if (!job) return false;
+  if (job.status === "error") return true;
+  return (job.status === "ready" || job.status === "partial") && job.rebuild?.status === "error" && job.rebuild.outcome !== "rejected";
+}
+
 /** What the page shows for the pair. */
 export function readingSyncPage(input: SyncPageFacts): SyncPageModel {
   const { admin, job, now } = input;
@@ -368,13 +387,16 @@ export function readingSyncPage(input: SyncPageFacts): SyncPageModel {
         };
       }
       const ready = job.status === "ready" || readsAsReady(job);
-      const run = rebuildRun(job);
-      // A Prepare again (or a rebuild) runs over the map in use (board ReadingSyncAgain).
+      const rejected = job.rebuild?.outcome === "rejected";
+      // A cancelled Prepare again leaves nothing: the page reads as before it (#542). A rejected one is not a run.
+      const run = job.rebuild && !rejected && job.rebuild.status !== "cancelled" ? rebuildRun(job) : null;
+      const value = finishedValue(job, admin, now, true);
+      // A Prepare again (or a rebuild) runs or waits over the map in use (board ReadingSyncAgain).
       if (run && active(run.status)) {
         return {
           state: "preparing-again",
           blocks: [
-            { ...status, value: finishedValue(job, admin, now, true), rows: [{ name: ready ? SYNC_STATE_LINES.ready : SYNC_STATE_LINES.partial, line: SYNC_STATE_NOTES.inUse, mark: ready ? "ready" : undefined }], steps: null },
+            { ...status, value, rows: [{ name: ready ? SYNC_STATE_LINES.ready : SYNC_STATE_LINES.partial, line: SYNC_STATE_NOTES.inUse, tip: "ready", mark: ready ? "ready" : undefined }], steps: null },
             runningBlock(SYNC_STATE_LINES.preparingAgain, run, admin),
           ],
           ...none,
@@ -382,25 +404,45 @@ export function readingSyncPage(input: SyncPageFacts): SyncPageModel {
           note: admin && isWholeBook(run) ? SYNC_BUTTON_NOTES.pause : null,
         };
       }
-      // A new map not used over the map in use (board ReadingSyncKept); a paused, stopped or cancelled one is named.
-      const rejected = job.rebuild?.outcome === "rejected";
-      const againLine = !run
-        ? null
-        : rejected
-          ? notUsedLine(job.rebuild?.coverage)
-          : run.status === "paused"
-            ? `${SYNC_STATE_LINES.preparingAgain}${DOT}${SYNC_STATE_LINES.paused}`
-            : run.status === "error"
-              ? `${SYNC_STATE_LINES.preparingAgain}${DOT}${SYNC_STATE_LINES.stopped}`
-              : run.status === "cancelled"
-                ? `${SYNC_STATE_LINES.preparingAgain}${DOT}${SYNC_STATE_LINES.cancelled}`
-                : null;
+      const mapBlock: StatusBlock = { ...status, value, rows: mapRows(job, SYNC_STATE_NOTES.estimated), steps: null };
+      // A paused Prepare again: the map in use, then the group holds Paused with Resume and Cancel (#542).
+      if (run && run.status === "paused") {
+        return {
+          state: "again-paused",
+          blocks: [
+            mapBlock,
+            { caption: SYNC_STATE_LINES.preparingAgain, tip: "preparing", value: whenLine(run.updatedAt, now) || undefined, rows: [{ name: SYNC_STATE_LINES.paused, line: isWholeBook(run) ? SYNC_STATE_NOTES.resumeOver : undefined }], steps: null },
+          ],
+          ...none,
+          buttons: only(["Resume", "Cancel"]),
+          details: true,
+          passages: passagesOf(job),
+        };
+      }
+      // A stopped Prepare again: the map in use, then the group holds Stopped with the reason per worker and Retry (#542).
+      if (run && run.status === "error") {
+        const reasons = admin ? Object.entries(run.poolErrors ?? {}).map(([host, reason]) => ({ name: host, line: reason })) : [];
+        const failure: StatusRow = { name: stoppedWhileLine(stoppedStep(run)), line: run.error || SYNC_STATE_NOTES.failedEverywhere, mark: "attention" };
+        return {
+          state: "again-stopped",
+          blocks: [
+            mapBlock,
+            { caption: SYNC_STATE_LINES.preparingAgain, tip: "stopped", value: whenLine(run.updatedAt, now) || undefined, rows: [failure, ...reasons], steps: null },
+          ],
+          ...none,
+          buttons: only(["Retry"]),
+          note: admin ? SYNC_BUTTON_NOTES.retry : null,
+          workers: admin && input.pool ? workersOnlineLine(input.pool.online, input.pool.total) : null,
+          details: true,
+          passages: passagesOf(job),
+        };
+      }
+      // A new map not used over the map in use (board ReadingSyncKept): muted under Prepare again, which stays.
       return {
         state: ready ? "ready" : "partial",
-        blocks: [{ ...status, value: finishedValue(job, admin, now, true), rows: mapRows(job, SYNC_STATE_NOTES.estimated), steps: null }],
+        blocks: [mapBlock],
         ...none,
-        prepareAgainRow: admin ? { line: againLine } : null,
-        buttons: admin && run && !rejected && (run.status === "paused" || run.status === "error") ? (run.status === "paused" ? ["Resume", "Cancel"] : ["Retry"]) : [],
+        prepareAgainRow: admin ? { line: rejected && job.rebuild ? notUsedLine(job.rebuild.coverage, notUsedReason(job.rebuild)) : null } : null,
         details: true,
         passages: passagesOf(job),
       };

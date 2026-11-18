@@ -231,28 +231,97 @@ test("not prepared: the pair has no job; the administrator gets Prepare", () => 
   assert.deepEqual(page(null, { admin: false }).buttons, []);
 });
 
-test("Prepare again over the map in use: the map is in use until the new one is ready; the new run's steps", () => {
-  const listed = job("ready", { coverage: 0.96, rebuild: { status: "processing", progress: 0.2, engine: BOOK_ENGINE, error: null, updatedAt: AT, generation: "g2", bookJob: { ...worker("decoding", { tracksTotal: 43, tracksDecoded: 5 }), id: bookWorkerJobId({ id: "job-1", generation: "g2" }) } } });
-  const model = page(listed);
+const workerOf = (generation: string, state: string, counts: Record<string, unknown> = {}) => ({ ...worker(state, counts), id: bookWorkerJobId({ id: "job-1", generation }) });
+const PASSAGES = [{ title: "Title page", excerpt: "E", sentenceCount: 6, section: 0, firstParagraphId: "a", lastParagraphId: "b" }];
+const over = (rebuild: NonNullable<ListedJob["rebuild"]>, extra: Partial<ListedJob> = {}) =>
+  job("ready", { coverage: 0.96, bookJob: worker("done"), unsyncedPassages: PASSAGES, rebuild, ...extra });
+
+test("Prepare again running over the map in use: the map in use with its line, the Preparing again group with the new run's steps, Pause, Cancel and the note", () => {
+  const model = page(over({ status: "processing", progress: 0.2, engine: BOOK_ENGINE, error: null, updatedAt: AT, generation: "g2", elapsedSeconds: 12 * 60, bookJob: workerOf("g2", "encoding", { tracksTotal: 43, tracksDecoded: 43, tracksEncoded: 24 }) }));
   assert.equal(model.state, "preparing-again");
-  assert.deepEqual(model.blocks[0].rows, [{ name: "Ready", line: "In use until the new one is ready", mark: "ready" }]);
+  assert.equal(model.blocks.length, 2);
+  assert.equal(model.blocks[0].caption, "Status");
+  assert.equal(model.blocks[0].value, "Today 14:02 · 38 min on wsl", "the map in use: when it was made and how long it took");
+  assert.deepEqual(model.blocks[0].rows, [{ name: "Ready", line: "In use until the new one is ready", tip: "ready", mark: "ready" }]);
   assert.equal(model.blocks[1].caption, "Preparing again");
-  assert.equal(model.blocks[1].value, "On wsl", "the new run's worker");
-  assert.deepEqual(running(model, 1), { label: "Decoding audio", state: "running", value: "5 of 43 files", progress: 5 / 43 });
+  assert.equal(model.blocks[1].tip, "preparing");
+  assert.equal(model.blocks[1].value, "On wsl · 12 min", "the new run's worker and time");
+  assert.deepEqual(model.blocks[1].steps!.map((s) => s.label), STEPS);
+  assert.deepEqual(model.blocks[1].steps!.map((s) => s.state), ["done", "done", "done", "running", "waiting", "waiting", "waiting"]);
+  assert.deepEqual(running(model, 1), { label: "Encoding audio", state: "running", value: "24 of 43 files", progress: 24 / 43 });
   assert.deepEqual(model.buttons, ["Pause", "Cancel"]);
+  assert.equal(model.note, "Pause stops the worker. Resume starts this book over.");
+  assert.equal(model.prepareAgainRow, null);
   assert.equal(model.passages, null);
-  // Not used: the new map matched less (#539).
-  const kept = page(job("ready", { coverage: 0.96, rebuild: { status: "error", outcome: "rejected", progress: 1, engine: BOOK_ENGINE, error: "worse", updatedAt: AT, coverage: 0.4 } }));
-  assert.equal(kept.state, "ready");
-  assert.deepEqual(kept.prepareAgainRow, { line: "Not used: it matched 40% of the text" });
-  assert.deepEqual(kept.buttons, []);
-  // A paused or stopped one is named under Prepare again, with its button.
-  const paused = page(job("ready", { coverage: 1, rebuild: { status: "paused", progress: 0.2, engine: BOOK_ENGINE, error: null, updatedAt: AT } }));
-  assert.deepEqual(paused.prepareAgainRow, { line: "Preparing again · Paused" });
-  assert.deepEqual(paused.buttons, ["Resume", "Cancel"], "a paused Prepare again: Resume (main) and Cancel (#541)");
-  const failed = page(job("ready", { coverage: 1, rebuild: { status: "error", progress: 0.2, engine: BOOK_ENGINE, error: "x", updatedAt: AT } }));
-  assert.deepEqual(failed.prepareAgainRow, { line: "Preparing again · Stopped" });
-  assert.deepEqual(failed.buttons, ["Retry"]);
+  // A worker job of the map in use's run is not the new run's: the new one waits for a worker.
+  const waiting = page(over({ status: "processing", progress: 0, engine: BOOK_ENGINE, error: null, updatedAt: AT, generation: "g2", bookJob: workerOf("g1", "done") }));
+  assert.equal(running(waiting, 1)?.label, "Waiting for a worker");
+  // Queued: it waits; a Partly ready map in use reads Partly ready, without the tick.
+  const queued = page(over({ status: "queued", progress: 0, engine: BOOK_ENGINE, error: null, updatedAt: AT }, { status: "partial", coverage: 0.6 }));
+  assert.equal(queued.state, "preparing-again");
+  assert.deepEqual(queued.blocks[0].rows, [{ name: "Partly ready", line: "In use until the new one is ready", tip: "ready", mark: undefined }]);
+  assert.equal(running(queued, 1)?.label, "Waiting for a worker");
+});
+
+test("Prepare again paused: the map in use, the group holds Paused with Resume and Cancel", () => {
+  const model = page(over({ status: "paused", progress: 0.2, engine: BOOK_ENGINE, error: null, updatedAt: AT, generation: "g2" }));
+  assert.equal(model.state, "again-paused");
+  assert.deepEqual(model.blocks[0].rows.map((row) => [row.name, row.line, row.value]), [["Ready", "Timings are estimated", undefined], ["Text mapped", undefined, "96%"]]);
+  assert.equal(model.blocks[1].caption, "Preparing again");
+  assert.deepEqual(model.blocks[1].rows, [{ name: "Paused", line: "Resume starts this book over" }]);
+  assert.equal(model.blocks[1].steps, null);
+  assert.deepEqual(model.buttons, ["Resume", "Cancel"]);
+  assert.equal(model.prepareAgainRow, null);
+  assert.equal(model.details, true);
+  assert.deepEqual(model.passages, [{ title: "Title page", line: "E · 6 sentences" }], "the map in use's passages");
+  assert.deepEqual(page(over({ status: "paused", progress: 0.2, engine: BOOK_ENGINE, error: null, updatedAt: AT }), { admin: false }).buttons, []);
+});
+
+test("Prepare again stopped: the map in use, the group holds Stopped with the reason per worker and Retry", () => {
+  const rebuild = { status: "error" as const, progress: 0.2, engine: BOOK_ENGINE, error: "Every worker failed", updatedAt: AT, generation: "g2", bookJob: workerOf("g2", "encoding"), poolErrors: { wsl: "CUDA out of memory", lisa: "Host unreachable" } };
+  const model = page(over(rebuild), { pool: { online: 1, total: 2 } });
+  assert.equal(model.state, "again-stopped");
+  assert.equal(model.blocks[0].rows[0].name, "Ready");
+  assert.equal(model.blocks[1].caption, "Preparing again");
+  assert.equal(model.blocks[1].tip, "stopped");
+  assert.deepEqual(model.blocks[1].rows, [
+    { name: "Stopped while encoding audio", line: "Every worker failed", mark: "attention" },
+    { name: "wsl", line: "CUDA out of memory" },
+    { name: "lisa", line: "Host unreachable" },
+  ]);
+  assert.deepEqual(model.buttons, ["Retry"]);
+  assert.equal(model.note, "Retry starts this book over on the first free worker.");
+  assert.equal(model.workers, "1 of 2 online");
+  assert.equal(model.prepareAgainRow, null);
+  const member = page(over(rebuild), { admin: false, pool: { online: 1, total: 2 } });
+  assert.deepEqual(member.blocks[1].rows.map((row) => row.name), ["Stopped while encoding audio"]);
+  assert.deepEqual(member.buttons, []);
+  assert.equal(member.workers, null);
+  assert.doesNotMatch(JSON.stringify(member.blocks), /lisa|CUDA/);
+});
+
+test("Prepare again not used: Prepare again stays, with the muted Not used line from the rejected job's coverage and reason", () => {
+  // The reasons as server/alignment-rebuild.ts `rebuildRejection` words them.
+  const rejected = (coverage: number, error: string) => over({ status: "error", outcome: "rejected", progress: 1, engine: BOOK_ENGINE, error, updatedAt: AT, coverage });
+  const less = page(rejected(0.4, "The rebuild was rejected: it mapped 40% of the text, more than 2 points less than the previous map. The previous map (96% of the text mapped) stays published."));
+  assert.equal(less.state, "ready");
+  assert.equal(less.blocks.length, 1, "no Preparing again group");
+  assert.deepEqual(less.blocks[0].rows.map((row) => row.name), ["Ready", "Text mapped"]);
+  assert.deepEqual(less.prepareAgainRow, { line: "Not used: it matched 40% of the text" });
+  assert.deepEqual(less.buttons, []);
+  assert.equal(less.details, true);
+  const none = page(rejected(0, "The rebuild was rejected: it mapped none of the text. The previous map (96% of the text mapped) stays published."));
+  assert.deepEqual(none.prepareAgainRow, { line: "Not used: it matched none of the text" });
+  const language = page(rejected(0, "The rebuild was rejected: the alignment worker does not support this language. The previous map (96% of the text mapped) stays published."));
+  assert.deepEqual(language.prepareAgainRow, { line: "Not used: the language is not supported" });
+  assert.equal(page(rejected(0.4, "x"), { admin: false }).prepareAgainRow, null);
+});
+
+test("Prepare again cancelled: nothing; the page reads as before Prepare again", () => {
+  const before = page(job("ready", { coverage: 0.96, bookJob: worker("done"), unsyncedPassages: PASSAGES }));
+  const cancelled = page(over({ status: "cancelled", progress: 0.2, engine: BOOK_ENGINE, error: null, updatedAt: AT, generation: "g2" }));
+  assert.deepEqual(cancelled, before);
+  assert.deepEqual(cancelled.prepareAgainRow, { line: null });
 });
 
 test("someone who is not the administrator: no buttons, no worker names, no Prepare again, no Workers row", () => {
