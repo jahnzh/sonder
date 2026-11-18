@@ -1007,10 +1007,8 @@ export async function createApp(options?: {
       }
       if (!stored.length) throw new Error("Choose at least one audio file.");
       const id = randomUUID();
-      if (work) {
-        title = work.title;
-        author = work.author;
-      }
+      // The book's author names the recording's narrator, as an upload's typed author does today.
+      if (work) author = work.author;
       const workId = work?.id || hardcoverWorkForMedia(title, author) || `work-${id}`;
       // A recording of a known book takes the cover its other editions show (the placeholder's, as a rule).
       const cover = work

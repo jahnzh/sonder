@@ -42,7 +42,7 @@ run("INSERT INTO user_settings(user_id,key,value) VALUES(?,'shelfEbooksJoined','
 //   Hardcover knows another work by the files' title and author (w-decoy), so neither may name the recording.
 work("w-target", "The Real Title", "Real Author");
 run("INSERT INTO ebook_editions(id,work_id,format,source) VALUES('eb-target','w-target','epub','/books/target.epub')");
-work("w-decoy", "Typed Title", "Typed Author");
+work("w-decoy", "Typed Title", "Real Author");
 run("INSERT INTO hardcover_links(work_id,book_id,slug,series) VALUES('w-decoy',4301,'typed-title','[]')");
 // - w-bare: a book with nothing at all, in nobody's library.
 work("w-bare", "Bare Book", "Bare Author");
@@ -108,6 +108,8 @@ test("an upload with workId makes a recording of that work with its title, in th
   // Sam and the owner have the book in their libraries through its placeholder (an ebook-only book).
   for (const user of [OWNER, SAM]) assert.equal((await app.inject({ method: "PUT", url: "/api/works/w-target/library", cookies: as(user) })).statusCode, 200);
   run("UPDATE user_library SET status='listening' WHERE user_id=? AND book_id='placeholder-w-target'", SAM);
+  // The placeholder shows the book's own cover (Hardcover's, as a rule): the recording takes it.
+  run("UPDATE audio_editions SET cover='https://assets.hardcover.app/target.jpg' WHERE id='placeholder-w-target'");
   const placeholderCover = (rows("SELECT cover FROM audio_editions WHERE id='placeholder-w-target'") as { cover: string }[])[0].cover;
   const answer = await upload(OWNER, [
     { field: "workId", value: "w-target" },
@@ -119,8 +121,9 @@ test("an upload with workId makes a recording of that work with its title, in th
   ]);
   assert.equal(answer.statusCode, 200, answer.body);
   const id = answer.json().id as string;
-  const edition = (rows("SELECT work_id AS workId,cover,source_label AS label FROM audio_editions WHERE id=?", id) as { workId: string; cover: string; label: string }[])[0];
-  assert.deepEqual(edition, { workId: "w-target", cover: placeholderCover, label: "Your audio files" });
+  const edition = (rows("SELECT work_id AS workId,cover,narrator,source_label AS label FROM audio_editions WHERE id=?", id) as { workId: string; cover: string; label: string }[])[0];
+  assert.equal(placeholderCover, "https://assets.hardcover.app/target.jpg");
+  assert.deepEqual(edition, { workId: "w-target", cover: placeholderCover, narrator: "Real Author", label: "Your audio files" });
   // The work keeps its own title and author; no work was made for the typed or tagged names, and w-decoy gained nothing.
   assert.deepEqual(rows("SELECT title,author FROM works WHERE id='w-target'"), [{ title: "The Real Title", author: "Real Author" }]);
   assert.equal((rows("SELECT count(*) AS n FROM audio_editions WHERE work_id='w-decoy'") as { n: number }[])[0].n, 0);
@@ -186,7 +189,7 @@ test("a refused file with workId leaves nothing in the upload folder", async () 
 test("an upload without workId is today's: a new work from the typed title, or the Hardcover match", async () => {
   const typed = await upload(OWNER, [
     { field: "title", value: "Typed Title" },
-    { field: "author", value: "Typed Author" },
+    { field: "author", value: "Real Author" },
     { file: "One.wav", body: wave() },
   ]);
   assert.equal(typed.statusCode, 200, typed.body);
