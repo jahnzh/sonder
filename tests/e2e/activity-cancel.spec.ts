@@ -121,3 +121,47 @@ test("a Cancel the server refuses says why under the row, and the download stays
   await expect(attention.getByRole("listitem").filter({ hasText: w.alice.title }).first()).toContainText("No peers");
   await noOverflow(page);
 });
+
+test("a stalled download of a book that already has a copy says so under In progress and offers Cancel, sent only when confirmed", async ({ page }, info) => {
+  mkdirSync(SHOTS, { recursive: true });
+  const w = await works(page);
+  const of = (work: Work) => ({ workId: work.workId, bookId: work.id, cover: work.cover, title: work.title });
+  let cancelled = false;
+  const cancels: unknown[] = [];
+  await page.route("**/api/activity", (route) => route.fulfill({
+    json: answer([
+      cancelled
+        ? item("acquisition:b1a70445", { ...of(w.alice), state: "done", updatedAt: Date.now() - 60_000, facts: { kind: "acquisition", status: "cancelled", backend: "local" } })
+        : item("acquisition:b1a70445", {
+            ...of(w.alice), progress: 0.0011, superseded: true, actions: ["cancel"], facts: { kind: "acquisition", status: "downloading", backend: "local" },
+          }),
+    ]),
+  }));
+  await page.route("**/api/activity/items/cancel", (route) => {
+    cancels.push(route.request().postDataJSON());
+    cancelled = true;
+    return route.fulfill({ json: { ok: true, result: { ok: true, removed: true } } });
+  });
+  await page.goto("/#activity");
+
+  const progress = group(page, "In progress");
+  const copy = progress.getByRole("listitem").filter({ hasText: w.alice.title }).first();
+  await expect(copy).toContainText("This book already has a copy · Downloading to server · 0%");
+  await expect(group(page, "Needs attention")).toHaveCount(0);
+  const cancel = progress.getByRole("button", { name: `Cancel ${w.alice.title}`, exact: true });
+  await expect(cancel).toBeVisible();
+  await noOverflow(page);
+  await page.screenshot({ path: `${SHOTS}/now-has-copy-${info.project.name}-390.png`, fullPage: true });
+  expect(cancels).toEqual([]);
+
+  await page.setViewportSize(DESKTOP);
+  await cancel.click();
+  const ask = progress.getByRole("group", { name: `Cancel ${w.alice.title}` });
+  await expect(ask).toContainText(`Cancel the download of “${w.alice.title}”?`);
+  await noOverflow(page);
+  await page.screenshot({ path: `${SHOTS}/now-has-copy-ask-${info.project.name}-desktop.png`, fullPage: true });
+  expect(cancels).toEqual([]);
+  await ask.getByRole("button", { name: "Cancel download", exact: true }).click();
+  await expect.poll(() => cancels).toEqual([{ id: "acquisition:b1a70445" }]);
+  await expect(group(page, "Finished today").getByRole("listitem").filter({ hasText: w.alice.title }).first()).toContainText("Download cancelled");
+});
