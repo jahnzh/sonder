@@ -1,3 +1,4 @@
+import { migrateFavorites } from "./pages/library-filter";
 import Dexie, { type Table } from "dexie";
 import { dropPosition, peekPosition, recentPositions, recordPosition, serialQueue, type PositionEntry, type PositionHistory } from "./position-history";
 import type { Book, LibraryWork, Progress, Download, DownloadPart, Track } from "./types";
@@ -127,6 +128,12 @@ export class SonderDB extends Dexie {
     this.version(5).stores({ works: "workId" });
     // Additive: a new table, nothing of the earlier ones changes (places, downloads, favourites, history stay).
     this.version(6).stores({ keep: "workId" });
+    this.version(7).stores({}).upgrade(async (tx) => {
+      const preference = await tx.table("preferences").get("favorites");
+      const ids = Array.isArray(preference?.value) ? preference.value.filter((id: unknown): id is string => typeof id === "string") : [];
+      const books = await tx.table("books").toArray();
+      await tx.table("preferences").put({ key: "workFavorites", value: migrateFavorites(ids, books) });
+    });
   }
 }
 const sharedDB = new SonderDB();

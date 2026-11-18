@@ -27,7 +27,7 @@ import { hardcoverRowValue } from "../hardcover-page-model";
 import { bytes } from "../size-format";
 import { tip } from "../tooltip-texts";
 import type { Book, Download, DownloadPart, LibraryWork } from "../types";
-import { bookModel, chosenRecording, deviceHold, favoriteOf, keepState } from "./book-model";
+import { bookModel, chosenRecording, deviceHold, keepState } from "./book-model";
 import type { Notify } from "./shared";
 import "./book-page.css";
 
@@ -156,8 +156,7 @@ export function BookPage(props: Props) {
   const epubCopy = useEbookDeviceCopy(chosenEpub ?? work?.ebooks[0]?.id ?? null, { kept: true });
   const model = work ? bookModel(work, { admin, deviceChoice, deviceEbookSize: epubCopy.size }) : null;
   const entries = useMemo(() => books.filter((b) => b.workId === workId), [books, workId]);
-  const entryIds = entries.map((b) => b.id);
-  const favorite = favoriteOf(entryIds, favorites);
+  const favorite = favorites.includes(workId);
   const chosenBook = (recording && entries.find((b) => b.recordingId === recording.recordingId)) ?? null;
   const searchTarget = chosenBook ?? entries[0] ?? (work ? ebookSearchTarget(work) : null);
   const hold = deviceHold(recording, downloads, downloadParts);
@@ -192,7 +191,7 @@ export function BookPage(props: Props) {
   const head = (
     <header className="book-page-head">
       <Button kind="secondary" icon={<BackIcon />} label={backLabel} onClick={() => address.goBack()} />
-      {work?.inLibrary && entryIds.length > 0 && (
+      {work?.inLibrary && (
         <Button
           kind="secondary"
           className="book-page-favorite"
@@ -200,7 +199,7 @@ export function BookPage(props: Props) {
           label="Favorite"
           aria-pressed={favorite}
           data-pressed={favorite ? "" : undefined}
-          onClick={() => props.onFavorite(entryIds)}
+          onClick={() => props.onFavorite([workId])}
         />
       )}
     </header>

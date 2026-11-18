@@ -87,6 +87,7 @@ const desktopProjects = [
               /(^|\/)activity-worker\.spec\.ts$/,
               // The Audiobook page (#530).
               /(^|\/)audiobook-page\.spec\.ts$/,
+              /(^|\/)library-redesign\.spec\.ts$/,
               // The Book page (#532).
               /(^|\/)book-page\.spec\.ts$/,
               // The reader's page: a head, the text band and a foot (#587).

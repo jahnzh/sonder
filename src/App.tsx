@@ -297,7 +297,8 @@ function LibraryApp({
   const queryOf = page === "library" || page === "discover" ? page : "other";
   const query = queries[queryOf];
   const setQuery = (value: string) => setQueries((q) => ({ ...q, [queryOf]: value }));
-  const [filter, setFilter] = useState("All books");
+  const [filter, setFilter] = useState(() => localStorage.getItem("sonder-library-chip") || "All books");
+  useEffect(() => { localStorage.setItem("sonder-library-chip", filter); }, [filter]);
   const [hardcoverFilter, setHardcoverFilter] = useState<HardcoverFilter>({
     shelf: "all",
     list: "all",
@@ -481,7 +482,7 @@ function LibraryApp({
     void refreshSavedEbooks();
     void refreshOfflineEbooks();
     refreshSettings();
-    void localDB.preferences.get("favorites").then((p) => {
+    void localDB.preferences.get("workFavorites").then((p) => {
       if (Array.isArray(p?.value)) setFavorites(p.value);
     });
     const status = () => {
@@ -634,7 +635,7 @@ function LibraryApp({
   const toggleFavorites = (ids: string[]) => {
     setFavorites((current) => {
       const next = toggleWorkFavorite(ids, current);
-      void localDB.preferences.put({ key: "favorites", value: next });
+      void localDB.preferences.put({ key: "workFavorites", value: next });
       return next;
     });
   };
@@ -643,7 +644,7 @@ function LibraryApp({
       const next = current.includes(id)
         ? current.filter((v) => v !== id)
         : [...current, id];
-      void localDB.preferences.put({ key: "favorites", value: next });
+      void localDB.preferences.put({ key: "workFavorites", value: next });
       return next;
     });
   };
@@ -848,41 +849,6 @@ function LibraryApp({
               </button>
             ))}
           </nav>
-          <div className="sidebar-section-label">
-            YOUR SHELVES <BookOpen size={13} />
-          </div>
-          <nav className="shelf-nav" aria-label="Your shelves">
-            <button
-              className={showFavorites ? "selected" : ""}
-              onClick={() => {
-                switchPlace("library");
-                setShowFavorites(true);
-                setFilter("All books");
-              }}
-            >
-              <Heart size={17} />
-              <span>Favorites</span>
-              <small>
-                {libraryBooks.filter((b) => favorites.includes(b.id)).length}
-              </small>
-            </button>
-            <button
-              className={
-                page === "library" && filter === "Finished" ? "selected" : ""
-              }
-              onClick={() => {
-                switchPlace("library");
-                setShowFavorites(false);
-                setFilter("Finished");
-              }}
-            >
-              <CheckCheck size={18} />
-              <span>Finished books</span>
-              <small>
-                {libraryBooks.filter((b) => b.status === "finished").length}
-              </small>
-            </button>
-          </nav>
           {user.role === "admin" && <button className="sidebar-add" onClick={() => setImportOpen(true)}>
             <Plus size={17} /> Add an audiobook
           </button>}
@@ -921,7 +887,7 @@ function LibraryApp({
               </span>
             </div>
             <div className="topbar-end">
-              {page !== "settings" && (
+              {page !== "settings" && page !== "library" && (
                 <label className="search-input">
                   <Search size={17} />
                   <input
@@ -1066,38 +1032,15 @@ function LibraryApp({
             ) : <>
             {(page === "library" || seriesBeside) && (
               <LibraryPage
-                admin={user.role === "admin"}
-                visible={visible}
-                featured={featured}
-                listening={listening}
-                query={query}
-                showFavorites={showFavorites}
-                filter={filter}
-                setFilter={setFilter}
-                view={view}
-                setView={setView}
-                sort={sort}
-                setSort={setSort}
-                hardcoverFilter={hardcoverFilter}
-                setHardcoverFilter={setHardcoverFilter}
-                loading={loading}
-                setLoading={setLoading}
-                loadError={loadError}
-                savedSeries={savedSeries}
-                openSeries={openSeries}
-                findSeries={findSeries}
+                works={[...deviceWorks.values()].filter((work) => work.inLibrary)}
+                query={queries.library} setQuery={(value) => setQueries((q) => ({ ...q, library: value }))}
+                filter={filter} setFilter={setFilter} view={view} setView={setView} sort={sort} setSort={setSort}
+                hardcoverFilter={hardcoverFilter} setHardcoverFilter={setHardcoverFilter}
+                savedSeries={savedSeries} openSeries={openSeries} findSeries={findSeries}
                 beside={seriesBeside && seriesRouteId !== null ? { id: Number(seriesRouteId), page: seriesPage(seriesRouteId, true) } : null}
-                setDetail={openBookOf}
-                setImportOpen={setImportOpen}
-                favorites={favorites}
-                toggleFavorite={toggleFavorite}
-                downloaded={onDevice}
-                readingPercentOf={readingPercentOf}
-                findAudio={findAudio}
-                mutateLibrary={mutateLibrary}
-                refresh={refresh}
-                navigate={navigate}
-                notify={notify}
+                favorites={favorites} onDevice={keptComplete}
+                openWork={(workId) => address.navigate({ name: "book", workId })}
+                refresh={refresh} navigate={navigate} notify={notify}
               />
             )}
             {page === "discover" && (
