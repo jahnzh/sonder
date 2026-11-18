@@ -27,13 +27,19 @@ import {
   openerOf,
   requestPlace,
   sectionOfSentence,
+  takeListenOpener,
   useOpener,
 } from "../reader-pages";
+import { useBookSpeed, usePlayer } from "../player";
+import { chapterRowTime, currentChapter, listeningChapters } from "../chapters";
+import { clock } from "../lib";
+import { chosenRecording } from "./book-model";
+import type { Book } from "../types";
 import type { ReaderBook, ReaderSection } from "../reading-types";
 import "./reader-pages.css";
 
-/** What a page keeps in its own entry: the ebook it lists and, on Search, the words. */
-type PageData = { ebookId?: string; words?: string };
+/** What a page keeps in its own entry: the ebook it lists, on Search the words, and whether Listen opened it (#593). */
+type PageData = { ebookId?: string; words?: string; listen?: boolean };
 const readData = (): PageData => {
   const data = pageData();
   return data && typeof data === "object" ? (data as PageData) : {};
@@ -119,7 +125,78 @@ function useOpenAt(workId: string, ebookId: string | null) {
   };
 }
 
-export function ReaderPages({ workId, page }: { workId: string; page: ReaderPage }) {
+export function ReaderPages({ workId, page, books = [] }: { workId: string; page: ReaderPage; books?: Book[] }) {
+  // Opened from Now playing's Listen face, Chapters lists the recording's chapters (#593); the entry keeps it.
+  const [fromListen] = useState(() => {
+    const listen = page === "chapters" && (takeListenOpener(workId) || readData().listen === true);
+    if (listen && readData().listen !== true) writeData({ listen: true });
+    return listen;
+  });
+  if (fromListen) return <ListenChapters workId={workId} books={books} />;
+  return <ReaderPagesOf workId={workId} page={page} />;
+}
+
+/**
+ * Chapters opened from Listen (#593, spec #586; board Chapters.dc.html): the recording's chapters with their lengths,
+ * the current one marked with the headphones and its time left; a row moves the narration there (today's chapter
+ * jump, recorded in Position history) and goes back to Listen.
+ */
+function ListenChapters({ workId, books }: { workId: string; books: Book[] }) {
+  const p = usePlayer();
+  const { goBack } = useAddress();
+  const { work } = useWork(workId);
+  const recordingId = work ? chosenRecording(work)?.recordingId : undefined;
+  const book: Book | null =
+    (p.book?.workId === workId ? p.book : null) ??
+    books.find((entry) => entry.recordingId === recordingId) ??
+    books.find((entry) => entry.workId === workId) ??
+    null;
+  const speed = useBookSpeed(book);
+  const playing = !!book && p.book?.recordingId === book.recordingId;
+  const current = playing && p.track ? currentChapter(book, p.track.id, p.position) : undefined;
+  return (
+    <div className="reader-pages" data-page="chapters" data-from="listen">
+      <PageHeader title="Chapters" back parent={{ name: "listen", workId }} named={() => "the book"} />
+      <p className="reader-pages-book type-label">{book?.title ?? work?.title ?? ""}</p>
+      {!book ? (
+        <Waiting missing={false} />
+      ) : (
+        <ul className="reader-pages-card reader-pages-chapters" role="list" aria-label="Chapters">
+          {listeningChapters(book).map((chapter) => {
+            const now = !!current && current.track.id === chapter.track.id && current.start === chapter.start;
+            const time = chapterRowTime(chapter, now ? p.position : null, speed);
+            return (
+              <li key={`${chapter.track.id}-${chapter.start}`}>
+                <button
+                  type="button"
+                  className="reader-pages-chapter"
+                  aria-current={now ? "true" : undefined}
+                  data-narrated={now ? "" : undefined}
+                  onClick={() => {
+                    void p.play(book, chapter.track, chapter.start, { kind: "chapter" });
+                    goBack({ name: "listen", workId });
+                  }}
+                >
+                  {now && (
+                    <span className="reader-pages-chapter-mark">
+                      <HeadphonesIcon />
+                    </span>
+                  )}
+                  <span className="reader-pages-chapter-title type-body">{chapter.title}</span>
+                  <span className="reader-pages-chapter-value type-label" title={time.title}>
+                    {time.left ? `${clock(time.seconds)} left` : clock(time.seconds)}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function ReaderPagesOf({ workId, page }: { workId: string; page: ReaderPage }) {
   const book = useListedBook(workId, page);
   const openAt = useOpenAt(workId, book.ebookId);
   const title = page === "search" ? "Search" : page === "bookmarks" ? "Bookmarks" : "Chapters";

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { parseRange } from "../../server/range";
 import { readerFixture } from "../reader-fixture";
+import { openListen, openRead } from "./now-playing";
 import { playFromLibrary } from "./library-play";
 test.use({ serviceWorkers: "block" });
 async function instrument(page: Page) {
@@ -336,8 +337,8 @@ test("Space toggles playback across views and arrows skip 30 seconds while ignor
   await expect(bookPage).toBeVisible();
   await bookPage.getByRole("button", { name: "Back to Library", exact: true }).click();
   await expect(bookPage).toBeHidden();
-  // Space and arrows work in Now Playing.
-  await page.locator(".dock-book").click();
+  // Space and arrows work in Now Playing, on its Listen face (#593).
+  await openListen(page);
   const nowPlaying = page.getByRole("dialog", {
     name: "Now playing",
     exact: true,
@@ -358,9 +359,10 @@ test("Space toggles playback across views and arrows skip 30 seconds while ignor
   await page.keyboard.press("ArrowLeft");
   await expect.poll(() => audioPosition(page)).toBeCloseTo(100, 0);
   await nowPlaying
-    .getByRole("button", { name: "Close dialog", exact: true })
+    .getByRole("button", { name: "Close now playing", exact: true })
     .click();
-  // Space and arrows also work in the Now Playing reader in Page mode.
+  await expect(nowPlaying).toBeHidden();
+  // Space and arrows also work on Now Playing's Read face in Page mode.
   const readerTitle = `Keyboard reader book ${randomUUID().slice(0, 8)}`;
   const imported = await page.request.post("/api/import", {
     multipart: {
@@ -398,10 +400,12 @@ test("Space toggles playback across views and arrows skip 30 seconds while ignor
       .locator(".player-dock")
       .getByRole("button", { name: "Pause", exact: true })
       .click();
-    await page.locator(".dock-book").click();
+    await openRead(page);
     await expect(
       page.locator(".inline-reader .reader-viewport iframe"),
     ).toBeVisible();
+    // The face control that switched to Read had focus; the keys act from Now playing itself, as before.
+    await nowPlaying.evaluate((element) => (element as HTMLElement).focus());
     await page.keyboard.press(" ");
     await expect(
       nowPlaying.getByRole("button", { name: "Pause narration", exact: true }),
@@ -421,12 +425,16 @@ test("Space toggles playback across views and arrows skip 30 seconds while ignor
     await page.request.delete(`/api/library/${id}`);
   }
 });
-test("keyboard shortcut sheet opens from Now Playing and Settings", async ({ page }) => {
+// Changed by design (spec #586, behaviour 30; #593): the keyboard help no longer opens from Now playing; it is in
+// Settings › Playback.
+test("keyboard shortcut sheet opens from Settings, not from Now Playing", async ({ page }) => {
   await instrument(page);
   await page.goto("/");
   await playFromLibrary(page, "Alice’s Adventures in Wonderland");
-  await page.locator(".dock-book").click();
-  await page.getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
+  await openListen(page);
+  await expect(page.getByRole("dialog", { name: "Now playing", exact: true }).getByRole("button", { name: "Keyboard shortcuts" })).toHaveCount(0);
+  await page.goto("/#settings/playback");
+  await page.locator("main").getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
   const sheet = page.getByRole("dialog", { name: "Keyboard shortcuts", exact: true });
   await expect(sheet).toBeVisible();
   for (const action of ["Play or pause", "Skip 30 seconds back or forward", "Search", "Follow the audio in the reader"])
@@ -439,11 +447,6 @@ test("keyboard shortcut sheet opens from Now Playing and Settings", async ({ pag
   await expect(sheet.locator("kbd")).toHaveCount(5);
   await sheet.getByRole("button", { name: "Close dialog" }).click();
   await expect(sheet).toBeHidden();
-  await page.goto("/#settings/playback");
-  // The new address closes Now playing (it has a history entry of its own, #484); its button may still be on
-  // screen while it closes, so this is the Settings page's own (Settings › Playback, #579).
-  await page.locator("main").getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "Keyboard shortcuts", exact: true }).getByText("Play or pause")).toBeVisible();
 });
 test("a form dialog focuses its first text field when it opens", async ({ page }) => {
   // The book dialog's Hardcover match dialog became the Hardcover page (#529); Add an audiobook is a form dialog.

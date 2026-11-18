@@ -313,11 +313,11 @@ test("Now playing has an entry: Back closes it and leaves the page where it was,
   const nowPlaying = page.getByRole("dialog", { name: "Now playing", exact: true });
   const length = await page.evaluate(() => history.length);
 
-  // Opening adds an entry with the page's address; the phone's Back closes it.
+  // Opening adds an entry with its own address (#593: `#listen/<work>`); the phone's Back closes it.
   await dock.locator(".dock-book").click();
   await expect(nowPlaying).toBeVisible();
   expect(await page.evaluate(() => history.length)).toBe(length + 1);
-  expect(await hash(page)).toBe("#library");
+  expect(await hash(page)).toMatch(/^#listen\//);
   // The page stays where it was (within a pixel: Firefox may keep a fraction after the dialog's scroll lock).
   const near = async () => Math.abs((await page.evaluate(() => scrollY)) - target);
   await page.goBack();
@@ -328,7 +328,7 @@ test("Now playing has an entry: Back closes it and leaves the page where it was,
   // Its own control goes back too, so Back afterwards does not open it again: it leaves the Library.
   await dock.locator(".dock-book").click();
   await expect(nowPlaying).toBeVisible();
-  await nowPlaying.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await nowPlaying.getByRole("button", { name: "Close now playing", exact: true }).click();
   await expect(nowPlaying).toBeHidden();
   expect(await near()).toBeLessThan(1);
   await page.goBack();
@@ -343,14 +343,16 @@ test("Now playing has an entry: Back closes it and leaves the page where it was,
     await expect.poll(async () => (await audio(page)).time).toBeGreaterThan(playing.time);
   }
 
-  // A reload with it open shows the page without it, and Back goes where it would have before it was opened.
+  // Its address survives a reload (#593), and Back still closes it to the page it was opened over.
   await tab(page, "My library").click();
   await expect(shown(page)).toHaveText("Library");
   await dock.locator(".dock-book").click();
   await expect(nowPlaying).toBeVisible();
   await page.reload();
-  await expect(shown(page)).toHaveText("Library");
+  await expect(nowPlaying).toBeVisible();
+  await page.goBack();
   await expect(nowPlaying).toBeHidden();
+  await expect(shown(page)).toHaveText("Library");
   await page.goBack();
   await expect(shown(page)).toHaveText("Discover");
 });
@@ -365,10 +367,11 @@ test("a dialog opened from Now playing closes with it on Back", async ({ page })
   const dock = page.locator(".player-dock");
   await expect(dock.locator(".dock-book")).toContainText(title);
   const nowPlaying = page.getByRole("dialog", { name: "Now playing", exact: true });
-  const keys = page.getByRole("dialog", { name: "Keyboard shortcuts", exact: true });
+  // Earlier positions opens Position history over Listen (#593; the keyboard help left Now playing).
+  const keys = page.getByRole("dialog", { name: "Position history", exact: true });
   await dock.locator(".dock-book").click();
   await expect(nowPlaying).toBeVisible();
-  await nowPlaying.getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
+  await nowPlaying.getByRole("button", { name: "Earlier positions", exact: true }).click();
   await expect(keys).toBeVisible();
   await page.goBack();
   await expect(nowPlaying).toBeHidden();
@@ -377,7 +380,7 @@ test("a dialog opened from Now playing closes with it on Back", async ({ page })
   // Opened again, Now playing does not bring the dialog back with it.
   await dock.locator(".dock-book").click();
   await expect(nowPlaying).toBeVisible();
-  await expect(nowPlaying.getByRole("button", { name: "Keyboard shortcuts", exact: true })).toBeVisible();
+  await expect(nowPlaying.getByRole("button", { name: "Earlier positions", exact: true })).toBeVisible();
   await expect(keys).toBeHidden();
 });
 

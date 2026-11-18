@@ -5,6 +5,7 @@ import { test, expect, type Browser, type Page } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
+import { openAudiobookPage } from "./now-playing";
 import { playFromLibrary } from "./library-play";
 
 test.use({ serviceWorkers: "block" });
@@ -186,8 +187,7 @@ test("its dialogs at phone size and on a desktop: a copy, Plays from, Report a p
     audio.currentTime = 200;
     audio.dispatchEvent(new Event("timeupdate"));
   });
-  await page.locator(".dock-book").click();
-  await page.getByRole("dialog", { name: "Now playing", exact: true }).getByRole("button", { name: "Audiobook", exact: true }).click();
+  await openAudiobookPage(page);
   await region(page).getByRole("radio", { name: /^Second Narrator/ }).click();
   const offer = page.getByRole("dialog", { name: "Where to resume", exact: true });
   await expect(offer.getByRole("group", { name: "Where to resume", exact: true })).toBeVisible();

@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 import { skipOnMobile } from "./mobile";
 import { applyInsets, bandBoxes, expectTextUncovered, INSET_PROFILES, intersects, type Box } from "./reader-bands";
+import { openRead } from "./now-playing";
 // The reader's page (#587, ADR 0019; boards Reader.dc.html, ReaderControls.dc.html, ReaderScroll.dc.html): a head
 // of 44 and a foot of 72 that keep their boxes whether the controls show or not, plus the safe areas, and the
 // text band exactly what is between them. From the prototype of #469.
@@ -169,12 +170,12 @@ async function inPlayer(page: Page, book: any) {
   const response = await page.request.post("/api/progress", { data: { recordingId: book.recordingId, trackId: book.tracks[0].id, position: 5, duration: book.tracks[0].duration, updatedAt: Date.now() } });
   expect(response.ok()).toBe(true);
   await page.goto("/");
-  await expect(page.locator(".player-dock").getByRole("button", { name: "Open ebook reader", exact: true })).toBeVisible();
+  await expect(page.locator(".player-dock .dock-book")).toBeVisible();
 }
 async function playerThenOpen(page: Page, book: any, ebook: string) {
   await inPlayer(page, book);
   // Now playing loads the resumed recording's track; closed again, the book stays in the player.
-  await page.locator(".player-dock").getByRole("button", { name: "Open ebook reader", exact: true }).click();
+  await openRead(page);
   await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "Now playing", exact: true })).toBeHidden();
@@ -241,23 +242,27 @@ test("at rest and with the controls shown as on Reader.dc.html and ReaderControl
   await expect(head.locator(".reader-head-rest")).toBeVisible();
 });
 
-test("the reader inside Now playing gets the same bands without the insets", async ({ page, browserName }) => {
+// Now playing's Read face is the whole window (#593): its head and foot carry the insets, as the reader on its own does.
+test("the reader inside Now playing gets the same bands with the insets", async ({ page, browserName }) => {
   const { book } = await fixture(page, "Inline bands");
   await applyInsets(page, browserName, INSET_PROFILES[2]!);
   await inPlayer(page, book);
-  await page.locator(".player-dock").getByRole("button", { name: "Open ebook reader", exact: true }).click();
+  await openRead(page);
   const room = page.locator(".inline-reader");
   await expect(room.locator(".reader-viewport iframe")).toBeVisible();
   await settled(room);
   const before = await frameState(room);
   const { head, text, foot } = await expectTextUncovered(room);
-  expect(head.height).toBeCloseTo(44, 0);
-  expect(foot.height).toBeCloseTo(72, 0);
+  expect(head.height).toBeCloseTo(44 + INSET_PROFILES[2]!.top, 0);
+  expect(foot.height).toBeCloseTo(72 + INSET_PROFILES[2]!.bottom, 0);
   expect(text.y).toBeCloseTo(head.y + head.height, 0);
   expect(text.y + text.height).toBeCloseTo(foot.y, 0);
   await page.mouse.click(text.x + text.width / 2, text.y + text.height / 2);
   await expect(room.locator(".reader-topbar")).toBeVisible();
-  await inOrder(room.locator(".reader-head"), HEAD);
+  // The head holds Now playing's Listen or Read control after Close.
+  await inOrder(room.locator(".reader-head"), HEAD.slice(0, 1));
+  await expect(room.locator(".reader-head").getByRole("radiogroup", { name: "Listen or read", exact: true })).toBeVisible();
+  await inOrder(room.locator(".reader-head"), HEAD.slice(1));
   await inOrder(room.locator(".reader-player"), FOOT);
   expect(await frameState(room)).toEqual(before);
 });

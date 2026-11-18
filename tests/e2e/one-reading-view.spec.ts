@@ -3,6 +3,7 @@ import {readFileSync} from "node:fs";
 import {randomUUID} from "node:crypto";
 import {readerFixture} from "../reader-fixture";
 import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
+import {openRead} from "./now-playing";
 import {closeAppearance,openAppearance} from "./reader-appearance";
 // One reading view (ADR 0017, #501): the reader shows the book's own text and nothing else. The Lyrics and Word
 // views are gone with their switch, their settings, the `P` key and the timing correction; `F` stays.
@@ -47,7 +48,7 @@ async function openFollowing(page:Page,book:any,interval:any){
  const response=await page.request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position:interval.start+.5,duration:book.tracks[0].duration,updatedAt:Math.max(Date.now(),previous+1)}});
  expect(response.ok()).toBe(true);
  await page.goto("/");
- await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
+ await openRead(page);
  const room=page.locator(".inline-reader");
  await timedWait("follow-highlight",()=>expect(room).toHaveAttribute("data-current-passage",interval.paragraphId,{timeout:READER_WAIT_MS.followHighlight}),{testName:test.info().title});
  await expect(room.locator(".reader-viewport .sonder-follow")).toHaveAttribute("data-epubcfi",/^epubcfi\(/,{timeout:READER_WAIT_MS.followHighlight});

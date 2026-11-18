@@ -6,6 +6,7 @@ import {readerFixture} from "../reader-fixture";
 import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
 import {highlightShown,textShown} from "./reader-view";
 import {setTextSize} from "./reader-appearance";
+import {openRead} from "./now-playing";
 // What the deleted Lyrics long-book test guarded that also holds for the book's text (#501 review): a search
 // result and a bookmark far away in a long book show their sentence on the page, and the text size setting
 // changes the size of the book's text that is drawn.
@@ -46,7 +47,7 @@ async function openFollowing(page:Page,book:any,interval:any){
  const response=await page.request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position:interval.start+.5,duration:book.tracks[0].duration,updatedAt:Math.max(Date.now(),previous+1)}});
  expect(response.ok()).toBe(true);
  await page.goto("/");
- await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
+ await openRead(page);
  const room=page.locator(".inline-reader");
  await timedWait("follow-highlight",()=>expect(room).toHaveAttribute("data-current-passage",interval.paragraphId,{timeout:READER_WAIT_MS.followHighlight}),{testName:test.info().title});
  await expect.poll(()=>highlightShown(room),{timeout:READER_WAIT_MS.followHighlight}).toBe(true);

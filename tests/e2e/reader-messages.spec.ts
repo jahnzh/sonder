@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 import { expectTextUncovered, intersects } from "./reader-bands";
+import { openRead } from "./now-playing";
 import { playFromLibrary } from "./library-play";
 // Every message while reading appears in the foot (#591, ADR 0019, spec #586 "Messages in the foot"; boards
 // ReaderUndo, ReaderError, ReaderConflict, ReaderUpdate, ReaderConfirm): the foot's lower row holds the message and
@@ -82,8 +83,7 @@ async function openNowPlaying(page: Page, title: string) {
   else expect(test.info().project.name).toMatch(/firefox/);
   await page.evaluate(() => ((window as any).__messageAudio as HTMLAudioElement[] | undefined)?.forEach((audio) => audio.pause()));
   await expect(page.locator(".player-dock").getByRole("button", { name: "Play", exact: true })).toBeVisible();
-  await page.locator(".dock-book").click();
-  await expect(page.getByRole("dialog", { name: "Now playing", exact: true })).toBeVisible();
+  await openRead(page);
   const room = page.locator(".inline-reader");
   await expect(room.locator(".reader-viewport iframe")).toBeVisible();
   return room;
@@ -380,7 +380,7 @@ test.describe("with no service worker", () => {
     // Outside the reader the app's notice shows it.
     await closeNowPlaying(page, room);
     await expect(page.getByText("An app update is ready", { exact: true })).toBeVisible();
-    await page.locator(".dock-book").click();
+    await openRead(page);
     await expect(message(room)).toHaveAttribute("data-kind", "update");
     await expect(page.locator(".app-update")).toHaveCount(0);
     // Dismissed, it stays away in the reader and outside it until the app starts again.
