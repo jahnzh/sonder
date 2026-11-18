@@ -355,14 +355,15 @@ test("the This device switch: on saves the recording and the EPUB; off asks with
   await settled(page);
   await page.screenshot({ path: `${OUT}/book-kept-phone.png`, fullPage: true });
   await keep(page).click();
-  const ask = page.getByRole("dialog", { name: "Remove from this device?" });
+  // Off asks in place under the row (#553, board KeepOff.dc.html).
+  const ask = region(page).getByRole("group", { name: "Turn off Keep on this device", exact: true });
   await expect(ask).toBeVisible();
-  await expect(ask).toContainText(/[\d.]+ (KB|MB) on this device\. Your place, bookmarks and the library entry stay\./);
+  await expect(ask).toContainText(/^Remove [\d.]+ (KB|MB) from this device\? Your place, bookmarks and library entry stay\./);
   // Closing it changes nothing.
   await ask.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(keep(page)).toHaveAttribute("aria-checked", "true");
   await keep(page).click();
-  await page.getByRole("dialog", { name: "Remove from this device?" }).getByRole("button", { name: "Remove", exact: true }).click();
+  await ask.getByRole("button", { name: "Remove", exact: true }).click();
   await expect(keep(page)).toHaveAttribute("aria-checked", "false");
   await expect(region(page).locator("#book-keep-line")).toHaveCount(0);
   // The place stays, on the server and on the page.

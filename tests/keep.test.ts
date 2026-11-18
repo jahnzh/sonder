@@ -223,7 +223,7 @@ test("a stopped save: network failures and a closed tab interrupt; a refusal fai
   assert.deepEqual(classifyStop({ cause: "pause", error: null }), { state: "paused" });
   assert.deepEqual(classifyStop({ cause: "off", error: null }), { state: "off" });
   const refused = Object.assign(new Error("The source did not return an audio file."), { refused: true });
-  assert.deepEqual(classifyStop({ cause: null, error: refused }), { state: "failed", reason: "The source did not return an audio file." });
+  assert.deepEqual(classifyStop({ cause: null, error: refused }), { state: "failed", reason: "The source did not return an audio file.", failure: "source" });
   const quota = Object.assign(new Error("full"), { name: "QuotaExceededError" });
   assert.equal(isRefusal(quota), true);
   assert.equal(classifyStop({ cause: null, error: quota }).state, "failed");

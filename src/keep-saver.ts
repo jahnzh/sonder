@@ -10,8 +10,10 @@
  * tracks first, then the chosen EPUB, then the pair's reading sync map (#551). An EPUB or a map that arrives later
  * (a new chosen EPUB, a map that became ready, a map prepared again) is missing at the next run and saved then.
  *
- * Network failures and a closed or frozen tab interrupt a save; it resumes by itself at the next run. A paused or
- * failed save waits for a tap. Everything outside this file (Dexie, the API, the lock, the channel, the file save) is
+ * Network failures and a closed or frozen tab interrupt a save; it resumes by itself at the next run. A failed save
+ * (the source refused, the account is signed out, the device is full) waits for Retry and is tried again by itself
+ * only after a library read that changed (#552). A paused save waits for Resume: Pause writes `pausedAt` on the
+ * book's Keep record, which every tab of the account reads, so Pause and Resume work from any tab. Everything outside this file (Dexie, the API, the lock, the channel, the file save) is
  * passed in, so the unit tests drive it with fakes. The server must not import this file.
  */
 import type { DeviceSaveRecord } from "./device-saves";
@@ -34,6 +36,7 @@ import {
   type ServerKeep,
   type StopCause,
 } from "./keep";
+import { rememberEbook, rememberRecording, turnedOffFromServer, type KeptRecording } from "./keep-device";
 
 /** Why a run was asked for. */
 export type KeepTrigger = "open" | "foreground" | "online" | "library" | "switch" | "retry";
@@ -74,6 +77,10 @@ export type SaverDeps = {
   read: () => Promise<SaverState>;
   /** Stores a choice made on this device now, pending until the server answers it. */
   writeChoice: (workId: string, on: boolean) => Promise<void>;
+  /** Writes or clears `pausedAt` on a work's Keep record (#552). */
+  writePause?: (workId: string, pausedAt: number | null) => Promise<void>;
+  /** Whether a work's Keep record is paused now, read from the device database (another tab may have paused it). */
+  isPaused?: (workId: string) => Promise<boolean>;
   /** `navigator.storage.persist()`: asked only on the switch's tap. */
   persist: () => Promise<boolean>;
   /** Stores the merged Keep records. */
@@ -91,6 +98,13 @@ export type SaverDeps = {
   /** Fetches and stores the pair's map (`warmMap`). */
   saveMap?: (ebookId: string, recordingId: string, signal: AbortSignal) => Promise<void>;
   writeRecord: (recordingId: string, workId: string, change: RecordChange) => Promise<void>;
+  /**
+   * Removes every file of a book from this device (#553): a Keep record a merge turned off (Remove from library on
+   * any device) frees its files at that run, as Off does.
+   */
+  removeWork?: (workId: string) => Promise<void>;
+  /** Stores the recordings saved for a book on its Keep record (#553), so an earlier copy keeps its name. */
+  remember?: (workId: string, saved: { recordings: KeptRecording[]; ebookIds: string[] }) => Promise<void>;
   online: () => boolean;
   /**
    * Runs `save` while this tab holds the recording's own lock, so no other tab (nor the app's own save button)
@@ -121,6 +135,8 @@ export class KeepSaver {
   private again = false;
   /** Books whose paused or failed save a tap asked to save again. */
   private forced = new Set<string>();
+  /** A library read that changed asked for a run: a failed save is tried again by itself then (#552). */
+  private libraryChanged = false;
   private unlisten: (() => void) | null = null;
   private readonly now: () => number;
 
@@ -170,6 +186,21 @@ export class KeepSaver {
     controller.abort();
   }
 
+  /**
+   * Pause of a kept book (#552): `pausedAt` on its Keep record, so it waits for Resume in every tab and after a
+   * reload, and the running save stops in whichever tab runs it.
+   */
+  async pauseWork(workId: string, saveId: string | null): Promise<void> {
+    await this.deps.writePause?.(workId, this.now());
+    if (saveId) this.pause(saveId);
+  }
+
+  /** Resume or Retry of a kept book: its pause is cleared and a run saves it again, in the tab that saves. */
+  async resumeWork(workId: string): Promise<void> {
+    await this.deps.writePause?.(workId, null);
+    await this.trigger("retry", workId);
+  }
+
   /** Stops the running save of a recording, in whichever tab runs it. */
   pause(recordingId: string, cause: StopCause = "pause"): void {
     const controller = this.deps.running.get(recordingId) as Stoppable | undefined;
@@ -195,6 +226,7 @@ export class KeepSaver {
       return Promise.resolve();
     }
     if (workId && (reason === "switch" || reason === "retry")) this.forced.add(workId);
+    if (reason === "library") this.libraryChanged = true;
     return this.run(reason);
   }
 
@@ -258,6 +290,19 @@ export class KeepSaver {
     if (this.stopped) return;
     let state = await this.deps.read();
     let { keep, synced } = await this.sync(state);
+    // Turned off from the server (Remove from library, here or on another device): the files go now (#553).
+    const removed = turnedOffFromServer(state.keep, keep);
+    for (const workId of removed) {
+      try {
+        await this.deps.removeWork?.(workId);
+      } catch {
+        // Removed at a later run: the record is off, and Off's removal finds the files again.
+      }
+    }
+    if (removed.length) {
+      state = await this.deps.read();
+      this.changed();
+    }
     // The rollout needs the server's records first, so a choice made on the server (off) is not overwritten.
     // It also waits for a stored library: a device that has not read it yet cannot tell which saved books are in it.
     if (synced && state.works.length > 0 && !(await this.deps.rolloutDone())) {
@@ -273,6 +318,10 @@ export class KeepSaver {
     }
     const works = new Map(state.works.map((work) => [work.workId, work]));
     const records = new Map(state.records.map((record) => [record.recordingId, record]));
+    // The pauses as the device database holds them now: a merge's records may predate a pause in another tab.
+    const pausedAt = new Map(state.keep.map((entry) => [entry.workId, entry.pausedAt ?? null]));
+    const libraryChanged = this.libraryChanged;
+    this.libraryChanged = false;
     for (const entry of keep) {
       if (this.stopped || !this.leader) return;
       if (!entry.on) continue;
@@ -280,6 +329,19 @@ export class KeepSaver {
       if (!work || !work.inLibrary) continue;
       const needs = this.needsOf(work, state);
       const forced = this.forced.delete(entry.workId);
+      // The kept recording is remembered on the record (#553): after a change of recording it is an earlier copy,
+      // named even when its recording has left the library.
+      // Its EPUB likewise, so Off finds it after the book left the stored library.
+      const chosen = keepRecording(work);
+      if (this.deps.remember) {
+        const recordings = chosen ? rememberRecording(entry.recordings, { recordingId: chosen.recordingId, narrator: chosen.narrator ?? "" }) : entry.recordings ?? [];
+        const ebookIds = needs.ebook ? rememberEbook(entry.ebookIds, needs.ebook.id) : entry.ebookIds ?? [];
+        if (recordings !== entry.recordings || ebookIds !== entry.ebookIds) {
+          entry.recordings = recordings;
+          entry.ebookIds = ebookIds;
+          await this.deps.remember(entry.workId, { recordings, ebookIds }).catch(() => {});
+        }
+      }
       if (!needs.filesTotal) continue;
       if (needs.complete) {
         if (entry.completeAt === null) await this.reportComplete(entry, keep);
@@ -288,13 +350,13 @@ export class KeepSaver {
       // A book without a recording (only an ebook) has no save record of its own: its save is keyed by its EPUB.
       const saveId = needs.recordingId ?? `ebook:${needs.ebook!.id}`;
       if (this.deps.running.has(saveId)) continue;
-      const record = needs.recordingId ? records.get(needs.recordingId) : undefined;
-      // A save the user paused, or one the source refused, waits for a tap.
-      if (!forced && (record?.state === "paused" || record?.state === "failed")) continue;
+      const record = records.get(saveId);
+      // A save the user paused waits for Resume; one that failed waits for Retry, or for a library read that changed.
+      if (!forced && (entry.pausedAt || pausedAt.get(entry.workId) || record?.state === "paused")) continue;
+      if (!forced && !libraryChanged && record?.state === "failed") continue;
       if (!this.deps.online()) {
         // A save that was running when the tab closed is noted as such; it resumes when there is a connection.
-        if (record?.state === "saving" && needs.recordingId)
-          await this.deps.writeRecord(needs.recordingId, work.workId, { state: "interrupted", how: "closed" });
+        if (record?.state === "saving") await this.deps.writeRecord(saveId, work.workId, { state: "interrupted", how: "closed" });
         continue;
       }
       const save = () => this.save(work.workId, saveId, needs);
@@ -343,8 +405,16 @@ export class KeepSaver {
   private async save(workId: string, saveId: string, needs: KeptNeeds): Promise<SaveStop | null> {
     const controller: Stoppable = new AbortController();
     this.deps.running.set(saveId, controller);
-    const recordingId = needs.recordingId;
-    const write = (change: RecordChange) => (recordingId ? this.deps.writeRecord(recordingId, workId, change) : Promise.resolve());
+    // A book with only an ebook keeps its record under its EPUB's save id, so a failure waits for Retry there too.
+    const write = (change: RecordChange) => this.deps.writeRecord(saveId, workId, change);
+    // Paused in another tab whose message did not reach this one: the Keep record says so before each file.
+    const pausedElsewhere = async () => {
+      if (this.deps.isPaused && (await this.deps.isPaused(workId).catch(() => false))) {
+        controller.cause = "pause";
+        controller.abort();
+      }
+      controller.signal.throwIfAborted();
+    };
     const missingIds = new Set(needs.missing.map((track) => track.id));
     const total = needs.filesTotal;
     let done = needs.filesSaved;
@@ -365,17 +435,17 @@ export class KeepSaver {
       this.changed();
       for (const track of needs.tracks) {
         if (!missingIds.has(track.id)) continue;
-        controller.signal.throwIfAborted();
+        await pausedElsewhere();
         await this.deps.saveTrack(track, controller.signal, (loaded, size) => publish(loaded, size));
         step();
       }
       if (needs.ebook && !needs.ebook.complete && this.deps.saveEbook) {
-        controller.signal.throwIfAborted();
+        await pausedElsewhere();
         await this.deps.saveEbook(needs.ebook.id, controller.signal);
         step();
       }
       if (needs.map && !needs.map.complete && this.deps.saveMap) {
-        controller.signal.throwIfAborted();
+        await pausedElsewhere();
         await this.deps.saveMap(needs.map.ebookId, needs.map.recordingId, controller.signal);
         step();
       }

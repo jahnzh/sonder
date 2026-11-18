@@ -10,9 +10,11 @@ import {
   deviceKeptLine,
   deviceSaveLine,
   downloadLine,
+  keepFailureLine,
   mediaStateLine,
   NOT_IN_LIBRARY_LINE,
   type DownloadFacts,
+  type KeepFailureFacts,
   type ReadingSyncJobFacts,
 } from "../status-lines";
 import type { Download, DownloadPart, LibraryWork, ReadingSyncSummary, WorkRecording } from "../types";
@@ -223,26 +225,47 @@ export function keepState(facts: {
    * What the kept book needs (`keptNeeds`, #551): its files are the tracks, the chosen EPUB and the pair's map, so a
    * kept book reads "Not complete · 11 of 12 files" while its map is missing and "Ebook · 0.6 MB" with only an EPUB.
    */
-  needs?: Pick<KeptNeeds, "filesTotal" | "filesSaved" | "complete" | "tracks" | "ebook"> | null;
-}): { on: boolean; line: string | null; resumable: boolean } {
-  const { keep, hold, saving, ebookSize, hasRecording, needs } = facts;
-  if (saving) return { on: keep, line: deviceSaveLine({ keep: true, saving: true, filesSaved: saving.filesSaved, filesTotal: saving.filesTotal, size: 0 }), resumable: false };
+  needs?: (Pick<KeptNeeds, "filesTotal" | "filesSaved" | "complete" | "tracks" | "ebook"> & { missing?: readonly unknown[] }) | null;
+  /**
+   * How the kept book's last save stopped (#552), from its save record and its Keep record: failed (with which
+   * failure), paused, or interrupted; null while nothing stopped it.
+   */
+  stop?: { why: "failed" | "paused" | "interrupted"; failure?: KeepFailureFacts["failure"] | null } | null;
+}): {
+  on: boolean;
+  line: string | null;
+  /** Resume is offered (a paused or interrupted save). */
+  resumable: boolean;
+  /** The save failed (#552): the line is in the failed colour and a row under it gives the reason and Retry. */
+  failed: boolean;
+  reason: string | null;
+} {
+  const { keep, hold, saving, ebookSize, hasRecording, needs, stop } = facts;
+  const plain = { failed: false, reason: null };
+  if (saving) return { on: keep, line: deviceSaveLine({ keep: true, saving: true, filesSaved: saving.filesSaved, filesTotal: saving.filesTotal, size: 0 }), resumable: false, ...plain };
   const ebook = ebookSize != null;
   const kept = (audio: DeviceHold["audio"]) =>
     deviceKeptLine({ audio, filesTotal: hold.filesTotal, filesSaved: hold.filesSaved, ebook, size: hold.audioSize + (ebookSize ?? 0) });
-  if (!keep) return { on: false, line: hasRecording ? kept(hold.audio) : kept("none"), resumable: hasRecording && hold.audio === "partial" };
+  if (!keep) return { on: false, line: hasRecording ? kept(hold.audio) : kept("none"), resumable: hasRecording && hold.audio === "partial", ...plain };
   if (needs && needs.filesTotal > 0) {
     const audio = needs.tracks.length > 0;
     const size = hold.audioSize + (needs.ebook?.complete ? needs.ebook.size : ebookSize ?? 0);
     if (needs.complete)
-      return { on: true, line: deviceKeptLine({ audio: audio ? "complete" : "none", filesTotal: needs.filesTotal, filesSaved: needs.filesSaved, ebook: !!needs.ebook, size }), resumable: false };
-    return { on: true, line: deviceKeptLine({ audio: "partial", filesTotal: needs.filesTotal, filesSaved: needs.filesSaved, ebook: false, size }), resumable: true };
+      return { on: true, line: deviceKeptLine({ audio: audio ? "complete" : "none", filesTotal: needs.filesTotal, filesSaved: needs.filesSaved, ebook: !!needs.ebook, size }), resumable: false, ...plain };
+    const line = deviceKeptLine({ audio: "partial", filesTotal: needs.filesTotal, filesSaved: needs.filesSaved, ebook: false, size });
+    if (stop?.why === "failed") {
+      // The audio files are among the missing ones when fewer tracks are here than the recording has.
+      const missingAudio = needs.missing ? needs.missing.length > 0 : audio;
+      const reason = keepFailureLine({ failure: stop.failure ?? "source", missing: needs.filesTotal - needs.filesSaved, audio: missingAudio });
+      return { on: true, line, resumable: false, failed: true, reason };
+    }
+    return { on: true, line, resumable: true, ...plain };
   }
   if (!hasRecording || !hold.filesTotal)
-    return { on: true, line: ebook ? kept("none") : deviceSaveLine({ keep: true, saving: false, filesTotal: 0, filesSaved: 0, size: 0 }), resumable: false };
+    return { on: true, line: ebook ? kept("none") : deviceSaveLine({ keep: true, saving: false, filesTotal: 0, filesSaved: 0, size: 0 }), resumable: false, ...plain };
   // Kept, files missing: "Not complete", also before the first file arrives.
   const audio = hold.audio === "complete" ? "complete" : "partial";
-  return { on: true, line: kept(audio), resumable: audio === "partial" };
+  return { on: true, line: kept(audio), resumable: audio === "partial", ...plain };
 }
 
 /** The ids of a work's entries in today's favourites list (the editions of `GET /api/books`), and whether it is a favourite. */

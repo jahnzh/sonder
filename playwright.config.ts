@@ -129,8 +129,12 @@ const desktopProjects = [
               /(^|\/)get-audiobook-line\.spec\.ts$/,
               // The Get ebook sheet (#604).
               /(^|\/)get-ebook\.spec\.ts$/,
+              // A kept book that is not complete says why and offers Retry (#552).
+              /(^|\/)keep-not-complete\.spec\.ts$/,
               // Import from this device into the book, from both Get sheets (#605).
               /(^|\/)get-import\.spec\.ts$/,
+              // Turning Keep off, and an earlier recording's copy (#553).
+              /(^|\/)keep-off\.spec\.ts$/,
               // Paste a magnet link for the book, over Get audiobook (#606).
               /(^|\/)get-magnet\.spec\.ts$/,
             ]
