@@ -6,6 +6,13 @@
 // states get-audiobook-state.ts. The language button beside the field opens a Picker (#602): the choice applies at
 // once and is stored on this device; Load more recordings asks AudioBookBay's next page. The words, the rows, the
 // pages loaded, the language and the choice are kept in the history entry; a reload searches again (as many pages).
+//
+// Without a book (#576, spec #572 "Discover"; board GetRecording.dc.html): `#discover/get/<query>` over Discover,
+// opened by Discover's "Search for a recording" with the words searched. "A recording for a new book" stands in
+// place of the book, each row's own title comes first, and "Adds the book to your library." is said under the
+// button. Get this recording sends the add route with `makeWork: true`: the server makes the book, and the sheet's
+// entry is replaced by the new book's page. Close goes back to Discover. The magnet link and the import need a book
+// to attach the recording to, so this sheet has neither.
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, localDB } from "../lib";
 import { mergeReleases } from "../releases";
@@ -42,9 +49,9 @@ import "./get-audiobook-sheet.css";
 /** What the sheet keeps in its history entry. */
 type Kept = { words: string; search: GetSearch; chosen: string | null; language: string | null };
 
-function keptOf(data: unknown, workId: string): Kept | null {
+function keptOf(data: unknown, key: string): Kept | null {
   const value = (data as { getAudiobook?: Kept & { workId?: string } } | null)?.getAudiobook;
-  if (!value || value.workId !== workId || typeof value.words !== "string" || !value.search || typeof value.search !== "object")
+  if (!value || value.workId !== key || typeof value.words !== "string" || !value.search || typeof value.search !== "object")
     return null;
   return {
     words: value.words,
@@ -103,7 +110,10 @@ function lean(search: GetSearch): GetSearch {
 }
 
 type Props = {
-  workId: string;
+  /** The book; null for the sheet without a book (#576), which searches `query`. */
+  workId: string | null;
+  /** The words Discover searched: the sheet without a book's first search. */
+  query?: string;
   online: boolean;
   /** Prowlarr is connected; null while the settings are not read yet (the first search waits for them). */
   prowlarrConfigured: boolean | null;
@@ -113,14 +123,23 @@ type Props = {
   onChanged: () => Promise<void> | void;
 };
 
-export function GetAudiobookSheet({ workId, online, prowlarrConfigured, torboxConfigured, onChanged }: Props) {
+/** Above the line under the button of the sheet without a book (#576, GetRecording.dc.html). */
+export const ADDS_THE_BOOK = "Adds the book to your library.";
+/** In place of the book on the sheet without a book (#576). */
+export const NEW_BOOK_HEADING = "A recording for a new book";
+
+export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarrConfigured, torboxConfigured, onChanged }: Props) {
   const address = useAddress();
-  const route: Route = { name: "get", workId, kind: "audiobook" };
-  const parent: Route = { name: "book", workId };
+  const newBook = bookId === null;
+  const workId = bookId ?? "";
+  const route: Route = newBook ? { name: "discover-get", query } : { name: "get", workId, kind: "audiobook" };
+  const parent: Route = newBook ? { name: "discover" } : { name: "book", workId };
+  // What the kept entry is for: the book, or the words of the sheet without one.
+  const keptKey = newBook ? `discover-get:${query}` : workId;
   const { work } = useWork(workId);
   // Today's hook: the line under the button warns when the torrent client a recording would need is not working.
   const { health } = useTorrentHealth();
-  const [initial] = useState(() => keptOf(pageData(), workId));
+  const [initial] = useState(() => keptOf(pageData(), keptKey));
   const [fresh] = useState(() => {
     const was = documentFresh;
     documentFresh = false;
@@ -201,9 +220,9 @@ export function GetAudiobookSheet({ workId, online, prowlarrConfigured, torboxCo
   const started = useRef(false);
   useEffect(() => {
     // The language too, so the first rows shown are already in it.
-    if (started.current || !work || prowlarrConfigured === null || language === null) return;
+    if (started.current || (!newBook && !work) || prowlarrConfigured === null || language === null) return;
     started.current = true;
-    const text = initial ? initial.words : `${work.title} ${work.author}`.trim();
+    const text = initial ? initial.words : work ? `${work.title} ${work.author}`.trim() : query;
     if (!initial) setWords(text);
     if (!initial) run(text);
     // A reload: the kept words again, as many AudioBookBay pages as were loaded, the choice kept while its row is shown.
@@ -213,18 +232,19 @@ export function GetAudiobookSheet({ workId, online, prowlarrConfigured, torboxCo
   // Kept in the sheet's own entry while it is the one shown.
   useEffect(() => {
     if (location.hash !== writeAddress(route)) return;
-    setPageData({ getAudiobook: { workId, words, search: lean(search), chosen, language } });
+    setPageData({ getAudiobook: { workId: keptKey, words, search: lean(search), chosen, language } });
   }, [words, search, chosen, language]);
 
-  const title = work?.title ?? "";
+  // Without a book the rows are sorted by the words searched, as a book's are by its title.
+  const title = newBook ? search.query || query : work?.title ?? "";
   const shownLanguage = language ?? GET_LANGUAGE;
-  const view = sheetView(search, { online, bookTitle: title, language: shownLanguage });
+  const view = sheetView(search, { online, bookTitle: title, language: shownLanguage, titleFirst: newBook });
   const loaded = mergeReleases(...Object.values(search.sources).map((source) => source?.results ?? []));
   const chooseLanguage = (next: string) => {
     setLanguage(next);
     void localDB.preferences.put({ key: LANGUAGE_KEY, value: next }).catch(() => {});
     // The choice stays while its row is still shown in the new language.
-    if (chosen && !recordingRows(loaded, title, next).some((row) => row.id === chosen)) setChosen(null);
+    if (chosen && !recordingRows(loaded, title, next, newBook).some((row) => row.id === chosen)) setChosen(null);
   };
   const chosenRow = view.rows.find((row) => row.id === chosen) ?? null;
   const line = getLine({ chosen: chosenRow?.release ?? null, mediaState: work?.mediaState, torboxConnected: torboxConfigured, health });
@@ -232,7 +252,32 @@ export function GetAudiobookSheet({ workId, online, prowlarrConfigured, torboxCo
   const named = (asked.length ? asked : sources()).map((source) => SOURCE_NAMES[source]);
   const sourcesLine = `From ${named.join(" and ")}.`;
 
+  const getNew = async () => {
+    if (!chosenRow) return;
+    const release = chosenRow.release;
+    setGetting(true);
+    setRefusal("");
+    try {
+      const job = await api<Acquisition>(release.source === "prowlarr" ? "/discover/prowlarr/add" : "/discover/abb/add", {
+        method: "POST",
+        body: JSON.stringify({ ...(release.source === "prowlarr" ? { id: release.id } : { slug: release.id }), makeWork: true }),
+      });
+      if (job?.status === "error") throw new Error(job.error || NOT_QUEUED);
+      if (!job?.workId) throw new Error(NOT_QUEUED);
+      await refreshLibraryWorks().catch(() => {});
+      window.dispatchEvent(new Event("sonder:library-changed"));
+      void onChanged();
+      // The new book's page takes the sheet's entry: Back from it goes to Discover.
+      if (live.current && location.hash === writeAddress(route)) address.navigate({ name: "book", workId: job.workId }, { replace: true });
+    } catch (error) {
+      if (live.current) setRefusal((error as Error).message || NOT_QUEUED);
+    } finally {
+      if (live.current) setGetting(false);
+    }
+  };
+
   const get = async () => {
+    if (newBook) return getNew();
     if (!chosenRow || !work) return;
     const release = chosenRow.release;
     setGetting(true);
@@ -274,16 +319,25 @@ export function GetAudiobookSheet({ workId, online, prowlarrConfigured, torboxCo
       <Button kind="primary" disabled={!chosenRow || getting || !online} onClick={() => void get()}>
         Get this recording
       </Button>
-      {line && (
-        <p className={line.failed ? "get-sheet-line get-sheet-line-failed" : "get-sheet-line"} data-testid="get-line">
-          {line.text}
+      {newBook ? (
+        <p className={line?.failed ? "get-sheet-line get-sheet-line-failed" : "get-sheet-line"} data-testid="get-line">
+          {line ? `${ADDS_THE_BOOK} ${line.text}` : ADDS_THE_BOOK}
         </p>
+      ) : (
+        line && (
+          <p className={line.failed ? "get-sheet-line get-sheet-line-failed" : "get-sheet-line"} data-testid="get-line">
+            {line.text}
+          </p>
+        )
       )}
     </>
   );
 
   return (
     <Sheet title="Get audiobook" parent={parent} footer={footer}>
+      {newBook ? (
+        <h1 className="get-sheet-title type-heading">{NEW_BOOK_HEADING}</h1>
+      ) : (
       <div className="get-sheet-book">
         {work?.cover ? <img className="get-sheet-cover" src={work.cover} alt="" /> : <span className="get-sheet-cover" aria-hidden="true" />}
         <div className="get-sheet-names">
@@ -291,6 +345,7 @@ export function GetAudiobookSheet({ workId, online, prowlarrConfigured, torboxCo
           {work?.author && <p className="get-sheet-author type-label">{work.author}</p>}
         </div>
       </div>
+      )}
 
       <form
         className="get-sheet-search"
@@ -378,6 +433,7 @@ export function GetAudiobookSheet({ workId, online, prowlarrConfigured, torboxCo
         <p className="part-group-note">{sourcesLine}</p>
       </div>
 
+      {!newBook && (
       <div className="part-group-block">
         <ul className="part-group" role="list" aria-label="Other ways to get it">
           <li className="part-row-item">
@@ -391,6 +447,7 @@ export function GetAudiobookSheet({ workId, online, prowlarrConfigured, torboxCo
           <GetImportRow kind="audiobook" workId={workId} title={title} />
         </ul>
       </div>
+      )}
     </Sheet>
   );
 }

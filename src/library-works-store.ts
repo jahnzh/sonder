@@ -249,7 +249,8 @@ export function useWork(workId: string): WorkRead {
   const owner = userId();
   const ownStore = store.owner === owner;
   const stored = ownStore ? store.works.get(workId) ?? null : null;
-  const needsRead = ownStore && store.stored && !stored;
+  // No work (the Get sheet without a book, #576): nothing to read.
+  const needsRead = ownStore && store.stored && !stored && !!workId;
   useEffect(() => {
     if (!needsRead) return;
     let live = true;

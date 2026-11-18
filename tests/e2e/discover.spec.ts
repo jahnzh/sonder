@@ -180,9 +180,10 @@ test("Search for a recording opens the recording search for the words over Disco
   await search(page, "banks");
   await recordingRow(page).click();
   await expect(page).toHaveURL(/#discover\/get\/banks$/);
-  const sheet = page.getByRole("dialog", { name: "Search for a recording", exact: true });
+  // The Get sheet without a book (#576).
+  const sheet = page.getByRole("dialog", { name: "Get audiobook", exact: true });
   await expect(sheet).toBeVisible();
-  await expect(sheet.getByRole("textbox", { name: "Search audiobook releases" })).toHaveValue("banks");
+  await expect(sheet.getByRole("searchbox", { name: "Search for a recording" })).toHaveValue("banks");
   await expect.poll(() => releases).toEqual(["banks"]);
   await sheet.getByRole("button", { name: "Close", exact: true }).click();
   await expect(page).toHaveURL(/#discover$/);
@@ -265,7 +266,7 @@ test("someone who is not the administrator gets no recording row", async ({ page
   // Nor at the recording search's address: Discover.
   await page.goto("/#discover/get/banks");
   await expect(page).toHaveURL(/#discover$/);
-  await expect(page.getByRole("dialog", { name: "Search for a recording" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Get audiobook" })).toHaveCount(0);
 });
 
 test("series search: two equal names told apart by Hardcover's number, the chosen one opening", async ({ page }) => {

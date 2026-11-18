@@ -294,7 +294,7 @@ function built(route: Route): boolean {
     case "series-add":
     case "library":
     case "discover":
-    // The recording search without a book (#575): ReleasePicker in a sheet until Get's own form lands.
+    // The Get sheet without a book (#575, #576): the recording chosen makes the book.
     case "discover-get":
     case "settings":
     case "reader":

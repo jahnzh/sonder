@@ -79,7 +79,6 @@ import { type HardcoverFilter } from "./components/Hardcover";
 import { type Page, Mark, Empty } from "./pages/shared";
 import { LibraryPage } from "./pages/library-page";
 import { askDiscoverSearch, DiscoverPage } from "./pages/discover-page";
-import { RecordingSearchSheet } from "./pages/recording-search-sheet";
 import { ActivityServer } from "./pages/activity-server";
 import { ActivityNow } from "./pages/activity-now";
 import { ActivityPlace } from "./pages/activity-place";
@@ -991,16 +990,18 @@ function LibraryApp({
               />
             )}
             {recordingQuery !== null && admin && (
-              <RecordingSearchSheet
+              // The Get sheet without a book (#576): the recording chosen makes the book.
+              <GetAudiobookSheet
                 key={`recording:${recordingQuery}`}
+                workId={null}
                 query={recordingQuery}
-                prowlarrConfigured={!!settings?.prowlarrConfigured}
-                onQueued={() => {
-                  void refresh();
-                  navigate("activity");
+                online={online}
+                prowlarrConfigured={settings ? !!settings.prowlarrConfigured : null}
+                torboxConfigured={!!settings?.torboxConfigured}
+                onChanged={async () => {
+                  await refresh();
+                  await refreshDownloads();
                 }}
-                refresh={refresh}
-                notify={notify}
               />
             )}
             {magnetSheet && admin && (
@@ -1119,6 +1120,9 @@ function LibraryApp({
             )}
             {page === "discover" && (
               <DiscoverPage
+                // Opened on the Get sheet without a book (a reload, a link: #576), Discover stands under it without its
+                // entry's search; Close mounts it again from its own entry, with its kept query and results.
+                key={recordingQuery !== null && !coveredPage() ? "under-sheet" : "discover"}
                 admin={user.role === "admin"}
                 online={online}
                 hardcoverConnected={!!settings?.hardcoverConfigured}

@@ -60,6 +60,8 @@ app.post("/api/__fixture/alignment-hold", async (request) => {
   return { released: holdAlignment(String(token), !!hold) };
 });
 app.get("/api/__fixture/alignment-hold", async (request) => ({ held: heldAlignmentRequests(String((request.query as { token?: string }).token)) }));
+// The Get sheet without a book (#576): its add answered without TorBox or a torrent client.
+await (await import("./new-book-browser-fixture.ts")).installNewBookFixture(app);
 await app.listen({ port: Number(process.env.PLAYWRIGHT_PORT || 4173), host: "127.0.0.1" });
 const stop = async () => {
   await app.close();
