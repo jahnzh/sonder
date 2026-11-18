@@ -5,7 +5,8 @@
 // The language (#602) narrows the rows: English the first time, then the one stored on this device; with All
 // languages each row's second line starts with its language.
 import { matchesLanguage, mergeReleases, normalizeTitle, sortReleases } from "../releases";
-import type { AudiobookRelease } from "../types";
+import { downloadLine, type DownloadFacts } from "../status-lines";
+import type { AudiobookRelease, TorrentHealth, WorkMediaState } from "../types";
 
 /** The language the sheet starts with the first time, before one is stored on this device. */
 export const GET_LANGUAGE = "English";
@@ -109,8 +110,52 @@ export function recordingRows(releases: AudiobookRelease[], bookTitle: string, l
   ).map((release) => recordingRow(release, bookTitle, language));
 }
 
-/** The line under Get this recording (ticket 03 completes it). */
-export function getLine(release: Pick<AudiobookRelease, "cached"> | null): string | null {
-  if (!release) return null;
-  return release.cached ? "Plays from TorBox right away." : "Downloads to your server first.";
+/** What the line under Get this recording says, and whether the add is sent with `replaceActive: true`. */
+export type GetLine = {
+  text: string;
+  /** In the failed colour: the torrent client the recording needs is not working. */
+  failed: boolean;
+  /** The add replaces the download on its way; true exactly when the line says so. */
+  replaceActive: boolean;
+};
+
+export type GetLineFacts = {
+  /** The chosen row's release, a pasted magnet link (nothing known about it yet), or nothing chosen. */
+  chosen: Pick<AudiobookRelease, "cached" | "source" | "infoHash"> | "magnet" | null;
+  /** The work's media state for this user (ADR 0011), as the library read gives it. */
+  mediaState: WorkMediaState | null | undefined;
+  /** TorBox is connected (the settings' `torboxConfigured`). */
+  torboxConnected: boolean;
+  /** The torrent client's health (`GET /api/torrents/health`), null until it is read. */
+  health: Pick<TorrentHealth, "status" | "message"> | null | undefined;
+};
+
+/** The download on its way's own status line (#494), as the Book page's Audiobook row shows it. */
+function onItsWay(acquisition: NonNullable<WorkMediaState["acquisition"]>): string {
+  const status = (acquisition.status ?? "checking") as DownloadFacts["status"];
+  return downloadLine({ status, progress: acquisition.progress }) ?? downloadLine({ status: "checking" })!;
+}
+
+/**
+ * The line under Get this recording (spec #600 "What the line under the button says"), the first that holds:
+ * nothing chosen, no line; a download for the book on its way, "Replaces the download on its way (<its line>)." and
+ * the add replaces it; a copy TorBox has, "Plays from TorBox right away."; TorBox not connected, or the row checked
+ * against TorBox and not there (an info hash: a Prowlarr row), "Downloads to your server first.", or the torrent
+ * client's own message in the failed colour while it is neither ok nor unconfigured; otherwise (an AudioBookBay row
+ * or a magnet link with TorBox connected) "Plays at once if TorBox has it, else downloads to your server."
+ */
+export function getLine({ chosen, mediaState, torboxConnected, health }: GetLineFacts): GetLine | null {
+  if (!chosen) return null;
+  const line = (text: string, failed = false, replaceActive = false): GetLine => ({ text, failed, replaceActive });
+  if (mediaState?.state === "queued" && mediaState.acquisition)
+    return line(`Replaces the download on its way (${onItsWay(mediaState.acquisition)}).`, false, true);
+  const release = chosen === "magnet" ? null : chosen;
+  if (release?.cached) return line("Plays from TorBox right away.");
+  const checked = !!release && (release.source === "prowlarr" || !!release.infoHash);
+  if (!torboxConnected || checked) {
+    if (health && health.status !== "ok" && health.status !== "unconfigured" && health.message?.trim())
+      return line(health.message.trim(), true);
+    return line("Downloads to your server first.");
+  }
+  return line("Plays at once if TorBox has it, else downloads to your server.");
 }
