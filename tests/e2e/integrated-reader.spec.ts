@@ -4,6 +4,7 @@ import {randomUUID} from "node:crypto";
 import {readerFixture} from "../reader-fixture";
 import {skipOnMobile} from "./mobile";
 import {highlightShown} from "./reader-view";
+import {openRead,nowPlaying} from "./now-playing";
 test.afterEach(async({page})=>{await page.unrouteAll({behavior:"wait"});});
 // Imports a book whose title is unique to this run, so a repeat on the same server finds exactly one
 // "Play <title>" button and its own EPUB; returns that title.
@@ -30,8 +31,8 @@ async function start(page:Page,title:string){
  await page.goto("/");
  await page.getByRole("button",{name:`Play ${title}`,exact:true}).click();
  await page.locator(".player-dock").getByRole("button",{name:"Pause",exact:true}).click();
- await page.locator(".dock-book").click();
- await expect(page.getByRole("dialog",{name:"Now playing",exact:true})).toBeVisible();
+ // Now playing on its Read face (#593).
+ await openRead(page);
  await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
 }
 async function showControls(page:Page,scope:string){
@@ -64,12 +65,13 @@ async function checkTransport(page:Page,scope:string){
  const left=(await previous.boundingBox())!,right=(await next.boundingBox())!,play=(await transport.getByRole("button",{name:/^(Play|Pause)$/}).boundingBox())!;
  expect(Math.abs((play.x+play.width/2-left.x-left.width/2)-(right.x+right.width/2-play.x-play.width/2))).toBeLessThan(1);
 }
+// The Read face's head (#593): Close reader, the Listen or Read control and the reader's buttons on one line.
 async function checkHeading(page:Page){
- const dialog=page.getByRole("dialog",{name:"Now playing",exact:true});
+ const dialog=nowPlaying(page);
  const centre=async(l:any)=>{const b=(await l.boundingBox())!;return b.y+b.height/2;};
- const close=await centre(dialog.getByRole("button",{name:"Close dialog",exact:true}));
- expect(Math.abs(await centre(dialog.getByRole("button",{name:"Playback options",exact:true}))-close)).toBeLessThan(1);
- expect(Math.abs(await centre(dialog.locator(".now-playing-heading-title"))-close)).toBeLessThan(1);
+ const close=await centre(dialog.getByRole("button",{name:"Close reader",exact:true}));
+ expect(Math.abs(await centre(dialog.getByRole("radiogroup",{name:"Listen or read",exact:true}))-close)).toBeLessThan(1);
+ expect(Math.abs(await centre(dialog.getByRole("button",{name:"Search this book",exact:true}))-close)).toBeLessThan(1);
 }
 test("page gestures show controls and long-press listens from that sentence",async({page})=>{
  const {ebook,map,manifest,title}=await fixture(page,"Integrated narration");
@@ -82,6 +84,7 @@ test("page gestures show controls and long-press listens from that sentence",asy
  await expect(room.getByRole("slider",{name:/^Seek in /})).toBeHidden();
  await showControls(page,".inline-reader");
  await expect(room.getByRole("slider",{name:/^Seek in /})).toBeVisible();
+ await checkHeading(page);
  const text=page.frameLocator(".inline-reader .reader-viewport iframe").locator("p").nth(1);
  await text.waitFor();
  const box=(await text.boundingBox())!;
@@ -106,7 +109,8 @@ test("page gestures show controls and long-press listens from that sentence",asy
  await slider.fill(String(Math.ceil(target.start)+1));
  await expect(room).toHaveAttribute("data-current-passage",target.paragraphId);
  await expect(room.locator(".reader-player-info")).toContainText("% of book");
- const more=page.getByRole("region",{name:"Playback options"});
+ // The reader's More opens its own panel; Playback options left with the expanded player (#593).
+ const more=room.locator(".reader-panel");
  await showControls(page,".inline-reader");
  await room.getByRole("button",{name:"More",exact:true}).click();
  await more.getByRole("button",{name:"Listen from here"}).click();
@@ -165,7 +169,7 @@ test("opening the reader restores saved audio position without starting playback
  const interval=map.intervals.find((i:any)=>i.section===1&&i.start>104),position=interval.start+1;
  expect((await page.request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position,duration:book.tracks[0].duration,updatedAt:Date.now()}})).ok()).toBe(true);
  await page.goto("/");
- await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
+ await openRead(page);
  await expect(page.locator(".inline-reader")).toHaveAttribute("data-current-passage",interval.paragraphId);
  await expect(page.locator(".inline-reader").getByRole("button",{name:"Play narration",exact:true})).toBeVisible();
  const box=(await page.locator(".inline-reader .reader-viewport").boundingBox())!;
@@ -219,7 +223,7 @@ test("Contents navigation during a follow jump wins and is saved", async ({page}
  expect((await page.request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position:interval.start+1,duration:book.tracks[0].duration,updatedAt:Date.now()}})).ok()).toBe(true);
  await page.setViewportSize({width:1440,height:900});
  await page.goto("/");
- await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
+ await openRead(page);
  const room=page.locator(".inline-reader");
  await expect(room).toHaveAttribute("data-current-passage",interval.paragraphId);
  const sidebar=room.getByLabel("Contents sidebar");
@@ -227,10 +231,13 @@ test("Contents navigation during a follow jump wins and is saved", async ({page}
  await expect(sidebar.getByRole("button",{name:"Down the Rabbit-Hole",exact:true})).toHaveAttribute("aria-current","location");
  await expect.poll(async()=>(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint?.locator.section).toBe(0);
  const before=(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint.revision;
- // Start a follow jump to chapter two and choose chapter one before it lands.
+ // Start a follow jump to chapter two and choose chapter one before it lands. Read from audio is in the reader's
+ // own More panel now that Playback options is gone (#593).
+ await room.locator(".reader-topbar").getByRole("button",{name:"More",exact:true}).click();
+ await expect(room.locator(".reader-panel .reader-more")).toBeVisible();
  await page.evaluate(()=>{
   const scope=document.querySelector(".inline-reader")!;
-  const read=[...document.querySelectorAll<HTMLButtonElement>('.playback-options-panel .reader-more button')].find(b=>b.textContent?.includes("Read from audio"))!;
+  const read=[...scope.querySelectorAll<HTMLButtonElement>('.reader-panel .reader-more button')].find(b=>b.textContent?.includes("Read from audio"))!;
   const chapter=[...scope.querySelectorAll<HTMLButtonElement>('[aria-label="Contents sidebar"] button')].find(b=>b.textContent==="Down the Rabbit-Hole")!;
   read.click(); chapter.click();
  });
@@ -248,7 +255,7 @@ test("back to narration right after a Contents navigation keeps following", asyn
  expect((await page.request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position:interval.start+1,duration:book.tracks[0].duration,updatedAt:Date.now()}})).ok()).toBe(true);
  await page.setViewportSize({width:1440,height:900});
  await page.goto("/");
- await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
+ await openRead(page);
  const room=page.locator(".inline-reader");
  await expect(room).toHaveAttribute("data-current-passage",interval.paragraphId);
  const sidebar=room.getByLabel("Contents sidebar");

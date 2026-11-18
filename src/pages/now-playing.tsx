@@ -6,7 +6,7 @@
 // Listen: the cover and the book, the timeline, the transport, then Speed, Sleep timer and Chapters, then Plays from,
 // Earlier positions and Keep on this device, as rows. Read: the reader's page with the face control in its head. It
 // replaces the expanded player, its Playback options panel and the reader inside it.
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Loader2, Pause, Play } from "lucide-react";
 import { Dialog } from "../components/ui/dialog";
 import { PositionHistoryDialog } from "../components/PositionHistoryDialog";
@@ -225,6 +225,8 @@ function ListenFace({
   const p = usePlayer();
   const [sleepOpen, setSleepOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  // Closing Position history puts the focus back on Earlier positions.
+  const earlier = useRef<HTMLButtonElement>(null);
   const [keepError, setKeepError] = useState("");
   const playsThis = p.book?.recordingId === book.recordingId;
   const trackId = playsThis ? p.track?.id : book.progress?.trackId ?? book.tracks[0]?.id;
@@ -323,7 +325,7 @@ function ListenFace({
             label="Earlier positions"
             info={<InfoMark name="Earlier positions" text={tip("earlier")} />}
             control={
-              <button type="button" className="now-playing-opens type-label" aria-label="Earlier positions" onClick={() => setHistoryOpen(true)}>
+              <button ref={earlier} type="button" className="now-playing-opens type-label" aria-label="Earlier positions" onClick={() => setHistoryOpen(true)}>
                 Undo a jump
                 <ChevronRightIcon />
               </button>
@@ -354,7 +356,7 @@ function ListenFace({
         onClose={() => setSleepOpen(false)}
         onChoose={(value) => p.setSleep(value === "off" ? null : Number(value))}
       />
-      <PositionHistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} />
+      <PositionHistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} triggerRef={earlier} />
     </div>
   );
 }

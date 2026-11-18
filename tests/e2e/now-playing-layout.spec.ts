@@ -5,7 +5,9 @@ import {readFileSync} from "node:fs";
 import {readerFixture} from "../reader-fixture";
 import {skipOnMobile} from "./mobile";
 import {READER_SPEC_TIMEOUT_MS,READER_WAIT_MS} from "./timing";
-// Geometry regression checks for issues #1 (seek/heading alignment) and #2 (reader-first Now Playing).
+import {openListen,openRead} from "./now-playing";
+// Geometry regression checks for issues #1 (seek/heading alignment) and #2 (reader-first Now Playing), on Now playing's
+// two faces (#593): Listen measured against NowPlaying.dc.html, Read with the reader's head and foot.
 const sizes=[[360,740],[390,844],[430,932],[1280,800]] as const;
 const readerCentreSizes=[[360,740],[390,844],[412,915]] as const;
 // Desktop (#122): Back to narration stays in the control row at these widths.
@@ -27,7 +29,7 @@ async function importBook(request:APIRequestContext,title:string,withEbook:boole
  // EPUB imports deduplicate by bytes across the whole browser run, not by work.
  expect((await request.post(`/api/ebooks/import?workId=${book.workId}`,{multipart:{file:{name:"Companion.epub",mimeType:"application/epub+zip",buffer:await readerFixture({language:"en-NZ",title})}}})).ok()).toBe(true);
 }
-async function open(page:Page,browserName:string,title:string,[width,height]:readonly [number,number]){
+async function open(page:Page,browserName:string,title:string,[width,height]:readonly [number,number],face:"listen"|"read"="listen"){
  await page.setViewportSize({width,height});
  await page.goto("/");
  await page.getByRole("button",{name:`Play ${title}`,exact:true}).click();
@@ -53,7 +55,8 @@ async function open(page:Page,browserName:string,title:string,[width,height]:rea
  await expect(dock.getByRole("button",{name:/^(Play|Pause)$/})).toBeVisible();
  await page.mouse.move(0,0);
  await checkTransport(page,page.locator(".player-dock .transport"));
- await page.locator(".dock-book").click();
+ // The mini player opens Now playing on its face rule (Listen the first time); the head's control switches faces (#593).
+ if(face==="read")await openRead(page);else await openListen(page);
  const dialog=page.getByRole("dialog",{name:"Now playing",exact:true});
  await expect(dialog).toBeVisible();
  // Wait until the open animation (scale/translate) has finished before measuring.
@@ -83,6 +86,26 @@ async function checkTransport(page:Page,transport:Locator){
  expect(Math.abs((play.x-seeks[0].x)-(seeks[1].x-play.x))).toBeLessThanOrEqual(1);
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(width);
 }
+/** Listen's transport (board NowPlaying.dc.html): −30 and +30 at 56, Play or Pause at 72, on one axis, centred, in the window. */
+async function checkListenTransport(page:Page,transport:Locator){
+ await transport.scrollIntoViewIfNeeded();
+ const {width,height}=page.viewportSize()!;
+ const play=await centre(transport.getByRole("button",{name:/^(Play|Pause)$/}));
+ expect([Math.round(play.box.width),Math.round(play.box.height)]).toEqual([72,72]);
+ const seeks=[];
+ for(const name of ["Rewind 30 seconds","Forward 30 seconds"]){
+  const b=await centre(transport.getByRole("button",{name,exact:true}));
+  expect([Math.round(b.box.width),Math.round(b.box.height)]).toEqual([56,56]);
+  expect(Math.abs(b.y-play.y)).toBeLessThanOrEqual(1);
+  expect(b.box.x).toBeGreaterThanOrEqual(0);expect(b.box.x+b.box.width).toBeLessThanOrEqual(width);
+  expect(b.box.y).toBeGreaterThanOrEqual(0);expect(b.box.y+b.box.height).toBeLessThanOrEqual(height);
+  seeks.push(b);
+ }
+ expect(seeks[0].x).toBeLessThan(play.x);expect(seeks[1].x).toBeGreaterThan(play.x);
+ expect(Math.abs((play.x-seeks[0].x)-(seeks[1].x-play.x))).toBeLessThanOrEqual(1);
+ expect(Math.round(play.box.x-(seeks[0].box.x+seeks[0].box.width))).toBe(24);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(width);
+}
 async function checkTimeline(dialog:Locator,transport:Locator){
  const slider=await centre(dialog.getByRole("slider",{name:"Seek in audiobook",exact:true}));
  const row=await centre(transport);
@@ -99,20 +122,31 @@ test.beforeAll(async({request})=>{
 for(const size of sizes){
  test(`Now Playing without an ebook is aligned at ${size[0]}px`,async({page,browserName})=>{
   skipOnMobile(size[0]>=900,"desktop layout (min-width: 900px) is not reachable on a phone profile");
+  // A book without an EPUB opens on Listen, measured against its board (#593).
   const dialog=await open(page,browserName,"Layout plain",size);
-  const transport=dialog.locator(".transport.large");
-  await checkTransport(page,transport);
+  await expect(dialog.locator(".now-playing-listen")).toBeVisible();
+  const transport=dialog.locator(".now-playing-transport");
+  await checkListenTransport(page,transport);
   await checkTimeline(dialog,transport);
-  const close=await centre(dialog.getByRole("button",{name:"Close dialog",exact:true}));
-  expect(close.box.x+close.box.width).toBeLessThanOrEqual(size[0]);
-  expect(Math.abs((await centre(dialog.getByRole("heading",{name:"Now playing",exact:true}))).y-close.y)).toBeLessThanOrEqual(1);
+  // The head: Close, Listen or Read, the book's page, 44 high on one line and in the window.
+  const close=await centre(dialog.getByRole("button",{name:"Close now playing",exact:true}));
+  const faces=await centre(dialog.getByRole("radiogroup",{name:"Listen or read",exact:true}));
+  const bookPage=await centre(dialog.getByRole("button",{name:"Open this book’s page",exact:true}));
+  for(const item of [close,faces,bookPage]){
+   expect(Math.round(item.box.height)).toBe(44);
+   expect(Math.abs(item.y-close.y)).toBeLessThanOrEqual(1);
+   expect(item.box.x).toBeGreaterThanOrEqual(0);expect(item.box.x+item.box.width).toBeLessThanOrEqual(size[0]);
+  }
+  expect(close.x).toBeLessThan(faces.x);expect(faces.x).toBeLessThan(bookPage.x);
+  // Read does not exist for this book; the suite's administrator gets Get ebook from it, so it is not off.
+  await expect(dialog.getByRole("radio",{name:"Listen",exact:true})).toHaveAttribute("aria-checked","true");
  });
  test(`reader-first Now Playing is aligned at ${size[0]}px`,async({page,browserName})=>{
   // On the Steam Deck this WebKit test takes 18-45 s (33 runs), right under the global 45 s limit, so it flakes with host load.
   test.setTimeout(READER_SPEC_TIMEOUT_MS);
   skipOnMobile(size[0]>=900,"desktop layout (min-width: 900px) is not reachable on a phone profile");
   const [width,height]=size;
-  const dialog=await open(page,browserName,"Layout reader",size);
+  const dialog=await open(page,browserName,"Layout reader",size,"read");
   await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
   // On a phone the foot's transport row shows with the controls (#587); at rest the foot has a small Play only.
   if(width<900)await showReaderTopbar(page,dialog.locator(".inline-reader"));
@@ -165,6 +199,8 @@ for(const size of sizes){
   // The bar is the narration's position; the page follows it.
   await expect(player.getByRole("slider",{name:/^Seek in /})).toBeVisible();
   await expect(player.getByRole("slider",{name:"Position in book"})).toHaveCount(0);
+  // Read's head carries the face control after Close (#593).
+  await expect(dialog.locator(".inline-reader .reader-topbar").getByRole("radio",{name:"Read",exact:true})).toHaveAttribute("aria-checked","true");
   const names=["Close reader","Bookmark current sentence","Search this book","Reader appearance","More","Back to narration","Back 30 seconds","Play narration","Forward 30 seconds",/^Sleep timer: /];
   if(width<900)names.push("Chapters");
   for(const name of names){
@@ -218,12 +254,12 @@ async function assertReaderTransportCentred(dialog:Locator,player:Locator){
  await expect(dialog.getByRole("button",{name:"Undo jump",exact:true})).toHaveCount(0);
  const below=await dialog.evaluate(()=>{
   const bar=document.querySelector<HTMLElement>(".reader-player");
-  const main=document.querySelector<HTMLElement>(".now-playing-main");
-  if(!bar||!main)return Infinity;
+  // Nothing of Now playing lies below the Read face's foot: the face is the reader's page alone (#593).
+  const face=document.querySelector<HTMLElement>(".now-playing-face");
+  if(!bar||!face)return Infinity;
   const bottom=bar.getBoundingClientRect().bottom;
-  return Math.max(0,...[...main.children].map((child)=>{
+  return Math.max(0,...[...face.children].map((child)=>{
    const el=child as HTMLElement;
-   if(el.classList.contains("playback-reader")||el.classList.contains("error-text"))return 0;
    if(getComputedStyle(el).display==="none")return 0;
    const box=el.getBoundingClientRect();
    return box.height>0?box.bottom-bottom:0;
@@ -328,7 +364,7 @@ async function assertDesktopBackNarration(dialog:Locator,player:Locator,width:nu
  }
  const playVsMain=await dialog.evaluate(()=>{
   const play=document.querySelector<HTMLElement>(".reader-play");
-  const main=document.querySelector<HTMLElement>(".now-playing-main");
+  const main=document.querySelector<HTMLElement>(".now-playing-face");
   if(!play||!main)return null;
   const playBox=play.getBoundingClientRect(),mainBox=main.getBoundingClientRect();
   return {x:playBox.left+playBox.width/2-(mainBox.left+mainBox.width/2),y:playBox.top+playBox.height/2-(mainBox.top+mainBox.height/2)};
@@ -367,7 +403,7 @@ async function openAlignedReader(page:Page,browserName:string,request:APIRequest
    return result;
   };
  });
- const dialog=await open(page,browserName,title,size);
+ const dialog=await open(page,browserName,title,size,"read");
  await expect.poll(()=>page.evaluate(()=>(window as any).__layoutPlaySettled),{timeout:READER_WAIT_MS.followHighlight}).toBe(true);
  await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible({timeout:READER_WAIT_MS.checkpointRestore});
  const player=dialog.getByRole("region",{name:"Player",exact:true});
@@ -562,7 +598,7 @@ test.describe("#122 reader Back to narration layout",()=>{
  test("Now Playing keeps keyboard focus inside the open dialog",async({page,browserName})=>{
   skipOnMobile(true,"needs a hardware keyboard (Tab, Escape)");
   const dialog=await open(page,browserName,"Layout plain",[390,844]);
-  const close=dialog.getByRole("button",{name:"Close dialog"});
+  const close=dialog.getByRole("button",{name:"Close now playing",exact:true});
   await close.focus();
   for(let i=0;i<30;i++){
    await page.keyboard.press("Tab");
@@ -572,7 +608,8 @@ test.describe("#122 reader Back to narration layout",()=>{
   await close.click();
   expect(await page.locator("#root").evaluate(el => (el as HTMLElement).inert)).toBe(false);
   await expect(page.locator(".player-dock .dock-book")).toBeFocused();
-  expect(await page.locator(".now-playing-dialog").evaluate(el => el.contains(document.activeElement))).toBe(false);
+  // Closed, Now playing leaves the page (it stays mounted only under the Read face's own pages); focus is not in it.
+  expect(await page.evaluate(() => !!document.activeElement?.closest(".now-playing-screen"))).toBe(false);
   expect(await page.evaluate(() => getComputedStyle(document.activeElement!).visibility)).toBe("visible");
   await page.locator(".player-dock .dock-book").click();
   await expect(dialog).toBeVisible();

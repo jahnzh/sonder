@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { skipOnMobile } from "./mobile";
+import { listenFace, openListen } from "./now-playing";
 function wave() {
   const seconds = 10,
     n = 8000 * seconds,
@@ -166,16 +167,16 @@ test("real audio playback, speed, seek, pause and recording-specific resume afte
       { timeout: 10000 },
     )
     .toBeGreaterThanOrEqual(before);
-  await page.locator(".dock-book").click();
-  await expect(page.getByRole("dialog")).toBeVisible();
-  await page
-    .getByRole("button", { name: /^Playback speed/ })
-    .last()
-    .click();
-  await page.getByRole("button", { name: "1.5×", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: /^Playback speed/ }).last(),
-  ).toHaveText("1.5×");
+  // Now playing's Listen face (#593): Speed is a Stepper row, the sleep timer a row with a picker.
+  await openListen(page);
+  const listen = listenFace(page);
+  const speed = listen.getByRole("spinbutton", { name: "Playback speed", exact: true });
+  const stepTo = async (text: string) => {
+    for (let i = 0; i < 60 && (await speed.getAttribute("aria-valuetext")) !== text; i++)
+      await listen.getByRole("button", { name: "Faster", exact: true }).click();
+    await expect(speed).toHaveAttribute("aria-valuetext", text);
+  };
+  await stepTo("1.5×");
   await page
     .getByRole("slider", { name: "Seek in audiobook", exact: true })
     .fill("30");
@@ -187,36 +188,18 @@ test("real audio playback, speed, seek, pause and recording-specific resume afte
       return b.progress?.position || 0;
     })
     .toBeGreaterThanOrEqual(30);
-  await page
-    .getByRole("button", { name: "Sleep timer", exact: true })
-    .last()
-    .click();
-  await page.getByRole("button", { name: "5 minutes", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Sleep timer", exact: true }).last(),
-  ).toContainText("5m");
-  await page
-    .getByRole("button", { name: /^Playback speed/ })
-    .last()
-    .click();
-  await page
-    .getByRole("slider", { name: "Playback speed", exact: true })
-    .fill("2.35");
-  await page.getByRole("button", { name: "Faster", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: /^Playback speed/ }).last(),
-  ).toHaveText("2.4×");
-  await page.getByRole("button", { name: "Close options", exact: true }).click();
+  await listen.getByRole("button", { name: "Sleep timer Off", exact: true }).click();
+  await page.getByRole("dialog", { name: "Sleep timer", exact: true }).getByRole("radio", { name: "5 minutes", exact: true }).click();
+  await expect(listen.getByRole("button", { name: /^Sleep timer / })).toHaveText(/5 min/);
+  await stepTo("2.4×");
   await expect(page.locator(".timeline-speed-left")).toContainText(
     "left at 2.4×",
   );
-  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await page.getByRole("button", { name: "Close now playing", exact: true }).click();
   await page.reload();
-  await page.locator(".dock-book").click();
-  await expect(
-    page.getByRole("button", { name: /^Playback speed/ }).last(),
-  ).toHaveText("2.4×");
-  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await openListen(page);
+  await expect(listenFace(page).getByRole("spinbutton", { name: "Playback speed", exact: true })).toHaveAttribute("aria-valuetext", "2.4×");
+  await page.getByRole("button", { name: "Close now playing", exact: true }).click();
 });
 test("import, complete device download, service-worker ranges and offline relaunch", async ({
   page,
@@ -353,14 +336,13 @@ test("embedded chapter controls seek within a recording without changing the phy
       .locator(".player-dock")
       .getByRole("button", { name: "Pause", exact: true }),
   ).toBeVisible();
-  await page.locator(".dock-book").click();
-  await page.getByRole("button", { name: /At the beginning/ }).click();
-  await expect(
-    page
-      .getByRole("dialog")
-      .getByRole("button", { name: "Pause", exact: true }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: /A new turn/ }).click();
+  // Chapters from Listen is a page of the recording's chapters (#593); a row moves the narration and returns.
+  await openListen(page);
+  await listenFace(page).getByRole("button", { name: /^Chapters / }).click();
+  await page.getByRole("list", { name: "Chapters", exact: true }).getByRole("button", { name: /At the beginning/ }).click();
+  await expect(listenFace(page).getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+  await listenFace(page).getByRole("button", { name: /^Chapters / }).click();
+  await page.getByRole("list", { name: "Chapters", exact: true }).getByRole("button", { name: /A new turn/ }).click();
   await expect
     .poll(async () => {
       const b = (await (await page.request.get("/api/books")).json()).find(
@@ -373,7 +355,6 @@ test("embedded chapter controls seek within a recording without changing the phy
     (b: { id: string }) => b.id === own.id,
   );
   expect(saved.progress.trackId).toBe(own.tracks[0].id);
-  await expect(page.getByRole("button", { name: /A new turn/ })).toHaveClass(
-    /selected/,
-  );
+  await listenFace(page).getByRole("button", { name: /^Chapters / }).click();
+  await expect(page.getByRole("list", { name: "Chapters", exact: true }).getByRole("button", { name: /A new turn/ })).toHaveAttribute("aria-current", "true");
 });

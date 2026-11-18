@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { openAudiobookPage } from "./now-playing";
 
 test.use({ serviceWorkers: "block" });
 // Each test's work gets a name unique to the run, so a repeat on the same server finds one "Play <title>" button,
@@ -96,8 +97,7 @@ async function listenAt(page: Page, release: Release, value: number) {
   await expect.poll(async () => (await audioState(page)).paused).toBe(true);
   await setPosition(page, value);
   await expect.poll(async () => (await audioState(page)).position).toBeCloseTo(value, 0);
-  await page.locator(".dock-book").click();
-  await page.getByRole("dialog", { name: "Now playing", exact: true }).getByRole("button", { name: "Audiobook", exact: true }).click();
+  await openAudiobookPage(page);
   await expect(page).toHaveURL(new RegExp(`#book/${encodeURIComponent(release.workId)}/audiobook$`));
   const audiobook = page.getByRole("region", { name: "Audiobook", exact: true });
   await expect(audiobook.getByRole("radiogroup", { name: "Recordings", exact: true })).toBeVisible();

@@ -165,6 +165,40 @@ test("a book without an EPUB has no Read face: it opens on Listen and Read leads
   await expect.poll(() => hashOf(page)).toBe(`#book/${encodeURIComponent(workId)}/get/ebook`);
 });
 
+test("a book without a recording opens on Read; Listen leads to Get audiobook", async ({ page }) => {
+  const name = `Ebook only ${randomUUID().slice(0, 8)}`;
+  const response = await page.request.post("/api/ebooks/import", {
+    multipart: { file: { name: `${name}.epub`, mimeType: "application/epub+zip", buffer: await readerFixture({ title: name }) } },
+  });
+  expect(response.ok()).toBe(true);
+  const id = (await response.json()).id as string;
+  const ebook = ((await (await page.request.get("/api/ebooks")).json()) as { id: string; workId: string }[]).find((e) => e.id === id)!;
+  try {
+    await page.goto(`/#listen/${encodeURIComponent(ebook.workId)}`);
+    // An address of Listen for a book without a recording shows Read in its place.
+    await expect.poll(() => hashOf(page)).toBe(`#read/${encodeURIComponent(ebook.workId)}`);
+    await expect(page.frameLocator(".now-playing-screen .reader-viewport iframe").getByText("Alice was beginning", { exact: false })).toBeVisible();
+    // No mini player for it: the dock, if any, holds another book.
+    await expect(page.locator(".player-dock").filter({ hasText: name })).toHaveCount(0);
+    await showReadControls(page);
+    await faces(page).getByRole("radio", { name: "Listen", exact: true }).click();
+    await expect.poll(() => hashOf(page)).toBe(`#book/${encodeURIComponent(ebook.workId)}/get/audiobook`);
+  } finally {
+    await page.request.delete(`/api/works/${encodeURIComponent(ebook.workId)}/library`);
+  }
+});
+
+test("for someone who is not the administrator a face the book does not have is off", async ({ page }) => {
+  const { title, workId } = await book(page, "Member audio story", { epub: false });
+  await page.route("**/api/auth/status", (route) =>
+    route.fulfill({ json: { required: true, authenticated: true, user: { id: 1, username: "reader", role: "user" } } }),
+  );
+  await page.goto(`/#listen/${encodeURIComponent(workId)}`);
+  await expect(listen(page).getByRole("heading", { name: title, exact: true })).toBeVisible();
+  await expect(faces(page).getByRole("radio", { name: "Read", exact: true })).toBeDisabled();
+  await expect(faces(page).getByRole("radio", { name: "Listen", exact: true })).toHaveAttribute("aria-checked", "true");
+});
+
 test("Listen at 390 by 844: the rows in the board's order with their names and tooltips, and the transport's sizes", async ({ page }) => {
   await instrument(page);
   const { title } = await book(page, "Board story");

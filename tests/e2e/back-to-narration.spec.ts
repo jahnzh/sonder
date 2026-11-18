@@ -4,6 +4,7 @@ import {randomUUID} from "node:crypto";
 import {readerFixture} from "../reader-fixture";
 import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
 import {appearancePanel,openAppearance} from "./reader-appearance";
+import {openRead} from "./now-playing";
 // Back to narration and the manual positions still waiting for their save (#417, ADR 0014): with a
 // narration to follow they are dropped, without one they are kept and saved. Sequences 1, 2 and 6 of the issue.
 test.use({serviceWorkers:"block"});
@@ -62,7 +63,7 @@ async function openAt(page:Page,book:any,position:number,track=0){
  expect(response.ok()).toBe(true);
  expect((await response.json()).progress.position).toBe(position);
  await page.goto("/");
- await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
+ await openRead(page);
  // The book's pages are in the frame: before that, Contents has no view to move.
  await expect(page.frameLocator(".inline-reader .reader-viewport iframe").locator("p").first()).toBeAttached({timeout:READER_WAIT_MS.followHighlight});
 }

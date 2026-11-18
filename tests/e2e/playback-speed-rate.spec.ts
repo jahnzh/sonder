@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { showControls } from "./reader-bands";
+import { listenFace, openListen, openRead } from "./now-playing";
 import { readFileSync } from "node:fs";
 import { readerFixture } from "../reader-fixture";
 import { installReaderWaitBudget, READER_WAIT_MS, timedWait } from "./timing";
@@ -78,21 +79,21 @@ test("lock-screen position state carries the real rate, the chapter list shows t
   await expect(
     page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true }),
   ).toBeVisible();
-  await page.locator(".dock-book").click();
-  const nowPlaying = page.getByRole("dialog", { name: "Now playing", exact: true });
-  const speedButton = nowPlaying.getByRole("button", { name: /^Playback speed/ }).last();
-  await expect(speedButton).toHaveText(`${defaultSpeed}×`);
-  await speedButton.click();
-  // The menu opens over a button near the screen's left edge and must still fit on the phone screen.
-  const menu = await page.locator(".speed-menu").boundingBox();
-  const width = page.viewportSize()!.width;
-  expect(menu!.x).toBeGreaterThanOrEqual(0);
-  expect(menu!.x + menu!.width).toBeLessThanOrEqual(width);
+  // The Speed row on Now playing's Listen face (#593): a Stepper, and Use default while the recording has its own.
+  await openListen(page);
+  const listen = listenFace(page);
+  const speed = listen.getByRole("spinbutton", { name: "Playback speed", exact: true });
+  const useDefault = listen.getByRole("button", { name: /^Use default/ });
+  await expect(speed).toHaveText(`${defaultSpeed}×`);
   // Until the speed is changed, the recording follows the default.
-  await expect(page.getByRole("button", { name: /^Use default/ })).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("slider", { name: "Playback speed", exact: true }).fill("2.35");
-  await expect(speedButton).toHaveText("2.35×");
-  await expect(page.getByRole("button", { name: /^Use default/ })).toHaveAttribute("aria-pressed", "false");
+  await expect(useDefault).toHaveCount(0);
+  // 2.35×: End (3×), Page Down (ten steps of 0.05) and three steps down.
+  await speed.focus();
+  await page.keyboard.press("End");
+  await page.keyboard.press("PageDown");
+  for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowDown");
+  await expect(speed).toHaveText("2.35×");
+  await expect(useDefault).toHaveCount(1);
   await expect.poll(() => audioRate(page)).toBe(2.35);
   // The rate change itself is reported (ratechange), not only the next time update.
   await expect.poll(async () => (await positionStates(page)).at(-1)?.playbackRate).toBe(2.35);
@@ -102,33 +103,32 @@ test("lock-screen position state carries the real rate, the chapter list shows t
   const later = (await positionStates(page)).slice(before);
   expect(later.every((state) => state.playbackRate === 2.35)).toBe(true);
   expect(later.at(-1)!.position).toBeGreaterThan(later[0].position!);
-  await page.getByRole("button", { name: "Slower", exact: true }).click();
-  await expect(speedButton).toHaveText("2.3×");
+  await listen.getByRole("button", { name: "Slower", exact: true }).click();
+  await expect(speed).toHaveText("2.3×");
   await expect.poll(async () => (await positionStates(page)).at(-1)?.playbackRate).toBe(2.3);
-  await page.getByRole("button", { name: "Close options", exact: true }).click();
   // The current chapter's time left is at 2.3×; the length the book holds is the real one. The Book page has no
-  // chapter list (#532): the player's chapter list, the same component, shows it.
-  const current = nowPlaying.locator(".chapter-list .chapter-row.selected small");
+  // chapter list (#532): the Chapters page opened from Listen lists the recording's chapters.
+  await listen.getByRole("button", { name: /^Chapters\b/ }).click();
+  const current = page.getByRole("list", { name: "Chapters", exact: true }).locator('button[aria-current="true"] .reader-pages-chapter-value');
   await expect(current).toHaveAttribute("title", "Left in chapter at 2.3×");
   const { duration, position } = await page.evaluate(() => {
     const audio = ((window as any).__speedAudio as HTMLAudioElement[]).find((a) => !!a.src)!;
     return { duration: audio.duration, position: audio.currentTime };
   });
-  expect(Math.abs(seconds((await current.textContent()) ?? "") - (duration - position) / 2.3)).toBeLessThan(5);
-  await nowPlaying.getByRole("button", { name: "Close dialog", exact: true }).click();
+  expect(Math.abs(seconds(((await current.textContent()) ?? "").replace(" left", "")) - (duration - position) / 2.3)).toBeLessThan(5);
+  await page.goBack();
+  await expect(listen).toBeVisible();
   // Use default drops the recording's own speed, also after a reload.
-  await page.locator(".dock-book").click();
-  await speedButton.click();
-  await page.getByRole("button", { name: `Use default · ${defaultSpeed}×`, exact: true }).click();
-  await expect(speedButton).toHaveText(`${defaultSpeed}×`);
+  await listen.getByRole("button", { name: `Use default · ${defaultSpeed}×`, exact: true }).click();
+  await expect(speed).toHaveText(`${defaultSpeed}×`);
+  await expect(useDefault).toHaveCount(0);
   await expect.poll(() => audioRate(page)).toBe(Number(defaultSpeed));
   await expect.poll(async () => (await positionStates(page)).at(-1)?.playbackRate).toBe(Number(defaultSpeed));
-  await nowPlaying.getByRole("button", { name: "Close dialog", exact: true }).click();
   await page.reload();
-  await page.locator(".dock-book").click();
-  await expect(speedButton).toHaveText(`${defaultSpeed}×`);
-  await speedButton.click();
-  await expect(page.getByRole("button", { name: /^Use default/ })).toHaveAttribute("aria-pressed", "true");
+  // The address names Listen (#593), so the reload shows it again.
+  await expect(listen).toBeVisible();
+  await expect(speed).toHaveText(`${defaultSpeed}×`);
+  await expect(useDefault).toHaveCount(0);
 });
 // One long chapter: the fixture worker gives each sentence 2 s of narration, so at 3× a new
 // sentence starts every 0.67 s and the page has to turn several times.
@@ -200,7 +200,7 @@ test("at 3× the follow highlight stays within one sentence of the audio and the
     expect(response.ok()).toBe(true);
     await instrument(page);
     await page.goto("/");
-    await page.getByRole("button", { name: "Open ebook reader", exact: true }).click();
+    await openRead(page);
     const reader = page.locator(".inline-reader");
     await timedWait(
       "follow-highlight",

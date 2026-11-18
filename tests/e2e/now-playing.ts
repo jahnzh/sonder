@@ -44,3 +44,14 @@ export async function openRead(page: Page) {
   }
   await expect(page.locator(".now-playing-screen .reader-viewport")).toBeVisible();
 }
+
+/** The Audiobook page from Now playing (#593: "Audiobook" left it): Listen's book button, then the Book page's Audiobook row. */
+export async function openAudiobookPage(page: Page) {
+  await openListen(page);
+  await listenFace(page).getByRole("button", { name: "Open this book’s page", exact: true }).click();
+  const book = page.getByRole("region", { name: "Book", exact: true });
+  await book.getByRole("button", { name: /^Audiobook / }).click();
+  const audiobook = page.getByRole("region", { name: "Audiobook", exact: true });
+  await expect(audiobook).toBeVisible();
+  return audiobook;
+}

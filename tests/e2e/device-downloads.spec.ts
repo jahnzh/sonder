@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { parseRange } from "../../server/range";
+import { listenFace, openListen } from "./now-playing";
 test.use({ serviceWorkers: "block" });
 let ALICE_WORK = "";
 test.beforeEach(async ({ page }) => {
@@ -129,11 +130,10 @@ test("player downloads retain verified sections after connection failure and res
   await expect(page.locator(".toast")).toHaveCount(0);
   await expect(keep).toHaveAttribute("aria-checked", "true");
   await expect(page.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
-  await page.locator(".dock-book").click();
-  await expect(page.getByRole("dialog")).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Resume download", exact: true }),
-  ).toBeVisible({ timeout: 20000 });
+  // Now playing's Listen face shows the same Keep row and line (#593; the device download progress left it).
+  await openListen(page);
+  await expect(page.locator("#listen-keep-line")).toHaveText("Not complete · 0 of 1 files", { timeout: 20000 });
+  await expect(listenFace(page).getByRole("button", { name: "Resume", exact: true })).toBeVisible({ timeout: 20000 });
   expect(starts.filter((start) => start === 0)).toHaveLength(1);
   expect(starts.filter((start) => start === 4 * 1024 * 1024)).toHaveLength(4);
   const pending = await page.evaluate(
@@ -161,10 +161,9 @@ test("player downloads retain verified sections after connection failure and res
   // After a reload the switch is still on and the save carries on by itself from the saved sections (#550).
   await expect(keep).toHaveAttribute("aria-checked", "true");
   await expect(page.locator("#book-keep-line")).toHaveText(/^Audiobook( and ebook)? · /, { timeout: 20000 });
-  await page.locator(".dock-book").click();
-  await expect(
-    page.getByRole("button", { name: "Saved on device", exact: true }),
-  ).toBeDisabled();
+  await openListen(page);
+  await expect(listenFace(page).getByRole("switch", { name: "Keep on this device", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator("#listen-keep-line")).toHaveText(/^Audiobook( and ebook)? · /, { timeout: 20000 });
   expect(starts.filter((start) => start === 0)).toHaveLength(1);
   const checksum = await page.evaluate(async () => {
     const chunks = await new Promise<any[]>((resolve) => {
@@ -198,9 +197,7 @@ test("player downloads retain verified sections after connection failure and res
   await page.screenshot({
     path: "artifacts/player-device-download-mobile.png",
   });
-  await page
-    .getByRole("button", { name: "Book details and editions", exact: true })
-    .click();
+  await listenFace(page).getByRole("button", { name: "Open this book’s page", exact: true }).click();
   // The player's book button opens the Book page (#532): its Audiobook row opens the Audiobook page (#530), where
   // Get another recording is.
   const bookPage = page.getByRole("region", { name: "Book", exact: true });
@@ -224,8 +221,8 @@ test("player downloads retain verified sections after connection failure and res
   await page.getByRole("dialog", { name: "Get ebook", exact: true }).getByRole("button", { name: "Close", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Get ebook", exact: true })).toHaveCount(0);
   await page.reload();
-  await page.locator(".dock-book").click();
-  await expect(
-    page.getByRole("dialog").getByLabel("Playback source"),
-  ).toHaveText("Source: Device cache");
+  // Listen makes the book ready to play; then the mini player names where it plays from.
+  await openListen(page);
+  await page.getByRole("button", { name: "Close now playing", exact: true }).click();
+  await expect(page.locator(".player-dock").getByLabel("Playback source")).toHaveText("Device cache", { timeout: 20000 });
 });

@@ -7,6 +7,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
+import { openRead } from "./now-playing";
 
 const OUT = "OUT";
 mkdirSync(OUT, { recursive: true });
@@ -155,12 +156,12 @@ test("a kept book with an audiobook, an EPUB and a ready reading sync is complet
   });
   expect(progress.ok()).toBe(true);
   await page.goto("/");
-  await expect(page.getByRole("button", { name: "Open ebook reader", exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator(".player-dock .dock-book")).toBeVisible({ timeout: 30_000 });
   await page.evaluate(() => navigator.serviceWorker.ready);
   await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
   await context.setOffline(true);
   await page.goto("/");
-  await page.getByRole("button", { name: "Open ebook reader", exact: true }).click();
+  await openRead(page);
   const frame = page.frameLocator(".inline-reader .reader-viewport iframe");
   await expect(frame.getByText("The first paragraph opens here.", { exact: false })).toBeVisible({ timeout: 30_000 });
   await expect(page.locator(".inline-reader")).toHaveAttribute("data-current-passage", interval.paragraphId, { timeout: 30_000 });

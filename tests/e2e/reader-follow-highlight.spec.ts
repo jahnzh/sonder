@@ -3,6 +3,7 @@ import {readFileSync} from "node:fs";
 import {randomUUID} from "node:crypto";
 import {readerFixture} from "../reader-fixture";
 import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
+import {openRead} from "./now-playing";
 // The service worker would answer the script request below before page.route sees it.
 test.use({serviceWorkers:"block"});
 // Per-step expect ceilings are up to 45 s; leave room for many highlight waits.
@@ -61,7 +62,7 @@ async function open(page:Page,book:any,interval:any){
  expect(saved.conflict).toBe(false);
  expect(saved.progress.position).toBe(interval.start+.5);
  await page.goto("/");
- await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
+ await openRead(page);
  await timedWait("follow-highlight",()=>expect(page.locator(".inline-reader")).toHaveAttribute("data-current-passage",interval.paragraphId,{timeout:READER_WAIT_MS.followHighlight}),{testName:test.info().title});
 }
 async function withReader(page:Page,reader:object,run:()=>Promise<void>){

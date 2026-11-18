@@ -1,14 +1,16 @@
 import { test, expect, type Page } from "@playwright/test";
+import { listenFace, nowPlaying, openListen } from "./now-playing";
 const serverSpeed = async (page: Page) =>
   (await (await page.request.get("/api/appearance")).json()).playback.speed ??
   null;
+// The Speed row on Now playing's Listen face (#593).
 async function expectDockSpeed(page: Page, speed: string) {
-  await page.locator(".dock-book").click();
-  const nowPlaying = page.getByRole("dialog", { name: "Now playing", exact: true });
+  await openListen(page);
   await expect(
-    nowPlaying.getByRole("button", { name: /^Playback speed/ }).last(),
+    listenFace(page).getByRole("spinbutton", { name: "Playback speed", exact: true }),
   ).toHaveText(speed);
-  await nowPlaying.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await nowPlaying(page).getByRole("button", { name: "Close now playing", exact: true }).click();
+  await expect(nowPlaying(page)).toBeHidden();
 }
 test("the default speed applies once chosen, chapter lengths stay real for a book not in the player, and choosing 1× again keeps it", async ({
   page,
@@ -38,14 +40,17 @@ test("the default speed applies once chosen, chapter lengths stay real for a boo
     await expect.poll(() => serverSpeed(page)).toBe(1.8);
     await expectDockSpeed(page, "1.8×");
     // Chapter lengths stay real lengths at any speed; only the current chapter's time left is adjusted. The Book page
-    // has no chapter list (#532): the player's chapter list, the same component, shows it.
-    await page.locator(".dock-book").click();
-    const nowPlaying = page.getByRole("dialog", { name: "Now playing", exact: true });
-    await expect(nowPlaying).toBeVisible();
+    // has no chapter list (#532): the Chapters page opened from Listen (#593) lists the recording's chapters.
+    await openListen(page);
+    await listenFace(page).getByRole("button", { name: /^Chapters\b/ }).click();
+    const chapters = page.getByRole("list", { name: "Chapters", exact: true });
     await expect(
-      nowPlaying.locator(".chapter-list .chapter-row:not(.selected) small").first(),
+      chapters.locator("button:not([aria-current]) .reader-pages-chapter-value").first(),
     ).toHaveAttribute("title", "Chapter length");
-    await nowPlaying.getByRole("button", { name: "Close dialog", exact: true }).click();
+    await page.goBack();
+    await expect(listenFace(page)).toBeVisible();
+    await nowPlaying(page).getByRole("button", { name: "Close now playing", exact: true }).click();
+    await expect(nowPlaying(page)).toBeHidden();
     stepper = await openPlayback();
     await stepper.focus();
     await page.keyboard.press("PageDown");

@@ -6,6 +6,7 @@ import {readerFixture} from "../reader-fixture";
 import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
 import {highlightShown,textShown} from "./reader-view";
 import {appearancePanel,openAppearance} from "./reader-appearance";
+import {openRead} from "./now-playing";
 // `F` returns to the narration only when the reader has the keyboard (#501 review): not behind a sheet or a dialog
 // above the reader, not while typing in a field (also one inside the book's pages), not with a modifier and not
 // without the book's narration in the player. A focused button does not take it.
@@ -50,7 +51,7 @@ async function openFollowing(page:Page,book:any,interval:any){
  const response=await page.request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position:interval.start+.5,duration:book.tracks[0].duration,updatedAt:Math.max(Date.now(),previous+1)}});
  expect(response.ok()).toBe(true);
  await page.goto("/");
- await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
+ await openRead(page);
  const room=page.locator(".inline-reader");
  await timedWait("follow-highlight",()=>expect(room).toHaveAttribute("data-current-passage",interval.paragraphId,{timeout:READER_WAIT_MS.followHighlight}),{testName:test.info().title});
  await expect.poll(()=>highlightShown(room),{timeout:READER_WAIT_MS.followHighlight}).toBe(true);
@@ -75,7 +76,7 @@ async function backWithF(page:Page,room:ReturnType<Page["locator"]>,interval:any
  await expect.poll(()=>textShown(room,textOf(manifest,interval.paragraphId))).toBe(true);
 }
 
-test("F does nothing behind Playback options, a dialog above the reader or with a modifier key",async({page})=>{
+test("F does nothing behind the reader's More panel or with a modifier key",async({page})=>{
  const {book,map,manifest}=await fixture(page,`Keys above ${test.info().repeatEachIndex}`);
  const interval=firstInterval(map);
  const room=await openFollowing(page,book,interval);
@@ -92,26 +93,14 @@ test("F does nothing behind Playback options, a dialog above the reader or with 
  expect(await backButton.evaluate(button=>document.activeElement===button)).toBe(true);
  for(const key of ["Control+f","Alt+f","Meta+f","Control+Shift+F"])await page.keyboard.press(key);
  await stillAway(page);
- const options=page.getByRole("region",{name:"Playback options"});
- // The reader's More opens Now Playing's Playback options sheet; no reader panel is open with it.
+ // The reader's More opens its own panel (#593: Now playing's Playback options sheet is gone).
+ const options=room.getByRole("complementary",{name:"Reader options",exact:true});
  await showControls(page,room);
  await room.locator(".reader-topbar").getByRole("button",{name:"More",exact:true}).click();
  await expect(options).toBeVisible();
- await expect(room.locator(".reader-panel")).toHaveCount(0);
  await page.keyboard.press("f");
  await stillAway(page);
- // Dialogs without a text field focus their container, so the key reaches the window while the reader is mounted.
- for(const [button,title] of [["Keyboard shortcuts","Keyboard shortcuts"],["Position history","Position history"]]){
-  await options.getByRole("button",{name:button,exact:true}).click();
-  const dialog=page.getByRole("dialog",{name:title,exact:true});
-  await expect(dialog).toBeVisible();
-  await expect.poll(()=>dialog.evaluate(element=>element.contains(document.activeElement))).toBe(true);
-  await page.keyboard.press("f");
-  await stillAway(page);
-  await dialog.getByRole("button",{name:"Close dialog",exact:true}).click();
-  await expect(dialog).toBeHidden();
- }
- await options.getByRole("button",{name:"Close playback options",exact:true}).click();
+ await options.getByRole("button",{name:"Close reader options",exact:true}).click();
  await expect(options).toBeHidden();
  await backWithF(page,room,interval,manifest);
 });
