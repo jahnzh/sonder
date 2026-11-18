@@ -829,9 +829,149 @@
       }
     },
     "/api/works/work-hc-9001": {
-      "status": 404,
+      "status": 200,
       "body": {
-        "error": "This book could not be found."
+        "workId": "w-two",
+        "title": "Two Recordings",
+        "author": "Author of Two Recordings",
+        "description": "About Two Recordings.",
+        "genre": "Fiction",
+        "year": 1969,
+        "cover": "/covers/two-b.jpg",
+        "inLibrary": true,
+        "addedAt": 1767571200000,
+        "finished": false,
+        "completionOverride": null,
+        "chosenRecordingId": "rec-two-b",
+        "recordings": [
+          {
+            "recordingId": "rec-two-a",
+            "editionId": "ed-two-a",
+            "narrator": "Narrator A",
+            "language": "en",
+            "releaseTitle": "Release ed-two-a",
+            "sourceLabel": "Test source",
+            "cover": "/covers/two-a.jpg",
+            "duration": 1500,
+            "tracks": [
+              {
+                "chapters": [
+                  {
+                    "title": "Chapter 1",
+                    "start": 0,
+                    "end": 600
+                  }
+                ],
+                "id": "t-two-a-0",
+                "recordingId": "rec-two-a",
+                "title": "Part 1",
+                "index": 0,
+                "duration": 600,
+                "source": "",
+                "sourceType": "local",
+                "serverAvailable": true,
+                "deliverySource": "server"
+              },
+              {
+                "chapters": [
+                  {
+                    "title": "Chapter 2",
+                    "start": 0,
+                    "end": 900
+                  }
+                ],
+                "id": "t-two-a-1",
+                "recordingId": "rec-two-a",
+                "title": "Part 2",
+                "index": 1,
+                "duration": 900,
+                "source": "",
+                "sourceType": "remote",
+                "serverAvailable": false,
+                "deliverySource": "remote"
+              }
+            ],
+            "serverStored": false,
+            "faults": {},
+            "progress": {
+              "recordingId": "rec-two-a",
+              "trackId": "t-two-a-0",
+              "position": 120,
+              "duration": 600,
+              "updatedAt": 1768089600000
+            },
+            "serverCopy": null
+          },
+          {
+            "recordingId": "rec-two-b",
+            "editionId": "ed-two-b",
+            "narrator": "Narrator B",
+            "language": "de",
+            "releaseTitle": "Release ed-two-b",
+            "sourceLabel": "Test source",
+            "cover": "/covers/two-b.jpg",
+            "duration": 600,
+            "tracks": [
+              {
+                "chapters": [
+                  {
+                    "title": "Chapter 1",
+                    "start": 0,
+                    "end": 600
+                  }
+                ],
+                "id": "t-two-b-0",
+                "recordingId": "rec-two-b",
+                "title": "Part 1",
+                "index": 0,
+                "duration": 600,
+                "source": "",
+                "sourceType": "remote",
+                "serverAvailable": false,
+                "deliverySource": "remote"
+              }
+            ],
+            "serverStored": false,
+            "faults": {},
+            "progress": {
+              "recordingId": "rec-two-b",
+              "trackId": "t-two-b-0",
+              "position": 60,
+              "duration": 600,
+              "updatedAt": 1768176000000
+            },
+            "serverCopy": null
+          }
+        ],
+        "chosenEbookId": null,
+        "ebooks": [],
+        "readingSync": [],
+        "series": [
+          {
+            "id": 77,
+            "name": "Pair Saga",
+            "position": 1,
+            "saved": false
+          }
+        ],
+        "mediaState": null,
+        "hardcover": {
+          "id": 9001,
+          "slug": "two-recordings",
+          "series": [
+            {
+              "id": 77,
+              "name": "Pair Saga",
+              "position": 1
+            }
+          ],
+          "statusId": null,
+          "pending": false,
+          "progressFraction": null,
+          "progressPending": false,
+          "syncError": null,
+          "listIds": []
+        }
       }
     },
     "/api/works/w-none": {
@@ -1204,9 +1344,109 @@
       }
     },
     "/api/works/work-hc-9001": {
-      "status": 404,
+      "status": 200,
       "body": {
-        "error": "This book could not be found."
+        "workId": "w-two",
+        "title": "Two Recordings",
+        "author": "Author of Two Recordings",
+        "description": "About Two Recordings.",
+        "genre": "Fiction",
+        "year": 1969,
+        "cover": "/covers/two-a.jpg",
+        "inLibrary": true,
+        "addedAt": 1767744000000,
+        "finished": false,
+        "completionOverride": null,
+        "chosenRecordingId": "rec-two-a",
+        "recordings": [
+          {
+            "recordingId": "rec-two-a",
+            "editionId": "ed-two-a",
+            "narrator": "Narrator A",
+            "language": "en",
+            "releaseTitle": "Release ed-two-a",
+            "sourceLabel": "Test source",
+            "cover": "/covers/two-a.jpg",
+            "duration": 1500,
+            "tracks": [
+              {
+                "chapters": [
+                  {
+                    "title": "Chapter 1",
+                    "start": 0,
+                    "end": 600
+                  }
+                ],
+                "id": "t-two-a-0",
+                "recordingId": "rec-two-a",
+                "title": "Part 1",
+                "index": 0,
+                "duration": 600,
+                "source": "",
+                "sourceType": "local",
+                "serverAvailable": true,
+                "deliverySource": "server"
+              },
+              {
+                "chapters": [
+                  {
+                    "title": "Chapter 2",
+                    "start": 0,
+                    "end": 900
+                  }
+                ],
+                "id": "t-two-a-1",
+                "recordingId": "rec-two-a",
+                "title": "Part 2",
+                "index": 1,
+                "duration": 900,
+                "source": "",
+                "sourceType": "remote",
+                "serverAvailable": false,
+                "deliverySource": "remote"
+              }
+            ],
+            "serverStored": false,
+            "faults": {},
+            "progress": {
+              "recordingId": "rec-two-a",
+              "trackId": "t-two-a-1",
+              "position": 300,
+              "duration": 600,
+              "updatedAt": 1768953600000
+            },
+            "serverCopy": null
+          }
+        ],
+        "chosenEbookId": null,
+        "ebooks": [],
+        "readingSync": [],
+        "series": [
+          {
+            "id": 77,
+            "name": "Pair Saga",
+            "position": 1,
+            "saved": false
+          }
+        ],
+        "mediaState": null,
+        "hardcover": {
+          "id": 9001,
+          "slug": "two-recordings",
+          "series": [
+            {
+              "id": 77,
+              "name": "Pair Saga",
+              "position": 1
+            }
+          ],
+          "statusId": null,
+          "pending": false,
+          "progressFraction": null,
+          "progressPending": false,
+          "syncError": null,
+          "listIds": []
+        }
       }
     },
     "/api/works/w-none": {

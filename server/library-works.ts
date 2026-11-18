@@ -23,7 +23,17 @@ import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
 import { z } from "zod";
 import { currentUserId, setUserSetting, userIsAdmin } from "./users.ts";
-import { hardcoverForWorks, hiddenHardcoverPlaceholders } from "./hardcover.ts";
+import {
+  HardcoverUpstreamError,
+  hardcoverBlocks,
+  hardcoverConnected,
+  hardcoverForWorks,
+  hardcoverLinkFields,
+  hardcoverWorkFields,
+  hiddenHardcoverPlaceholders,
+  importHardcoverBookToAdd,
+  lookAtHardcoverBook,
+} from "./hardcover.ts";
 import { deliveredTracks } from "./media-library.ts";
 import { choiceKey, chosenRecordingId, fallbackCovers, idList, listedRecordings, storedChoices, workCovers } from "./work-cover.ts";
 import { readerPlaces, workCompletions } from "./work-completion.ts";
@@ -421,6 +431,95 @@ function libraryWork(userId: number, workId: string): LibraryWork | null {
   return buildWorks(userId, [workId], hidden)[0] ?? null;
 }
 
+/** The Hardcover book an id of the form `work-hc-<n>` names (the id the import gives its work), else null. */
+export function hardcoverWorkBook(workId: string) {
+  const match = /^work-hc-([1-9][0-9]{0,14})$/.exec(workId);
+  return match ? Number(match[1]) : null;
+}
+
+/** A failure of Hardcover behind a look or an add: answered as Hardcover's (502), not as the request's. */
+function hardcoverFailure(error: unknown): never {
+  if (error instanceof HardcoverUpstreamError) throw Object.assign(new Error(error.message), { statusCode: 502 });
+  throw error;
+}
+
+/**
+ * A Hardcover book that is not on the server, as the one-work read answers it (ADR 0022): the
+ * `LibraryWork` the import would make, not in the library, with no recordings and no ebook
+ * editions, its media state missing and its Hardcover block (`id`, `slug`, `series`, and the
+ * user's own shelf and lists of that book). Null when the user has no Hardcover token or Hardcover
+ * does not know the book. Nothing is written.
+ */
+async function hardcoverLook(userId: number, bookId: number): Promise<LibraryWork | null> {
+  let book;
+  try {
+    book = await lookAtHardcoverBook(userId, bookId);
+  } catch (error) {
+    hardcoverFailure(error);
+  }
+  if (!book) return null;
+  const workId = `work-hc-${bookId}`;
+  const fields = hardcoverWorkFields(book);
+  const hardcover = hardcoverBlocks(userId, [{ workId, ...hardcoverLinkFields(book) }]).get(workId) ?? null;
+  return {
+    workId,
+    ...fields,
+    cover: book.cached_image?.url ?? "",
+    inLibrary: false,
+    addedAt: null,
+    finished: false,
+    completionOverride: null,
+    chosenRecordingId: null,
+    recordings: [],
+    chosenEbookId: null,
+    ebooks: [],
+    readingSync: [],
+    series: workSeries(hardcover, savedSeries(userId)),
+    mediaState: { state: "missing", holdReason: null, acquisition: null },
+    hardcover,
+  };
+}
+
+/**
+ * The work the one-work read answers for `workId` (ADR 0022): the work itself when the user may
+ * see it; for an id `work-hc-<n>`, the work on the server matched to book `n` that the user may see
+ * (`hardcoverBookWorks`), else Hardcover's book (`hardcoverLook`); otherwise null.
+ */
+async function workOrLook(userId: number, workId: string) {
+  const work = libraryWork(userId, workId);
+  if (work) return work;
+  const bookId = hardcoverWorkBook(workId);
+  if (bookId === null) return null;
+  const matched = hardcoverBookWorks(userId, [bookId]).get(bookId)!;
+  if (matched.onServer) return libraryWork(userId, matched.workId);
+  return hardcoverLook(userId, bookId);
+}
+
+/**
+ * The work Add to library adds for `workId` (ADR 0022): the work itself when the user may see it;
+ * for an id `work-hc-<n>`, the work on the server matched to book `n` that the user may see, else
+ * the work today's Hardcover import (`importHardcoverBook`) makes or matches for book `n`; null
+ * when there is none (no such work, no Hardcover token, or a book Hardcover does not know).
+ */
+async function workToAdd(userId: number, workId: string): Promise<string | null> {
+  if (workVisibleTo(userId, workId)) return workId;
+  const bookId = hardcoverWorkBook(workId);
+  if (bookId === null) return null;
+  const matched = hardcoverBookWorks(userId, [bookId]).get(bookId)!;
+  if (matched.onServer) return matched.workId;
+  if (!hardcoverConnected(userId)) return null;
+  let imported;
+  try {
+    imported = await importHardcoverBookToAdd(userId, bookId);
+  } catch (error) {
+    hardcoverFailure(error);
+  }
+  if (!imported) return null;
+  return (
+    db.select({ workId: s.editions.workId }).from(s.editions).where(eq(s.editions.id, imported.bookId)).get()?.workId ?? null
+  );
+}
+
 /** At most this many works answer `GET /api/works`. */
 export const WORK_RESULTS_LIMIT = 30;
 
@@ -628,9 +727,13 @@ export function registerLibraryWorks(app: FastifyInstance) {
     if (matchesTag(req.headers["if-none-match"], tag)) return reply.code(304).send();
     return reply.type("application/json; charset=utf-8").send(body);
   });
+  /**
+   * One work (#485), in the library or not. An id `work-hc-<n>` with no work the user may see is
+   * answered from Hardcover's book `n` (ADR 0022, `workOrLook`), or as the work matched to it.
+   */
   app.get("/api/works/:workId", async (req, reply) => {
     const { workId } = req.params as { workId: string };
-    const work = libraryWork(currentUserId(req), workId);
+    const work = await workOrLook(currentUserId(req), workId);
     if (!work) return reply.code(404).send({ error: "This book could not be found." });
     return work;
   });
@@ -654,14 +757,18 @@ export function registerLibraryWorks(app: FastifyInstance) {
    * Add to library and Remove from library by work (#527, `work-library.ts`). Both take no body
    * (an empty JSON body is accepted too) and answer `{ ok: true }`; a work the user may not see
    * answers 404 as `GET /api/works/<workId>` does. A work with no audio edition joins the library
-   * through the placeholder `PUT` makes for it (#555).
+   * through the placeholder `PUT` makes for it (#555). `PUT` answers `workId` too, the work that was
+   * added: for an id `work-hc-<n>` of a book not on the server, the work the Hardcover import made
+   * or matched for it first (ADR 0022, `workToAdd`), which differs when the administrator's import
+   * matched the book to an existing work by title and author.
    */
   app.put("/api/works/:workId/library", async (req, reply) => {
     const userId = currentUserId(req);
     const { workId } = req.params as { workId: string };
-    if (!workVisibleTo(userId, workId)) return reply.code(404).send({ error: "This book could not be found." });
-    addWorkToLibrary(userId, workId);
-    return { ok: true };
+    const added = await workToAdd(userId, workId);
+    if (!added) return reply.code(404).send({ error: "This book could not be found." });
+    addWorkToLibrary(userId, added);
+    return { ok: true, workId: added };
   });
   app.delete("/api/works/:workId/library", async (req, reply) => {
     const userId = currentUserId(req);
