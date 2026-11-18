@@ -354,6 +354,7 @@ test("cleared files are saved again and This device explains until complete", as
   await page.goto(address(book.workId));
   await keep(page).click();
   await expect.poll(async () => (await serverKeep(page, book.workId))?.completeAt, { timeout: 30_000 }).toEqual(expect.any(Number));
+  await page.goto("/favicon.ico");
   await page.evaluate(async () => {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open("sonder");
