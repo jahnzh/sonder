@@ -20,3 +20,9 @@ test('Library chips and search use works and reading places', () => {
 test('favorite migration maps editions including placeholders and drops unknowns', () => {
   assert.deepEqual(migrateFavorites(['a','b','placeholder','unknown'], [{id:'a', workId:'one'}, {id:'b', workId:'one'}, {id:'placeholder', workId:'two'}]), ['one','two']);
 });
+test('search matches authors case insensitively and Continue orders individual places', () => {
+  assert.deepEqual(select('All books', 'aUtHoR'), works.map(w => w.workId));
+  assert.deepEqual(select('All books', 'missing'), []);
+  assert.equal(latestPlace(base('empty')), 0);
+  assert.equal(latestPlace(works[4]), 42);
+});
