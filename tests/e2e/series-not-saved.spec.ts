@@ -32,6 +32,9 @@ async function notSaved(page: Page, id: number) {
   const series = async () => (await (await page.request.get(`/api/series/${id}`)).json()) as SeriesView;
   const addedBefore = savedBefore ? (await series()).works.filter((work) => work.added).map((work) => work.id) : [];
   await unsaveSeries(page, id);
+  // A series search resets the suite's Hardcover fixture: The Crossing lists Crossing Three only from its third read
+  // after one, whatever the specs before this one read.
+  expect((await page.request.get("/api/discover/series?q=Crossing")).ok()).toBe(true);
   return async () => {
     await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
     if ((await savedIds(page)).includes(id)) {
