@@ -437,13 +437,13 @@ test.describe("with answers from the test", () => {
   });
 
   test("Back restores the Series chip's list at its scroll position", async ({ page }) => {
-    // Thirty saved series, so the chip's list scrolls; the answer comes slowly and is counted (#567).
+    // Thirty saved series, so the chip's list scrolls; the answer comes slowly (1.5 s) and is counted (#567).
     const many = Array.from({ length: 30 }, (_, index) => ({
       id: 990200 + index, name: `Scroll series ${String(index).padStart(2, "0")}`, author: "Filler", count: 3, finished: 0, total: 3, covers: [],
     }));
     let answeredSeries = 0;
     await page.route("**/api/series", async (route) => {
-      await new Promise((resolve) => setTimeout(resolve, 400));
+      await new Promise((resolve) => setTimeout(resolve, 1500));
       await route.fulfill({ json: many });
       answeredSeries++;
     });
@@ -470,9 +470,10 @@ test.describe("with answers from the test", () => {
     await page.goBack();
     await expect(shown(page)).toHaveText("Library");
     await expect(seriesChip(page)).toHaveAttribute("aria-selected", "true");
-    // At once, from the last answer: the same rows where they stood.
+    // At once, from the last answer: the same rows where they stood, before the list's new answer has landed.
     await expect.poll(() => page.evaluate(() => scrollY)).toBe(target);
     expect(await onScreen()).toEqual(seen);
+    expect(answeredSeries).toBe(before);
     // The list is read again; when the answer lands, the list must not move.
     await expect.poll(() => answeredSeries > before).toBe(true);
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
