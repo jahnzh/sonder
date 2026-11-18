@@ -143,7 +143,7 @@ test("Settings offers no view choice and no words per minute",async({page})=>{
  await expect(page.getByRole("slider",{name:/words per minute/i})).toHaveCount(0);
 });
 
-test("the Reading sync card offers no timing correction for the sentence on the page",async({page})=>{
+test("More › Reading sync offers no timing correction for the sentence on the page",async({page})=>{
  const {book,map}=await fixture(page,`No timing correction ${test.info().repeatEachIndex}`);
  const interval=map.intervals.find((i:any)=>i.section===1);
  // The place the correction showed: a ready map of the recording in the player, and a sentence on the page.
@@ -154,7 +154,8 @@ test("the Reading sync card offers no timing correction for the sentence on the 
  await page.locator(".reader-more:visible").getByRole("button",{name:"Reading sync",exact:true}).click();
  const card=room.locator(".reader-panel");
  await expect(card.locator(".reader-panel-heading").getByRole("heading",{name:"Reading sync",exact:true})).toBeVisible();
- await expect(card.getByRole("button",{name:"Rebuild reading sync",exact:true})).toBeVisible();
+ // The card gave way to one row opening the Reading sync page (#543).
+ await expect(card.getByRole("button",{name:/^Reading sync/})).toBeVisible();
  await expect(card.getByText(/Correct this sentence/)).toHaveCount(0);
  await expect(card.getByRole("button",{name:"Save sentence timing",exact:true})).toHaveCount(0);
  await expect(card.getByRole("spinbutton")).toHaveCount(0);
