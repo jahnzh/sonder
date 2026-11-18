@@ -129,8 +129,11 @@ test("backfill queues only eligible pairs, tags origin, is idempotent, and never
   enableWorker();
   try {
     const first = await runAlignmentBackfill();
-    // good + other (ebook-other is linked to work-good, so it pairs with recording-good).
-    assert.equal(first.queued, 2, JSON.stringify(first));
+    // good only: ebook-other is linked to work-good too, but it is the work's second EPUB and nobody reads it, so it
+    // is a spare edition and gets no whole-book sync of its own (#718).
+    assert.equal(first.queued, 1, JSON.stringify(first));
+    assert.equal(first.skipped.spare, 1, JSON.stringify(first));
+    assert.equal(rows().some((row) => row.ebook_id === "ebook-other"), false, "the spare edition is not queued");
     assert.ok(jobFor("good"));
     assert.equal(jobFor("partial"), undefined, "a track missing server media is skipped");
     assert.equal(jobFor("french"), undefined);
@@ -138,8 +141,9 @@ test("backfill queues only eligible pairs, tags origin, is idempotent, and never
     for (const row of rows()) assert.equal(JSON.parse(row.data).origin, "backfill");
     const second = await runAlignmentBackfill();
     assert.equal(second.queued, 0, "a second run queues nothing new");
-    assert.equal(second.skipped.inProgress, 2);
-    assert.equal(rows().length, 2);
+    assert.equal(second.skipped.inProgress, 1);
+    assert.equal(second.skipped.spare, 1);
+    assert.equal(rows().length, 1);
   } finally {
     disableWorker();
   }
@@ -222,8 +226,9 @@ test("endpoints: GET/POST /api/alignments/backfill are admin only; counts and ne
     enableWorker();
     const posted = await app.inject({ method: "POST", url: "/api/alignments/backfill", cookies: { sonder_session: admin } });
     assert.equal(posted.statusCode, 200, posted.body);
-    assert.equal(posted.json().queued, 2);
-    assert.equal(rows().length, 2);
+    // good, and nothing for the spare edition ebook-other (#718).
+    assert.equal(posted.json().queued, 1);
+    assert.equal(rows().length, 1);
   } finally {
     disableWorker();
   }
