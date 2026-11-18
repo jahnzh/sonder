@@ -973,16 +973,74 @@ export async function hardcoverSearch(userId: number, query: string) {
     })),
   };
 }
-export async function hardcoverBook(userId: number, id: number) {
+/** Hardcover's book `id`, or null when Hardcover does not know it. */
+async function findHardcoverBook(userId: number, id: number) {
   const result = await graphql(
     userId,
     `query SonderBook($id:Int!){books_by_pk(id:$id){${bookFields}}}`,
     { id },
     z.object({ books_by_pk: catalogBook.nullable() }),
   );
-  if (!result.books_by_pk)
-    throw new Error("Hardcover could not find this book.");
   return result.books_by_pk;
+}
+export async function hardcoverBook(userId: number, id: number) {
+  const book = await findHardcoverBook(userId, id);
+  if (!book) throw new Error("Hardcover could not find this book.");
+  return book;
+}
+/** Whether the user has a Hardcover token saved ("Hardcover connected"). */
+export function hardcoverConnected(userId: number) {
+  return !!hardcoverKey(userId);
+}
+/**
+ * Hardcover's books as a look at a book not on the server reads them (ADR 0022), remembered for
+ * `ttlMs` per user and book so a Book page opened again or read again after an add does not ask
+ * Hardcover each time. Only what Hardcover answered is kept; nothing is written to the database.
+ */
+export const hardcoverLooks = { ttlMs: 10 * 60_000, now: () => Date.now() };
+const looked = new Map<string, { book: CatalogBook | null; at: number }>();
+/**
+ * Hardcover's book `id` for a look by `userId` (`hardcoverLooks`): null when the user has no
+ * Hardcover token or Hardcover does not know the book. Any other failure of Hardcover is thrown.
+ */
+export async function lookAtHardcoverBook(userId: number, id: number): Promise<CatalogBook | null> {
+  if (!hardcoverConnected(userId)) return null;
+  const key = `${userId}:${id}`;
+  const known = looked.get(key);
+  if (known && hardcoverLooks.now() - known.at < hardcoverLooks.ttlMs) return known.book;
+  let book: CatalogBook | null;
+  try {
+    book = await findHardcoverBook(userId, id);
+  } catch (error) {
+    // The token went between the check and the request: as no token.
+    if (error instanceof HardcoverUpstreamError && error.kind === "missing_token") return null;
+    throw error;
+  }
+  if (looked.size >= 1000) looked.clear();
+  looked.set(key, { book, at: hardcoverLooks.now() });
+  return book;
+}
+/** The fields of the work the Hardcover import makes for `book` (`importCatalogBook`). */
+export function hardcoverWorkFields(book: CatalogBook) {
+  return {
+    title: book.title || "Untitled book",
+    author: authorOf(book),
+    description:
+      book.description ||
+      "A book from your Hardcover library. Add a recording whenever you’re ready to listen.",
+    genre: "From Hardcover",
+    year: book.release_year || new Date().getFullYear(),
+  };
+}
+/** The Hardcover link the import writes for `book` (`metadataLink`): its slug and series. */
+export function hardcoverLinkFields(book: CatalogBook) {
+  return {
+    bookId: book.id,
+    slug: book.slug || null,
+    series: book.book_series.flatMap((item) =>
+      item.series ? [{ id: item.series.id, name: item.series.name, position: item.position }] : [],
+    ),
+  };
 }
 async function account(userId: number) {
   const data = await graphql(
@@ -1118,14 +1176,7 @@ function metadataLink(workId: string, book: CatalogBook) {
     )
       db.delete(T.outbox).where(eq(T.outbox.bookId, existing.bookId)).run();
   }
-  const values = {
-    workId,
-    bookId: book.id,
-    slug: book.slug || null,
-    series: book.book_series.flatMap((item) =>
-      item.series ? [{ id: item.series.id, name: item.series.name, position: item.position }] : [],
-    ),
-  };
+  const values = { workId, ...hardcoverLinkFields(book) };
   db.insert(s.hardcoverLinks)
     .values(values)
     .onConflictDoUpdate({
@@ -1229,16 +1280,7 @@ function importCatalogBook(
   if (!links.length) {
     const workId = `work-hc-${book.id}`;
     db.insert(s.works)
-      .values({
-        id: workId,
-        title: book.title || "Untitled book",
-        author: authorOf(book),
-        description:
-          book.description ||
-          "A book from your Hardcover library. Add a recording whenever you’re ready to listen.",
-        genre: "From Hardcover",
-        year: book.release_year || new Date().getFullYear(),
-      })
+      .values({ id: workId, ...hardcoverWorkFields(book) })
       .onConflictDoNothing()
       .run();
     // Linked first, so the placeholder the work gets is `hc-<book id>` (#467, `ensurePlaceholder`).
@@ -1248,6 +1290,10 @@ function importCatalogBook(
     imported = true;
   }
   const audio = links.flatMap((l) => audioForWork(l.workId));
+  // A work matched by title and author may have no audio edition yet (only an ebook): it joins the
+  // library through its placeholder, as Add to library does (#467, `ensurePlaceholder`).
+  if (!audio.length && !db.select().from(s.editions).where(eq(s.editions.workId, links[0].workId)).get())
+    ensurePlaceholder(sqlite, links[0].workId, { cover: book.cached_image?.url });
   const representative =
     audio[0] ||
     db
@@ -1299,8 +1345,17 @@ export function hardcoverForWork(userId: number, workId: string) {
 }
 /** The Hardcover block of `GET /api/books` (`hardcoverForWork`) for many works, one query per table. */
 export function hardcoverForWorks(userId: number, workIds: string[]) {
+  return hardcoverBlocks(userId, db.select().from(s.hardcoverLinks).where(inArray(s.hardcoverLinks.workId, workIds)).all());
+}
+/**
+ * The Hardcover block for links of works to Hardcover books, by work id: the stored links of
+ * `hardcoverForWorks`, or the link a book not on the server will get (ADR 0022).
+ */
+export function hardcoverBlocks(
+  userId: number,
+  links: { workId: string; bookId: number; slug: string | null; series: HardcoverBlock["series"] }[],
+) {
   const blocks = new Map<string, HardcoverBlock>();
-  const links = db.select().from(s.hardcoverLinks).where(inArray(s.hardcoverLinks.workId, workIds)).all();
   if (!links.length) return blocks;
   const bookIds = [...new Set(links.map((link) => link.bookId))];
   const byBook = <Row extends { bookId: number }>(rows: Row[]) => {
@@ -1449,8 +1504,20 @@ export async function importHardcoverBook(
   id: number,
   workId?: string,
 ) {
-  const book = await hardcoverBook(userId, id);
-  let added;
+  return importFetchedBook(userId, await hardcoverBook(userId, id), workId);
+}
+/**
+ * Add to library on a Hardcover book that is not on the server (ADR 0022): today's import
+ * (`importHardcoverBook`) of book `id`, read from Hardcover afresh; null when Hardcover does not
+ * know the book.
+ */
+export async function importHardcoverBookToAdd(userId: number, id: number) {
+  const book = await findHardcoverBook(userId, id);
+  return book ? importFetchedBook(userId, book) : null;
+}
+function importFetchedBook(userId: number, book: CatalogBook, workId?: string) {
+  const id = book.id;
+  let added: ReturnType<typeof importCatalogBook> | undefined;
   sqlite.transaction(() => {
     if (workId) {
       if (!db.select().from(s.works).where(eq(s.works.id, workId)).get())
