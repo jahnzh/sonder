@@ -935,6 +935,9 @@ export async function createApp(options?: {
     ensureMediaStorage();
     let title = "";
     let author = "Unknown author";
+    // The book the files join (#605): sent before the files. Its title and author name them, and Hardcover is not
+    // asked which work they are.
+    let work: { id: string; title: string; author: string } | null = null;
     const stored: {
       path: string;
       title: string;
@@ -949,6 +952,13 @@ export async function createApp(options?: {
             title = String(part.value).slice(0, 200);
           if (part.fieldname === "author")
             author = String(part.value).slice(0, 200);
+          if (part.fieldname === "workId") {
+            const workId = String(part.value).slice(0, 200);
+            // A book named after a file was written is not the one the files were sent for: refused, as unknown.
+            const found = stored.length ? undefined : db.select().from(s.works).where(eq(s.works.id, workId)).get();
+            if (!found) throw new Error("The selected book could not be found.");
+            work = { id: found.id, title: found.title, author: found.author };
+          }
           continue;
         }
         const ext = extname(part.filename).toLowerCase();
@@ -1003,7 +1013,13 @@ export async function createApp(options?: {
       }
       if (!stored.length) throw new Error("Choose at least one audio file.");
       const id = randomUUID();
-      const workId = hardcoverWorkForMedia(title, author) || `work-${id}`;
+      // The book's author names the recording's narrator, as an upload's typed author does today.
+      if (work) author = work.author;
+      const workId = work?.id || hardcoverWorkForMedia(title, author) || `work-${id}`;
+      // A recording of a known book takes the cover its other editions show (the placeholder's, as a rule).
+      const cover = work
+        ? db.select({ cover: s.editions.cover }).from(s.editions).where(eq(s.editions.workId, work.id)).all().map((e) => e.cover).find(Boolean)
+        : undefined;
       sqlite.transaction(() => {
         db.insert(s.works)
           .values({
@@ -1020,7 +1036,7 @@ export async function createApp(options?: {
           .values({
             id,
             workId,
-            cover: "/covers/meditations.svg",
+            cover: cover || "/covers/meditations.svg",
             narrator: author,
             rating: 0,
             sourceLabel: "Your audio files",

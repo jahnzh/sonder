@@ -179,7 +179,7 @@ test("from the Book page: title and author searched, EPUBs before PDFs, a tap se
   // Nothing chosen at first.
   for (const row of await rows(page).all()) await expect(row).toHaveAttribute("aria-checked", "false");
   await expect(getButton(page)).toBeDisabled();
-  await expect(sheet(page).getByRole("button", { name: "Import a file from this device", exact: true })).toHaveAttribute("aria-disabled", "true");
+  await expect(sheet(page).getByRole("button", { name: "Import a file from this device", exact: true })).not.toHaveAttribute("aria-disabled", "true");
   // The line for each kind: a PDF is kept for other apps; an EPUB of a book with a recording is checked.
   await rows(page).nth(3).click();
   await expect(sheet(page).getByText("Saved on the server. Opens in another app.", { exact: true })).toBeVisible();
