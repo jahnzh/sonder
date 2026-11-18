@@ -204,7 +204,10 @@ test("the Save series request: the chosen books, plus every book already in the 
   const none = { "n:1": false, "n:2": false, "n:3": false, "n:5": false };
   assert.deepEqual(seriesAddModel(hainish, sheetFacts({ manual: none })).body.bookIds, [4]);
   // A book the server says is in this account's library but this device has not read yet is linked too.
-  assert.deepEqual(seriesAddModel(hainish, sheetFacts({ manual: none, library: new Map() })).body.bookIds, [4]);
+  // (This device lists it as a choice, unticked here: the request still links it.)
+  const unread = seriesAddModel(hainish, sheetFacts({ manual: { ...none, "n:4": false }, library: new Map() }));
+  assert.ok(unread.choices.some((choice) => choice.bookId === 4 && !choice.chosen));
+  assert.deepEqual(unread.body.bookIds, [4]);
   // Every work in the library, translations at one number too, is linked once.
   const both = new Map([...library, ["w22", libraryWork("w22")]]);
   const translated = { ...hainish, works: hainish.works.map((work) => (work.id === 22 ? { ...work, workId: "w22" } : work)) };
