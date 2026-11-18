@@ -81,6 +81,8 @@ const desktopProjects = [
               /(^|\/)hardcover(-page)?\.spec\.ts$/,
               // Activity's Now (#522).
               /(^|\/)activity-now\.spec\.ts$/,
+              // Activity: the syncs of a book's spare editions as one row under Waiting (#718).
+              /(^|\/)activity-spare-editions\.spec\.ts$/,
               // The Ebook page (#531).
               /(^|\/)ebook-page\.spec\.ts$/,
               // The worker's page (#520).
