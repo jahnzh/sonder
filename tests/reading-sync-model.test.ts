@@ -84,9 +84,15 @@ test("every worker stage and count", () => {
   assert.deepEqual(page(job("queued")).blocks[0].steps!.map((s) => s.state), ["running", "waiting", "waiting", "waiting", "waiting", "waiting", "waiting"]);
   assert.deepEqual(running(page(job("copying"))), { label: "Copying audio", state: "running" });
   assert.deepEqual(page(job("copying")).blocks[0].steps!.map((s) => s.state), ["done", "running", "waiting", "waiting", "waiting", "waiting", "waiting"]);
-  // Done steps carry no figure.
+  // A finished step keeps its own count when the worker reported it, as the boards draw "Decoding audio · 43 of 43
+  // files" (ReadingSync, ReadingSyncAgain); one it did not report, and a step that does not count, carry none.
   const aligning = page(job("processing", { bookJob: worker("aligning", { tracksTotal: 43, tracksDecoded: 43, groupsTotal: 8, groupsDone: 3 }) }));
-  assert.equal(aligning.blocks[0].steps!.filter((s) => s.value).length, 1);
+  assert.deepEqual(aligning.blocks[0].steps!.map((s) => s.value ?? null), [null, null, "43 of 43 files", null, null, "3 of 8 parts", null]);
+  const saving = page(job("processing", { bookJob: worker("finishing", { tracksTotal: 1, tracksDecoded: 1, tracksEncoded: 1, groupsTotal: 8, groupsDone: 8 }) }));
+  assert.deepEqual(saving.blocks[0].steps!.map((s) => s.value ?? null), [null, null, "1 of 1 file", "1 of 1 file", null, "8 of 8 parts", null]);
+  // A worker job of an earlier run is not this run's: its counts are not shown.
+  const earlier = page(job("processing", { bookJob: { ...worker("aligning", { tracksTotal: 43, tracksDecoded: 43 }), id: "older-run" } }));
+  assert.equal(earlier.blocks[0].steps!.filter((s) => s.value).length, 0);
 });
 
 test("a worker job of an earlier run (before a Resume) is not this run's: it waits for a worker, the audio copied", () => {
@@ -249,6 +255,8 @@ test("Prepare again running over the map in use: the map in use with its line, t
   assert.deepEqual(model.blocks[1].steps!.map((s) => s.label), STEPS);
   assert.deepEqual(model.blocks[1].steps!.map((s) => s.state), ["done", "done", "done", "running", "waiting", "waiting", "waiting"]);
   assert.deepEqual(running(model, 1), { label: "Encoding audio", state: "running", value: "24 of 43 files", progress: 24 / 43 });
+  // As the board draws it: the finished Decoding audio keeps "43 of 43 files".
+  assert.deepEqual(model.blocks[1].steps!.map((s) => s.value ?? null), [null, null, "43 of 43 files", "24 of 43 files", null, null, null]);
   assert.deepEqual(model.buttons, ["Pause", "Cancel"]);
   assert.equal(model.note, "Pause stops the worker. Resume starts this book over.");
   assert.equal(model.prepareAgainRow, null);

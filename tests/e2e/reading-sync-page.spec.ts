@@ -124,7 +124,7 @@ test("every state names itself as its board does; the steps show the running one
   await expect(region.locator(".reading-sync-caption-line").first()).toContainText("Preparing");
   await expect(region.locator(".reading-sync-caption-value").first()).toHaveText("On wsl · GPU · 12 min");
   await expect(stepsOf(page)).toHaveText([
-    "Waiting for a worker", "Copying audio", "Decoding audio", "Encoding audio24 of 43 files", "Anchoring text to audio", "Aligning text", "Saving the map",
+    "Waiting for a worker", "Copying audio", "Decoding audio43 of 43 files", "Encoding audio24 of 43 files", "Anchoring text to audio", "Aligning text", "Saving the map",
   ]);
   expect(await stepsOf(page).locator('[role="img"]').evaluateAll((els) => els.map((el) => el.getAttribute("aria-label")))).toEqual([
     "Done", "Done", "Done", "Running", "Not started", "Not started", "Not started",
