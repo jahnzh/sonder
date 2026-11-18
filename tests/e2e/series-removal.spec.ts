@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { openSavedSeries, showSavedSeries, savedSeriesRow } from "./library-series";
 
 async function saveCrossingSeries(page: import("@playwright/test").Page) {
   await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
@@ -26,12 +27,13 @@ test("remove a saved series while keeping its works", async ({ page }) => {
   const refreshed = page.waitForResponse(
     (response) => new URL(response.url()).pathname === "/api/series/701",
   );
-  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
+  await openSavedSeries(page, "The Crossing", "Ada North");
   await refreshed;
   // The saved series is a page (#562): Remove series is its last row, whatever a new work's choice in the dialog.
   await page.getByRole("region", { name: "Series", exact: true }).getByRole("button", { name: "Remove series", exact: true }).click();
   await page.getByRole("button", { name: "Remove series", exact: true }).last().click();
-  await expect(page.getByRole("button", { name: "Open The Crossing by Ada North" })).toHaveCount(0);
+  await showSavedSeries(page);
+  await expect(savedSeriesRow(page, "The Crossing", "Ada North")).toHaveCount(0);
 
   const after = (await (await page.request.get("/api/books")).json()).filter(
     (book: { inLibrary: boolean }) => book.inLibrary,
@@ -56,7 +58,7 @@ test("work-removal confirmation lists shared series and defaults", async ({ page
   await page.request.post("/api/series", { data: { id: 701, bookIds: [501, 503] } });
   await page.request.post("/api/series", { data: { id: 702, bookIds: [501] } });
   await page.goto("/#library");
-  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).first().click();
+  await openSavedSeries(page, "The Crossing", "Ada North");
   await page.getByRole("button", { name: "Remove series", exact: true }).click();
   await page.getByRole("checkbox", { name: /Also remove selected works/ }).check();
   const alice = page.getByRole("checkbox", { name: /Alice’s Adventures in Wonderland/ });
@@ -71,7 +73,7 @@ test("work-removal confirmation names the other saved series from series 702", a
   await page.request.post("/api/series", { data: { id: 701, bookIds: [501, 503] } });
   await page.request.post("/api/series", { data: { id: 702, bookIds: [501] } });
   await page.goto("/#library");
-  await page.getByRole("button", { name: "Open The Crossing by Bea South" }).click();
+  await openSavedSeries(page, "The Crossing", "Bea South");
   await page.getByRole("button", { name: "Remove series", exact: true }).click();
   await page.getByRole("checkbox", { name: /Also remove selected works/ }).check();
   await expect(page.getByText(/Also in The Crossing \(#701\)/)).toBeVisible();
@@ -94,7 +96,7 @@ test("work-removal confirmation lists audio to delete", async ({ page }) => {
     },
   });
   await page.goto("/#library");
-  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
+  await openSavedSeries(page, "The Crossing", "Ada North");
   await page.getByRole("button", { name: "Remove series", exact: true }).click();
   await page.getByRole("checkbox", { name: /Also remove selected works/ }).check();
   await page.getByRole("checkbox", { name: /Crossing Companion/ }).check();
@@ -121,12 +123,13 @@ test("admin can remove a selected work from the confirmation dialog", async ({ p
     (book: { inLibrary: boolean }) => book.inLibrary,
   );
   await page.goto("/#library");
-  await page.getByRole("button", { name: "Open The Crossing by Ada North" }).click();
+  await openSavedSeries(page, "The Crossing", "Ada North");
   await page.getByRole("button", { name: "Remove series", exact: true }).click();
   await page.getByRole("checkbox", { name: /Also remove selected works/ }).check();
   await page.getByRole("checkbox", { name: /Crossing Companion/ }).check();
   await page.getByRole("button", { name: "Remove series", exact: true }).last().click();
-  await expect(page.getByRole("button", { name: "Open The Crossing by Ada North" })).toHaveCount(0);
+  await showSavedSeries(page);
+  await expect(savedSeriesRow(page, "The Crossing", "Ada North")).toHaveCount(0);
   const after = (await (await page.request.get("/api/books")).json()).filter(
     (book: { inLibrary: boolean }) => book.inLibrary,
   );

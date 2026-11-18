@@ -72,3 +72,17 @@
 .series-page-new > .part-button {
   flex: none;
 }
+/* Beside the Library's list (a desktop, #567; board DesktopSeries.dc.html): the name as a Heading, the intro on its
+   right, wrapping under it when the column is narrow. */
+.series-page-beside-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-4) var(--space-12);
+}
+.series-page-beside-head > h2 {
+  margin: 0;
+}
+.series-page-beside-head > span {
+  color: var(--muted);
+}

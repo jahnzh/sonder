@@ -33,8 +33,10 @@ import {
   Menu,
 } from "lucide-react";
 import { PlayerProvider } from "./player";
-import { SeriesDialog, type SeriesTarget } from "./components/Series";
+import { askSeriesSearch, SeriesDialog, type SeriesTarget } from "./components/Series";
 import { SeriesPage } from "./pages/series-page";
+import { useSavedSeries } from "./pages/library-series";
+import { isSavedSeries, SERIES_CHIP } from "./pages/library-series-model";
 import { ReaderHost } from "./components/Reader";
 import { EBOOK_DEVICE_EVENT } from "./reading";
 import {
@@ -305,6 +307,21 @@ function LibraryApp({
   const [showFavorites, setShowFavorites] = useState(false);
   const [seriesTarget, setSeriesTarget] = useState<SeriesTarget | null>(null);
   const [seriesRevision, setSeriesRevision] = useState(0);
+  // The Library's Series chip (#567): the saved series, read again whenever the Library or a series is shown.
+  const savedSeries = useSavedSeries(
+    seriesRevision,
+    address.route.name === "library" ? "library" : address.route.name === "series" || address.route.name === "series-add" ? `series` : "other",
+  );
+  const seriesRouteId = pageRoute.name === "series" || pageRoute.name === "series-add" ? pageRoute.id : null;
+  // A desktop shows a saved series beside the chip's list (DesktopSeries.dc.html); a series that is not saved stays one
+  // column. Until the list is read the series is taken as saved: the page itself sends one that is not to the Library.
+  const seriesBeside = seriesRouteId !== null && sideBySide && (savedSeries.items === undefined || isSavedSeries(savedSeries.items, seriesRouteId));
+  // On a desktop choosing a series replaces the entry, as choosing a worker beside the Server list does (ADR 0020).
+  const openSeries = (id: number) => address.navigate({ name: "series", id: String(id) }, { replace: sideBySide });
+  const findSeries = () => {
+    askSeriesSearch();
+    navigate("discover");
+  };
   const [importOpen, setImportOpen] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
@@ -730,6 +747,25 @@ function LibraryApp({
   const findEbook = (workId: string) => address.navigate({ name: "get", workId, kind: "ebook" });
   // Get audiobook (#601): the sheet over the page it is opened from, the administrator's.
   const findAudio = (b: Book) => address.navigate({ name: "get", workId: b.workId, kind: "audiobook" });
+  // The Series page (#562), alone or beside the Library's list of saved series (a desktop, #567).
+  const seriesPage = (id: string, beside: boolean) => (
+    <SeriesPage
+      key={id}
+      id={id}
+      admin={admin}
+      online={online}
+      books={books}
+      revision={seriesRevision}
+      beside={beside}
+      onNotSaved={(seriesId) => setSeriesTarget({ id: seriesId, mode: "preview" })}
+      onRemoved={() => {
+        setSeriesRevision((value) => value + 1);
+        // The Library it lands on shows the Series chip (spec #560, "Remove series").
+        setFilter(SERIES_CHIP);
+        void refresh();
+      }}
+    />
+  );
   visible.sort((a, b) =>
     sort === "title"
       ? a.title.localeCompare(b.title)
@@ -1004,20 +1040,8 @@ function LibraryApp({
               <ReadingSyncPage key={pageRoute.workId} workId={pageRoute.workId} admin={admin} />
             ) : pageRoute.name === "sync-details" ? (
               <ReadingSyncDetailsPage key={pageRoute.workId} workId={pageRoute.workId} />
-            ) : pageRoute.name === "series" || pageRoute.name === "series-add" ? (
-              <SeriesPage
-                key={pageRoute.id}
-                id={pageRoute.id}
-                admin={admin}
-                online={online}
-                books={books}
-                revision={seriesRevision}
-                onNotSaved={(id) => setSeriesTarget({ id, mode: "preview" })}
-                onRemoved={() => {
-                  setSeriesRevision((value) => value + 1);
-                  void refresh();
-                }}
-              />
+            ) : seriesRouteId !== null && !seriesBeside ? (
+              seriesPage(seriesRouteId, false)
             ) : pageRoute.name === "book-page" && pageRoute.page === "hardcover" ? <HardcoverPage key={pageRoute.workId} workId={pageRoute.workId} admin={user.role === "admin"} books={books} onChanged={() => void refresh()} /> : ebookPage ? (
               <EbookPage
                 key={ebookPage}
@@ -1026,7 +1050,7 @@ function LibraryApp({
                 onGetEdition={(work) => findEbook(work.workId)}
               />
             ) : <>
-            {page === "library" && (
+            {(page === "library" || seriesBeside) && (
               <LibraryPage
                 admin={user.role === "admin"}
                 visible={visible}
@@ -1045,9 +1069,10 @@ function LibraryApp({
                 loading={loading}
                 setLoading={setLoading}
                 loadError={loadError}
-                seriesRevision={seriesRevision}
-                // A saved series opens its page (#562); the dialog stays for one that is not saved.
-                setSeriesTarget={(target) => (target.mode === "saved" ? address.navigate({ name: "series", id: String(target.id) }) : setSeriesTarget(target))}
+                savedSeries={savedSeries}
+                openSeries={openSeries}
+                findSeries={findSeries}
+                beside={seriesBeside && seriesRouteId !== null ? { id: Number(seriesRouteId), page: seriesPage(seriesRouteId, true) } : null}
                 setDetail={openBookOf}
                 setImportOpen={setImportOpen}
                 favorites={favorites}
