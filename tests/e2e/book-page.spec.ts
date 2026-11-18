@@ -258,13 +258,20 @@ test("a book whose audiobook is downloading: the download's line and bar, Get fo
 test("the series line opens the series; Mark as finished and back", async ({ page }) => {
   const book = await importBook(page, unique("Series book"), false);
   await routeWork(page, book.workId, (work) => ({ ...work, series: [{ id: 4242, name: "The Culture", position: 8, saved: false }] }));
-  await page.route("**/api/series/4242**", (route) => route.fulfill({ status: 404, json: { error: "Series not found." } }));
+  // A series that is not saved (#564): its page, from Hardcover's answer, with Save series; Back returns to the book.
+  await page.route(/\/api\/hardcover\/series\/4242(\?.*)?$/, (route) =>
+    route.fulfill({ json: { id: 4242, name: "The Culture", author: "Iain M. Banks", count: 1, works: [
+      { id: 42428, title: "Look to Windward", position: 8, cover: null, workId: null, owned: false, unreleased: false, needsAdmin: false, selected: true },
+    ] } }));
   await page.goto(address(book.workId));
   const shown = region(page);
   await shown.getByRole("button", { name: "The Culture · Book 8", exact: true }).click();
-  await expect(page.getByRole("dialog")).toBeVisible();
-  await page.keyboard.press("Escape");
+  await expect(page).toHaveURL(/#series\/4242$/);
   await expect(page.getByRole("dialog")).toHaveCount(0);
+  const series = page.getByRole("region", { name: "Series", exact: true });
+  await expect(series.getByRole("button", { name: "Save series", exact: true })).toBeVisible();
+  await series.getByRole("button", { name: "Back to the book", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`#book/${encodeURIComponent(book.workId)}$`));
   const marks: unknown[] = [];
   page.on("request", (request) => {
     if (request.url().endsWith(`/api/works/${encodeURIComponent(book.workId)}/completion`)) marks.push(request.postDataJSON());

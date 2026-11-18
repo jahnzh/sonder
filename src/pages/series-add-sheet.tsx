@@ -1,5 +1,6 @@
-// The Add sheet of a saved series (#563, spec #560 "The Add sheet"; board SeriesAdd.dc.html): `#series/<id>/add`, a
-// full-screen Sheet over the Series page. Close and "Add to library"; the stacked cover, the name and the author; Not
+// The Add sheet of a saved series (#563, spec #560 "The Add sheet"; board SeriesAdd.dc.html), and the Save series sheet
+// of one that is not saved (#564, board SeriesSave.dc.html): `#series/<id>/add`, a full-screen Sheet over the Series
+// page. Close and "Add to library" (or "Save series"); the stacked cover, the name and the author; Not
 // in your library · N as choice rows; For the books you add: the administrator's Get switches, then Preferred
 // language; the button "Add N books" with its note. The words and rules are in series-add-model.ts.
 import { useEffect, useMemo, useState } from "react";
@@ -15,7 +16,7 @@ import { Switch } from "../parts/Switch";
 import { InfoMark } from "../parts/Tooltip";
 import { normalizeSeriesLanguage } from "../series-selection";
 import { tip } from "../tooltip-texts";
-import { seriesAddModel, type SeriesAddManual, type SeriesAddOpening, type SeriesAddSeries } from "./series-add-model";
+import { ADD_SHEET_TITLE, SAVE_SHEET_TITLE, seriesAddModel, type SeriesAddManual, type SeriesAddOpening, type SeriesAddSeries } from "./series-add-model";
 import "./series-add-sheet.css";
 
 /** The Get switches as the administrator last set them on this device; off the first time. */
@@ -45,6 +46,12 @@ const askedFor = new Map<number, number>();
 /** A row's Add: the sheet opens with that book chosen. */
 export function openAddSheet(seriesId: number, bookId: number) {
   askedFor.set(seriesId, bookId);
+  navigate({ name: "series-add", id: String(seriesId) });
+}
+
+/** Save series, on a series that is not saved: the sheet opens with the defaults chosen. */
+export function openSaveSheet(seriesId: number) {
+  askedFor.delete(seriesId);
   navigate({ name: "series-add", id: String(seriesId) });
 }
 
@@ -93,6 +100,8 @@ function StackedCover({ covers }: { covers: (string | null)[] }) {
 type Props = {
   seriesId: number;
   series: SeriesAddSeries | null;
+  /** The series is saved; false for the Save series sheet of a series that is not saved. */
+  saved: boolean;
   admin: boolean;
   online: boolean;
   /** The preferred language; the sheet changes it for the page too. */
@@ -102,7 +111,7 @@ type Props = {
   onAdded: () => void;
 };
 
-export function SeriesAddSheet({ seriesId, series, admin, online, language, onLanguage, onAdded }: Props) {
+export function SeriesAddSheet({ seriesId, series, saved, admin, online, language, onLanguage, onAdded }: Props) {
   const library = useStoredWorksWithPlaces();
   const [opening] = useState(() => openingOf(seriesId));
   useEffect(() => () => void askedFor.delete(seriesId), [seriesId]);
@@ -115,9 +124,9 @@ export function SeriesAddSheet({ seriesId, series, admin, online, language, onLa
   const model = useMemo(
     () =>
       series
-        ? seriesAddModel(series, { library, admin, language, deviceLanguage: deviceLanguage(), opening, manual, getAudio, getEbooks })
+        ? seriesAddModel(series, { saved, library, admin, language, deviceLanguage: deviceLanguage(), opening, manual, getAudio, getEbooks })
         : null,
-    [series, library, admin, language, opening, manual, getAudio, getEbooks],
+    [series, saved, library, admin, language, opening, manual, getAudio, getEbooks],
   );
 
   const add = async () => {
@@ -151,7 +160,7 @@ export function SeriesAddSheet({ seriesId, series, admin, online, language, onLa
   ) : undefined;
 
   return (
-    <Sheet title={model?.title ?? "Add to library"} parent={{ name: "series", id: String(seriesId) }} footer={footer}>
+    <Sheet title={model?.title ?? (saved ? ADD_SHEET_TITLE : SAVE_SHEET_TITLE)} parent={{ name: "series", id: String(seriesId) }} footer={footer}>
       {!model ? (
         <p className="type-label series-add-loading">Loading…</p>
       ) : (

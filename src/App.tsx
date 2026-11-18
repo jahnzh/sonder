@@ -30,7 +30,7 @@ import {
   Menu,
 } from "lucide-react";
 import { PlayerProvider } from "./player";
-import { askSeriesSearch, SeriesDialog, type SeriesTarget } from "./components/Series";
+import { askSeriesSearch } from "./components/Series";
 import { SeriesPage } from "./pages/series-page";
 import { REMOVED_TOAST as SERIES_REMOVED_TOAST } from "./pages/series-remove-model";
 import { useSavedSeries } from "./pages/library-series";
@@ -319,7 +319,6 @@ function LibraryApp({
   // The favourites by work (#577): work ids, read from this account's device database.
   const [favorites, setFavorites] = useState<string[]>([]);
   const [online, setOnline] = useState(navigator.onLine);
-  const [seriesTarget, setSeriesTarget] = useState<SeriesTarget | null>(null);
   const [seriesRevision, setSeriesRevision] = useState(0);
   // The Library's Series chip (#567): the saved series, read again whenever the Library or a series is shown.
   const savedSeries = useSavedSeries(
@@ -553,7 +552,6 @@ function LibraryApp({
     () =>
       onPageLeftByHistory(() => {
         leftByHistory.current++;
-        setSeriesTarget(null);
         setImportOpen(false);
         setSidebarOpen(false);
       }),
@@ -743,7 +741,10 @@ function LibraryApp({
       books={books}
       revision={seriesRevision}
       beside={beside}
-      onNotSaved={(seriesId) => setSeriesTarget({ id: seriesId, mode: "preview" })}
+      onSaved={() => {
+        setSeriesRevision((value) => value + 1);
+        void refresh();
+      }}
       onRemoved={() => {
         setSeriesRevision((value) => value + 1);
         // The Library it lands on shows the Series chip (spec #560, "Remove series").
@@ -968,7 +969,7 @@ function LibraryApp({
                 onPauseSave={pauseSave}
                 onFindAudio={findAudio}
                 onFindEbook={(b) => findEbook(b.workId)}
-                onSeries={(id, saved) => (saved ? address.navigate({ name: "series", id: String(id) }) : setSeriesTarget({ id, mode: "preview" }))}
+                onSeries={(id) => address.navigate({ name: "series", id: String(id) })}
                 onChanged={refresh}
                 onDevice={async () => {
                   await refreshDownloads();
@@ -1034,7 +1035,7 @@ function LibraryApp({
                 notify={notify}
                 torboxConfigured={!!settings?.torboxConfigured}
                 onConnect={openConnections}
-                onSeries={(id) => setSeriesTarget({ id, mode: "preview" })}
+                onSeries={(id) => address.navigate({ name: "series", id: String(id) })}
                 refresh={refresh}
               />
             )}
@@ -1203,10 +1204,6 @@ function LibraryApp({
             </button>
           </div>
         )}
-        <SeriesDialog target={seriesTarget} onClose={() => setSeriesTarget(null)} downloads={downloads} savedEbooks={savedEbooks}
-          offlineEbookEditionIds={offlineEbookEditionIds}
-          canAcquire={user.role === "admin"}
-          onSaved={() => { setSeriesRevision((value) => value + 1); void refresh(); notify("Series saved."); }} />
         <ImportDialog
           onQueued={(shown) => {
             void refresh();

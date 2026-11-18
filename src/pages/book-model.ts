@@ -75,7 +75,7 @@ export function placeLine(work: LibraryWork, deviceChoice: string | null | undef
 
 /**
  * The series line: the work's first series, "The Culture · Book 8"; null without series information. `saved` says
- * whether the user saved it: a saved series opens its Series page (#562), another today's series dialog.
+ * whether the user saved it: both open the Series page (#562, #564).
  */
 export function seriesLine(work: Pick<LibraryWork, "series">): { label: string; id: number | null; saved: boolean } | null {
   const first = work.series[0];

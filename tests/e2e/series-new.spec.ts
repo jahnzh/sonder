@@ -151,15 +151,16 @@ test("adding a book from the series clears the New marks once the page reads the
   await expect(newCard(page)).toBeVisible();
   await expect(bookRow(page, "Crossing Three")).toHaveAccessibleName(/Crossing Three New · Not in your library$/);
 
-  // Add of the new work: today's series dialog in its saved mode, or the Add sheet (#563), with the book chosen.
+  // Add of the new work opens the Add sheet (#563) with the book chosen; adding closes it to the page.
   await bookRow(page, "Crossing Three").getByRole("button", { name: "Add Crossing Three", exact: true }).click();
+  const sheet = page.getByRole("dialog", { name: "Add to library" });
+  await expect(sheet.getByRole("checkbox", { name: "Crossing Three Book 4", exact: true })).toBeChecked();
   const saved = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/series");
-  await page.getByRole("button", { name: /^(Add selected works|Add \d+ books?)$/ }).click();
+  await sheet.getByRole("button", { name: "Add 1 book", exact: true }).click();
   const answer = await saved;
   expect(answer.ok()).toBe(true);
   expect((answer.request().postDataJSON() as { bookIds: number[] }).bookIds).toContain(506);
-  const close = page.getByRole("button", { name: "Close series", exact: true });
-  if (await close.isVisible()) await close.click();
+  await expect(sheet).toHaveCount(0);
 
   // The page reads the series again: no card, no mark; Crossing Three is a book of the library, added once.
   await expect(newCard(page)).toHaveCount(0);
