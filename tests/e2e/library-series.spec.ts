@@ -78,7 +78,7 @@ async function noOverflow(page: Page) {
       .filter((element) => {
         const rect = element.getBoundingClientRect();
         const style = getComputedStyle(element);
-        return rect.width > 0 && rect.right > innerWidth + 1 && style.position !== "fixed" && style.visibility === "visible" && !element.closest(".filter-tabs");
+        return rect.width > 0 && rect.right > innerWidth + 1 && style.position !== "fixed" && style.visibility === "visible" && !element.closest(".library-chips");
       })
       .map((element) => `${element.tagName.toLowerCase()}.${String(element.className).slice(0, 40)}`),
   );
@@ -101,15 +101,16 @@ test("the Series chip lists the saved series with counts and stacked covers; a r
 
   await page.goto("/#library");
   // The old section above the shelf is gone: no list of series until the chip is chosen, no "Hardcover #701", no "Open …".
-  await expect(page.getByRole("tab", { name: "All books", exact: true })).toHaveAttribute("aria-selected", "true");
+  const allChip = page.getByRole("group", { name: "Filter your library" }).getByRole("button", { name: "All", exact: true });
+  await expect(allChip).toHaveAttribute("aria-pressed", "true");
   await expect(savedSeriesList(page)).toHaveCount(0);
   await expect(page.getByText(/Hardcover #70\d/)).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^Open The Crossing/ })).toHaveCount(0);
   await expect(page.getByText("No saved series yet.", { exact: false })).toHaveCount(0);
 
-  // The filter row: Series right after All books, the Chip part.
-  const tabs = page.getByRole("tablist", { name: "Filter your library" }).getByRole("tab");
-  await expect(tabs).toHaveText(["All books", "Series", /^Listening/, "Not started", "Finished", "Downloaded"]);
+  // The filter row: Series right after All, the Chip part (#577: every chip is one, a toggle button).
+  const tabs = page.getByRole("group", { name: "Filter your library" }).getByRole("button");
+  await expect(tabs).toHaveText(["All", "Series", "In progress", "Not started", "Finished", "On device", "Favorites"]);
   expect(await seriesChip(page).evaluate((element) => element.classList.contains("part-chip"))).toBe(true);
   // The Chip part's measures (round, 44 high, 16 inside, Label text), whole inside the filter row.
   const chip = await box(seriesChip(page));
@@ -118,12 +119,12 @@ test("the Series chip lists the saved series with counts and stacked covers; a r
     const style = getComputedStyle(element);
     return [style.paddingLeft, style.paddingRight, style.fontSize, style.borderRadius];
   })).toEqual(["16px", "16px", "14px", "999px"]);
-  const row = await box(page.getByRole("tablist", { name: "Filter your library" }));
+  const row = await box(page.getByRole("group", { name: "Filter your library" }));
   expect(chip.y).toBeGreaterThanOrEqual(row.y);
   expect(chip.y + chip.height).toBeLessThanOrEqual(row.y + row.height);
   await showSavedSeries(page);
-  await expect(seriesChip(page)).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("tab", { name: "All books", exact: true })).toHaveAttribute("aria-selected", "false");
+  await expect(seriesChip(page)).toHaveAttribute("aria-pressed", "true");
+  await expect(allChip).toHaveAttribute("aria-pressed", "false");
 
   // The rows, in the server's order, with its counts; the shelf, its sort and the featured book are not shown.
   const list = savedSeriesList(page);
@@ -175,7 +176,7 @@ test("the Series chip lists the saved series with counts and stacked covers; a r
   await expect(seriesRegion(page).getByText(`Ada North · ${ada.finished} of ${ada.total} finished`, { exact: true })).toBeVisible();
   await page.goBack();
   await expect(page).toHaveURL(/#library$/);
-  await expect(seriesChip(page)).toHaveAttribute("aria-selected", "true");
+  await expect(seriesChip(page)).toHaveAttribute("aria-pressed", "true");
   await expect(adaRow).toBeVisible();
 });
 
@@ -197,7 +198,7 @@ test("Back from a series returns to the chip at its scroll position", async ({ p
   await expect(seriesRegion(page)).toBeVisible();
   await page.goBack();
   await expect(page).toHaveURL(/#library$/);
-  await expect(seriesChip(page)).toHaveAttribute("aria-selected", "true");
+  await expect(seriesChip(page)).toHaveAttribute("aria-pressed", "true");
   await expect.poll(() => page.evaluate(() => scrollY)).toBe(scrolled);
   await expect(row).toBeInViewport();
 });
@@ -220,7 +221,7 @@ test("with no saved series the chip says so, and Find a series opens Discover's 
   // Back returns to the Library with the chip still chosen: it is remembered as the filter is.
   await page.goBack();
   await expect(page).toHaveURL(/#library$/);
-  await expect(seriesChip(page)).toHaveAttribute("aria-selected", "true");
+  await expect(seriesChip(page)).toHaveAttribute("aria-pressed", "true");
   await expect(list.getByText("No saved series", { exact: true })).toBeVisible();
 });
 
@@ -248,7 +249,7 @@ test.describe("on a desktop", () => {
     const series = seriesRegion(page);
     await expect(list).toBeVisible();
     await expect(series).toBeVisible();
-    await expect(seriesChip(page)).toHaveAttribute("aria-selected", "true");
+    await expect(seriesChip(page)).toHaveAttribute("aria-pressed", "true");
     await expect(savedSeriesRow(page, "The Crossing", "Ada North")).toHaveAttribute("aria-current", "true");
     await expect(savedSeriesRow(page, "The Crossing", "Bea South")).not.toHaveAttribute("aria-current", "true");
     // The series is a heading beside the Library's Title, with its intro; there is no back button of its own.

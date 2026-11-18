@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { listenFace, nowPlaying, openListen } from "./now-playing";
+import { playFromLibrary } from "./library-play";
 const serverSpeed = async (page: Page) =>
   (await (await page.request.get("/api/appearance")).json()).playback.speed ??
   null;
@@ -40,7 +41,7 @@ test("the default speed applies once chosen, chapter lengths stay real for a boo
   const id = (await imported.json()).id as string;
   try {
     await page.goto("/");
-    await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+    await playFromLibrary(page, title);
     const pause = page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true });
     await expect(pause).toBeVisible();
     await pause.click();

@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 import { expectTextUncovered, intersects } from "./reader-bands";
 import { openRead } from "./now-playing";
+import { playFromLibrary } from "./library-play";
 // Every message while reading appears in the foot (#591, ADR 0019, spec #586 "Messages in the foot"; boards
 // ReaderUndo, ReaderError, ReaderConflict, ReaderUpdate, ReaderConfirm): the foot's lower row holds the message and
 // keeps Play or Pause at its end, at rest and with the controls shown, and nothing is drawn over the text.
@@ -73,7 +74,7 @@ let plays = true;
 async function openNowPlaying(page: Page, title: string) {
   await instrument(page);
   await page.goto("/");
-  await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+  await playFromLibrary(page, title);
   const pause = page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true });
   plays = await pause.waitFor({ timeout: 8000 }).then(() => true, () => false);
   // Firefox may start and then lose the audio: Pause is pressed only while it is there, and the narration is paused

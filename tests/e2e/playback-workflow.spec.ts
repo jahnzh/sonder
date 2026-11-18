@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 import { listenFace, openAudiobookPage, openListen, openRead } from "./now-playing";
+import { playFromLibrary } from "./library-play";
 
 // Books a test imports get a title unique to the run, so a repeat on the same server finds one
 // "Play <title>" button, and leave the library afterwards, so what a test played does not become
@@ -49,7 +50,7 @@ async function position(page: Page, value: number) {
   }, value);
 }
 async function playAndPause(page: Page, title: string) {
-  await page.getByRole("button", {name:`Play ${title}`,exact:true}).click();
+  await playFromLibrary(page, title);
   const pause=page.locator(".player-dock").getByRole("button",{name:"Pause",exact:true});
   await expect(pause).toBeVisible();
   await pause.click();
@@ -273,7 +274,7 @@ test("playback opens the reader and title page; downloaded sources can be switch
   await page.reload();
   await expect(manager.getByRole("button",{name:"Device copy Marked faulty",exact:true})).toBeVisible();
   await page.locator(".mobile-nav").getByRole("button",{name:"My library",exact:true}).click();
-  await page.getByRole("button",{name:`Play ${title}`,exact:true}).click();
+  await playFromLibrary(page, title);
   await expect(page.locator(".player-dock").getByRole("button",{name:"Pause",exact:true})).toBeVisible();
   await page.locator(".player-dock").getByRole("button",{name:"Pause",exact:true}).click();
   expect((await audioState(page)).src).not.toMatch(/^blob:/);
@@ -322,13 +323,15 @@ test("switching audiobook versions resumes each recording's own checkpoint",asyn
   // The seeded recording leaves the library after the test too (#645).
   imported.push(french.editionId);
   await page.request.post("/api/progress",{data:{recordingId:french.recordingId,trackId:french.trackId,position:42,duration:english.tracks[0].duration,updatedAt:Date.now()}});
-  // The Library still shows one tile per recording: the French one gets a title of its own there.
+  // The French entry gets a title of its own in GET /api/books (the Library shows one tile per work, #577).
   await page.route("**/api/books",async route=>{
     const response=await route.fetch(), all=await response.json();
     for (const b of all) if(b.recordingId===french.recordingId) b.title=`${title} French`;
     // A read the app gave up on meanwhile is already answered.
     await route.fulfill({response,json:all}).catch(()=>{});
   });
+  // The Library has one tile per work (#577): the English recording is the chosen one its Book page's Listen plays.
+  expect((await page.request.put(`/api/works/${encodeURIComponent(english.workId)}/recording`,{data:{recordingId:english.recordingId}})).ok()).toBe(true);
   await page.goto("/");
   await playAndPause(page,title);
   await position(page,210);

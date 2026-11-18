@@ -264,7 +264,7 @@ test("measured against the boards at phone size and on a desktop: rows 56 high, 
   // name the first heading of the series.
   const measure = async (desktop = false) => {
     await expect(books(page)).toBeVisible();
-    await expect(page.getByRole("heading", { level: 1 })).toHaveText([desktop ? "Your library." : "The Crossing"]);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText([desktop ? "Library" : "The Crossing"]);
     await expect(region(page).getByRole("heading", { level: 2 })).toHaveText([...(desktop ? ["The Crossing"] : []), /^Books · \d+$/, "Related works · 1"]);
     const heights = (list: ReturnType<typeof books>) =>
       list.evaluate((element) => [...element.querySelectorAll(".part-book-row")].map((shownRow) => (shownRow as HTMLElement).getBoundingClientRect().height));

@@ -6,6 +6,7 @@ import { createServer, type AddressInfo } from "node:net";
 import { readerFixture } from "../reader-fixture";
 import { installReaderWaitBudget, READER_WAIT_MS, timedWait } from "./timing";
 import { listenFace, nowPlaying, openListen, openRead } from "./now-playing";
+import { playFromLibrary } from "./library-play";
 
 // Per-step expect ceilings are up to 45 s; leave room around history restores.
 installReaderWaitBudget(test);
@@ -82,7 +83,7 @@ async function setPosition(page: Page, position: number) {
 }
 
 async function startPaused(page: Page, title: string) {
-  await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+  await playFromLibrary(page, title);
   const pause = page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true });
   await expect(pause).toBeVisible();
   await pause.click();
@@ -290,7 +291,7 @@ test("the Dexie upgrade retains existing local progress", async ({ page }) => {
   });
   expect(seeded).toEqual({ version: 30, hasHistory: false });
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Your library." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Library", exact: true, level: 1 })).toBeVisible();
   const upgraded = await page.evaluate(async () => {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open("sonder");
@@ -310,15 +311,16 @@ test("the Dexie upgrade retains existing local progress", async ({ page }) => {
   expect(upgraded).toEqual({
     progress: { recordingId: "old-recording", trackId: "old-track", position: 12.5, duration: 300, updatedAt: 12345 },
     hasHistory: true,
-    // db.version(5) added the works table (#528), db.version(6) the keep table (#550), db.version(7) the stored series (#568).
-    version: 70,
+    // db.version(5) added the works table (#528), db.version(6) the keep table (#550), db.version(7) the stored series (#568),
+    // db.version(8) favourites by work (#577).
+    version: 80,
   });
 });
 
 test("expired and excess entries are pruned even for an inactive recording", async ({ page }) => {
   await page.goto("/");
   // The app creates the stores on first open; seeding before that finds none.
-  await expect(page.getByRole("heading", { name: "Your library." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Library", exact: true, level: 1 })).toBeVisible();
   await page.evaluate(async () => {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open("sonder");

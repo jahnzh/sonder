@@ -2,9 +2,10 @@ import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { openAudiobookPage } from "./now-playing";
+import { playFromLibrary } from "./library-play";
 
 test.use({ serviceWorkers: "block" });
-// Each test's work gets a name unique to the run, so a repeat on the same server finds one "Play <title>" button,
+// Each test's work gets a name unique to the run, so a repeat on the same server finds one tile of its title,
 // and leaves the library afterwards with both its recordings, so the book a test played is not the latest played
 // book that the dock and the feature card show the next spec on the server.
 const made: string[] = [];
@@ -89,8 +90,12 @@ async function twoReleases(page: Page, base: string, second: { duration: number;
   return { first, other };
 }
 async function listenAt(page: Page, release: Release, value: number) {
+  // The Library has one tile per work (#577): the release to play is the work's chosen recording, and its Book page's
+  // Listen plays it.
+  expect((await page.request.put(`/api/works/${encodeURIComponent(release.workId)}/recording`, { data: { recordingId: release.recordingId } })).ok()).toBe(true);
+  const work = (await (await page.request.get(`/api/works/${encodeURIComponent(release.workId)}`)).json()) as { title: string };
   await page.goto("/");
-  await page.getByRole("button", { name: `Play ${release.title}`, exact: true }).click();
+  await playFromLibrary(page, work.title);
   const pause = page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true });
   await expect(pause).toBeVisible();
   await pause.click();

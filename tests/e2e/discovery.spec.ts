@@ -31,11 +31,12 @@ test("a manually downloaded ebook can be imported and is a book in the Library a
   await page.screenshot({ path: "artifacts/ebook-browser-import-desktop.png", fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/#library");
-  const book = page.locator(".book-card").filter({
-    has: page.getByRole("button", { name: "A free browser download", exact: true }),
+  // The Library by work (#577): the ebook's tile, with the ebook mark and no audiobook mark.
+  const book = page.locator(".library-tile").filter({
+    has: page.getByRole("button", { name: "About A free browser download", exact: true }),
   });
   await expect(book).toBeVisible();
-  await expect(book).toContainText("No audio yet");
+  await expect(book.getByRole("img")).toHaveAccessibleName("Ebook");
   await page.reload();
   await expect(book).toBeVisible();
   const ebooks = (await (await page.request.get("/api/ebooks")).json()) as { title: string; workId: string }[];

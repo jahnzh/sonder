@@ -5,6 +5,7 @@ import {readFileSync} from "node:fs";
 import {readerFixture} from "../reader-fixture";
 import {skipOnMobile} from "./mobile";
 import {READER_SPEC_TIMEOUT_MS,READER_WAIT_MS} from "./timing";
+import { playFromLibrary } from "./library-play";
 import {openListen,openRead} from "./now-playing";
 // Geometry regression checks for issues #1 (seek/heading alignment) and #2 (reader-first Now Playing), on Now playing's
 // two faces (#593): Listen measured against NowPlaying.dc.html, Read with the reader's head and foot.
@@ -32,7 +33,7 @@ async function importBook(request:APIRequestContext,title:string,withEbook:boole
 async function open(page:Page,browserName:string,title:string,[width,height]:readonly [number,number],face:"listen"|"read"="listen"){
  await page.setViewportSize({width,height});
  await page.goto("/");
- await page.getByRole("button",{name:`Play ${title}`,exact:true}).click();
+ await playFromLibrary(page, title);
  // Headless Firefox/WebKit may refuse to start audio; the layout only needs the book loaded and paused.
  const dock=page.locator(".player-dock");
  await expect(dock.locator(".dock-book")).toContainText(title);

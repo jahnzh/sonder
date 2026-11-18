@@ -4,6 +4,7 @@ import { listenFace, openListen, openRead } from "./now-playing";
 import { readFileSync } from "node:fs";
 import { readerFixture } from "../reader-fixture";
 import { installReaderWaitBudget, READER_WAIT_MS, timedWait } from "./timing";
+import { playFromLibrary } from "./library-play";
 // The service worker would answer the epub.js script request below before page.route sees it.
 test.use({ serviceWorkers: "block" });
 installReaderWaitBudget(test);
@@ -75,7 +76,7 @@ test("lock-screen position state carries the real rate, the chapter list shows t
   const defaultSpeed = String(Number((saved ?? 1).toFixed(2)));
   await instrument(page);
   await page.goto("/");
-  await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+  await playFromLibrary(page, title);
   await expect(
     page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true }),
   ).toBeVisible();

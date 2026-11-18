@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { parseRange } from "../../server/range";
 import { readerFixture } from "../reader-fixture";
 import { openListen, openRead } from "./now-playing";
+import { playFromLibrary } from "./library-play";
 test.use({ serviceWorkers: "block" });
 async function instrument(page: Page) {
   await page.addInitScript(() => {
@@ -56,12 +57,7 @@ test("onscreen, lock-screen and headphone commands seek 30 seconds and persist t
 }) => {
   await instrument(page);
   await page.goto("/");
-  await page
-    .getByRole("button", {
-      name: "Play Alice’s Adventures in Wonderland",
-      exact: true,
-    })
-    .click();
+  await playFromLibrary(page, "Alice’s Adventures in Wonderland");
   await expect(
     page
       .locator(".player-dock")
@@ -164,12 +160,7 @@ test("headphone seeks cross audio files while paused and retain the 30-second of
     await route.fulfill({ response, json: books });
   });
   await page.goto("/");
-  await page
-    .getByRole("button", {
-      name: "Play Alice’s Adventures in Wonderland",
-      exact: true,
-    })
-    .click();
+  await playFromLibrary(page, "Alice’s Adventures in Wonderland");
   await expect(
     page
       .locator(".player-dock")
@@ -239,17 +230,12 @@ test("Space toggles playback across views and arrows skip 30 seconds while ignor
     );
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: "Your library." }),
+    page.getByRole("heading", { name: "Library", exact: true, level: 1 }),
   ).toBeVisible();
   // Space with no audio loaded does nothing and shows no error.
   await page.keyboard.press(" ");
   expect(await paused()).toBe(true);
-  await page
-    .getByRole("button", {
-      name: "Play Alice’s Adventures in Wonderland",
-      exact: true,
-    })
-    .click();
+  await playFromLibrary(page, "Alice’s Adventures in Wonderland");
   await expect(
     page
       .locator(".player-dock")
@@ -285,7 +271,9 @@ test("Space toggles playback across views and arrows skip 30 seconds while ignor
   await page.keyboard.press("ArrowLeft");
   await expect.poll(() => audioPosition(page)).toBeCloseTo(100, 0);
   // Typing in the search box does not toggle playback or seek.
-  const search = page.getByRole("textbox", {
+  // The Library's Search opens its field in place of the Title (#577).
+  await page.getByRole("button", { name: "Search your library", exact: true }).click();
+  const search = page.getByRole("searchbox", {
     name: "Search your library",
     exact: true,
   });
@@ -407,9 +395,7 @@ test("Space toggles playback across views and arrows skip 30 seconds while ignor
       ).ok(),
     ).toBe(true);
     await page.reload();
-    await page
-      .getByRole("button", { name: `Play ${readerTitle}`, exact: true })
-      .click();
+    await playFromLibrary(page, readerTitle);
     await page
       .locator(".player-dock")
       .getByRole("button", { name: "Pause", exact: true })
@@ -444,9 +430,7 @@ test("Space toggles playback across views and arrows skip 30 seconds while ignor
 test("keyboard shortcut sheet opens from Settings, not from Now Playing", async ({ page }) => {
   await instrument(page);
   await page.goto("/");
-  await page
-    .getByRole("button", { name: "Play Alice’s Adventures in Wonderland", exact: true })
-    .click();
+  await playFromLibrary(page, "Alice’s Adventures in Wonderland");
   await openListen(page);
   await expect(page.getByRole("dialog", { name: "Now playing", exact: true }).getByRole("button", { name: "Keyboard shortcuts" })).toHaveCount(0);
   await page.goto("/#settings/playback");

@@ -240,7 +240,6 @@ img {
   margin-top: 43px;
 }
 .main-nav > button,
-.shelf-nav > button,
 .settings-nav {
   display: flex;
   align-items: center;
@@ -258,8 +257,7 @@ img {
   background: var(--surface);
   font-weight: 650;
 }
-.main-nav > button:hover,
-.shelf-nav > button:hover {
+.main-nav > button:hover {
   background: var(--surface);
 }
 .main-nav > button small {
@@ -278,34 +276,6 @@ img {
   border-radius: 50%;
   background: var(--accent);
   margin-left: auto;
-}
-.sidebar-section-label {
-  font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  letter-spacing: 1.3px;
-  font-weight: 600;
-  color: var(--muted);
-  padding: 0 14px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 38px;
-  margin-bottom: 12px;
-}
-.shelf-nav > button {
-  font-size: calc(11px * var(--ui-scale, 1));
-  padding-top: 10px;
-  padding-bottom: 10px;
-  min-height: 39px;
-  gap: 12px;
-}
-.shelf-nav > button small {
-  margin-left: auto;
-  color: var(--muted);
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-}
-.shelf-nav > button.selected {
-  color: var(--muted);
-  background: var(--surface);
 }
 .sidebar-add {
   display: flex;
@@ -528,9 +498,6 @@ img {
   font-weight: 650;
   margin-top: 6px;
 }
-.heading-dot {
-  color: var(--accent);
-}
 .page-heading p {
   font-size: calc(11px * var(--ui-scale, 1));
   color: var(--muted);
@@ -543,22 +510,6 @@ img {
   padding: 9px 13px;
   font-size: max(11px, calc(10px * var(--ui-scale, 1)));
   gap: 7px;
-}
-.feature {
-  background: var(--surface);
-  display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(260px, 1fr);
-  min-height: 293px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  position: relative;
-  overflow: hidden;
-  margin-bottom: 39px;
-}
-.feature-copy {
-  padding: 29px 32px 24px;
-  position: relative;
-  z-index: 2;
 }
 .feature-eyebrow {
   display: flex;
@@ -587,170 +538,6 @@ img {
 .tiny-wave i:nth-child(3) {
   height: 8px;
 }
-.feature-title {
-  text-align: left;
-  margin-top: 15px;
-  max-width: 400px;
-  padding: 0;
-}
-.feature-title h2 {
-  font-family: var(--font-body);
-  font-size: calc(35px * var(--ui-scale, 1));
-  line-height: 1.15;
-  letter-spacing: -0.6px;
-  font-weight: 400;
-  color: var(--muted);
-}
-.feature-title:hover h2 {
-  color: var(--muted);
-}
-.feature-author {
-  font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  color: var(--muted);
-  margin-top: 11px;
-  line-height: 1.7;
-}
-.feature-author > span {
-  margin: 0 5px;
-  color: var(--text);
-}
-.feature-progress-info {
-  font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  color: var(--muted);
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 20px;
-  max-width: 345px;
-}
-.feature-progress-info > span {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-.feature-progress-info i {
-  height: 3px;
-  width: 3px;
-  border-radius: 50%;
-  background: var(--surface);
-}
-.feature-progress {
-  height: 3px;
-  background: var(--surface);
-  max-width: 345px;
-  margin-top: 8px;
-  border-radius: 3px;
-  overflow: hidden;
-}
-.feature-progress > i {
-  display: block;
-  background: var(--surface);
-  height: 100%;
-  border-radius: 3px;
-}
-.feature-actions {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  margin-top: 20px;
-}
-.feature-actions > .button {
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  min-height: 35px;
-  padding: 9px 13px;
-}
-.feature-details {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  color: var(--muted);
-  padding: 0;
-}
-.feature-details:hover {
-  color: var(--muted);
-}
-.feature-source {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  color: var(--muted);
-  margin-top: 15px;
-}
-.feature-art {
-  position: relative;
-  min-height: 293px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  isolation: isolate;
-  background: radial-gradient(
-    ellipse at 55% 55%,
-    color-mix(in srgb, var(--surface) 46%, transparent) 0,
-    transparent 60%
-  );
-}
-.orbit {
-  position: absolute;
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  width: 310px;
-  height: 310px;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%) rotate(-20deg);
-  z-index: -1;
-}
-.orbit-two {
-  width: 385px;
-  height: 385px;
-  top: -38px;
-}
-.orbit-three {
-  width: 460px;
-  height: 460px;
-  top: -76px;
-}
-.hero-book {
-  width: 142px;
-  position: relative;
-  transform: rotate(9deg);
-  box-shadow:
-    7px 12px 14px color-mix(in srgb, var(--shadow) 19%, transparent),
-    2px 2px 4px color-mix(in srgb, var(--shadow) 25%, transparent);
-  transition: transform 0.3s !important;
-  border-radius: 2px;
-  flex-shrink: 0;
-  margin-top: -13px;
-}
-.hero-book:hover {
-  transform: rotate(4deg) translateY(-3px);
-}
-.hero-book > img {
-  width: 100%;
-  border-radius: 2px;
-  position: relative;
-  border-left: 3px solid color-mix(in srgb, var(--border) 19%, transparent);
-  z-index: 1;
-}
-.hero-book > span {
-  position: absolute;
-  top: 3px;
-  left: 5px;
-  width: 100%;
-  height: 99%;
-  background: repeating-linear-gradient(
-    0deg,
-    var(--surface) 0px,
-    var(--surface) 1px,
-    var(--surface) 1px,
-    var(--surface) 3px
-  );
-  border-radius: 3px;
-  z-index: 0;
-  border-right: 1px solid var(--border);
-}
 .feature-art-caption {
   position: absolute;
   bottom: 21px;
@@ -768,26 +555,6 @@ img {
   width: 13px;
   height: 1px;
   background: var(--surface);
-}
-.spark {
-  position: absolute;
-  color: var(--text);
-  font-family: var(--font-body);
-}
-.spark-one {
-  font-size: calc(27px * var(--ui-scale, 1));
-  left: 13%;
-  top: 26%;
-}
-.spark-two {
-  font-size: calc(29px * var(--ui-scale, 1));
-  right: 9%;
-  bottom: 31%;
-}
-.spark-three {
-  font-size: calc(11px * var(--ui-scale, 1));
-  left: 25%;
-  bottom: 21%;
 }
 .section-heading {
   display: flex;
@@ -836,55 +603,6 @@ img {
   box-shadow: 0 1px 3px color-mix(in srgb, var(--shadow) 7%, transparent);
   color: var(--muted);
 }
-.library-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 24px;
-  border-bottom: 1px solid var(--line);
-  height: 39px;
-}
-.filter-tabs {
-  display: flex;
-  align-items: center;
-  gap: 22px;
-  height: 100%;
-  white-space: nowrap;
-  min-width: 0;
-}
-.filter-tabs > button {
-  height: 100%;
-  position: relative;
-  font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  color: var(--muted);
-  padding: 0 0 11px;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-.filter-tabs > button:hover {
-  color: var(--muted);
-}
-.filter-tabs > button.selected {
-  color: var(--muted);
-  font-weight: 650;
-}
-.filter-tabs > button.selected:after {
-  content: "";
-  position: absolute;
-  height: 2px;
-  bottom: -1px;
-  left: 0;
-  right: 0;
-  background: var(--surface);
-}
-.filter-tabs > button > span {
-  font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  background: var(--surface);
-  border-radius: 3px;
-  padding: 0 3px;
-}
 .sort-control {
   display: flex;
   align-items: center;
@@ -917,15 +635,6 @@ img {
   column-gap: 22px;
   row-gap: 32px;
 }
-.book-card {
-  position: relative;
-  min-width: 0;
-}
-.book-cover-container {
-  position: relative;
-  padding: 0 0 0;
-  isolation: isolate;
-}
 .book-cover {
   display: block;
   width: 100%;
@@ -948,108 +657,6 @@ img {
 .book-cover:hover img {
   transform: scale(1.025);
 }
-.book-cover-container:after {
-  content: "";
-  position: absolute;
-  bottom: -8px;
-  left: 7px;
-  right: 7px;
-  height: 10px;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--raised) 10%, transparent);
-  filter: blur(6px);
-  z-index: -1;
-}
-.book-heart {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 27px;
-  height: 27px;
-  background: color-mix(in srgb, var(--surface) 91%, transparent);
-  border-radius: 50%;
-  color: var(--muted);
-  opacity: 0;
-  transform: translateY(3px);
-  transition: all 0.2s !important;
-  box-shadow: 0 1px 5px color-mix(in srgb, var(--shadow) 7%, transparent);
-}
-.book-heart.favorited,
-.book-cover-container:hover .book-heart,
-.book-heart:focus-visible {
-  opacity: 1;
-  transform: translateY(0);
-}
-.book-heart.favorited {
-  color: var(--accent);
-}
-.card-play {
-  position: absolute;
-  bottom: 10px;
-  right: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 33px;
-  height: 33px;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-  color: var(--muted);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--shadow) 13%, transparent);
-  opacity: 0;
-  transform: translateY(4px);
-  transition: all 0.2s !important;
-}
-.card-play svg {
-  margin-left: 2px;
-}
-.card-play.playing svg {
-  margin-left: 0;
-}
-.book-cover-container:hover .card-play,
-.card-play:focus-visible,
-.card-play.playing {
-  opacity: 1;
-  transform: none;
-}
-.offline-badge {
-  position: absolute;
-  bottom: 9px;
-  left: 8px;
-  width: 21px;
-  height: 21px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: color-mix(in srgb, var(--surface) 90%, transparent);
-  border-radius: 50%;
-  color: var(--muted);
-}
-.finished-badge {
-  position: absolute;
-  left: 8px;
-  bottom: 9px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--muted);
-  background: color-mix(in srgb, var(--surface) 95%, transparent);
-  padding: 3px 6px;
-  border-radius: 3px;
-  font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-}
-.book-card-content {
-  padding-top: 13px;
-}
-.book-title-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1px;
-}
 .book-title {
   display: block;
   text-align: left;
@@ -1067,9 +674,6 @@ img {
 .book-title:hover {
   color: var(--accent);
 }
-.book-title-row > .book-title {
-  min-height: 31px;
-}
 .book-author {
   font-size: max(11px, calc(9px * var(--ui-scale, 1)));
   color: var(--muted);
@@ -1079,113 +683,11 @@ img {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.book-meta {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-  line-height: 1.5;
-  color: var(--muted);
-  margin-top: 7px;
-  white-space: nowrap;
-  overflow: hidden;
-}
-.book-meta > i {
-  height: 2px;
-  width: 2px;
-  background: var(--surface);
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.book-status {
-  font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-  color: var(--text);
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 11px;
-  line-height: 1.6;
-}
-.small-dot {
-  height: 3px;
-  width: 3px;
-  border-radius: 50%;
-  background: var(--surface);
-}
-.book-status.finished {
-  color: var(--muted);
-}
-.book-progress {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 11px;
-}
-.book-progress > div {
-  height: 3px;
-  background: var(--surface);
-  border-radius: 3px;
-  flex: 1;
-  overflow: hidden;
-}
-.book-progress i {
-  display: block;
-  height: 100%;
-  background: var(--surface);
-}
-.book-progress > span {
-  font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-  color: var(--muted);
-}
-.book-menu-wrap {
-  position: relative;
-  flex-shrink: 0;
-  margin-top: -2px;
-  margin-right: -6px;
-}
-.book-more.icon-button {
-  width: 20px;
-  height: 22px;
-  color: var(--text);
-  opacity: 0.7;
-}
-.book-more:hover {
-  color: var(--accent);
-}
 .menu-backdrop {
   position: fixed;
   inset: 0;
   z-index: 65;
   cursor: default;
-}
-.book-menu {
-  position: absolute;
-  right: 0;
-  top: 27px;
-  width: 174px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  border-radius: 7px;
-  box-shadow: 0 9px 24px color-mix(in srgb, var(--shadow) 11%, transparent);
-  padding: 5px;
-  z-index: 66;
-}
-.book-menu > button {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 10px 8px;
-  border-radius: 4px;
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  color: var(--muted);
-  text-align: left;
-}
-.book-menu > button:hover {
-  background: var(--surface);
-}
-.book-menu > button:last-child {
-  color: var(--accent);
 }
 .library-footer {
   display: flex;
@@ -1236,59 +738,6 @@ img {
   width: 11px;
   height: 14px;
   transform-origin: left center;
-}
-.books-list {
-  display: flex;
-  flex-direction: column;
-}
-.books-list .book-card {
-  display: flex;
-  gap: 20px;
-  padding: 15px 0;
-  border-bottom: 1px solid var(--line);
-  align-items: center;
-}
-.books-list .book-cover-container {
-  width: 65px;
-  flex-shrink: 0;
-}
-.books-list .book-card-content {
-  flex: 1;
-  padding-top: 0;
-}
-.books-list .book-title-row > .book-title {
-  font-size: calc(14px * var(--ui-scale, 1));
-  min-height: 0;
-}
-.books-list .book-author {
-  font-size: calc(11px * var(--ui-scale, 1));
-}
-.books-list .book-meta {
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-}
-.books-list .book-status {
-  font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-}
-.books-list .book-progress {
-  max-width: 300px;
-}
-.books-list .book-menu-wrap {
-  margin-right: 5px;
-}
-.books-list .book-heart {
-  width: 24px;
-  height: 24px;
-  right: 3px;
-  top: 3px;
-}
-.books-list .card-play {
-  width: 28px;
-  height: 28px;
-  bottom: 5px;
-  right: 5px;
-}
-.books-list .book-title-row {
-  align-items: center;
 }
 .player-dock {
   position: fixed;
@@ -1611,25 +1060,6 @@ input[type="range"]::-moz-range-thumb {
   margin-top: 23px;
   font-size: max(11px, calc(10px * var(--ui-scale, 1)));
   min-height: 36px;
-}
-.book-skeleton > div {
-  aspect-ratio: 500/680;
-  background: var(--surface);
-  border-radius: 3px;
-  animation: skeleton 1.2s infinite alternate;
-}
-.book-skeleton > span {
-  display: block;
-  width: 90%;
-  height: 8px;
-  background: var(--surface);
-  margin-top: 14px;
-  border-radius: 2px;
-}
-.book-skeleton > span:last-child {
-  width: 60%;
-  height: 6px;
-  margin-top: 10px;
 }
 .toast {
   position: fixed;
@@ -2763,19 +2193,6 @@ input[type="range"]::-moz-range-thumb {
   .main-content {
     padding-top: 47px;
   }
-  .feature {
-    min-height: 320px;
-  }
-  .feature-copy {
-    padding: 35px 38px;
-  }
-  .feature-title h2 {
-    font-size: calc(40px * var(--ui-scale, 1));
-    max-width: 430px;
-  }
-  .hero-book {
-    width: 159px;
-  }
   .books-grid {
     gap: 30px;
   }
@@ -2784,15 +2201,6 @@ input[type="range"]::-moz-range-thumb {
   }
   .book-author {
     font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  }
-  .book-meta {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  }
-  .book-status {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  }
-  .feature-art {
-    min-height: 320px;
   }
   .topbar {
     height: 83px;
@@ -2827,31 +2235,6 @@ input[type="range"]::-moz-range-thumb {
   .books-grid {
     gap: 20px;
     grid-template-columns: repeat(5, minmax(0, 1fr));
-  }
-  .book-card:nth-child(6) {
-    display: block;
-  }
-  .feature-copy {
-    padding-left: 26px;
-  }
-  .feature-title h2 {
-    font-size: calc(31px * var(--ui-scale, 1));
-  }
-  .feature {
-    grid-template-columns: minmax(0, 1.5fr) minmax(220px, 1fr);
-  }
-  .hero-book {
-    width: 132px;
-  }
-  .feature-author {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  }
-  .feature-details {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-    gap: 5px;
-  }
-  .feature-actions {
-    gap: 14px;
   }
   .dock-actions {
     gap: 8px;
@@ -2902,10 +2285,6 @@ input[type="range"]::-moz-range-thumb {
     padding: 11px 12px;
     gap: 10px;
   }
-  .shelf-nav > button {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-    gap: 10px;
-  }
   .connection-card {
     padding: 12px 10px;
     gap: 8px;
@@ -2944,70 +2323,14 @@ input[type="range"]::-moz-range-thumb {
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 22px;
   }
-  .feature {
-    grid-template-columns: minmax(0, 1.6fr) minmax(175px, 1fr);
-    min-height: 279px;
-  }
-  .feature-copy {
-    padding: 26px 15px 23px 24px;
-  }
-  .feature-title h2 {
-    font-size: calc(28px * var(--ui-scale, 1));
-    max-width: 310px;
-  }
-  .feature-art {
-    min-height: 279px;
-  }
-  .feature-author {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-  }
-  .feature-progress-info {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-    margin-top: 18px;
-  }
-  .feature-actions {
-    gap: 12px;
-  }
-  .feature-actions > .button {
-    font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-    padding: 8px 10px;
-    min-height: 33px;
-  }
-  .feature-details {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-    gap: 4px;
-  }
-  .feature-details > svg {
-    width: 12px;
-  }
   .feature-eyebrow {
     font-size: max(11px, calc(7px * var(--ui-scale, 1)));
     letter-spacing: 1.3px;
-  }
-  .feature-source {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-  }
-  .hero-book {
-    width: 116px;
-    margin-top: -9px;
-  }
-  .spark-one {
-    left: 3%;
-    font-size: calc(22px * var(--ui-scale, 1));
-  }
-  .spark-two {
-    right: 3%;
   }
   .feature-art-caption {
     font-size: max(11px, calc(5px * var(--ui-scale, 1)));
     letter-spacing: 1.5px;
     gap: 6px;
-  }
-  .filter-tabs {
-    gap: 18px;
-  }
-  .filter-tabs > button {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
   }
   .sort-control {
     min-width: 112px;
@@ -3015,9 +2338,6 @@ input[type="range"]::-moz-range-thumb {
   .sort-control select {
     font-size: max(11px, calc(7px * var(--ui-scale, 1)));
     width: 83px;
-  }
-  .library-toolbar {
-    gap: 8px;
   }
   .dock-actions {
     gap: 10px;
@@ -3121,16 +2441,6 @@ input[type="range"]::-moz-range-thumb {
   .main-nav > button > svg {
     width: 18px;
   }
-  .sidebar-section-label {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-    padding: 0 10px;
-    margin-top: 28px;
-  }
-  .shelf-nav > button {
-    font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-    padding: 10px;
-    gap: 9px;
-  }
   .sidebar-add {
     font-size: max(11px, calc(9px * var(--ui-scale, 1)));
     margin-left: 10px;
@@ -3213,93 +2523,15 @@ input[type="range"]::-moz-range-thumb {
   .page-heading {
     margin-bottom: 24px;
   }
-  .feature {
-    display: block;
-    min-height: 250px;
-  }
-  .feature-copy {
-    padding: 24px 21px;
-    width: 75%;
-  }
-  .feature-title {
-    max-width: 250px;
-  }
-  .feature-title h2 {
-    font-size: calc(27px * var(--ui-scale, 1));
-  }
-  .feature-author {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-    max-width: 240px;
-  }
-  .feature-art {
-    position: absolute;
-    right: -45px;
-    width: 160px;
-    top: 0;
-    bottom: 0;
-    min-height: 100%;
-    opacity: 0.9;
-    z-index: 1;
-  }
-  .hero-book {
-    width: 103px;
-    transform: rotate(13deg);
-    margin-left: 13px;
-  }
   .feature-art-caption {
     display: none;
-  }
-  .feature-copy {
-    z-index: 2;
   }
   .feature-eyebrow {
     font-size: max(11px, calc(6px * var(--ui-scale, 1)));
   }
-  .feature-progress-info {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-    max-width: 220px;
-    margin-top: 15px;
-  }
-  .feature-progress {
-    max-width: 220px;
-  }
-  .feature-actions {
-    gap: 12px;
-    position: relative;
-    margin-top: 18px;
-  }
-  .feature-actions > .button {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-    min-height: 30px;
-    gap: 6px;
-  }
-  .feature-details {
-    font-size: max(11px, calc(6px * var(--ui-scale, 1)));
-  }
-  .feature-source {
-    font-size: max(11px, calc(6px * var(--ui-scale, 1)));
-    margin-top: 14px;
-  }
-  .orbit {
-    opacity: 0.45;
-  }
-  .spark {
-    display: none;
-  }
   .books-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 24px 19px;
-  }
-  .filter-tabs {
-    gap: 12px;
-    overflow: auto;
-    scrollbar-width: none;
-  }
-  .filter-tabs > button {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-  }
-  .filter-tabs > button:last-child {
-    display: none;
   }
   .sort-control {
     min-width: 109px;
@@ -3309,12 +2541,6 @@ input[type="range"]::-moz-range-thumb {
   }
   .book-author {
     font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  }
-  .book-meta {
-    font-size: max(11px, calc(6px * var(--ui-scale, 1)));
-  }
-  .book-status {
-    font-size: max(11px, calc(6px * var(--ui-scale, 1)));
   }
   .section-heading h2 {
     font-size: calc(14px * var(--ui-scale, 1));
@@ -3507,12 +2733,6 @@ input[type="range"]::-moz-range-thumb {
   .offline-banner > svg {
     width: 14px;
   }
-  
-  
-  
-  
-  
-  
 }
 @media (max-width: 650px) {
   :root {
@@ -3568,16 +2788,6 @@ input[type="range"]::-moz-range-thumb {
   .main-nav > button small {
     font-size: max(11px, calc(10px * var(--ui-scale, 1)));
     min-width: 20px;
-  }
-  .sidebar-section-label {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-    padding: 0 14px;
-    margin-top: 33px;
-  }
-  .shelf-nav > button {
-    font-size: calc(11px * var(--ui-scale, 1));
-    padding: 11px 14px;
-    gap: 12px;
   }
   .sidebar-add {
     font-size: calc(11px * var(--ui-scale, 1));
@@ -3692,82 +2902,12 @@ input[type="range"]::-moz-range-thumb {
   .page-heading > .button > svg {
     width: 14px;
   }
-  .feature {
-    border-radius: 8px;
-    margin-bottom: 31px;
-    min-height: 261px;
-  }
-  .feature-copy {
-    padding: 24px 20px;
-    width: 80%;
-  }
-  .feature-title {
-    max-width: 270px;
-    margin-top: 15px;
-  }
-  .feature-title h2 {
-    font-size: calc(30px * var(--ui-scale, 1));
-    line-height: 1.13;
-    max-width: 270px;
-  }
   .feature-eyebrow {
     font-size: max(11px, calc(6.7px * var(--ui-scale, 1)));
     letter-spacing: 1.2px;
   }
-  .feature-author {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-    max-width: 230px;
-    margin-top: 10px;
-  }
-  .feature-progress-info {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-    margin-top: 17px;
-    max-width: 245px;
-  }
-  .feature-actions {
-    margin-top: 18px;
-    gap: 15px;
-  }
-  .feature-actions > .button {
-    font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-    padding: 8px 11px;
-    min-height: 32px;
-  }
-  .feature-actions > .button > svg {
-    width: 12px;
-  }
-  .feature-details {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-    gap: 5px;
-  }
-  .feature-source {
-    font-size: max(11px, calc(6.7px * var(--ui-scale, 1)));
-    margin-top: 14px;
-  }
-  .feature-art {
-    width: 185px;
-    right: -48px;
-    opacity: 0.85;
-  }
-  .hero-book {
-    width: 115px;
-    margin-left: 16px;
-    transform: rotate(13deg) translateY(-6px);
-  }
   .feature-art-caption {
     display: none;
-  }
-  .orbit {
-    opacity: 0.8;
-  }
-  .spark-one {
-    display: block;
-    font-size: calc(16px * var(--ui-scale, 1));
-    left: 1%;
-    top: 21%;
-  }
-  .feature-progress {
-    max-width: 220px;
   }
   .section-heading {
     margin-bottom: 15px;
@@ -3785,24 +2925,6 @@ input[type="range"]::-moz-range-thumb {
     width: 25px;
     height: 24px;
   }
-  .library-toolbar {
-    height: 37px;
-    margin-bottom: 22px;
-    gap: 15px;
-  }
-  .filter-tabs {
-    gap: 20px;
-    overflow: auto;
-    scrollbar-width: none;
-  }
-  .filter-tabs > button {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-    flex-shrink: 0;
-    padding-bottom: 12px;
-  }
-  .filter-tabs > button:last-child {
-    display: flex;
-  }
   .sort-control {
     display: none;
   }
@@ -3814,70 +2936,9 @@ input[type="range"]::-moz-range-thumb {
     font-size: max(11px, calc(10px * var(--ui-scale, 1)));
     line-height: 1.5;
   }
-  .book-title-row > .book-title {
-    min-height: 30px;
-  }
-  .book-card-content {
-    padding-top: 12px;
-  }
   .book-author {
     font-size: max(11px, calc(8px * var(--ui-scale, 1)));
     margin-top: 4px;
-  }
-  .book-meta {
-    font-size: max(11px, calc(6.5px * var(--ui-scale, 1)));
-    gap: 4px;
-    margin-top: 6px;
-  }
-  .book-status {
-    font-size: max(11px, calc(6.5px * var(--ui-scale, 1)));
-    margin-top: 9px;
-  }
-  .book-menu-wrap {
-    margin-right: -4px;
-  }
-  .book-more.icon-button {
-    width: 16px;
-    height: 21px;
-  }
-  .book-more > svg {
-    width: 14px;
-  }
-  .book-heart {
-    opacity: 1;
-    transform: none;
-    width: 23px;
-    height: 23px;
-    right: 6px;
-    top: 6px;
-    background: color-mix(in srgb, var(--surface) 79%, transparent);
-  }
-  .book-heart > svg {
-    width: 13px;
-  }
-  .card-play {
-    opacity: 1;
-    transform: none;
-    width: 28px;
-    height: 28px;
-    right: 7px;
-    bottom: 7px;
-    background: color-mix(in srgb, var(--surface) 87%, transparent);
-  }
-  .card-play > svg {
-    width: 14px;
-  }
-  .offline-badge {
-    width: 18px;
-    height: 18px;
-    left: 6px;
-    bottom: 8px;
-  }
-  .book-progress {
-    gap: 5px;
-  }
-  .book-progress > span {
-    font-size: max(11px, calc(6px * var(--ui-scale, 1)));
   }
   .library-footer {
     font-size: max(11px, calc(8px * var(--ui-scale, 1)));
@@ -4092,13 +3153,6 @@ input[type="range"]::-moz-range-thumb {
     margin-right: -6px;
   }
 
-  .book-menu {
-    width: 167px;
-  }
-  .book-menu > button {
-    font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-    padding: 11px 8px;
-  }
   .full-seek {
     margin-top: 19px;
   }
@@ -4361,52 +3415,6 @@ input[type="range"]::-moz-range-thumb {
   .magnet-form > .button {
     font-size: max(11px, calc(10px * var(--ui-scale, 1)));
   }
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  .books-list .book-card {
-    gap: 17px;
-    padding: 15px 0;
-  }
-  .books-list .book-cover-container {
-    width: 61px;
-  }
-  .books-list .book-title-row > .book-title {
-    font-size: calc(12px * var(--ui-scale, 1));
-  }
-  .books-list .book-author {
-    font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  }
-  .books-list .book-meta {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  }
-  .books-list .book-status {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  }
-  .books-list .card-play {
-    width: 25px;
-    height: 25px;
-    right: 4px;
-    bottom: 5px;
-  }
-  .books-list .book-heart {
-    width: 20px;
-    height: 20px;
-    right: 4px;
-    top: 5px;
-  }
-  .books-list .book-heart > svg {
-    width: 11px;
-  }
 }
 @media (max-width: 390px) {
   .main-content {
@@ -4440,45 +3448,9 @@ input[type="range"]::-moz-range-thumb {
   .page-heading p {
     font-size: max(11px, calc(9px * var(--ui-scale, 1)));
   }
-  .feature-title h2 {
-    font-size: calc(27px * var(--ui-scale, 1));
-    max-width: 230px;
-  }
-  .feature-copy {
-    padding-left: 18px;
-    width: 81%;
-  }
-  .feature-art {
-    right: -57px;
-    opacity: 0.72;
-  }
-  .feature-details {
-    font-size: max(11px, calc(6px * var(--ui-scale, 1)));
-    gap: 4px;
-  }
-  .feature-actions {
-    gap: 10px;
-  }
   .feature-eyebrow {
     font-size: max(11px, calc(6px * var(--ui-scale, 1)));
     letter-spacing: 1px;
-  }
-  .feature-author {
-    font-size: max(11px, calc(6px * var(--ui-scale, 1)));
-    max-width: 213px;
-  }
-  .feature-progress-info {
-    font-size: max(11px, calc(6.5px * var(--ui-scale, 1)));
-  }
-  .feature-source {
-    font-size: max(11px, calc(6px * var(--ui-scale, 1)));
-  }
-  .feature-actions > .button {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-    padding: 8px 9px;
-  }
-  .feature {
-    min-height: 249px;
   }
   .books-grid {
     column-gap: 13px;
@@ -4489,13 +3461,6 @@ input[type="range"]::-moz-range-thumb {
   .book-author {
     font-size: max(11px, calc(7px * var(--ui-scale, 1)));
   }
-  .book-meta {
-    font-size: max(11px, calc(5.5px * var(--ui-scale, 1)));
-    gap: 3px;
-  }
-  .book-status {
-    font-size: max(11px, calc(5.5px * var(--ui-scale, 1)));
-  }
   .library-footer {
     font-size: max(11px, calc(7px * var(--ui-scale, 1)));
     gap: 10px;
@@ -4503,12 +3468,6 @@ input[type="range"]::-moz-range-thumb {
   .library-footer > button {
     font-size: max(11px, calc(6px * var(--ui-scale, 1)));
     gap: 3px;
-  }
-  .filter-tabs {
-    gap: 17px;
-  }
-  .filter-tabs > button {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
   }
   .main-footer {
     padding-left: 18px;
@@ -4595,7 +3554,6 @@ input[type="range"]::-moz-range-thumb {
   .import-fields input {
     font-size: max(11px, calc(8px * var(--ui-scale, 1)));
   }
-  
 }
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -4634,7 +3592,6 @@ body {
   color: var(--muted);
 }
 .main-nav > button,
-.shelf-nav > button,
 .settings-nav {
   color: var(--muted);
 }
@@ -4643,23 +3600,12 @@ body {
   color: var(--text);
   background: var(--raised);
 }
-.main-nav > button:hover,
-.shelf-nav > button:hover {
+.main-nav > button:hover {
   background: var(--raised);
 }
 .main-nav > button small {
   color: var(--text);
   border-color: var(--border);
-  background: var(--raised);
-}
-.sidebar-section-label {
-  color: var(--muted);
-}
-.shelf-nav > button small {
-  color: var(--muted);
-}
-.shelf-nav > button.selected {
-  color: var(--text);
   background: var(--raised);
 }
 .sidebar-add {
@@ -4742,9 +3688,6 @@ body {
 .page-heading h1 {
   color: var(--text);
 }
-.heading-dot {
-  color: var(--accent);
-}
 .button.primary {
   color: var(--text);
   background: var(--accent-soft);
@@ -4786,80 +3729,17 @@ body {
   color: var(--text);
   background: color-mix(in srgb, var(--raised) 47%, transparent);
 }
-.feature {
-  background: linear-gradient(
-    110deg,
-    var(--raised) 0%,
-    var(--raised) 48%,
-    var(--raised) 100%
-  );
-  border-color: var(--border);
-}
-.feature-title h2 {
-  color: var(--text);
-}
-.feature-title:hover h2 {
-  color: var(--text);
-}
 .feature-eyebrow {
   color: var(--text);
 }
 .tiny-wave i {
   background: var(--surface);
 }
-.feature-author {
-  color: var(--text);
-}
-.feature-author > span {
-  color: var(--muted);
-}
-.feature-progress-info {
-  color: var(--text);
-}
-.feature-progress-info i {
-  background: var(--surface);
-}
-.feature-progress {
-  background: var(--surface);
-}
-.feature-progress > i {
-  background: var(--surface);
-}
-.feature-details {
-  color: var(--text);
-}
-.feature-details:hover {
-  color: var(--text);
-}
-.feature-source {
-  color: var(--text);
-}
-.feature-art {
-  background: radial-gradient(
-    ellipse at 55% 55%,
-    color-mix(in srgb, var(--surface) 16%, transparent) 0,
-    transparent 65%
-  );
-}
-.orbit {
-  border-color: color-mix(in srgb, var(--border) 38%, transparent);
-}
-.spark {
-  color: var(--text);
-}
 .feature-art-caption {
   color: var(--muted);
 }
 .feature-art-caption > span {
   background: var(--surface);
-}
-.hero-book {
-  box-shadow:
-    9px 17px 19px color-mix(in srgb, var(--shadow) 36%, transparent),
-    2px 3px 5px color-mix(in srgb, var(--shadow) 31%, transparent);
-}
-.hero-book > span {
-  filter: brightness(0.65);
 }
 .section-heading h2 {
   color: var(--text);
@@ -4878,23 +3758,6 @@ body {
   background: var(--raised);
   color: var(--text);
   box-shadow: 0 1px 4px color-mix(in srgb, var(--shadow) 13%, transparent);
-}
-.filter-tabs > button {
-  color: var(--muted);
-  font-size: calc(11px * var(--ui-scale, 1));
-}
-.filter-tabs > button:hover {
-  color: var(--text);
-}
-.filter-tabs > button.selected {
-  color: var(--text);
-}
-.filter-tabs > button.selected:after {
-  background: var(--surface);
-}
-.filter-tabs > button > span {
-  background: var(--raised);
-  color: var(--text);
 }
 .sort-control,
 .sort-control select {
@@ -4915,9 +3778,6 @@ body {
   color: var(--text);
   font-size: calc(13px * var(--ui-scale, 1));
 }
-.book-title-row > .book-title {
-  min-height: 39px;
-}
 .book-title:hover {
   color: var(--accent);
 }
@@ -4925,76 +3785,11 @@ body {
   font-size: calc(11px * var(--ui-scale, 1));
   color: var(--muted);
 }
-.book-meta {
-  font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  color: var(--muted);
-}
-.book-meta > i {
-  background: var(--surface);
-}
-.book-status {
-  font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  color: var(--muted);
-}
-.book-status .small-dot {
-  background: var(--surface);
-}
-.book-status.finished {
-  color: var(--text);
-}
-.book-progress > div {
-  background: var(--raised);
-}
-.book-progress i {
-  background: var(--surface);
-}
-.book-progress > span {
-  color: var(--text);
-  font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-}
 .book-cover {
   background: var(--raised);
   box-shadow:
     0 4px 10px color-mix(in srgb, var(--shadow) 20%, transparent),
     0 1px 2px color-mix(in srgb, var(--shadow) 20%, transparent);
-}
-.book-cover-container:after {
-  background: color-mix(in srgb, var(--background) 27%, transparent);
-}
-.book-heart {
-  background: color-mix(in srgb, var(--raised) 87%, transparent);
-  color: var(--text);
-}
-.book-heart.favorited {
-  background: color-mix(in srgb, var(--accent-soft) 90%, transparent);
-  color: var(--accent);
-}
-.card-play {
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-  color: var(--muted);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--shadow) 33%, transparent);
-}
-.offline-badge,
-.finished-badge {
-  background: color-mix(in srgb, var(--raised) 92%, transparent);
-  color: var(--text);
-}
-.book-more.icon-button {
-  color: var(--muted);
-}
-.book-menu {
-  background: var(--raised);
-  border-color: var(--border);
-  box-shadow: 0 7px 30px color-mix(in srgb, var(--shadow) 33%, transparent);
-}
-.book-menu > button {
-  color: var(--text);
-}
-.book-menu > button:hover {
-  background: var(--raised);
-}
-.book-menu > button:last-child {
-  color: var(--accent);
 }
 .library-footer {
   color: var(--muted);
@@ -5014,9 +3809,6 @@ body {
 }
 .main-footer .brand-mark i {
   background: var(--accent-soft);
-}
-.books-list .book-title-row > .book-title {
-  color: var(--text);
 }
 .player-dock {
   background: color-mix(in srgb, var(--surface) 96%, transparent);
@@ -5111,12 +3903,6 @@ input[type="range"]::-moz-range-thumb {
 }
 .empty-state p {
   color: var(--muted);
-}
-.book-skeleton > div {
-  background: var(--raised);
-}
-.book-skeleton > span {
-  background: var(--raised);
 }
 .toast {
   background: var(--raised);
@@ -5537,19 +4323,6 @@ input[type="range"]::-moz-range-thumb {
   .book-author {
     font-size: max(11px, calc(10px * var(--ui-scale, 1)));
   }
-  .book-meta,
-  .book-status {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  }
-  .book-title-row > .book-title {
-    min-height: 36px;
-  }
-  .filter-tabs {
-    gap: 16px;
-  }
-  .filter-tabs > button {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  }
   .sort-control,
   .sort-control select {
     font-size: max(11px, calc(9px * var(--ui-scale, 1)));
@@ -5577,12 +4350,6 @@ input[type="range"]::-moz-range-thumb {
   }
 }
 @media (max-width: 800px) {
-  .filter-tabs {
-    gap: 14px;
-  }
-  .filter-tabs > button {
-    font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  }
   .sort-control {
     display: none;
   }
@@ -5662,100 +4429,16 @@ input[type="range"]::-moz-range-thumb {
     padding: 9px 11px;
     min-height: 36px;
   }
-  .feature-copy {
-    padding-top: 25px;
-    padding-bottom: 24px;
-  }
   .feature-eyebrow {
     font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-  }
-  .feature-author {
-    font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-    max-width: 224px;
-    line-height: 1.8;
-  }
-  .feature-title h2 {
-    font-size: calc(29px * var(--ui-scale, 1));
-  }
-  .feature-progress-info {
-    font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-    max-width: 245px;
-    line-height: 1.6;
-  }
-  .feature-actions > .button {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-    min-height: 35px;
-  }
-  .feature-details {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  }
-  .feature-source {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  }
-  .feature-art {
-    opacity: 0.56;
-    right: -60px;
-    width: 190px;
-  }
-  .hero-book {
-    width: 117px;
-  }
-  .feature {
-    min-height: 283px;
-  }
-  .feature-title {
-    max-width: 265px;
-  }
-  .feature-actions {
-    gap: 13px;
-  }
-  .feature-source {
-    margin-top: 17px;
   }
   .book-title {
     font-size: calc(11px * var(--ui-scale, 1));
     line-height: 1.5;
   }
-  .book-title-row > .book-title {
-    min-height: 33px;
-  }
   .book-author {
     font-size: max(11px, calc(9px * var(--ui-scale, 1)));
     color: var(--text);
-  }
-  .book-meta {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-    flex-wrap: wrap;
-    gap: 4px;
-    white-space: normal;
-    max-height: 28px;
-    min-height: 13px;
-    color: var(--muted);
-  }
-  .book-status {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-    margin-top: 10px;
-    color: var(--muted);
-  }
-  .book-progress > span {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  }
-  .filter-tabs {
-    gap: 22px;
-  }
-  .filter-tabs > button {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-    padding-bottom: 12px;
-  }
-  .filter-tabs > button:last-child {
-    display: flex;
-  }
-  .library-toolbar {
-    height: 40px;
-  }
-  .filter-tabs {
-    overflow: auto;
-    scrollbar-width: none;
   }
   .library-footer {
     font-size: max(11px, calc(9px * var(--ui-scale, 1)));
@@ -6016,51 +4699,11 @@ input[type="range"]::-moz-range-thumb {
   .queue-empty {
     font-size: calc(12px * var(--ui-scale, 1));
   }
-  .books-list .book-title-row > .book-title {
-    font-size: calc(14px * var(--ui-scale, 1));
-  }
-  .books-list .book-author {
-    font-size: calc(11px * var(--ui-scale, 1));
-  }
-  .books-list .book-meta,
-  .books-list .book-status {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  }
-  .books-list .book-title-row > .book-title {
-    min-height: 0;
-  }
-  
-  
-  
-  
 }
 @media (max-width: 390px) {
   .page-heading > .button {
     font-size: max(11px, calc(9px * var(--ui-scale, 1)));
     padding: 8px;
-  }
-  .feature-title h2 {
-    font-size: calc(27px * var(--ui-scale, 1));
-  }
-  .feature-author {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-    max-width: 207px;
-  }
-  .feature-progress-info {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  }
-  .feature-actions > .button {
-    font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  }
-  .feature-details {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-  }
-  .feature-source {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-  }
-  .feature-art {
-    right: -70px;
-    opacity: 0.4;
   }
   .dock-book strong {
     font-size: max(11px, calc(10px * var(--ui-scale, 1)));
@@ -6071,10 +4714,6 @@ input[type="range"]::-moz-range-thumb {
   }
   .book-title {
     font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  }
-  .book-meta,
-  .book-status {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
   }
   .page-settings .page-heading h1 {
     font-size: calc(28px * var(--ui-scale, 1));
@@ -6169,14 +4808,6 @@ input[type="range"]::-moz-range-thumb {
   .mobile-nav > button {
     min-height: 48px;
   }
-  .card-play {
-    width: 32px;
-    height: 32px;
-  }
-  .book-heart {
-    width: 26px;
-    height: 26px;
-  }
 }
 @media (max-width: 650px) {
   .main-content {
@@ -6191,59 +4822,6 @@ input[type="range"]::-moz-range-thumb {
   .page-heading p {
     font-size: calc(11px * var(--ui-scale, 1));
   }
-  .feature {
-    min-height: 242px;
-    margin-bottom: 29px;
-  }
-  .feature-copy {
-    padding: 21px 18px;
-    width: 82%;
-  }
-  .feature-title {
-    margin-top: 12px;
-    max-width: 250px;
-  }
-  .feature-title h2 {
-    font-size: calc(25px * var(--ui-scale, 1));
-    line-height: 1.12;
-    max-width: 250px;
-  }
-  .feature-author {
-    margin-top: 8px;
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-    line-height: 1.6;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 230px;
-  }
-  .feature-progress-info {
-    margin-top: 13px;
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  }
-  .feature-actions {
-    margin-top: 15px;
-    gap: 14px;
-  }
-  .feature-actions > .button {
-    min-height: 33px;
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  }
-  .feature-source {
-    margin-top: 14px;
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-  }
-  .feature-details {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  }
-  .feature-art {
-    right: -57px;
-    width: 180px;
-    opacity: 0.54;
-  }
-  .hero-book {
-    width: 108px;
-  }
   .feature-eyebrow {
     font-size: max(11px, calc(7px * var(--ui-scale, 1)));
   }
@@ -6254,34 +4832,8 @@ input[type="range"]::-moz-range-thumb {
   .discovery-sources > button {
     font-size: calc(11px * var(--ui-scale, 1));
   }
-  .library-toolbar {
-    margin-bottom: 21px;
-  }
-  .book-title-row > .book-title {
-    min-height: 33px;
-  }
 }
 @media (max-width: 390px) {
-  .feature-title h2 {
-    font-size: calc(24px * var(--ui-scale, 1));
-  }
-  .feature-author {
-    max-width: 204px;
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-  }
-  .feature-actions {
-    gap: 11px;
-  }
-  .feature-actions > .button {
-    font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  }
-  .feature-details {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-  }
-  .feature-art {
-    right: -65px;
-    opacity: 0.44;
-  }
   .discovery-sources > button {
     font-size: max(11px, calc(10px * var(--ui-scale, 1)));
   }
@@ -6440,20 +4992,6 @@ input[type="range"]::-moz-range-thumb {
   color: var(--muted);
   margin-top: 17px;
   line-height: 1.8;
-}
-.hardcover-book-label {
-  font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  color: var(--text);
-  margin-top: 7px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.hardcover-series-label {
-  font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  color: var(--muted);
-  line-height: 1.8;
-  margin-top: 5px;
 }
 
 .sr-only {
@@ -6642,10 +5180,6 @@ input[type="range"]::-moz-range-thumb {
   }
   .hardcover-permissions {
     font-size: calc(11px * var(--ui-scale, 1));
-  }
-  .hardcover-book-label,
-  .hardcover-series-label {
-    font-size: max(11px, calc(9px * var(--ui-scale, 1)));
   }
 }
 .keyboard-shortcuts { display: grid; gap: 10px; margin: 0; }

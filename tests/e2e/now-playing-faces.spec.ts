@@ -6,6 +6,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
+import { playFromLibrary } from "./library-play";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -67,7 +68,7 @@ const seekAudio = (page: Page, value: number) =>
 
 /** Plays the book from the Library and pauses it in the mini player. */
 async function playAndPause(page: Page, title: string) {
-  await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+  await playFromLibrary(page, title);
   const pause = page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true });
   await expect(pause).toBeVisible();
   await pause.click();
