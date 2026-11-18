@@ -225,6 +225,10 @@
   .now-playing-listen[data-layout="desktop"] .now-playing-switch {
     margin-right: auto;
   }
+  /* Close as Read's head draws it (DesktopNowPlaying.dc.html): no ground; the book's page keeps its own. */
+  .now-playing-listen[data-layout="desktop"] .part-button.now-playing-close {
+    background: transparent;
+  }
   .now-playing-face > .now-playing-head {
     height: 60px;
     box-sizing: border-box;
