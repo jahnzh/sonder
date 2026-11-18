@@ -12,8 +12,10 @@ import * as s from "./schema.ts";
 import { getSecret, torbox } from "./services.ts";
 import { addTorrent, getTorrent, transmission } from "./transmission.ts";
 import { getTorrentHealth } from "./torrent-health.ts";
+import { getWorkMediaState, trackWorkMediaState } from "./work-media-state.ts";
 import {
   ACTIVE_ACQUISITION_STATUSES,
+  isActiveAcquisitionStatus,
   isFinishedAcquisitionStatus,
   setAcquisitionStatus,
   startAcquisitionRecord,
@@ -491,3 +493,125 @@ export const acquisitionsLoop: BackgroundProcess = {
   pausedBy: "acquisitions",
   tick: refreshQueue,
 };
+
+/** The error a replaced download of the user's own is marked with (spec #600, "Replacing the download on its way"). */
+export const REPLACED_ERROR = "Replaced by a new recording.";
+
+/**
+ * The user's download for the work that is still on its way: the acquisition behind the work's media state while it
+ * is queued (ADR 0011), or null. A work with playable audio is never queued, so a second recording replaces nothing.
+ */
+export function activeWorkAcquisition(userId: number, workId: string) {
+  const state = getWorkMediaState(userId, workId);
+  if (state?.state !== "queued" || !state.acquisitionId) return null;
+  const job = db
+    .select()
+    .from(s.acquisitions)
+    .where(eq(s.acquisitions.id, state.acquisitionId))
+    .get();
+  if (!job || !isActiveAcquisitionStatus(job.status)) return null;
+  return job;
+}
+
+export type ReplacePreviousResult =
+  | { action: "skipped_same_hash" }
+  | { action: "stopped_local" }
+  | { action: "detached_shared" }
+  | { action: "detached_torbox"; note: string };
+
+/** Detach or stop the caller's previous acquisition after a new one has started. */
+export async function replacePreviousAcquisition(
+  userId: number,
+  previousAcquisitionId: string,
+  newMagnet: string,
+): Promise<ReplacePreviousResult> {
+  const previous = db
+    .select()
+    .from(s.acquisitions)
+    .where(eq(s.acquisitions.id, previousAcquisitionId))
+    .get();
+  if (!previous) return { action: "skipped_same_hash" };
+  const newHash = magnetHash(newMagnet);
+  if (previous.hash === newHash) return { action: "skipped_same_hash" };
+
+  const users = db
+    .select()
+    .from(s.userAcquisitions)
+    .where(eq(s.userAcquisitions.acquisitionId, previousAcquisitionId))
+    .all();
+  const shared =
+    users.length !== 1 ||
+    users[0].userId !== userId ||
+    users.some((row) => row.userId !== userId);
+
+  if (shared) {
+    db.delete(s.userAcquisitions)
+      .where(
+        and(
+          eq(s.userAcquisitions.userId, userId),
+          eq(s.userAcquisitions.acquisitionId, previousAcquisitionId),
+        ),
+      )
+      .run();
+    if (previous.workId) trackWorkMediaState(userId, previous.workId);
+    return { action: "detached_shared" };
+  }
+
+  if (previous.backend === "torbox") {
+    db.delete(s.userAcquisitions)
+      .where(
+        and(
+          eq(s.userAcquisitions.userId, userId),
+          eq(s.userAcquisitions.acquisitionId, previousAcquisitionId),
+        ),
+      )
+      .run();
+    return {
+      action: "detached_torbox",
+      note:
+        "The previous TorBox download was not cancelled upstream; this account no longer tracks it.",
+    };
+  }
+
+  db.delete(s.userAcquisitions)
+    .where(
+      and(
+        eq(s.userAcquisitions.userId, userId),
+        eq(s.userAcquisitions.acquisitionId, previousAcquisitionId),
+      ),
+    )
+    .run();
+  if (!isFinishedAcquisitionStatus(previous.status)) {
+    try {
+      await transmission("torrent-stop", { ids: [previous.hash] });
+    } catch (error) {
+      // Best effort: the acquisition is marked replaced whatever the client says; the refresh loop skips it.
+      console.warn(`Stopping replaced torrent ${previous.hash} failed: ${(error as Error).message}`);
+    }
+  }
+  setAcquisitionStatus(previousAcquisitionId, "error", {
+    error: REPLACED_ERROR,
+    updatedAt: Date.now(),
+  });
+  return { action: "stopped_local" };
+}
+
+/**
+ * Get a recording for a work and, when asked to (`replaceActive`), replace the user's download for that work that is
+ * still on its way: the new acquisition starts first, then the previous one is replaced. Without the flag, without a
+ * work or without a download on its way this is `acquire` as it is. The answer gains `replaced` (the action) only when
+ * something was replaced; an answer in `error` replaces nothing.
+ */
+export async function acquireReplacing(
+  magnet: string,
+  metadata: Parameters<typeof acquire>[1] & { replaceActive?: boolean },
+  acquireFn: typeof acquire = acquire,
+): Promise<Acquisition & { replaced?: Exclude<ReplacePreviousResult["action"], "skipped_same_hash"> }> {
+  const { replaceActive, ...rest } = metadata;
+  const userId = rest.userId ?? 1;
+  const previous = replaceActive && rest.workId ? activeWorkAcquisition(userId, rest.workId) : null;
+  const job = await acquireFn(magnet, rest);
+  if (!previous || job.status === "error") return job;
+  const result = await replacePreviousAcquisition(userId, previous.id, magnet);
+  return result.action === "skipped_same_hash" ? job : { ...job, replaced: result.action };
+}

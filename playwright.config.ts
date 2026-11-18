@@ -123,6 +123,8 @@ const desktopProjects = [
               /(^|\/)series-add\.spec\.ts$/,
               // The New mark on a series and Dismiss (#565).
               /(^|\/)series-new\.spec\.ts$/,
+              // The line under Get this recording and replacing the download on its way (#603).
+              /(^|\/)get-audiobook-line\.spec\.ts$/,
               // The Get ebook sheet (#604).
               /(^|\/)get-ebook\.spec\.ts$/,
               // Import from this device into the book, from both Get sheets (#605).

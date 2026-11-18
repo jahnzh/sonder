@@ -118,6 +118,11 @@
   color: var(--muted);
   text-align: center;
 }
+/* The torrent client's own message when a recording would need it and it is not working (#603). */
+.get-sheet-line.get-sheet-line-failed {
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
 /* The language beside the field (#602): a filled 44 high button with the language's name and a chevron. */
 .get-sheet-language {
   flex: none;
