@@ -364,6 +364,23 @@ export function goBack(fallback?: Route) {
   else navigate(parent(), { replace: true });
 }
 /**
+ * Closes a sheet and the sheet it was opened over (the magnet sheet over Get audiobook, #606) to the page under
+ * both: Back past the two entries when the app made them, so Back on that page reopens neither; when the sheet
+ * under lies behind but nothing of the app's behind it, back to it and `page` in its place; when no sheet of the
+ * app lies behind (a link), `page` in place of this entry.
+ */
+export function closeSheets(page: Route) {
+  const entry = ensure();
+  if (pending) return;
+  const under = entry.depth > 0 && entry.from && coversPage(entry.from);
+  if (!under) navigate(page, { replace: true });
+  else if (entry.depth >= 2) traverse(-2, () => replaceAtStart(page));
+  else {
+    traverse(-1, () => replaceAtStart(page));
+    afterPending(() => navigate(page, { replace: true }));
+  }
+}
+/**
  * Closes the page that shows `route` (the reader, #590): back as goBack, but only while the current entry still
  * shows it. A close heard after its Back has landed (a kept-mounted dialog told of a focus outside it, with the
  * route of the render before) then moves nothing, rather than going a second step back.

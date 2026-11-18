@@ -664,3 +664,50 @@ test("an older build's entry behind names no address: the back button names the 
   nav.goBack();
   await until(() => browser.url.hash === "#discover", "#discover");
 });
+
+// Paste a magnet link over Get audiobook (#606): after Get this recording both sheets close to the page under them.
+const MAGNET = { name: "get-magnet", workId: "w1" } as const;
+const BOOK = { name: "book", workId: "w1" } as const;
+test("closing the magnet sheet and Get under it goes back past both entries, so Back on the book reopens neither", async () => {
+  const browser = new FakeBrowser("/#library");
+  const nav = await load(browser);
+  nav.navigate(BOOK);
+  nav.navigate({ name: "get", workId: "w1", kind: "audiobook" });
+  nav.navigate(MAGNET);
+  assert.deepEqual(browser.hashes, ["#library", "#book/w1", "#book/w1/get/audiobook", "#book/w1/get/audiobook/magnet"]);
+  nav.closeSheets(BOOK);
+  await until(() => browser.url.hash === "#book/w1", "#book/w1");
+  assert.equal(browser.index, 1);
+  assert.deepEqual(browser.landed, ["#book/w1"]);
+  nav.goBack();
+  await until(() => browser.url.hash === "#library", "#library");
+});
+
+test("a Get sheet opened by a link with the magnet sheet over it: back to Get, then the book in its place", async () => {
+  const browser = new FakeBrowser("/#book/w1/get/audiobook");
+  const nav = await load(browser);
+  nav.navigate(MAGNET);
+  nav.closeSheets(BOOK);
+  await until(() => browser.url.hash === "#book/w1", "#book/w1");
+  await settle();
+  assert.deepEqual(browser.hashes, ["#book/w1", "#book/w1/get/audiobook/magnet"]);
+  assert.equal(browser.index, 0);
+});
+
+test("a magnet sheet opened by a link closes to the book in its own place", async () => {
+  const browser = new FakeBrowser("/#library");
+  const nav = await load(browser);
+  browser.followHash("#book/w1/get/audiobook/magnet");
+  await settle();
+  nav.closeSheets(BOOK);
+  await settle();
+  assert.deepEqual(browser.hashes, ["#library", "#book/w1"]);
+  assert.equal(browser.index, 1);
+  // Its Close (a plain Back) goes to Get, the sheet's parent, from a link opened on its own.
+  const alone = new FakeBrowser("/#book/w1/get/audiobook/magnet");
+  const again = await load(alone);
+  assert.deepEqual(again.backTarget(), { name: "get", workId: "w1", kind: "audiobook" });
+  again.goBack();
+  await settle();
+  assert.deepEqual(alone.hashes, ["#book/w1/get/audiobook"]);
+});
