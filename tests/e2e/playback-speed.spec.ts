@@ -1,4 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { listenFace, nowPlaying, openListen } from "./now-playing";
 const serverSpeed = async (page: Page) =>
   (await (await page.request.get("/api/appearance")).json()).playback.speed ??
@@ -27,8 +29,21 @@ test("the default speed applies once chosen, chapter lengths stay real for a boo
     await page.getByRole("button", { name: /^Playback\b/ }).click();
     return page.getByRole("spinbutton", { name: "Default speed", exact: true });
   };
+  // A book of two files (two chapters) in the player, so the Chapters page has a chapter that is not the current one,
+  // whatever an earlier spec left in the player.
+  const title = `Speed chapters ${randomUUID().slice(0, 8)}`;
+  const audio = readFileSync("server/demo/alice-01.mp3");
+  const imported = await page.request.post("/api/import", {
+    multipart: { title, author: "Speed QA", one: { name: "One.mp3", mimeType: "audio/mpeg", buffer: audio }, two: { name: "Two.mp3", mimeType: "audio/mpeg", buffer: audio } } as never,
+  });
+  expect(imported.ok()).toBe(true);
+  const id = (await imported.json()).id as string;
   try {
     await page.goto("/");
+    await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+    const pause = page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true });
+    await expect(pause).toBeVisible();
+    await pause.click();
     // Settings › Playback saves the speed when it is changed (#579): ten steps up with Page Up, six more.
     let stepper = await openPlayback();
     await expect(stepper).toHaveText("1×");
@@ -61,6 +76,7 @@ test("the default speed applies once chosen, chapter lengths stay real for a boo
     await expect(stepper).toHaveText("1×");
     await expectDockSpeed(page, "1×");
   } finally {
+    await page.request.delete(`/api/library/${id}`);
     await page.request.put("/api/appearance", {
       data: withSpeed(original.playback.speed ?? null),
     });
