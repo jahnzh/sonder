@@ -8,6 +8,7 @@ import { seriesBooks, type SeriesBookCandidate } from "../series-selection";
 import {
   downloadLine,
   NEEDS_ADMIN_LINE,
+  NO_CONNECTION_LINE,
   NOT_IN_LIBRARY_LINE,
   NOT_RELEASED_LINE,
   SERIES_SEARCH_FAILED_LINE,
@@ -81,6 +82,11 @@ export type SeriesRow = {
   /** The book in the library this row opens (`#book/<workId>`); null for a book that is not in it (not a link). */
   workId: string | null;
   action: SeriesRowAction | null;
+  /**
+   * The action's button is off: without a connection Add and Retry cannot reach the server (#568). The play button
+   * stays on (a book kept on this device plays without one).
+   */
+  actionOff: boolean;
   /** A link without a button of its own shows the chevron. */
   chevron: boolean;
   /** The line is a failure (the failed colour). */
@@ -97,14 +103,23 @@ export type SeriesPageModel = {
   related: SeriesRow[];
   /** The book to continue: its Hardcover book id and work; null when there is none. */
   continueWith: { bookId: number; workId: string } | null;
-  /** The refresh error card's message; null when Hardcover was read. */
+  /** The refresh error card's message; null when Hardcover was read, or without a connection (the card below stands there). */
   refreshError: string | null;
+  /**
+   * Without a connection (#568, spec #560 "Without a connection"): the "No connection" card, where the refresh error
+   * would stand, over the series this device last read; null with a connection.
+   */
+  noConnection: string | null;
+  /** Remove series is off: without a connection it cannot reach the server. */
+  removeOff: boolean;
   /**
    * The New card under the intro while any row is marked New: the new titles for its second line, comma-separated
    * in reading order (the screen cuts them with an ellipsis), and every work the answer marks new for Dismiss to
    * acknowledge (a translation that stands at no row too). Null with no new row.
    */
   newCard: { titles: string; bookIds: number[] } | null;
+  /** The New card's Dismiss is off: without a connection it cannot reach the server. */
+  dismissOff: boolean;
 };
 
 /** The work of a series row in the user's library, or null. */
@@ -190,6 +205,7 @@ function rowOf(work: SeriesPageWork, number: number | null, library: ReadonlyMap
     progress: line.progress ?? (marks?.kind === "downloading" ? marks.percent / 100 : null),
     workId: entry ? entry.workId : null,
     action: line.action,
+    actionOff: false,
     chevron: !!entry && !line.action,
     failed: line.failed,
   };
@@ -216,9 +232,16 @@ function continueBook(rows: SeriesRow[], library: ReadonlyMap<string, LibraryWor
 /** What the Series page shows for a saved series. */
 export function seriesPageModel(
   series: SeriesPageSeries,
-  facts: { library: ReadonlyMap<string, LibraryWork>; admin: boolean; language: string },
+  facts: {
+    library: ReadonlyMap<string, LibraryWork>;
+    admin: boolean;
+    language: string;
+    /** The series is the answer this device kept, as the server cannot be reached (#568). */
+    offline?: boolean;
+  },
 ): SeriesPageModel {
   const { library, admin, language } = facts;
+  const offline = !!facts.offline;
   // Membership and Finished come from this device's library by work, so a place saved here counts before the server has it.
   const candidates = series.works.map((work) => {
     const entry = libraryWorkOf(work, library);
@@ -231,6 +254,8 @@ export function seriesPageModel(
   const next = continueBook([...books, ...relatedRows], library);
   if (next) next.action = { kind: "play" };
   if (next) next.chevron = false;
+  // Without a connection Add and Retry are off; the play button is not a request to the server.
+  if (offline) for (const row of [...books, ...relatedRows]) row.actionOff = !!row.action && row.action.kind !== "play";
   const counts = `${finished} of ${total} finished`;
   const newRows = [...books, ...relatedRows].filter((row) => row.isNew);
   const newCard = newRows.length
@@ -242,7 +267,10 @@ export function seriesPageModel(
     books,
     related: relatedRows,
     continueWith: next ? { bookId: next.bookId, workId: next.workId! } : null,
-    refreshError: series.refreshError || null,
+    refreshError: offline ? null : series.refreshError || null,
+    noConnection: offline ? NO_CONNECTION_LINE : null,
+    removeOff: offline,
+    dismissOff: offline,
     newCard,
   };
 }

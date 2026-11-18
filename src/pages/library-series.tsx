@@ -8,6 +8,8 @@ import { api, userId } from "../lib";
 import { Group } from "../parts/Group";
 import { Chevron } from "../parts/icons";
 import { Row } from "../parts/Row";
+import { isNoConnection, keepSeriesAnswer, SERIES_LIST_KEY, storedSeriesAnswer } from "../series-store";
+import { NO_CONNECTION_LINE } from "../status-lines";
 import {
   FIND_A_SERIES,
   NO_SAVED_SERIES,
@@ -24,27 +26,39 @@ const lastSeries = accountAnswer<SavedSeriesItem[]>(userId);
 /**
  * The saved series of this account: the last answer at once (so Back finds the list as it was left, at its scroll
  * position), then a fresh one. `revision` grows when a series was saved or removed; `visit` changes when the list is
- * shown again (the Library, a series), so counts changed on a Book page are read once more.
+ * shown again (the Library, a series), so counts changed on a Book page are read once more. Without a connection the
+ * list is the last answer this device kept (#568), read again when `online` comes back.
  */
-export function useSavedSeries(revision: number, visit: string): { items: SavedSeriesItem[] | undefined; error: string } {
+export function useSavedSeries(revision: number, visit: string, online = true): { items: SavedSeriesItem[] | undefined; error: string } {
   const [items, setItems] = useState<SavedSeriesItem[] | undefined>(() => lastSeries.kept());
   const [error, setError] = useState("");
   useEffect(() => {
     let active = true;
     lastSeries
-      .read(() => api<SavedSeriesItem[]>("/series"))
+      .read(() => api<SavedSeriesItem[]>("/series", { cache: "no-store" }))
       .then((answer) => {
         if (!answer || !active) return;
         setItems(answer.value);
         setError("");
+        void keepSeriesAnswer(SERIES_LIST_KEY, answer.value);
       })
-      .catch((reason) => {
-        if (active) setError((reason as Error).message);
+      .catch(async (reason) => {
+        if (!active) return;
+        if (isNoConnection(reason)) {
+          const kept = lastSeries.kept() ?? (await storedSeriesAnswer<SavedSeriesItem[]>(SERIES_LIST_KEY));
+          if (!active) return;
+          if (kept) {
+            setItems(kept);
+            setError("");
+          } else setError(NO_CONNECTION_LINE);
+          return;
+        }
+        setError((reason as Error).message);
       });
     return () => {
       active = false;
     };
-  }, [revision, visit]);
+  }, [revision, visit, online]);
   return { items, error };
 }
 

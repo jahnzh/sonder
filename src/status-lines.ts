@@ -491,6 +491,9 @@ export const SYNC_STATE_LINES = {
   notPrepared: "Not prepared",
 } as const;
 
+/** A page shows what this device kept because the server cannot be reached (the Series page's card, #568). */
+export const NO_CONNECTION_LINE = "No connection";
+
 /** The line under a state's name. */
 export const SYNC_STATE_NOTES = {
   estimated: "Timings are estimated",
