@@ -8,41 +8,11 @@
 // suite's server save The Crossing (#701, #702), add Crossing Two and read the Hardcover fixture's series, and this
 // spec reads a series that is not saved with only Alice in the library. On the suite's server it saw that state: the
 // sheet offered two books, not three, and Crossing Two was not on offer (#564's fix round).
-import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
-import { createServer, type AddressInfo } from "node:net";
-import { test as base, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { test, expect } from "./own-server";
 import { noOverflow } from "./overflow";
 import { saveSheet } from "./series-save";
-
-async function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const probe = createServer();
-    probe.once("error", reject);
-    probe.listen(0, "127.0.0.1", () => {
-      const { port } = probe.address() as AddressInfo;
-      probe.close(() => resolve(port));
-    });
-  });
-}
-
-/** `baseURL` is a server of the test's own, so `page.goto` and `page.request` reach it with the paths as written. */
-const test = base.extend({
-  baseURL: async ({}, use) => {
-    const port = await freePort();
-    const url = `http://127.0.0.1:${port}`;
-    const server: ChildProcess = spawn(process.execPath, ["--import", "tsx", "tests/browser-server.ts"], {
-      env: { ...process.env, PLAYWRIGHT_PORT: String(port), SONDER_BROWSER_TEMP: "" },
-      stdio: "ignore",
-    });
-    try {
-      await expect.poll(async () => fetch(`${url}/api/health`).then((r) => r.ok, () => false), { timeout: 30000 }).toBe(true);
-      await use(url);
-    } finally {
-      server.kill();
-    }
-  },
-});
 
 test.use({ serviceWorkers: "block" });
 
