@@ -141,10 +141,14 @@ const desktopProjects = [
               /(^|\/)keep-off\.spec\.ts$/,
               // Paste a magnet link for the book, over Get audiobook (#606).
               /(^|\/)get-magnet\.spec\.ts$/,
+              // The saved series without a connection (#568).
+              /(^|\/)series-offline\.spec\.ts$/,
               // More › Reading sync opens the Reading sync page; the specs that opened the card (#543).
               /(^|\/)(reader-sync-row|chapterless-sync|one-reading-view)\.spec\.ts$/,
               // Now playing as one screen with Listen and Read, and the specs of the screens it replaces (#593).
               /(^|\/)(now-playing-faces|playback-workflow|media-controls|playback-speed|playback-speed-rate|position-history|integrated-reader)\.spec\.ts$/,
+              // A device whose browser cleared Sonder's files saves its kept books again (#554).
+              /(^|\/)keep-cleared\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },
