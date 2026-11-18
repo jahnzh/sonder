@@ -5,8 +5,6 @@ import {
   Link2,
   Loader2,
   RefreshCw,
-  X,
-  ArrowRight,
 } from "lucide-react";
 import { api, localDB, userId } from "../lib";
 import { accountAnswer } from "../account-answer";
@@ -22,7 +20,7 @@ export function hardcoverChanged() {
  * book it was on; the fresh state replaces it when it arrives.
  */
 const lastState = accountAnswer<HardcoverState>(userId);
-/** The user's Hardcover state (`GET /api/hardcover`), kept current: the Library filters, Settings and the Hardcover page (#529). */
+/** The user's Hardcover state (`GET /api/hardcover`), kept current: the Library's picker (#578), Settings and the Hardcover page (#529). */
 export function useHardcover() {
   const lastSeenSync = useRef(0);
   const [state, setState] = useState<HardcoverState | null>(() => lastState.kept() ?? null);
@@ -69,138 +67,6 @@ function lastSync(time: number) {
         minute: "2-digit",
       })
     : "Not synced yet";
-}
-export type HardcoverFilter = { shelf: string; list: string };
-export function HardcoverLibraryFilters({
-  filter,
-  onFilter,
-  onSettings,
-  onChanged,
-  notify,
-}: {
-  filter: HardcoverFilter;
-  onFilter: (v: HardcoverFilter) => void;
-  onSettings: () => void;
-  onChanged: () => void;
-  notify: Notify;
-}) {
-  const { state, refresh } = useHardcover();
-  const [busy, setBusy] = useState(false);
-  const sync = async () => {
-    setBusy(true);
-    try {
-      const result = await api<{ imported: number; pending: number }>(
-        "/hardcover/sync",
-        { method: "POST" },
-      );
-      notify(
-        result.pending
-          ? `Library synced. ${result.pending} changes are still queued.`
-          : `Hardcover synced${result.imported ? ` · ${result.imported} new books` : ""}.`,
-      );
-      hardcoverChanged();
-      onChanged();
-      await refresh();
-    } catch (e) {
-      notify((e as Error).message, true);
-    } finally {
-      setBusy(false);
-    }
-  };
-  if (!state?.configured)
-    return (
-      <div className="hardcover-connect-callout">
-        <span>
-          <BookOpen size={16} /> Your books, together with Hardcover.
-        </span>
-        <button onClick={onSettings}>
-          Connect library <ArrowRight size={13} />
-        </button>
-      </div>
-    );
-  if (state.mode === "off")
-    return (
-      <div className="hardcover-connect-callout">
-        <span>
-          <BookOpen size={16} /> Hardcover is connected. Library sync is off.
-        </span>
-        <button onClick={onSettings}>
-          Set up sync <ArrowRight size={13} />
-        </button>
-      </div>
-    );
-  return (
-    <div className="hardcover-library">
-      <div className="hardcover-library-meta">
-        <span>
-          <BookOpen size={15} /> Hardcover{" "}
-          {state.username && <strong>@{state.username}</strong>}
-        </span>
-        <span>
-          {state.pending
-            ? `${state.pending} changes queued`
-            : lastSync(state.lastSync)}
-        </span>
-      </div>
-      <div className="hardcover-library-controls">
-        <label>
-          <span className="sr-only">Hardcover shelf</span>
-          <select
-            aria-label="Hardcover shelf"
-            value={filter.shelf}
-            onChange={(e) => onFilter({ ...filter, shelf: e.target.value })}
-          >
-            <option value="all">All reading shelves</option>
-            <option value="linked">Linked to Hardcover</option>
-            {state.shelves.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span className="sr-only">Hardcover list</span>
-          <select
-            aria-label="Hardcover list"
-            value={filter.list}
-            onChange={(e) => onFilter({ ...filter, list: e.target.value })}
-          >
-            <option value="all">All Hardcover lists</option>
-            {state.lists.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.name} · {l.count}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button
-          className="button subtle"
-          disabled={busy || !navigator.onLine}
-          onClick={() => void sync()}
-        >
-          {busy ? (
-            <Loader2 className="spin" size={14} />
-          ) : (
-            <RefreshCw size={14} />
-          )}{" "}
-          Sync now
-        </button>
-        {(filter.shelf !== "all" || filter.list !== "all") && (
-          <button
-            className="icon-button"
-            onClick={() => onFilter({ shelf: "all", list: "all" })}
-            aria-label="Clear Hardcover filters"
-          >
-            <X size={15} />
-          </button>
-        )}
-      </div>
-      {state.lastError && (
-        <p className="hardcover-inline-warning">{state.lastError}</p>
-      )}
-    </div>
-  );
 }
 export function HardcoverSyncSettings({
   configured,

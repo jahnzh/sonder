@@ -137,3 +137,11 @@ button.part-book-row:focus-visible {
 .part-book-row-item[data-raised] {
   background: var(--raised);
 }
+/* The marks on the right edge in place of the chevron (the Library's list): muted, 12 px, 4 apart. */
+.part-book-row-edge-marks {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--muted);
+}

@@ -37,12 +37,26 @@ export type BookRowProps = {
   coverIcon?: ReactNode;
   /** The row stands out on the raised fill (the Series page's book to continue). */
   raised?: boolean;
+  /**
+   * Which files the book has, as muted 12 px marks on the right edge in place of the chevron (the Library's list,
+   * LibraryList.dc.html); read out after the status line.
+   */
+  edgeMarks?: FileKind[];
 };
 
-export function BookRow({ title, status, lead, cover, number, marks = [], progress, onClick, action, failed, trailing, coverIcon, raised }: BookRowProps) {
+export function BookRow({ title, status, lead, cover, number, marks = [], progress, onClick, action, failed, trailing, coverIcon, raised, edgeMarks }: BookRowProps) {
   const id = useId();
   const numbered = number != null && number !== "";
-  const names = [numbered && `${id}-number`, `${id}-title`, ...marks.map((_, index) => `${id}-mark-${index}`), `${id}-status`, trailing && !action && `${id}-trailing`].filter(Boolean).join(" ");
+  const names = [
+    numbered && `${id}-number`,
+    `${id}-title`,
+    ...marks.map((_, index) => `${id}-mark-${index}`),
+    `${id}-status`,
+    trailing && !action && `${id}-trailing`,
+    ...(edgeMarks ?? []).map((_, index) => `${id}-edge-${index}`),
+  ]
+    .filter(Boolean)
+    .join(" ");
   const body = (
     <>
       {numbered && (
@@ -80,6 +94,15 @@ export function BookRow({ title, status, lead, cover, number, marks = [], progre
           {trailing}
         </span>
       )}
+      {edgeMarks && (
+        <span className="part-book-row-edge-marks">
+          {edgeMarks.map((kind, index) => (
+            <span key={`${kind}-${index}`} id={`${id}-edge-${index}`}>
+              <FileIcon kind={kind} size={12} name={fileKindName[kind]} />
+            </span>
+          ))}
+        </span>
+      )}
     </>
   );
   const data = {
@@ -108,7 +131,7 @@ export function BookRow({ title, status, lead, cover, number, marks = [], progre
       <li className="part-book-row-item">
         <button type="button" className="part-book-row" {...data} aria-labelledby={names} onClick={onClick}>
           {body}
-          {!trailing && (
+          {!trailing && !edgeMarks && (
             <span className="part-book-row-end">
               <Chevron />
             </span>

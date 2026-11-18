@@ -11,8 +11,18 @@ import {
   emptyShelf,
   filterLibrary,
   LIBRARY_CHIPS,
+  controlLabel,
+  hardcoverChips,
+  hardcoverInEffect,
+  listChoices,
   listLine,
+  listRowLine,
   matchesSearch,
+  NO_HARDCOVER_FILTER,
+  readHardcoverFilter,
+  shelfChoices,
+  SORT_NAMES,
+  SORT_ORDERS,
   progressFraction,
   readChip,
   readSort,
@@ -157,7 +167,6 @@ test("In progress counts this device's newer place laid over the stored work", (
 
 test("Hardcover's shelf and list narrow the shelf, together and with a chip", () => {
   assert.deepEqual(under("All books", { hardcover: { shelf: "1", list: "all" } }), ["w-epub", "w-nothing"]);
-  assert.deepEqual(under("All books", { hardcover: { shelf: "linked", list: "all" } }), ["w-epub", "w-nothing", "w-listening", "w-finished"]);
   assert.deepEqual(under("All books", { hardcover: { shelf: "all", list: "11" } }), ["w-listening", "w-finished"]);
   assert.deepEqual(under("All books", { hardcover: { shelf: "2", list: "11" } }), ["w-listening"]);
   assert.deepEqual(under("All books", { hardcover: { shelf: "1", list: "11" } }), []);
@@ -257,7 +266,7 @@ test("an empty shelf: No books with what is in use and Clear filters; an empty l
     inUse: ["Favorites", "Want to read", "Summer", "“frank”"],
     action: "clear",
   });
-  assert.deepEqual(emptyShelf(8, input({ hardcover: { shelf: "linked", list: "all" } })).inUse, ["Hardcover shelf"]);
+  assert.deepEqual(emptyShelf(8, input({ hardcover: { shelf: "4", list: "all" } })).inUse, ["Hardcover shelf"]);
 });
 
 test("the chip, sort and view read back from the device; earlier values map to their chips", () => {
@@ -309,4 +318,96 @@ test("the Book page's Favorite toggles the work", () => {
   assert.deepEqual(toggleFavoriteWork("w1", []), ["w1"]);
   assert.deepEqual(toggleFavoriteWork("w1", ["w0", "w1"]), ["w0"]);
   assert.deepEqual(toggleFavoriteWork("w2", ["w0"]), ["w0", "w2"]);
+});
+
+// The sort-and-view control (#578; boards LibrarySort.dc.html, LibraryShelf.dc.html, LibraryList.dc.html).
+const names = {
+  shelves: [
+    { id: 1, name: "Want to read" },
+    { id: 2, name: "Currently reading" },
+    { id: 3, name: "Read" },
+    { id: 4, name: "Paused" },
+    { id: 5, name: "Did not finish" },
+  ],
+  lists: [
+    { id: 10, name: "Summer", count: 2 },
+    { id: 11, name: "Culture", count: 7 },
+  ],
+};
+
+test("each sort with ties by title, from the picker's names", () => {
+  assert.deepEqual(SORT_ORDERS.map((order) => SORT_NAMES[order]), ["Recently added", "Title", "Author", "Progress"]);
+  // Two books alike in every order but their titles: each sort puts them by title, whichever came first.
+  const twin = (id: string, title: string) => work(id, title, "Same Author", { addedAt: 3, recordings: [recording(`r-${id}`)] });
+  const pair = [twin("b", "Zebra"), twin("a", "Aardvark")];
+  for (const order of SORT_ORDERS) assert.deepEqual(sortLibrary(pair, order).map((w) => w.title), ["Aardvark", "Zebra"], order);
+  assert.deepEqual(sortLibrary(fixture, "title").map((w) => w.title), [...fixture.map((w) => w.title)].sort((a, b) => a.localeCompare(b)));
+});
+
+test("the control's text and name for each sort and view", () => {
+  assert.deepEqual(controlLabel("recent", "grid"), { text: "Recent · Grid", name: "Sort and view: recent, grid" });
+  assert.deepEqual(controlLabel("recent", "list"), { text: "Recent · List", name: "Sort and view: recent, list" });
+  assert.deepEqual(controlLabel("title", "grid"), { text: "Title · Grid", name: "Sort and view: title, grid" });
+  assert.deepEqual(controlLabel("author", "list"), { text: "Author · List", name: "Sort and view: author, list" });
+  assert.deepEqual(controlLabel("progress", "grid"), { text: "Progress · Grid", name: "Sort and view: progress, grid" });
+});
+
+test("the Hardcover group's lists: All shelves and Hardcover's five shelves; All lists and each list with its count", () => {
+  assert.deepEqual(shelfChoices(names).map((c) => [c.value, c.label]), [
+    ["all", "All shelves"],
+    ["1", "Want to read"],
+    ["2", "Currently reading"],
+    ["3", "Read"],
+    ["4", "Paused"],
+    ["5", "Did not finish"],
+  ]);
+  assert.deepEqual(listChoices(names), [
+    { value: "all", label: "All lists" },
+    { value: "10", label: "Summer", detail: "2" },
+    { value: "11", label: "Culture", detail: "7" },
+  ]);
+});
+
+test("a shelf, a list and both with a chip: the books left and the clear chips under the heading", () => {
+  // Shelf alone.
+  assert.deepEqual(under("All books", { hardcover: { shelf: "1", list: "all" } }), ["w-epub", "w-nothing"]);
+  assert.deepEqual(hardcoverChips({ shelf: "1", list: "all" }, names), [{ kind: "shelf", text: "Want to read", name: "Clear the Hardcover shelf: Want to read" }]);
+  // List alone.
+  assert.deepEqual(under("All books", { hardcover: { shelf: "all", list: "11" } }), ["w-listening", "w-finished"]);
+  assert.deepEqual(hardcoverChips({ shelf: "all", list: "11" }, names), [{ kind: "list", text: "Culture", name: "Clear the Hardcover list: Culture" }]);
+  // Both, and with a chip: each narrows the others.
+  assert.deepEqual(under("All books", { hardcover: { shelf: "2", list: "11" } }), ["w-listening"]);
+  assert.deepEqual(under("In progress", { hardcover: { shelf: "2", list: "11" } }), ["w-listening"]);
+  assert.deepEqual(under("Finished", { hardcover: { shelf: "2", list: "11" } }), []);
+  assert.deepEqual(under("Not started", { hardcover: { shelf: "1", list: "all" } }), ["w-epub", "w-nothing"]);
+  assert.deepEqual(hardcoverChips({ shelf: "2", list: "11" }, names), [
+    { kind: "shelf", text: "Currently reading", name: "Clear the Hardcover shelf: Currently reading" },
+    { kind: "list", text: "Culture", name: "Clear the Hardcover list: Culture" },
+  ]);
+  // None in use: no chip. A shelf whose name is not read yet keeps a generic one.
+  assert.deepEqual(hardcoverChips(NO_HARDCOVER_FILTER, names), []);
+  assert.deepEqual(hardcoverChips({ shelf: "1", list: "99" }, null).map((c) => c.text), ["Hardcover shelf", "Hardcover list"]);
+  // Without Hardcover connected the kept filter narrows nothing and shows no chip.
+  assert.deepEqual(hardcoverInEffect({ shelf: "1", list: "11" }, false), NO_HARDCOVER_FILTER);
+  assert.deepEqual(hardcoverInEffect({ shelf: "1", list: "11" }, true), { shelf: "1", list: "11" });
+});
+
+test("the Hardcover filters read back from the device: ids kept, anything else no filter", () => {
+  assert.deepEqual(readHardcoverFilter(JSON.stringify({ shelf: "1", list: "8803" })), { shelf: "1", list: "8803" });
+  assert.deepEqual(readHardcoverFilter(JSON.stringify({ shelf: "1" })), { shelf: "1", list: "all" });
+  // The old strip's "Linked to Hardcover" is gone from the picker.
+  assert.deepEqual(readHardcoverFilter(JSON.stringify({ shelf: "linked", list: "all" })), NO_HARDCOVER_FILTER);
+  assert.deepEqual(readHardcoverFilter(null), NO_HARDCOVER_FILTER);
+  assert.deepEqual(readHardcoverFilter("not json"), NO_HARDCOVER_FILTER);
+  assert.deepEqual(readHardcoverFilter("[1,2]"), NO_HARDCOVER_FILTER);
+});
+
+test("the list row's second line: the author and each place line, or the download's line alone", () => {
+  assert.equal(listRowLine(nothing), "Octavia E. Butler · Not started");
+  assert.equal(listRowLine(pdfOnly), `${pdfOnly.author} · Not started`);
+  assert.equal(listRowLine(readingEbook), `${readingEbook.author} · 38% of the ebook`);
+  assert.equal(listRowLine(listening), `${listening.author} · Chapter 2 · 8 min left`);
+  assert.equal(listRowLine(finished), "Iain M. Banks · Finished");
+  assert.equal(listRowLine(downloading), "Downloading to server · 43%");
+  assert.equal(listRowLine({ ...nothing, author: "" }), "Not started");
 });
