@@ -73,7 +73,6 @@ type PlayerState = {
   speedRecordingId: string | undefined;
   /** Changes whenever a saved speed changes. */
   speedRevision: number;
-  volume: number;
   sleep: number | null;
   error: string | null;
   /**
@@ -102,7 +101,6 @@ type PlayerState = {
   setSpeed: (n: number, recordingId?: string) => void;
   /** Removes a recording's own speed so it plays at the default again. */
   resetSpeed: (recordingId: string) => void;
-  setVolume: (n: number) => void;
   setSleep: (n: number | null) => void;
   next: () => void;
   previous: () => void;
@@ -134,7 +132,6 @@ export function PlayerProvider({
   const [position, setPosition] = useState(0);
   const [length, setLength] = useState(0);
   const [speed, setSpeedState] = useState(1);
-  const [volume, setVolumeState] = useState(1);
   const [sleep, setSleepState] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<PlayerState["source"]>(null);
@@ -1073,10 +1070,6 @@ export function PlayerProvider({
       void speedFor(recordingId).then(applyRate);
     setSpeedRevision((revision) => revision + 1);
   };
-  const setVolume = (n: number) => {
-    audio.current.volume = n;
-    setVolumeState(n);
-  };
   const setSleep = (minutes: number | null) => {
     sleepEnd.current = minutes ? Date.now() + minutes * 60000 : null;
     setSleepState(minutes ? minutes * 60 : null);
@@ -1097,7 +1090,6 @@ export function PlayerProvider({
         ownSpeedOf: speeds.own,
         speedRecordingId: speedTarget,
         speedRevision,
-        volume,
         sleep,
         error,
         source,
@@ -1116,7 +1108,6 @@ export function PlayerProvider({
         restoreJump,
         setSpeed,
         resetSpeed,
-        setVolume,
         setSleep,
         next,
         previous,

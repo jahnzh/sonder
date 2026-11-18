@@ -50,7 +50,8 @@ async function pauseAt(page:Page,book:any,interval:any){
 }
 async function openReader(page:Page){
  await page.goto("/");
- await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
+ // Now playing on its Read face (#593: the dock's "Open ebook reader" went).
+ await openRead(page);
  const room=page.locator(".inline-reader");
  await expect(room.locator(".reader-viewport iframe")).toBeVisible();
  return room;
