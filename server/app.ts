@@ -69,6 +69,7 @@ import {
   torrentDownloadDir,
 } from "./storage.ts";
 import { acquireReplacing, acquisitionsLoop, controlAcquisition } from "./acquisitions.ts";
+import { acquireForNewBook } from "./new-book.ts";
 import { seriesAcquisitionLoop } from "./series-acquisition.ts";
 import { transmission, transmissionConfigured } from "./transmission.ts";
 import { getTorrentHealth } from "./torrent-health.ts";
@@ -779,9 +780,17 @@ export async function createApp(options?: {
         cover: z.string().max(2000).optional(),
         workId: z.string().max(100).optional(),
         replaceActive: z.boolean().optional(),
+        // A recording for a new book (#576): the book is made from the release, in the requester's library.
+        makeWork: z.boolean().optional(),
       })
       .parse(req.body);
     const release = await abbRelease(input.slug);
+    if (input.makeWork && !input.workId)
+      return acquireForNewBook(
+        await abbMagnet(input.slug),
+        { title: release.title, author: release.author, cover: release.cover, language: release.language, narrator: release.narrator },
+        currentUserId(req),
+      );
     return acquireReplacing(await abbMagnet(input.slug), {
       ...input,
       title: release.title,
@@ -804,9 +813,13 @@ export async function createApp(options?: {
         id: z.string().regex(/^prowlarr-[a-f0-9]{32}$/),
         workId: z.string().max(100).optional(),
         replaceActive: z.boolean().optional(),
+        // A recording for a new book (#576): the book is made from the release, in the requester's library.
+        makeWork: z.boolean().optional(),
       })
       .parse(req.body);
     const link = prowlarrRelease(input.id);
+    if (input.makeWork && !input.workId)
+      return acquireForNewBook(await prowlarrMagnet(input.id), { title: releaseDisplayTitle(link.title) }, currentUserId(req));
     const work = input.workId
       ? db.select().from(s.works).where(eq(s.works.id, input.workId)).get()
       : undefined;
