@@ -145,6 +145,8 @@ const desktopProjects = [
               /(^|\/)series-offline\.spec\.ts$/,
               // More › Reading sync opens the Reading sync page; the specs that opened the card (#543).
               /(^|\/)(reader-sync-row|chapterless-sync|one-reading-view)\.spec\.ts$/,
+              // A device whose browser cleared Sonder's files saves its kept books again (#554).
+              /(^|\/)keep-cleared\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },

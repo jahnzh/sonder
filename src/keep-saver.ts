@@ -37,6 +37,7 @@ import {
   type StopCause,
 } from "./keep";
 import { rememberEbook, rememberRecording, turnedOffFromServer, type KeptRecording } from "./keep-device";
+import { clearedMessageEnds, wasCleared, type DeviceHolds } from "./keep-cleared";
 
 /** Why a run was asked for. */
 export type KeepTrigger = "open" | "foreground" | "online" | "library" | "switch" | "retry";
@@ -48,6 +49,13 @@ export type SaverState = {
   works: KeepWork[];
   keep: KeepEntry[];
   downloads: HeldFile[];
+  /**
+   * Every `downloads` row, also one whose bytes do not add up (#554): any file of a book, complete or not, means the
+   * browser did not clear it. Absent: `downloads`.
+   */
+  existingDownloads?: HeldFile[];
+  /** Ebook editions with any copy here, kept or the reader's own (#554). */
+  existingEbookIds?: string[];
   parts: HeldPart[];
   records: DeviceSaveRecord[];
   /** This device's kept EPUB copies (#551); not the reader's own reading cache. */
@@ -63,6 +71,19 @@ export type RecordChange =
   | { state: "saving"; job?: KeepJob | null }
   | { state: "finished" }
   | SaveStop;
+
+/** What the device holds of any book, for the cleared-device check (#554). */
+function holdsOf(state: SaverState): DeviceHolds {
+  return {
+    keep: state.keep,
+    works: state.works,
+    records: state.records,
+    downloads: state.existingDownloads ?? state.downloads,
+    parts: state.parts,
+    ebookIds: [...(state.existingEbookIds ?? []), ...(state.ebooks ?? []).map((ebook) => ebook.id)],
+    mapKeys: Object.keys(state.maps ?? {}),
+  };
+}
 
 export type LockManager = {
   /** Calls `hold` once the lock is granted; the lock is held until `hold`'s promise settles. */
@@ -117,6 +138,12 @@ export type SaverDeps = {
   onJob: (recordingId: string, job: KeepJob | null) => void;
   /** The device's files or records changed. */
   onChanged: () => void;
+  /**
+   * When this device noticed that the browser cleared Sonder's files (#554), and writing or ending it (null). This
+   * device's note under Storage reads it.
+   */
+  clearedAt?: () => Promise<number | null>;
+  setClearedAt?: (at: number | null) => Promise<void>;
   now?: () => number;
 };
 
@@ -271,6 +298,17 @@ export class KeepSaver {
     } catch {
       return { keep: state.keep, synced: false };
     }
+    // A cleared device (#554): the server says this device completed a work it holds nothing of. It is noticed once,
+    // when the device has read its library (a cleared device has none stored yet, and only the work names its files);
+    // until then a server record of a completed work is not taken over, so the next run still sees nothing of it.
+    if (!state.works.length) {
+      const local = new Set(state.keep.map((entry) => entry.workId));
+      server = server.filter((entry) => local.has(entry.workId) || !(entry.on && entry.completeAt !== null));
+    }
+    else if (this.deps.setClearedAt && server.some((entry) => wasCleared(entry, holdsOf(state))) && !(await this.deps.clearedAt?.())) {
+      await this.deps.setClearedAt(this.now());
+      this.changed();
+    }
     const merged = mergeKeep(state.keep, server);
     const records = new Map(merged.records.map((record) => [record.workId, record]));
     for (const send of merged.send) {
@@ -368,6 +406,14 @@ export class KeepSaver {
         if (done.complete) await this.reportComplete(entry, keep);
       } else if (stop.state === "interrupted" && stop.how === "network") return; // The others would fail as well.
     }
+    // The note of a cleared device ends once every kept book is complete again (#554).
+    if (this.deps.setClearedAt && (await this.deps.clearedAt?.())) {
+      const latest = await this.deps.read();
+      if (clearedMessageEnds(latest.keep, latest.works, (work) => this.needsOf(work, latest))) {
+        await this.deps.setClearedAt(null);
+        this.changed();
+      }
+    }
     void reason;
   }
 
@@ -378,7 +424,7 @@ export class KeepSaver {
     if (this.deps.online()) {
       try {
         const answer = await this.deps.sendKeep({ workId: entry.workId, kind: "complete", completeAt });
-        stored = { ...answer, pending: false };
+        stored = { ...entry, ...answer, pending: false, completePending: false };
       } catch {
         // Told at the next run's merge.
       }
