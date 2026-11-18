@@ -98,6 +98,15 @@
   margin: 0;
   padding: 0;
 }
+/* A failed save (#552, board KeepNotComplete.dc.html): the Keep line in the failed colour, and a row under it with the
+   reason (muted) and Retry. */
+.book-page-keep .part-file-row-status[data-failed] {
+  color: var(--danger);
+}
+.book-page-keep-failure {
+  list-style: none;
+  margin: 0;
+}
 /* About: the description collapsed to three lines in a button, expanding in place. */
 .book-page-about {
   box-sizing: border-box;

@@ -22,7 +22,8 @@ import { usePlayer } from "../player";
 import { openReader } from "../reading";
 import { ebookDeviceCopySize, EBOOK_DEVICE_EVENT, removeEbookFromDevice, useDeviceEbookChoice, useEbookDeviceCopy } from "../ebook-device-copy";
 import { ebookSearchTarget } from "./ebook-page";
-import { keepSaver, removeWorkMaps, tapKeep, useKeepRecord, useKeptNeeds } from "../keep-runtime";
+import { keepSaver, removeWorkMaps, resumeKeep, tapKeep, useKeepRecord, useKeptNeeds } from "../keep-runtime";
+import type { DeviceSaveRecord } from "../device-saves";
 import { hardcoverRowValue } from "../hardcover-page-model";
 import { bytes } from "../size-format";
 import { tip } from "../tooltip-texts";
@@ -48,6 +49,8 @@ type Props = {
   downloadParts: DownloadPart[];
   /** Saves to this device that are running now, by recording. */
   running: Running;
+  /** The device's records of its saves (#517): how a kept book's last save stopped (#552). */
+  records?: readonly DeviceSaveRecord[];
   favorites: string[];
   /** Every entry of the work joins today's favourites list, or every one leaves it. */
   onFavorite: (entryIds: string[]) => void;
@@ -176,9 +179,19 @@ export function BookPage(props: Props) {
   const chosenBook = (recording && entries.find((b) => b.recordingId === recording.recordingId)) ?? null;
   const searchTarget = chosenBook ?? entries[0] ?? (work ? ebookSearchTarget(work) : null);
   const hold = deviceHold(recording, downloads, downloadParts);
-  const job = recording ? running[recording.recordingId] : undefined;
   const epubSize = chosenEpub && epubCopy.known ? epubCopy.size : null;
   const needs = useKeptNeeds(work, downloads, downloadParts);
+  // The save of the book: its recording's, or for a book with only an ebook its EPUB's (#551).
+  const saveId = recording ? recording.recordingId : needs?.ebook ? `ebook:${needs.ebook.id}` : null;
+  const job = saveId ? running[saveId] : undefined;
+  const saveRecord = saveId ? props.records?.find((r) => r.recordingId === saveId) : undefined;
+  // How the kept book's last save stopped (#552): a failure waits for Retry, a pause (on any tab) for Resume.
+  const stop =
+    saveRecord?.state === "failed"
+      ? { why: "failed" as const, failure: saveRecord.failure ?? null }
+      : keepRecord?.pausedAt || saveRecord?.state === "paused"
+        ? { why: "paused" as const }
+        : null;
   const keep = keepState({
     keep: keepRecord?.on === true,
     hold,
@@ -186,6 +199,7 @@ export function BookPage(props: Props) {
     ebookSize: epubSize,
     hasRecording: !!recording && recording.tracks.length > 0,
     needs,
+    stop,
   });
   const deviceSize = useDeviceSize(work, downloads, downloadParts);
   const hardcoverValue = hardcoverRowValue(hardcover, work?.hardcover ?? null);
@@ -288,9 +302,9 @@ export function BookPage(props: Props) {
     void tapKeep(workId, true).catch((e: Error) => setError(e.message));
   };
   // Resume: a kept book's save is the saver's; another is today's save.
+  // Resume and Retry of a kept book clear its pause and ask the tab that saves to save it again (#552).
   const resume = () => {
-    const saver = keepSaver();
-    if (keepRecord?.on && saver) void saver.trigger("retry", workId);
+    if (keepRecord?.on && keepSaver()) void resumeKeep(workId).catch((e: Error) => setError(e.message));
     else if (chosenBook) props.onSave(chosenBook);
   };
   // Off removes every file of the book from this device: its recordings' audio and its EPUBs. The place stays.
@@ -424,14 +438,14 @@ export function BookPage(props: Props) {
                   <InfoMark name="Keep on this device" text={tip("keep")} />
                 </span>
                 {keep.line && (
-                  <span id="book-keep-line" className="part-file-row-status type-label">
+                  <span id="book-keep-line" className="part-file-row-status type-label" data-failed={keep.failed ? "" : undefined}>
                     {keep.line}
                   </span>
                 )}
                 {job && <ProgressBar progress={job.progress / 100} />}
               </span>
               <span className="part-file-row-end">
-                {keep.resumable && !job && chosenBook && (
+                {keep.resumable && !job && (chosenBook || keepRecord?.on) && (
                   <Button kind="quiet" disabled={busy || !online} onClick={resume}>
                     Resume
                   </Button>
@@ -445,6 +459,21 @@ export function BookPage(props: Props) {
               </span>
             </div>
           </li>
+          {/* A failed save: its reason in one line and Retry (board KeepNotComplete.dc.html). */}
+          {keep.failed && keep.reason && !job && (
+            <li className="part-file-row book-page-keep-failure">
+              <span className="part-file-row-text">
+                <span className="part-file-row-status type-label" id="book-keep-reason">
+                  {keep.reason}
+                </span>
+              </span>
+              <span className="part-file-row-end">
+                <Button aria-label="Retry saving on this device" aria-describedby="book-keep-reason" disabled={busy || !online} onClick={resume}>
+                  Retry
+                </Button>
+              </span>
+            </li>
+          )}
         </Group>
       )}
 

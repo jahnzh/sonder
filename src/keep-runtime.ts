@@ -110,10 +110,26 @@ export function startKeepSaver(account: number): KeepSaver {
       };
     },
     writeChoice: (workId, on) => writeChoice(workId, on),
+    writePause: async (workId, pausedAt) => {
+      await db.transaction("rw", db.keep, async () => {
+        const entry = await db.keep.get(workId);
+        if (entry) await db.keep.put({ ...entry, pausedAt });
+      });
+      keepChanged();
+    },
+    isPaused: async (workId) => !!(await db.keep.get(workId))?.pausedAt,
     persist: askPersist,
     storeKeep: async (records) => {
       await db.transaction("rw", db.keep, async () => {
-        await db.keep.bulkPut(records);
+        // A pause belongs to the pause and resume writers (#552): a merge that read the records before another tab
+        // paused or resumed must not undo it. A record that turned off has no pause.
+        const stored = new Map((await db.keep.bulkGet(records.map((r) => r.workId))).flatMap((e) => (e ? [[e.workId, e] as const] : [])));
+        await db.keep.bulkPut(
+          records.map((record) => {
+            const pausedAt = record.on ? stored.get(record.workId)?.pausedAt ?? null : null;
+            return { ...record, pausedAt };
+          }),
+        );
       });
       keepChanged();
     },
@@ -222,9 +238,10 @@ export async function fingerprintFile(blob: Blob): Promise<string | null> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-/** A refusal of the source (4xx other than a timeout or a rate limit): the save waits for Retry. */
+/** A refusal of the source (4xx other than a timeout or a rate limit): the save waits for Retry. A 401 is a sign-out. */
 function refusal(message: string, status: number) {
-  return Object.assign(new Error(message), { refused: status >= 400 && status < 500 && status !== 408 && status !== 429 });
+  const refused = status >= 400 && status < 500 && status !== 408 && status !== 429;
+  return Object.assign(new Error(message), { refused, status, ...(refused ? { failure: status === 401 ? "signed-out" : "source" } : {}) });
 }
 
 /**
@@ -362,4 +379,63 @@ export function useKeptNeeds(work: LibraryWork | null, downloads: readonly Downl
 /** Removes this device's reading sync maps of a work (Keep off, #551): the reader fetches them again online. */
 export async function removeWorkMaps(work: Pick<LibraryWork, "readingSync">): Promise<void> {
   for (const job of work.readingSync ?? []) await localDB.preferences.delete(readerMapKey(job.ebookId, job.recordingId)).catch(() => {});
+}
+
+/**
+ * Pause of a kept book from any tab (#552): `pausedAt` on its Keep record, and its running save stops wherever it
+ * runs. `saveId` is the recording (or `ebook:<id>` for a book with only an ebook).
+ */
+export async function pauseKeep(workId: string, saveId: string | null): Promise<void> {
+  if (saver) return saver.pauseWork(workId, saveId);
+}
+
+/** Resume or Retry of a kept book from any tab: the pause goes and the tab that saves saves it again. */
+export async function resumeKeep(workId: string): Promise<void> {
+  if (saver) return saver.resumeWork(workId);
+}
+
+/** A kept work with what it needs on this device, for Activity's entries and the On device filter (#552). */
+export type KeptWork = { workId: string; entry: KeepEntry; needs: KeptNeeds };
+
+/**
+ * Every work this account keeps on this device (Keep on, in the stored library) with what it needs, read again when
+ * the Keep records, the EPUB copies or the device's files change.
+ */
+export function useKeptWorks(works: ReadonlyMap<string, LibraryWork>, downloads: readonly Download[], parts: readonly DownloadPart[]): KeptWork[] {
+  const [state, setState] = useState<{ keep: KeepEntry[]; held: Awaited<ReturnType<typeof readingHeld>> } | null>(null);
+  const shape = JSON.stringify([...works.values()].map((w) => [w.workId, w.ebooks?.map((e) => e.id), w.readingSync?.map((j) => [j.id, j.updatedAt])]));
+  useEffect(() => {
+    let live = true;
+    const read = () =>
+      void (async () => {
+        const keep = await localDB.keep.toArray();
+        const kept = keep.filter((entry) => entry.on).map((entry) => works.get(entry.workId)).filter((w): w is LibraryWork => !!w);
+        const held = await readingHeld(kept);
+        if (live) setState({ keep, held });
+      })().catch(() => {});
+    read();
+    window.addEventListener(KEEP_EVENT, read);
+    window.addEventListener(EBOOK_DEVICE_EVENT, read);
+    window.addEventListener("sonder:downloads-changed", read);
+    return () => {
+      live = false;
+      window.removeEventListener(KEEP_EVENT, read);
+      window.removeEventListener(EBOOK_DEVICE_EVENT, read);
+      window.removeEventListener("sonder:downloads-changed", read);
+    };
+  }, [shape]);
+  if (!state) return [];
+  const kept: KeptWork[] = [];
+  for (const entry of state.keep) {
+    const work = works.get(entry.workId);
+    if (!entry.on || !work || !work.inLibrary) continue;
+    const needs = keptNeeds(keepRecording(work), downloads, parts, {
+      work,
+      deviceChoice: state.held.ebookChoices[work.workId] ?? null,
+      ebooks: state.held.ebooks,
+      maps: state.held.maps,
+    });
+    kept.push({ workId: entry.workId, entry, needs });
+  }
+  return kept;
 }

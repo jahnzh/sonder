@@ -13,11 +13,13 @@ export type GroupProps = {
   info?: ReactNode;
   /** A note under the card (Caption size, not uppercase, muted). */
   note?: string;
+  /** The note is in the failed colour (This device: "This device is full. …", #552). */
+  noteFailed?: boolean;
   /** Rows. */
   children: ReactNode;
 };
 
-export function Group({ caption, label, info, note, children }: GroupProps) {
+export function Group({ caption, label, info, note, noteFailed, children }: GroupProps) {
   const id = useId();
   return (
     <div className="part-group-block">
@@ -37,7 +39,11 @@ export function Group({ caption, label, info, note, children }: GroupProps) {
       <ul className="part-group" role="list" aria-labelledby={caption ? `${id}-caption` : undefined} aria-label={caption ? undefined : label}>
         {children}
       </ul>
-      {note && <p className="part-group-note">{note}</p>}
+      {note && (
+        <p className="part-group-note" data-failed={noteFailed ? "" : undefined} role={noteFailed ? "alert" : undefined}>
+          {note}
+        </p>
+      )}
     </div>
   );
 }

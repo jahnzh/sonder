@@ -435,6 +435,131 @@ test("a book with only an ebook keeps its EPUB; an interrupted EPUB save resumes
   await settle();
   assert.deepEqual(d.fileSaves, ["1:epub:e1", "1:epub:e1"]);
   assert.equal(typeof d.server.get("w1")?.completeAt, "number");
-  // No save record is written for a book without a recording.
-  assert.equal(d.records.size, 0);
+  // A book without a recording keeps its save record under its EPUB's save id (#552: a failure there waits for Retry).
+  assert.deepEqual([...d.records.keys()], ["ebook:e1"]);
+  assert.equal(d.records.get("ebook:e1")?.state, "finished");
+});
+
+/** A refusal as `downloadInChunks` throws it: the source refused, the account is signed out, or the device is full. */
+const refusedBy = (failure: "source" | "signed-out" | "full") =>
+  Object.assign(new Error(failure === "full" ? "This device has run out of storage." : "Refused"), { name: "DownloadRefused", refused: true, failure });
+
+test("a failed save waits for Retry; it is tried again by itself only after a library read that changed (#552)", async () => {
+  const d = device();
+  let refuse = true;
+  const failures: string[] = [];
+  const a = d.tab(1, {
+    saveTrack: async (t, signal, onProgress) => {
+      signal.throwIfAborted();
+      d.saves.push(`1:${t.id}`);
+      if (refuse) throw refusedBy("source");
+      onProgress(10, 10);
+      d.downloads.push({ trackId: t.id, recordingId: t.recordingId, size: 10 });
+    },
+    writeRecord: async (recordingId, workId, change) => {
+      if (change.state === "off") return;
+      if (change.state === "failed") failures.push(change.failure);
+      d.records.set(recordingId, { recordingId, workId, startedAt: 1, state: change.state, reason: change.state === "failed" ? change.reason : null });
+    },
+  });
+  a.saver.start();
+  await settle();
+  await a.saver.tap("w1", true);
+  await settle();
+  assert.deepEqual(d.saves, ["1:r1-0"]);
+  assert.equal(d.records.get("r1")?.state, "failed");
+  assert.deepEqual(failures, ["source"]);
+  // Foreground, online and a reopened Sonder do not try it again.
+  for (const reason of ["foreground", "online", "open"] as const) await a.saver.trigger(reason);
+  await settle();
+  assert.deepEqual(d.saves, ["1:r1-0"], "a failed save waits");
+  // A library read that changed tries it once more by itself.
+  await a.saver.trigger("library");
+  await settle();
+  assert.deepEqual(d.saves, ["1:r1-0", "1:r1-0"]);
+  // Retry saves it.
+  refuse = false;
+  await a.saver.trigger("retry", "w1");
+  await settle();
+  assert.deepEqual(d.saves, ["1:r1-0", "1:r1-0", "1:r1-0", "1:r1-1"]);
+  assert.equal(d.records.get("r1")?.state, "finished");
+});
+
+test("Pause writes pausedAt on the Keep record from any tab; the save waits for Resume, also after a reload (#552)", async () => {
+  const d = device({ tracks: 3 });
+  const pause = {
+    writePause: async (workId: string, pausedAt: number | null) => {
+      const entry = d.keep.get(workId);
+      if (entry) d.keep.set(workId, { ...entry, pausedAt });
+    },
+    isPaused: async (workId: string) => !!d.keep.get(workId)?.pausedAt,
+  };
+  let release: () => void = () => {};
+  let hold = true;
+  const saveTrack: SaverDeps["saveTrack"] = async (t, signal, onProgress) => {
+    signal.throwIfAborted();
+    d.saves.push(t.id);
+    if (hold && t.id === "r1-1")
+      await new Promise<void>((resolve, reject) => {
+        release = resolve;
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    onProgress(10, 10);
+    d.downloads.push({ trackId: t.id, recordingId: t.recordingId, size: 10 });
+  };
+  const a = d.tab(1, { ...pause, saveTrack });
+  const b = d.tab(2, { ...pause, saveTrack });
+  a.saver.start();
+  b.saver.start();
+  await settle();
+  await a.saver.tap("w1", true);
+  await settle();
+  assert.deepEqual(d.saves, ["r1-0", "r1-1"]);
+  // Pause in the tab that does not save: the Keep record says so and the saving tab stops.
+  await b.saver.pauseWork("w1", "r1");
+  await settle();
+  assert.equal(typeof d.keep.get("w1")?.pausedAt, "number");
+  assert.equal(d.records.get("r1")?.state, "paused");
+  assert.equal(a.running.size, 0);
+  // A reload: the records stay, a new tab takes over; nothing is saved while the pause stands.
+  a.saver.stop("closed");
+  b.saver.stop("closed");
+  d.records.set("r1", { ...d.records.get("r1")!, state: "interrupted" });
+  const c = d.tab(3, { ...pause, saveTrack });
+  c.saver.start();
+  await settle();
+  await c.saver.trigger("foreground");
+  await c.saver.trigger("library");
+  await settle();
+  assert.deepEqual(d.saves, ["r1-0", "r1-1"], "a paused save waits for Resume");
+  // Resume clears the pause and saves the rest.
+  hold = false;
+  await c.saver.resumeWork("w1");
+  await settle();
+  assert.ok(!d.keep.get("w1")?.pausedAt, "the pause is gone");
+  assert.deepEqual(d.saves, ["r1-0", "r1-1", "r1-1", "r1-2"]);
+  assert.equal(d.records.get("r1")?.state, "finished");
+  void release;
+});
+
+test("a pause written in another tab whose message is lost stops the save before its next file (#552)", async () => {
+  const d = device({ tracks: 3 });
+  const a = d.tab(1, {
+    channel: null,
+    isPaused: async (workId) => !!d.keep.get(workId)?.pausedAt,
+    saveTrack: async (t, signal, onProgress) => {
+      signal.throwIfAborted();
+      d.saves.push(t.id);
+      // Another tab pauses while the first file is saved; no channel carries it here.
+      if (t.id === "r1-0") d.keep.set("w1", { ...d.keep.get("w1")!, pausedAt: 7 });
+      onProgress(10, 10);
+      d.downloads.push({ trackId: t.id, recordingId: t.recordingId, size: 10 });
+    },
+  });
+  a.saver.start();
+  await settle();
+  await a.saver.tap("w1", true);
+  await settle();
+  assert.deepEqual(d.saves, ["r1-0"]);
+  assert.equal(d.records.get("r1")?.state, "paused");
 });

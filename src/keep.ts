@@ -27,6 +27,11 @@ export type KeepEntry = {
   pending: boolean;
   /** A completion the server has not been told of yet. */
   completePending?: boolean;
+  /**
+   * When the user paused this book's save (#552): it waits for Resume, in every tab of the account. Kept on this
+   * device only; the server's record has no such field.
+   */
+  pausedAt?: number | null;
 };
 
 /** A record of `GET /api/device/keep` (`server/device-keep.ts`). */
@@ -61,16 +66,18 @@ export function mergeKeep(local: readonly KeepEntry[], server: readonly ServerKe
       send.push(sendOf(entry));
       continue;
     }
+    // A pause is this device's (#552): it stays while the book stays kept, whichever record wins.
+    const paused = (record: KeepEntry): KeepEntry => (record.on && entry.pausedAt ? { ...record, pausedAt: entry.pausedAt } : record);
     if (theirs.at > entry.at || theirs.on !== entry.on) {
-      records.push({ ...theirs, pending: false });
+      records.push(paused({ ...theirs, pending: false }));
       continue;
     }
     // The same choice: the later completion of the two.
     const mine = entry.on ? entry.completeAt : null;
     if (mine !== null && (theirs.completeAt === null || mine > theirs.completeAt)) {
-      records.push({ ...theirs, completeAt: mine, pending: false, completePending: true });
+      records.push(paused({ ...theirs, completeAt: mine, pending: false, completePending: true }));
       send.push({ workId: entry.workId, kind: "complete", completeAt: mine });
-    } else records.push({ ...theirs, pending: false });
+    } else records.push(paused({ ...theirs, pending: false }));
   }
   for (const theirs of remote.values()) records.push({ ...theirs, pending: false });
   return { records, send };
@@ -199,17 +206,36 @@ export function keptNeeds(
  */
 export type StopCause = "pause" | "off" | "closed";
 
+/**
+ * Why a save failed (#552): the source refused a file, the account is signed out (401), or the device is full
+ * (`QuotaExceededError`). Each waits for Retry, and is tried again by itself only when the library read changes.
+ */
+export type SaveFailure = "source" | "signed-out" | "full";
+
 /** What became of a save that stopped, as the device's record notes it. */
 export type SaveStop =
   | { state: "interrupted"; how: "network" | "closed" }
   | { state: "paused" }
   | { state: "off" }
-  | { state: "failed"; reason: string };
+  | { state: "failed"; reason: string; failure: SaveFailure };
 
-/** An error the save cannot get past by trying again: the source refused, or storage ran out. */
+export type Failing = { name?: string; refused?: boolean; failure?: SaveFailure; status?: number; inner?: { name?: string } | null } | null;
+
+/** A full device: the browser's `QuotaExceededError`, also wrapped by Dexie (`inner`) or by the save (`failure`). */
+export const isQuota = (e: Failing) => !!e && (e.failure === "full" || e.name === "QuotaExceededError" || e.inner?.name === "QuotaExceededError");
+
+/** An error the save cannot get past by trying again: the source refused, the account is signed out, or storage ran out. */
 export function isRefusal(error: unknown): boolean {
-  const e = error as { name?: string; refused?: boolean } | null;
-  return !!e && (e.refused === true || e.name === "QuotaExceededError" || e.name === "DownloadRefused");
+  const e = error as Failing;
+  return !!e && (e.refused === true || isQuota(e) || e.name === "DownloadRefused" || e.failure === "signed-out" || e.failure === "source");
+}
+
+/** Which failure a refusal is: a full device, a signed-out account (401), or a refusal by the source. */
+export function failureOf(error: unknown): SaveFailure {
+  const e = error as Failing;
+  if (isQuota(e)) return "full";
+  if (e?.failure === "signed-out" || e?.status === 401) return "signed-out";
+  return "source";
 }
 
 /**
@@ -220,7 +246,8 @@ export function classifyStop(stop: { cause: StopCause | null; error: unknown }):
   if (stop.cause === "pause") return { state: "paused" };
   if (stop.cause === "off") return { state: "off" };
   if (stop.cause === "closed") return { state: "interrupted", how: "closed" };
-  if (isRefusal(stop.error)) return { state: "failed", reason: (stop.error as Error).message || "The save failed." };
+  if (isRefusal(stop.error))
+    return { state: "failed", reason: (stop.error as Error).message || "The save failed.", failure: failureOf(stop.error) };
   return { state: "interrupted", how: "network" };
 }
 

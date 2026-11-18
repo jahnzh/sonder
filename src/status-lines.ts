@@ -242,6 +242,26 @@ export function deviceKeptLine({ audio, filesTotal, filesSaved, ebook, size }: D
   return ebook ? `Ebook${DOT}${bytes(size)}` : null;
 }
 
+/** Why a kept book's save failed (#552; board KeepNotComplete.dc.html), and how many of its files are missing. */
+export type KeepFailureFacts = {
+  failure: "source" | "signed-out" | "full";
+  /** The needed files that are not on this device. */
+  missing: number;
+  /** Audio files are among the missing ones: the audio source did not supply them; otherwise the server. */
+  audio: boolean;
+};
+
+/** The reason row under a failed Keep row: "The audio source could not supply 4 files.", "This device is full". */
+export function keepFailureLine({ failure, missing, audio }: KeepFailureFacts): string {
+  if (failure === "full") return "This device is full";
+  if (failure === "signed-out") return "Signed out. Sign in again, then Retry.";
+  const files = `${missing} ${missing === 1 ? "file" : "files"}`;
+  return `The ${audio ? "audio source" : "server"} could not supply ${files}.`;
+}
+
+/** Under Storage on This device when a kept book's save failed because the device is full (board KeepFull.dc.html). */
+export const DEVICE_FULL_NOTE = "This device is full. Remove a book here or free space on the phone, then Retry.";
+
 /** A book of a series the user has not added. */
 export const NOT_IN_LIBRARY_LINE = "Not in your library";
 /** A queue that is switched off. */

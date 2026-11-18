@@ -1,11 +1,18 @@
 import { localDB } from "./lib";
 import type { DownloadPart, Track } from "./types";
-import { STALL_MS, stallGuard, type StallClock } from "./keep";
+import { STALL_MS, isQuota, stallGuard, type Failing, type SaveFailure, type StallClock } from "./keep";
 const CHUNK_SIZE = 4 * 1024 * 1024;
 /** The source refused, or storage ran out: trying again does not help (`isRefusal` in keep.ts). */
 class DownloadRefused extends Error {
   readonly refused = true;
   override name = "DownloadRefused";
+  /** Which failure it is (#552): the source refused, the account is signed out, or the device is full. */
+  constructor(
+    message: string,
+    readonly failure: SaveFailure = "source",
+  ) {
+    super(message);
+  }
 }
 /** A range delivered nothing for 30 seconds (#550): aborted, and counted as a network failure. */
 class RangeStalled extends Error {
@@ -182,6 +189,7 @@ export async function downloadInChunks(
               (response.status === 401
                 ? "Sign in again to resume this download."
                 : "The audio source could not supply this download. Retry when it is available."),
+            response.status === 401 ? "signed-out" : "source",
           );
         }
         if (
@@ -308,7 +316,7 @@ export async function downloadInChunks(
         // A stalled range is a network failure: counted, and fetched again after the delay.
         if (
           error instanceof DownloadRefused ||
-          (error as Error).name === "QuotaExceededError"
+          isQuota(error as Failing)
         )
           throw error;
         if (++failures >= 4)
@@ -346,9 +354,10 @@ export async function downloadInChunks(
     );
     onProgress(part.loaded, part.total);
   } catch (error) {
-    if ((error as Error).name === "QuotaExceededError")
+    if (isQuota(error as Failing))
       throw new DownloadRefused(
         "This device has run out of storage. Free some space, then resume the download.",
+        "full",
       );
     throw error;
   }
