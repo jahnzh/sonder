@@ -143,6 +143,8 @@ const desktopProjects = [
               /(^|\/)get-magnet\.spec\.ts$/,
               // More › Reading sync opens the Reading sync page; the specs that opened the card (#543).
               /(^|\/)(reader-sync-row|chapterless-sync|one-reading-view)\.spec\.ts$/,
+              // Now playing as one screen with Listen and Read, and the specs of the screens it replaces (#593).
+              /(^|\/)(now-playing-faces|playback-workflow|media-controls|playback-speed|playback-speed-rate|position-history|integrated-reader)\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },

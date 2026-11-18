@@ -168,9 +168,9 @@ test("what an address shows: built pages as they are, everything else the first 
   // Its magnet sheet (#606) likewise: the administrator's; someone else gets the Book page.
   assert.equal(shows("#book/w1/get/audiobook/magnet"), "#book/w1/get/audiobook/magnet");
   assert.equal(shows("#book/w1/get/audiobook/magnet", false), "#book/w1");
-  // Not built yet: behaves like an address that names nothing.
-  assert.equal(shows("#listen/w1"), "#library");
-  assert.equal(shows("#read/w1"), "#library");
+  // Now playing's faces (#593) are built, for everyone.
+  assert.equal(shows("#listen/w1"), "#listen/w1");
+  assert.equal(shows("#read/w1", false), "#read/w1");
   assert.equal(shows("#activity/device"), "#activity/device");
   // A worker's address is the administrator's worker page (#520): it stays in the address.
   assert.equal(shows("#activity/server/wsl"), "#activity/server/wsl");
