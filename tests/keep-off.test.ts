@@ -40,6 +40,8 @@ function input(change: Partial<DeviceBookInput> = {}): DeviceBookInput {
     maps: [
       { key: "reader-map:e1:r2", size: 50_000 },
       { key: "reader-map:e1:r1", size: 40_000 },
+      // The book's EPUB paired with a recording no longer listed anywhere: still the book's map.
+      { key: "reader-map:e1:gone", size: 10_000 },
       { key: "reader-map:e9:o1", size: 70_000 },
     ],
     ...change,
@@ -48,8 +50,8 @@ function input(change: Partial<DeviceBookInput> = {}): DeviceBookInput {
 
 test("the size of a book on this device: every recording's files and sections, the EPUB and the maps, nothing of another book", () => {
   const book = deviceBook(input());
-  // r1 412 MB (an earlier copy), r2 300 MB plus a 40 MB section, the EPUB 1 MB, the two maps 90 KB.
-  assert.equal(book.size, 412 * MB + 340 * MB + 1 * MB + 90_000);
+  // r1 412 MB (an earlier copy), r2 300 MB plus a 40 MB section, the EPUB 1 MB, the three maps 100 KB.
+  assert.equal(book.size, 412 * MB + 340 * MB + 1 * MB + 100_000);
   assert.equal(book.any, true);
 });
 
@@ -57,7 +59,7 @@ test("what Off removes: both recordings (complete and partial), the EPUB copy, t
   const book = deviceBook(input());
   assert.deepEqual(book.recordingIds, ["r1", "r2"]);
   assert.deepEqual(book.ebookIds, ["e1"]);
-  assert.deepEqual(book.mapKeys, ["reader-map:e1:r2", "reader-map:e1:r1"]);
+  assert.deepEqual(book.mapKeys, ["reader-map:e1:r2", "reader-map:e1:r1", "reader-map:e1:gone"]);
   assert.deepEqual(book.saveIds.sort(), ["ebook:e1", "r1", "r2"]);
   for (const list of [book.recordingIds, book.saveIds, book.mapKeys]) assert.ok(!list.some((id) => id.includes("o1")));
 });
@@ -104,7 +106,7 @@ test("an earlier copy whose recording left the library is named from the Keep re
   const book = deviceBook(left);
   assert.deepEqual(book.earlier, [{ recordingId: "r1", narrator: "Ann", size: 412 * MB }]);
   assert.ok(book.recordingIds.includes("r1"));
-  assert.equal(book.size, 412 * MB + 340 * MB + 1 * MB + 90_000);
+  assert.equal(book.size, 412 * MB + 340 * MB + 1 * MB + 100_000);
   // Without the record's name it is found by its save record and listed without a narrator.
   const unnamed = deviceBook({ ...left, remembered: [], records: [...left.records, { recordingId: "r1", workId: "w1" }] });
   assert.deepEqual(unnamed.earlier, [{ recordingId: "r1", narrator: "", size: 412 * MB }]);
