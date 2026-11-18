@@ -1,8 +1,8 @@
 // The Get audiobook sheet (#601, spec #600 "The sheet"; boards GetAudiobook.dc.html, BookGetting.dc.html):
 // `#book/<workId>/get/audiobook`, the administrator's. Close, the caption "Get audiobook", the book (cover, title as
 // the one heading, author), the search field (the title and author, searched on open and on Enter or the search
-// key), Recordings with one choice row per recording found, the Group of the other ways to get one (off until
-// tickets 05 and 06) and Get this recording with its line. The rows are get-audiobook-rows.ts, the search's
+// key), Recordings with one choice row per recording found, the Group of the other ways to get one (the
+// magnet link off until ticket 06; the import, get-import-row.tsx) and Get this recording with its line. The rows are get-audiobook-rows.ts, the search's
 // states get-audiobook-state.ts. The language button beside the field opens a Picker (#602): the choice applies at
 // once and is stored on this device; Load more recordings asks AudioBookBay's next page. The words, the rows, the
 // pages loaded, the language and the choice are kept in the history entry; a reload searches again (as many pages).
@@ -35,6 +35,7 @@ import {
   type GetSearch,
   type SourceId,
 } from "./get-audiobook-state";
+import { GetImportRow } from "./get-import-row";
 import "./get-audiobook-sheet.css";
 
 /** What the sheet keeps in its history entry. */
@@ -366,7 +367,7 @@ export function GetAudiobookSheet({ workId, online, prowlarrConfigured, onChange
 
       <div className="part-group-block">
         <ul className="part-group" role="list" aria-label="Other ways to get it">
-          {["Paste a magnet link", "Import files from this device"].map((label) => (
+          {["Paste a magnet link"].map((label) => (
             <li className="part-row-item" key={label}>
               <button type="button" className="part-row get-sheet-off" data-opens="" aria-disabled="true">
                 <span className="part-row-label type-body">{label}</span>
@@ -376,6 +377,7 @@ export function GetAudiobookSheet({ workId, online, prowlarrConfigured, onChange
               </button>
             </li>
           ))}
+          <GetImportRow kind="audiobook" workId={workId} title={title} />
         </ul>
       </div>
     </Sheet>
