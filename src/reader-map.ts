@@ -1,7 +1,7 @@
 // The reader's narration map (#543, spec #537 "What the reader keeps"): which recording's map the reader loads, and
 // the loading itself (restore the cached copy, read the listing and the map through the map lifecycle, poll while
 // the job or its rebuild runs). The Reading sync card did this in the background until the page replaced it; the
-// rule and the lifecycle calls are the card's, unchanged. It reads no `/alignments/options`.
+// rule and the lifecycle calls are the card's, unchanged; it no longer reads the alignment options the card read.
 //
 // Pure and DOM-free so tests call it: the hook in src/use-reader-map.ts gives it the player, the saved choice, the
 // lifecycle and the timers.

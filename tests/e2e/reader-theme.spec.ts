@@ -286,11 +286,17 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await page
     .getByRole("button", { name: "Close reader options", exact: true })
     .click();
+  // The reading sync's pair is still the chosen recording (#543): More › Reading sync opens the page, whose Recording
+  // row names it from the stored work.
+  await openMore(page);
+  await page.locator(".reader-room:not(.inline-reader) .reader-more").getByRole("button", { name: "Reading sync", exact: true }).click();
+  await page.locator(".reader-room:not(.inline-reader) .reader-panel").getByRole("button", { name: /^Reading sync/ }).click();
+  await expect(sync).toHaveAttribute("data-state", "offline");
+  await expect(sync.getByRole("button", { name: /^Recording/ })).toHaveText(`Recording${audioBook.narrator?.trim() || "Unknown narrator"}`);
+  await page.goBack();
   await expect(
-    page.locator(
-      '.reader-room:not(.inline-reader) .reading-sync select[aria-label="Reading sync audiobook release"]',
-    ),
-  ).toHaveValue(chosenRecording);
+    page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").locator("body"),
+  ).toBeVisible();
   await page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").locator("body").click({ position: { x: 340, y: 100 } });
   await showControls(page);
   await page
