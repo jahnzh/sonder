@@ -267,3 +267,17 @@ test("the Book page's Keep line: Not complete in the failed colour after a failu
   // Complete: no failure, whatever the record says.
   assert.equal(keepState({ ...base, needs: { ...needs, filesSaved: 12, complete: true, missing: [] }, stop: { why: "failed", failure: "source" } }).failed, false);
 });
+
+test("a kept book with only an ebook is on Now while its EPUB is missing, with the ebook's icon and its own save id", () => {
+  const over = {
+    books: [],
+    kept: [kept({ recordingId: null, ebook: true })],
+    records: [record("ebook:e1", { state: "failed", reason: "Refused", failure: "source" as const })],
+  };
+  const now = buildNow({ activity: null, saves: deviceSaveEntries(input(over)), books: [{ id: "x", workId: "w1", title: "Ebook only" }], admin: false, online: true, now: NOW });
+  assert.equal(groupOf(now), "attention");
+  const row = rowOf(now)!;
+  assert.equal(row.icon, "ebook");
+  assert.equal(row.line, "Not complete · 0 of 1 files");
+  assert.deepEqual(row.button, { action: "retry", source: "device", recordingId: "ebook:e1", bookId: "", workId: "w1", keep: true });
+});

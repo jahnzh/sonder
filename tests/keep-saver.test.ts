@@ -532,6 +532,8 @@ test("Pause writes pausedAt on the Keep record from any tab; the save waits for 
   await c.saver.trigger("library");
   await settle();
   assert.deepEqual(d.saves, ["r1-0", "r1-1"], "a paused save waits for Resume");
+  // Nothing even starts: the save record stays as the reload left it.
+  assert.equal(d.records.get("r1")?.state, "interrupted");
   // Resume clears the pause and saves the rest.
   hold = false;
   await c.saver.resumeWork("w1");
