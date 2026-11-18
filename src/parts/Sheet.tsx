@@ -72,7 +72,11 @@ export function Sheet({ title, children, footer, parent, onClose }: SheetProps) 
     const sheet = ref.current!;
     // Read before anything turns inert: a focused control inside an inert subtree loses its focus.
     const from = opener();
-    const made = [...document.body.children].filter((element) => element !== sheet && !element.hasAttribute("inert"));
+    // A sheet over this one (the magnet sheet over Get, #606) comes after it in the document: when both open at once
+    // (a link), it is left alone, and it makes this one inert itself.
+    const over = (element: Element) =>
+      element.classList.contains("part-sheet") && !!(sheet.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING);
+    const made = [...document.body.children].filter((element) => element !== sheet && !element.hasAttribute("inert") && !over(element));
     for (const element of made) element.setAttribute("inert", "");
     sheet.focus({ preventScroll: true });
     return () => {

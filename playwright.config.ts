@@ -131,6 +131,8 @@ const desktopProjects = [
               /(^|\/)get-import\.spec\.ts$/,
               // Prepare again on the Reading sync page with the reading sync in use kept (#542).
               /(^|\/)reading-sync-(again|kept)\.spec\.ts$/,
+              // Paste a magnet link for the book, over Get audiobook (#606).
+              /(^|\/)get-magnet\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },
