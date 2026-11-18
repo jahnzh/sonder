@@ -403,3 +403,18 @@ test("This device's Remove does what Off does: no file of the book is left, and 
   const records = (await (await page.request.get("/api/device/keep")).json()).records as { workId: string; on: boolean }[];
   expect(records.find((r) => r.workId === book.workId)?.on).toBe(false);
 });
+
+test("Remove from library on another device turns Keep off from the server: the files go at this device's next run", async ({ page }) => {
+  test.setTimeout(120_000);
+  const book = await fixture(page, unique("Removed elsewhere"), { ebook: true });
+  await page.goto(address(book.workId));
+  await keep(page).click();
+  await expect(line(page)).toHaveText(/^Audiobook and ebook · [\d.]+ MB$/, { timeout: 30_000 });
+  expect((await held(page, [book.recordingId], book.ebookId)).downloads).toBe(1);
+  // Another device removes the book from the library: the server writes off for every device of the user.
+  await page.goto("/#library");
+  expect((await page.request.delete(`/api/works/${encodeURIComponent(book.workId)}/library`)).ok()).toBe(true);
+  // This device's next run (Sonder opened again) merges the record and removes the files.
+  await page.reload();
+  await expect.poll(() => held(page, [book.recordingId], book.ebookId), { timeout: 20_000 }).toEqual({ downloads: 0, parts: 0, chunks: 0, epub: 0, maps: 0, records: 0, opfs: 0 });
+});
