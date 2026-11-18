@@ -402,6 +402,12 @@ export type ActivityItem = {
    * (`buildActivity`); `ActivityResponse.attention` counts these plus the processes that are down (#514).
    */
   attention: boolean;
+  /**
+   * A download that made no progress while its work already has a ready copy from another download (#716): not
+   * stuck and not needing attention, but it offers Cancel and Now says "This book already has a copy". Absent
+   * otherwise; an older client ignores it.
+   */
+  superseded?: true;
 };
 /**
  * The facts of an item's status line (#514), one shape per kind: the feature's own status word as it is stored (a

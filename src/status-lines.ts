@@ -394,6 +394,12 @@ export function withFileCount(line: string, files: { done: number; total: number
   return files && files.total > 0 ? `${line}${DOT}${files.done} of ${files.total} files` : line;
 }
 
+/**
+ * A download that made no progress while its book already has a ready copy from another download (#716): this leads
+ * its line ("This book already has a copy · Downloading to server · 0%"), and the row offers Cancel.
+ */
+export const ALREADY_HAS_COPY_LINE = "This book already has a copy";
+
 /** A stuck or blocked entry's line with the server's reason ("Downloading to server · 77% · Blocked by Torrent client"). */
 export function withReason(line: string, reason: string | null | undefined): string {
   return reason ? `${line}${DOT}${reason}` : line;

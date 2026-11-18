@@ -7,8 +7,8 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  NOT_IN_LIBRARY_LINE, QUEUE_OFF_LINE, WORKER_OFF_LINE,
-  deviceSaveLine, downloadLine, ebookCheckLine, readingSyncLine, serverCopyLine,
+  NOT_IN_LIBRARY_LINE, QUEUE_OFF_LINE, WORKER_OFF_LINE, ALREADY_HAS_COPY_LINE,
+  deviceSaveLine, downloadLine, ebookCheckLine, readingSyncLine, serverCopyLine, withReason,
   type EbookCheckFacts, type ReadingSyncJobFacts,
 } from "../src/status-lines.ts";
 import { ALIGNMENT_OUTCOMES, ALIGNMENT_STATUSES } from "../src/reading-types.ts";
@@ -301,4 +301,9 @@ test("the Reading sync page's lines (#540): states, notes, steps, and the lines 
   // The step lines are the stage lines a reading sync's row shows elsewhere.
   for (const [stage, step] of [["decoding", "decoding"], ["encoding", "encoding"], ["anchoring", "anchoring"], ["aligning", "aligning"], ["finishing", "saving"]] as const)
     assert.equal(reading(book("processing", { stage })), lines.SYNC_STEP_LINES[step], stage);
+});
+
+test("a stalled download of a book that already has a copy: the line leads with it (#716)", () => {
+  assert.equal(ALREADY_HAS_COPY_LINE, "This book already has a copy");
+  assert.equal(withReason(ALREADY_HAS_COPY_LINE, downloadLine({ status: "downloading", progress: 0.0011 })), "This book already has a copy · Downloading to server · 0%");
 });

@@ -11,7 +11,7 @@
 import type { DeviceSaveEntry } from "./device-saves";
 import {
   downloadLine, ebookCheckLine, failedLine, finishedLine, readingSyncLine, serverCopyLine, seriesSearchLine,
-  withFileCount, withReason, withUser, deviceSaveLine,
+  withFileCount, withReason, withUser, deviceSaveLine, ALREADY_HAS_COPY_LINE,
   type DownloadFacts, type EbookCheckFacts, type ReadingSyncJobFacts, type SeriesSearchFacts, type ServerCopyFacts,
 } from "./status-lines";
 import type { ActivityItem, ActivityItemAction, ActivityProcess, ActivityResponse } from "./types";
@@ -243,6 +243,8 @@ function serverEntry(item: ActivityItem, now: number): Entry | null {
   // still shows it on a phone; "No change for …" and "Blocked by …" follow the line as before.
   if (!notBook && item.stuck)
     line = item.stuck.known ? withReason(item.stuck.reason, line ?? item.detail) : withReason(line ?? item.detail ?? "", item.stuck.reason);
+  // A stalled download of a book that already has a copy (#716) says so first; it is not stuck and stays in its group.
+  else if (!notBook && item.superseded) line = withReason(ALREADY_HAS_COPY_LINE, line ?? item.detail);
   const action = firstAction(item.actions);
   const syncOpen = entry === "reading-sync" && item.state !== "done";
   return {
@@ -257,7 +259,7 @@ function serverEntry(item: ActivityItem, now: number): Entry | null {
     icon: notBook ? "server" : item.facts.kind === "series-acquisition" ? item.facts.search : ICON_OF[entry] ?? null,
     line: line ?? item.detail ?? "",
     failed: failed || notBook,
-    progress: group === "progress" && !item.stuck ? item.progress : null,
+    progress: group === "progress" && !item.stuck && !item.superseded ? item.progress : null,
     finishedAt: group === "finished" ? item.updatedAt : null,
     button: action ? { action, source: "server", itemId: item.id } : null,
     ...(action && action !== "cancel" && item.actions.includes("cancel") ? { cancel: { action: "cancel" as const, source: "server" as const, itemId: item.id } } : {}),

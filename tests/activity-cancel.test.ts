@@ -25,6 +25,10 @@ const STUCK = "38136ad6".padEnd(40, "1");
 const FAILED = "f".repeat(40);
 const READY = "e".repeat(40);
 const PAUSED = "d".repeat(40);
+/** A stuck download of a book with no other copy, the same torrent state as the owner's (#716). */
+const ALONE = "a1".padEnd(40, "2");
+const OWN = "a2".padEnd(40, "3");
+const PLACEHOLDER = "a3".padEnd(40, "4");
 
 /** The RPC calls the fake torrent client received; it is "down" while `unreachable` is set. */
 const rpc: Array<{ method: string; arguments: Record<string, unknown> }> = [];
@@ -41,11 +45,13 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
     "session-get": { version: "4.0.6", "download-dir": join(temp, "media", "torrents", "complete"), "incomplete-dir": "", "incomplete-dir-enabled": false },
     "port-test": { "port-is-open": true },
     "torrent-remove": {},
-    // The stuck torrent: in the client, its metadata in, no peer connected, every tracker counting no seeder.
-    "torrent-get": { torrents: [{
-      hashString: STUCK, status: 4, error: 0, errorString: "", percentDone: 0.0011, metadataPercentComplete: 1,
-      peersConnected: 0, peersSendingToUs: 0, trackerStats: [{ seederCount: 0 }],
-    }] },
+    // The stuck torrents: in the client, their metadata in, no peer connected, every tracker counting no seeder.
+    "torrent-get": { torrents: [STUCK, ALONE, OWN, PLACEHOLDER]
+      .filter((hash) => !Array.isArray(call.arguments.ids) || (call.arguments.ids as string[]).includes(hash))
+      .map((hashString) => ({
+        hashString, status: 4, error: 0, errorString: "", percentDone: 0.0011, metadataPercentComplete: 1,
+        peersConnected: 0, peersSendingToUs: 0, trackerStats: [{ seederCount: 0 }],
+      })) },
   };
   return new Response(JSON.stringify({ result: "success", arguments: answers[call.method] ?? {} }), { status: 200 });
 }) as typeof fetch;
@@ -84,10 +90,20 @@ for (const userId of [1, readerId]) {
   run("INSERT INTO user_library(user_id,book_id,status,added_at) VALUES(?,'torbox-1','reading',?)", userId, now);
   run("INSERT INTO user_progress(user_id,recording_id,track_id,position,duration,updated_at) VALUES(?,'recording-torbox-1','t1',?,3600,?)", userId, 1234 + userId, now);
 }
-const acquisition = (id: string, hash: string, status: string, backend = "local", error: string | null = null) => {
-  run(`INSERT INTO acquisitions(id,hash,magnet,backend,remote_id,title,author,cover,status,progress,error,work_id,created_at,updated_at)
-       VALUES(?,?,?,?,?,'A Game of Thrones','George R. R. Martin','',?,0.0011,?,'got',?,?)`,
-    id, hash, `magnet:?xt=urn:btih:${hash}&dn=GoT`, backend, hash, status, error, now - 19 * 86_400_000, now - 2 * 3_600_000);
+// Works with no ready copy besides a download's own (#716): one with nothing, one whose only recording is the one the
+// download itself made (its `book_id`), and one with only a placeholder edition (no track), as a Hardcover import makes.
+run("INSERT INTO works(id,title,author,description,genre,year) VALUES('alone','A Clash of Kings','George R. R. Martin','','',1998)");
+run("INSERT INTO works(id,title,author,description,genre,year) VALUES('own','A Storm of Swords','George R. R. Martin','','',2000)");
+run("INSERT INTO audio_editions(id,work_id,cover,narrator,rating,source_label) VALUES('own-1','own','','Roy Dotrice',0,'Local')");
+run("INSERT INTO recordings(id,edition_id) VALUES('recording-own-1','own-1')");
+run("INSERT INTO tracks(id,recording_id,title,track_index,duration,source,source_type) VALUES('o1','recording-own-1','Prologue',0,3600,'{}','local')");
+run("INSERT INTO works(id,title,author,description,genre,year) VALUES('placeholder','A Feast for Crows','George R. R. Martin','','',2005)");
+run("INSERT INTO audio_editions(id,work_id,cover,narrator,rating,source_label) VALUES('hc-crows','placeholder','','',0,'Hardcover')");
+run("INSERT INTO recordings(id,edition_id) VALUES('recording-hc-crows','hc-crows')");
+const acquisition = (id: string, hash: string, status: string, backend = "local", error: string | null = null, workId = "got", bookId: string | null = null) => {
+  run(`INSERT INTO acquisitions(id,hash,magnet,backend,remote_id,title,author,cover,status,progress,error,work_id,book_id,created_at,updated_at)
+       VALUES(?,?,?,?,?,'A Game of Thrones','George R. R. Martin','',?,0.0011,?,?,?,?,?)`,
+    id, hash, `magnet:?xt=urn:btih:${hash}&dn=GoT`, backend, hash, status, error, workId, bookId, now - 19 * 86_400_000, now - 2 * 3_600_000);
   run("INSERT INTO user_acquisitions(user_id,acquisition_id) VALUES(1,?)", id);
 };
 acquisition("b1a70445", STUCK, "downloading");
@@ -95,6 +111,9 @@ acquisition("acq-failed", FAILED, "error", "local", "A completed torrent file co
 acquisition("acq-ready", READY, "ready", "torbox");
 acquisition("acq-paused", PAUSED, "paused");
 acquisition("acq-torbox", "c".repeat(40), "preparing", "torbox");
+acquisition("acq-alone", ALONE, "downloading", "local", null, "alone");
+acquisition("acq-own", OWN, "downloading", "local", null, "own", "own-1");
+acquisition("acq-placeholder", PLACEHOLDER, "downloading", "local", null, "placeholder");
 
 const statusOf = (id: string) => (sqlite.prepare("SELECT status FROM acquisitions WHERE id=?").get(id) as { status: string }).status;
 const positions = () => sqlite.prepare("SELECT user_id, recording_id, position FROM user_progress ORDER BY user_id").all();
@@ -113,24 +132,50 @@ async function activity() {
   return Object.fromEntries(answer.items.map((item) => [item.id, item]));
 }
 
-test("the owner's stuck download names why, from the client, and offers Cancel", async () => {
+test("a stuck download names why, from the client, and offers Cancel", async () => {
   const byId = await activity();
-  const stuck = byId["acquisition:b1a70445"];
+  const stuck = byId["acquisition:acq-alone"];
   assert.deepEqual(stuck.stuck, { reason: "No seeders", known: true });
   assert.deepEqual(stuck.actions, ["cancel"]);
   assert.equal(stuck.attention, true);
-  assert.equal(JSON.stringify(stuck).includes(STUCK), false, "the torrent's hash is not sent to the page");
+  assert.equal(stuck.superseded, undefined, "the book has no other copy");
+  // Its own recording and a placeholder (no track) are no other copy: these are problems of their books too.
+  for (const id of ["acquisition:acq-own", "acquisition:acq-placeholder"]) {
+    assert.deepEqual(byId[id].stuck, { reason: "No seeders", known: true }, id);
+    assert.equal(byId[id].attention, true, id);
+    assert.equal(byId[id].superseded, undefined, id);
+  }
+  for (const item of Object.values(byId)) assert.equal(JSON.stringify(item).includes(STUCK) || JSON.stringify(item).includes(ALONE), false, "no torrent's hash is sent to the page");
   const asked = rpc.filter((call) => call.method === "torrent-get").map((call) => call.arguments.ids);
-  assert.ok(asked.length >= 1 && asked.every((ids) => JSON.stringify(ids) === JSON.stringify([STUCK])), "only the fetching local download is asked about");
+  assert.ok(asked.length >= 1 && asked.every((ids) => JSON.stringify(ids) === JSON.stringify([STUCK, ALONE, OWN, PLACEHOLDER])), "only the fetching local downloads are asked about");
   assert.deepEqual(byId["acquisition:acq-failed"].actions, ["retry", "cancel"]);
-  assert.deepEqual(byId["acquisition:acq-torbox"].stuck, { reason: "No change for 3 h" }, "a TorBox download keeps the current line");
-  assert.deepEqual(byId["acquisition:acq-torbox"].actions, ["cancel"]);
   rpc.length = 0;
   // The app's own route asks the client the same way (the wiring in `server/app.ts`).
   const read = await app.inject({ method: "GET", url: "/api/activity", cookies: { sonder_session: admin } });
   assert.equal(read.statusCode, 200, read.body);
-  assert.ok(rpc.some((call) => call.method === "torrent-get" && JSON.stringify(call.arguments.ids) === JSON.stringify([STUCK])));
+  assert.ok(rpc.some((call) => call.method === "torrent-get" && (call.arguments.ids as string[]).includes(STUCK)));
   assert.equal(read.body.includes(STUCK), false, "the hash is not in the answer");
+  rpc.length = 0;
+});
+
+test("the owner's stuck download of a book that already has a copy: Cancel offered, not a problem of the book, nothing cancelled", async () => {
+  const byId = await activity();
+  const stuck = byId["acquisition:b1a70445"];
+  assert.equal(stuck.superseded, true, "the work has its ready TorBox copy");
+  assert.equal(stuck.stuck, null, "not stuck as a problem: no reason line of its own");
+  assert.equal(stuck.attention, false, "not under Needs attention");
+  assert.equal(stuck.state, "running");
+  assert.deepEqual(stuck.actions, ["cancel"]);
+  // A TorBox download of the same book that does not move is the same: the local client's words are not asked for.
+  const torbox = byId["acquisition:acq-torbox"];
+  assert.deepEqual([torbox.superseded, torbox.stuck, torbox.attention, torbox.actions], [true, null, false, ["cancel"]]);
+  // A failed download of the book still needs attention: it failed, which a copy does not change.
+  assert.equal(byId["acquisition:acq-failed"].attention, true);
+  assert.equal(byId["acquisition:acq-failed"].superseded, undefined);
+  // The paused download of the book is not stalled: nothing changes for it.
+  assert.equal(byId["acquisition:acq-paused"].superseded, undefined);
+  assert.deepEqual(removals(), [], "nothing is cancelled automatically");
+  assert.equal(statusOf("b1a70445"), "downloading");
   rpc.length = 0;
 });
 

@@ -81,7 +81,7 @@ export class ChangeTracker {
 }
 
 /** An item as a source reports it; Activity adds whether it is stuck, blocked or needs attention. */
-export type ActivityDraft = Omit<ActivityItem, "stuck" | "blockedBy" | "permanent" | "actions" | "attention"> & {
+export type ActivityDraft = Omit<ActivityItem, "stuck" | "blockedBy" | "permanent" | "actions" | "attention" | "superseded"> & {
   permanent?: boolean;
   /** When the item last changed, for the "no change for" rule. */
   changedAt: number;
@@ -95,6 +95,12 @@ export type ActivityDraft = Omit<ActivityItem, "stuck" | "blockedBy" | "permanen
   stuckReason?: string | null;
   /** Actions offered besides `actions` while the item is stuck by the no-change rule (#716: Cancel, and Retry where it helps). */
   stuckActions?: ActivityItem["actions"];
+  /**
+   * What the item fetches is already there (#716: the work has a ready copy from another download). Once stuck by the
+   * no-change rule it is not a problem of the book: it is not stuck and needs no attention, but it is marked
+   * `superseded` and still offers its `stuckActions`. Nothing is cancelled automatically.
+   */
+  superseded?: boolean;
 };
 
 /** A service a source probes (torrent client, alignment workers), listed as a process of type "service". */

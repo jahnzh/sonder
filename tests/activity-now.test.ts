@@ -479,3 +479,23 @@ test("a stuck download says why and offers Cancel; a failing one Retry with Canc
   assert.equal(before.button, null);
   assert.equal(before.cancel, undefined);
 });
+
+test("a stalled download of a book that already has a copy says so, offers Cancel and stays under In progress (#716)", () => {
+  const now = build({
+    activity: answer([
+      download("acquisition:got", "got", { progress: 0.0011, superseded: true, actions: ["cancel"], updatedAt: NOW - 2 * HOUR }),
+      download("acquisition:tb", "tb", {
+        progress: null, superseded: true, actions: ["cancel"], facts: { kind: "acquisition", status: "preparing", backend: "torbox" },
+      }),
+    ]),
+  });
+  assert.equal(where(now)["work:got"], "progress", "not under Needs attention");
+  const got = row(now, "work:got");
+  assert.equal(got.line, "This book already has a copy · Downloading to server · 0%");
+  assert.equal(got.progress, null, "no bar for a download that does not move");
+  assert.equal(got.failed, false);
+  assert.deepEqual(got.button, { action: "cancel", source: "server", itemId: "acquisition:got" });
+  assert.equal(got.cancel, undefined);
+  assert.equal(row(now, "work:tb").line, "This book already has a copy · Preparing the stream");
+  assert.equal(now.dot, false, "nothing needs attention: no dot");
+});

@@ -155,6 +155,11 @@ export type AcquisitionRow = {
   updated_at: number;
   /** The work it is for, once it has one. */
   work?: ItemWork | null;
+  /**
+   * The work already has a ready recording (one with a track) other than this download's own (#716): 1 or 0 as
+   * SQLite answers. A stuck download of it is then `superseded`.
+   */
+  has_copy?: number | null;
 };
 
 export const TORRENT_CLIENT = { id: "torrent-client", label: "Torrent client" };
@@ -191,6 +196,15 @@ export type AcquisitionProbe = { health: TorrentHealth; torrents: TorrentLookup 
 const asksClient = (row: Pick<AcquisitionRow, "status" | "backend" | "hash">) =>
   usesLocalTorrentClient(row.backend || null) && ACQUISITION_ACTIVITY_STATES[row.status as AcquisitionJobStatus] === "running" && !!row.hash;
 
+/**
+ * Whether the work `w` of the download `a` already has a ready recording, one with a track, in an audio edition other
+ * than the one the download made (`a.book_id`) (#716). A placeholder edition has no track, so it never counts.
+ */
+const HAS_OTHER_COPY_SQL = `(w.id IS NOT NULL AND EXISTS(
+  SELECT 1 FROM audio_editions copy_e JOIN recordings copy_r ON copy_r.edition_id = copy_e.id
+   WHERE copy_e.work_id = w.id AND (a.book_id IS NULL OR copy_e.id <> a.book_id)
+     AND EXISTS(SELECT 1 FROM tracks copy_t WHERE copy_t.recording_id = copy_r.id)))`;
+
 export const acquisitionSource = defineSource<AcquisitionRow[], AcquisitionProbe>({
   kind: "acquisition",
   process: { id: "acquisitions", label: "Download queue" },
@@ -200,7 +214,7 @@ export const acquisitionSource = defineSource<AcquisitionRow[], AcquisitionProbe
       sqlite, userId,
       sqlite.prepare(
         `SELECT a.id, a.hash, a.title, a.author, a.backend, a.status, a.progress, a.error, a.cover, a.created_at, a.updated_at,
-                w.id AS work_id
+                w.id AS work_id, ${HAS_OTHER_COPY_SQL} AS has_copy
            FROM acquisitions a LEFT JOIN audio_editions e ON e.id = a.book_id
            LEFT JOIN works w ON w.id = COALESCE(a.work_id, e.work_id)`,
       ).all() as Array<Omit<AcquisitionRow, "work"> & { work_id: string | null }>,
@@ -236,6 +250,8 @@ export const acquisitionSource = defineSource<AcquisitionRow[], AcquisitionProbe
         dependsOn: usesLocalTorrentClient(row.backend || null) ? TORRENT_CLIENT.id : null,
         actions: offeredActions(ACQUISITION_ACTIONS, row.status),
         ...stuckFields(row, probe.value?.torrents ?? null),
+        // A download still fetching a book that already has a copy (#716): once stuck, not a problem of the book.
+        ...(state === "running" && row.has_copy ? { superseded: true } : {}),
       };
     });
     return { drafts, services: [{ ...TORRENT_CLIENT, ...torrentProcessHealth(probe.value?.health ?? null, probe.failure) }] };

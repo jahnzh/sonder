@@ -83,25 +83,28 @@ export function buildActivity(input: ActivityInput): ActivityResponse {
 
   const items: ActivityItem[] = [];
   for (const { draft, source } of drafts) {
-    const { changedAt, permanent, dependsOn, actions, stuckReason, stuckActions, ...item } = draft;
+    const { changedAt, permanent, dependsOn, actions, stuckReason, stuckActions, superseded, ...item } = draft;
     if (item.state === "done" && now - item.updatedAt > FINISHED_VISIBLE_MS) continue;
     const waiting = item.state === "running" || item.state === "queued";
     const blockedBy = waiting && dependsOn && downService.has(dependsOn) ? dependsOn : null;
     const threshold = source.stuckAfterMs * multiplier;
     let stuck: ActivityItem["stuck"] = null;
     let stalled = false;
+    let moot = false;
     if (blockedBy) stuck = { reason: `Blocked by ${downService.get(blockedBy)}` };
     else if (source.stuck) stuck = source.stuck(draft, now, threshold);
     else if (item.state === "running" && now - changedAt > threshold) {
-      // The source names why when it knows (#716); otherwise the line says how long nothing changed.
-      stuck = stuckReason ? { reason: stuckReason, known: true } : { reason: `No change for ${formatAge(now - changedAt)}` };
       stalled = true;
+      // What it fetches is already there (#716): not a problem of the book, so not stuck and no attention; Cancel stays.
+      if (superseded) moot = true;
+      // The source names why when it knows (#716); otherwise the line says how long nothing changed.
+      else stuck = stuckReason ? { reason: stuckReason, known: true } : { reason: `No change for ${formatAge(now - changedAt)}` };
     }
     const offered = [...(actions ?? [])];
     if (stalled) for (const action of stuckActions ?? []) if (!offered.includes(action)) offered.push(action);
     // The one place the rule is decided for server work (#514): failed in the last seven days, stuck or blocked.
     const attention = (item.state === "failed" && now - item.updatedAt <= ATTENTION_FAILURE_MS) || !!stuck || !!blockedBy;
-    items.push({ ...item, permanent: !!permanent, actions: offered, stuck, blockedBy, attention });
+    items.push({ ...item, permanent: !!permanent, actions: offered, stuck, blockedBy, attention, ...(moot ? { superseded: true as const } : {}) });
   }
 
   const rank = (item: ActivityItem) =>

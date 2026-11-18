@@ -153,3 +153,37 @@ test("the probe asks the client only about local downloads that are fetching, an
   const none = (await acquisitionSource.probe!({ ...deps, torrentStates: async () => { throw new Error("x"); } }, [row("p", { status: "paused" })])) as AcquisitionProbe;
   assert.equal(none.torrents, null, "nothing fetching: the client is not asked");
 });
+
+test("a stuck download of a book that already has a copy offers Cancel and is not a problem of the book (#716)", () => {
+  const noPeers = { health: health(), torrents: states(torrent({ peersConnected: 0, peersSendingToUs: 0, trackerStats: [] })) };
+  const tracker = new ChangeTracker();
+  const rows = [row("copy", { has_copy: 1 }), row("alone", { hash: "b".repeat(40), has_copy: 0 })];
+  const snapshots = [{ source: acquisitionSource, rows, probe: { value: noPeers, failure: null } }];
+  const first = buildActivity({ now: NOW - 120 * MIN, multiplier: 1, tracker, snapshots });
+  const fresh = first.items.find((item) => item.id === "acquisition:copy")!;
+  assert.equal(fresh.superseded, undefined, "while it may still move it is an ordinary download");
+  assert.deepEqual(fresh.actions, [], "and offers no Cancel yet");
+
+  const answer = buildActivity({ now: NOW, multiplier: 1, tracker, snapshots });
+  const byId = Object.fromEntries(answer.items.map((item) => [item.id, item]));
+  const copy = byId["acquisition:copy"];
+  assert.equal(copy.superseded, true);
+  assert.equal(copy.stuck, null, "the client's cause is not the line: the copy is");
+  assert.equal(copy.attention, false, "not counted under Needs attention");
+  assert.equal(copy.state, "running");
+  assert.deepEqual(copy.actions, ["cancel"]);
+  const alone = byId["acquisition:alone"];
+  assert.deepEqual([alone.superseded, alone.stuck, alone.attention], [undefined, { reason: "Not in the torrent client", known: true }, true]);
+  assert.equal(answer.attention, 1, "only the download of the book without a copy is counted");
+  const queue = answer.processes.find((process) => process.id === "acquisitions")!;
+  assert.equal(queue.counts.stuck, 1, "the queue's health counts only the one without a copy");
+
+  // Blocked by a client that is down: it stays blocked (the client is the problem), and a failed one still failed.
+  const down = health({ status: "unreachable", session: false, network: "unknown", message: "The local torrent client cannot be reached." });
+  const blocked = items([row("b", { has_copy: 1 })], { health: down, torrents: { failure: "unreachable" } })["acquisition:b"];
+  assert.deepEqual([blocked.superseded, blocked.stuck, blocked.attention], [undefined, { reason: "Blocked by Torrent client" }, true]);
+  const failed = items([row("f", { status: "error", has_copy: 1 })], { health: health(), torrents: null })["acquisition:f"];
+  assert.deepEqual([failed.superseded, failed.attention, failed.actions], [undefined, true, ["retry", "cancel"]]);
+  const paused = items([row("p", { status: "paused", has_copy: 1 })], { health: health(), torrents: null })["acquisition:p"];
+  assert.deepEqual([paused.superseded, paused.attention, paused.actions], [undefined, false, ["resume"]]);
+});
