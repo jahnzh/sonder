@@ -77,6 +77,14 @@
   width: auto;
   align-self: stretch;
 }
+/* A row that is off (Get ebook's "Already added"): shown, not chosen. */
+.part-choice-row:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.part-choice-row:disabled:hover {
+  background: transparent;
+}
 /* Several chosen (ChoiceList): a row under the line stretches to the card, its 64 and its padding inside it. */
 .part-choice-list > .part-choice-row + .part-choice-row {
   width: auto;
