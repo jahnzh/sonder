@@ -3,7 +3,7 @@
 // media state's forms, what is shown for a work outside the library, the This device switch and the heart.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bookModel, deviceHold, favoriteOf, keepState, placeLine, seriesLine, toggleWorkFavorite } from "../src/pages/book-model.ts";
+import { bookModel, deviceHold, keepState, placeLine, seriesLine } from "../src/pages/book-model.ts";
 import { bookSyncLine, mediaStateLine, NEEDS_EPUB_LINE } from "../src/status-lines.ts";
 import type { Download, DownloadPart, LibraryWork, Progress, ReadingSyncSummary, Track, WorkEbook, WorkRecording } from "../src/types.ts";
 
@@ -301,14 +301,6 @@ test("the Keep row counts the tracks, the EPUB and the map, and names what is ke
   assert.equal(keepState({ keep: true, hold: complete, saving: { filesSaved: 11, filesTotal: 12 }, ebookSize: null, hasRecording: true, needs: needs(11, 12, null) }).line, "Saving · 11 of 12 files");
   // Off: the needs do not matter.
   assert.equal(keepState({ keep: false, hold: complete, saving: null, ebookSize: null, hasRecording: true, needs: needs(3, 5, null) }).line, "Audiobook · 3 MB");
-});
-
-test("the heart: pressed when any entry of the work is a favourite, toggling all of them", () => {
-  assert.equal(favoriteOf(["a", "b"], []), false);
-  assert.equal(favoriteOf(["a", "b"], ["x", "b"]), true);
-  assert.deepEqual(toggleWorkFavorite(["a", "b"], ["x"]), ["x", "a", "b"]);
-  assert.deepEqual(toggleWorkFavorite(["a", "b"], ["x", "b"]), ["x"]);
-  assert.deepEqual(toggleWorkFavorite([], ["x"]), ["x"]);
 });
 
 // #533: the three states of boards BookNotInLibrary, BookNothing and BookPdf, each read as a whole: the place line,

@@ -56,9 +56,10 @@ type Props = {
   running: Running;
   /** The device's records of its saves (#517): how a kept book's last save stopped (#552). */
   records?: readonly DeviceSaveRecord[];
+  /** The favourites by work (work ids). */
   favorites: string[];
-  /** Every entry of the work joins today's favourites list, or every one leaves it. */
-  onFavorite: (entryIds: string[]) => void;
+  /** The Favorite button: the work joins the favourites by work, or leaves them (#577). */
+  onFavorite: (workId: string) => void;
   /** Today's save of a recording to this device (the dock's and Activity's): Resume of a book that is not kept. */
   onSave: (book: Book) => void;
   /** Stops a running save of a recording. */
@@ -199,7 +200,7 @@ export function BookPage(props: Props) {
           label="Favorite"
           aria-pressed={favorite}
           data-pressed={favorite ? "" : undefined}
-          onClick={() => props.onFavorite([workId])}
+          onClick={() => props.onFavorite(workId)}
         />
       )}
     </header>

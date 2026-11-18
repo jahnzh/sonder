@@ -1,5 +1,5 @@
-import { migrateFavorites } from "./pages/library-filter";
 import Dexie, { type Table } from "dexie";
+import { upgradeFavoritesToWorks } from "./favorites-by-work";
 import { dropPosition, peekPosition, recentPositions, recordPosition, serialQueue, type PositionEntry, type PositionHistory } from "./position-history";
 import type { Book, LibraryWork, Progress, Download, DownloadPart, Track } from "./types";
 import { DEVICE_SAVE_KEY_PREFIX, deviceSaveKey, readDeviceSaveRecord, type DeviceSaveRecord } from "./device-saves";
@@ -128,12 +128,9 @@ export class SonderDB extends Dexie {
     this.version(5).stores({ works: "workId" });
     // Additive: a new table, nothing of the earlier ones changes (places, downloads, favourites, history stay).
     this.version(6).stores({ keep: "workId" });
-    this.version(7).stores({}).upgrade(async (tx) => {
-      const preference = await tx.table("preferences").get("favorites");
-      const ids = Array.isArray(preference?.value) ? preference.value.filter((id: unknown): id is string => typeof id === "string") : [];
-      const books = await tx.table("books").toArray();
-      await tx.table("preferences").put({ key: "workFavorites", value: migrateFavorites(ids, books) });
-    });
+    // Additive: favourites by work (#577). Version 7 maps the favourite edition ids to their works into a new
+    // preference; the old one stays for an older tab, and no table changes.
+    this.version(7).stores({}).upgrade((tx) => upgradeFavoritesToWorks(tx.table("preferences"), tx.table("books")));
   }
 }
 const sharedDB = new SonderDB();

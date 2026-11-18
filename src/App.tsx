@@ -47,6 +47,7 @@ import {
   localDB,
   authDB,
   selectUserStorage,
+  userStorageKey,
   bytes,
   percent,
   downloadTrack,
@@ -90,7 +91,6 @@ import { HardcoverPage } from "./pages/hardcover-page";
 import { EbookPage } from "./pages/ebook-page";
 import { BookPage } from "./pages/book-page";
 import { ReadingSyncDetailsPage, ReadingSyncPage } from "./pages/reading-sync-page";
-import { toggleWorkFavorite } from "./pages/book-model";
 import { ReaderPages } from "./pages/reader-pages";
 import { isReaderPage } from "./reader-pages";
 import { firstPage, parentOf, writeAddress, type Place, type Route } from "./routes";
@@ -100,7 +100,12 @@ import { GetMagnetSheet } from "./pages/get-magnet-sheet";
 import { GetEbookSheet } from "./pages/get-ebook-sheet";
 import { deviceImports } from "./device-import";
 import { Gallery, isGalleryRoute } from "./gallery/Gallery";
-import { refreshLibraryWorks, startLibraryWorks, useStoredWorksWithPlaces } from "./library-works-store";
+import { refreshLibraryWorks, startLibraryWorks, useLibraryWorksStored, useStoredWorksWithPlaces } from "./library-works-store";
+import { toggleFavoriteWork, WORK_FAVORITES_KEY } from "./favorites-by-work";
+import { ALL_CHIP, readChip, type LibraryChip } from "./pages/library-filter";
+
+/** The Library's chip on this device (#577), per account through `userStorageKey`. */
+const LIBRARY_CHIP_KEY = "sonder-library-chip";
 import { bookStatus, readingPercent, workProgress } from "./work-progress";
 import { classifyStop, type StopCause } from "./keep";
 import { activeSaves, claimRecording, keepSaver, pauseKeep, resumeKeep, keepOffAndRemove, onKeepJob, savesInOtherTabs, startKeepSaver, stopKeepSaver, useKeptWorks } from "./keep-runtime";
@@ -266,6 +271,9 @@ function LibraryApp({
   // The library by work with this device's places (#528): the Library's Listening, Not started and Finished
   // follow the work of each entry, so a book read in the reader is In progress (#556).
   const deviceWorks = useStoredWorksWithPlaces();
+  const worksStored = useLibraryWorksStored();
+  // The Library's shelf (#577): one entry per work in the library, never `GET /api/books`.
+  const libraryWorks = useMemo(() => [...deviceWorks.values()].filter((work) => work.inLibrary), [deviceWorks]);
   // The address, read by SignedIn once the user is known. The page modules in
   // src/pages never read or write it themselves.
   const address = useAddress();
@@ -297,16 +305,19 @@ function LibraryApp({
   const queryOf = page === "library" || page === "discover" ? page : "other";
   const query = queries[queryOf];
   const setQuery = (value: string) => setQueries((q) => ({ ...q, [queryOf]: value }));
-  const [filter, setFilter] = useState(() => localStorage.getItem("sonder-library-chip") || "All books");
-  useEffect(() => { localStorage.setItem("sonder-library-chip", filter); }, [filter]);
+  // The Library's chip, remembered on this device for this account (#577; #455: not in the address).
+  const [filter, setFilter] = useState<LibraryChip>(() => readChip(localStorage.getItem(userStorageKey(LIBRARY_CHIP_KEY))));
+  useEffect(() => {
+    localStorage.setItem(userStorageKey(LIBRARY_CHIP_KEY), filter);
+  }, [filter]);
   const [hardcoverFilter, setHardcoverFilter] = useState<HardcoverFilter>({
     shelf: "all",
     list: "all",
   });
   const [sort, setSort] = useState("recent");
   const [view, setView] = useState<"grid" | "list">("grid");
+  // The favourites by work (#577): work ids, read from this account's device database.
   const [favorites, setFavorites] = useState<string[]>([]);
-  const [showFavorites, setShowFavorites] = useState(false);
   const [seriesTarget, setSeriesTarget] = useState<SeriesTarget | null>(null);
   const [seriesRevision, setSeriesRevision] = useState(0);
   // The Library's Series chip (#567): the saved series, read again whenever the Library or a series is shown.
@@ -482,7 +493,7 @@ function LibraryApp({
     void refreshSavedEbooks();
     void refreshOfflineEbooks();
     refreshSettings();
-    void localDB.preferences.get("workFavorites").then((p) => {
+    void localDB.preferences.get(WORK_FAVORITES_KEY).then((p) => {
       if (Array.isArray(p?.value)) setFavorites(p.value);
     });
     const status = () => {
@@ -631,20 +642,11 @@ function LibraryApp({
       notify((e as Error).message, true);
     }
   };
-  // The Book page's heart: every entry of the work joins today's favourites list, or every one leaves it (#532).
-  const toggleFavorites = (ids: string[]) => {
+  // The Book page's Favorite (#532): the work joins the favourites by work, or leaves them (#577).
+  const toggleFavorite = (workId: string) => {
     setFavorites((current) => {
-      const next = toggleWorkFavorite(ids, current);
-      void localDB.preferences.put({ key: "workFavorites", value: next });
-      return next;
-    });
-  };
-  const toggleFavorite = (id: string) => {
-    setFavorites((current) => {
-      const next = current.includes(id)
-        ? current.filter((v) => v !== id)
-        : [...current, id];
-      void localDB.preferences.put({ key: "workFavorites", value: next });
+      const next = toggleFavoriteWork(workId, current);
+      void localDB.preferences.put({ key: WORK_FAVORITES_KEY, value: next });
       return next;
     });
   };
@@ -717,45 +719,15 @@ function LibraryApp({
       const status = bookStatus(workProgress(work));
       return status === b.status ? b : { ...b, status };
     });
-  // A book without audio shows its ebook's place; a book with audio its listening percentage, as before.
-  const readingPercentOf = (b: Book) => {
-    const work = b.tracks.length ? undefined : deviceWorks.get(b.workId);
-    return work ? readingPercent(work) : null;
-  };
   const downloaded = (b: Book) =>
     b.tracks.length > 0 &&
     b.tracks.every((t) => downloads.some((d) => d.trackId === t.id));
-  // The Library's Downloaded filter and badge (On device, #552): Keep on and complete, every needed file here.
+  // The Library's On device chip (#552, #577): Keep on and complete, every needed file here.
   const keptComplete = new Set(keptWorks.filter((k) => k.needs.complete).map((k) => k.workId));
-  const onDevice = (b: Book) => keptComplete.has(b.workId);
-  let visible = (page === "discover" ? books : libraryBooks)
-    .filter((b) => page !== "library" || !showFavorites || favorites.includes(b.id))
-    .filter(
-      (b) =>
-        !query ||
-        `${b.title} ${b.author} ${b.genre}`
-          .toLowerCase()
-          .includes(query.toLowerCase()),
-    );
-  if (page === "library")
-    visible = visible.filter(
-      (b) =>
-        filter === "All books" ||
-        (filter === "Listening" && b.status === "listening") ||
-        (filter === "Not started" && b.status === "unread") ||
-        (filter === "Finished" && b.status === "finished") ||
-        (filter === "Downloaded" && onDevice(b)),
-    );
-  if (page === "library")
-    visible = visible.filter(
-      (b) =>
-        (hardcoverFilter.shelf === "all" ||
-          (hardcoverFilter.shelf === "linked"
-            ? !!b.hardcover
-            : b.hardcover?.statusId === Number(hardcoverFilter.shelf))) &&
-        (hardcoverFilter.list === "all" ||
-          b.hardcover?.listIds.includes(Number(hardcoverFilter.list))),
-    );
+  // Discover's shelf of the server's books (the Library reads the library by work, #577).
+  const visible = books.filter(
+    (b) => !query || `${b.title} ${b.author} ${b.genre}`.toLowerCase().includes(query.toLowerCase()),
+  );
   // Get ebook (#604): the sheet over the page it is opened from, the administrator's.
   const findEbook = (workId: string) => address.navigate({ name: "get", workId, kind: "ebook" });
   // Get audiobook (#601): the sheet over the page it is opened from, the administrator's.
@@ -779,15 +751,6 @@ function LibraryApp({
         notify(SERIES_REMOVED_TOAST);
       }}
     />
-  );
-  visible.sort((a, b) =>
-    sort === "title"
-      ? a.title.localeCompare(b.title)
-      : sort === "author"
-        ? a.author.localeCompare(b.author)
-        : sort === "progress"
-          ? percent(b) - percent(a)
-          : b.addedAt - a.addedAt,
   );
   const listening = libraryBooks
     .filter((b) => b.status === "listening")
@@ -830,10 +793,7 @@ function LibraryApp({
                 aria-describedby={n.id === "activity" && attentionDot ? "activity-attention-sidebar" : undefined}
                 onClick={() => {
                   // Like the tab of the current place: on the Library, its own item shows every book again.
-                  if (n.id === "library" && page === "library") {
-                    setShowFavorites(false);
-                    setFilter("All books");
-                  }
+                  if (n.id === "library" && page === "library") setFilter(ALL_CHIP);
                   switchPlace(n.id);
                 }}
               >
@@ -1002,7 +962,7 @@ function LibraryApp({
                 running={savesRunning}
                 records={saveRecords}
                 favorites={favorites}
-                onFavorite={toggleFavorites}
+                onFavorite={toggleFavorite}
                 onSave={(book) => void startDownload(book)}
                 onPauseSave={pauseSave}
                 onFindAudio={findAudio}
@@ -1032,15 +992,29 @@ function LibraryApp({
             ) : <>
             {(page === "library" || seriesBeside) && (
               <LibraryPage
-                works={[...deviceWorks.values()].filter((work) => work.inLibrary)}
-                query={queries.library} setQuery={(value) => setQueries((q) => ({ ...q, library: value }))}
-                filter={filter} setFilter={setFilter} view={view} setView={setView} sort={sort} setSort={setSort}
-                hardcoverFilter={hardcoverFilter} setHardcoverFilter={setHardcoverFilter}
-                savedSeries={savedSeries} openSeries={openSeries} findSeries={findSeries}
+                works={libraryWorks}
+                stored={worksStored}
+                books={books}
+                query={queries.library}
+                setQuery={(value) => setQueries((q) => ({ ...q, library: value }))}
+                filter={filter}
+                setFilter={setFilter}
+                view={view}
+                setView={setView}
+                sort={sort}
+                setSort={setSort}
+                hardcoverFilter={hardcoverFilter}
+                setHardcoverFilter={setHardcoverFilter}
+                savedSeries={savedSeries}
+                openSeries={openSeries}
+                findSeries={findSeries}
                 beside={seriesBeside && seriesRouteId !== null ? { id: Number(seriesRouteId), page: seriesPage(seriesRouteId, true) } : null}
-                favorites={favorites} onDevice={keptComplete}
-                openWork={(workId) => address.navigate({ name: "book", workId })}
-                refresh={refresh} navigate={navigate} notify={notify}
+                favorites={favorites}
+                onDevice={keptComplete}
+                openWork={openWork}
+                refresh={refresh}
+                navigate={navigate}
+                notify={notify}
               />
             )}
             {page === "discover" && (

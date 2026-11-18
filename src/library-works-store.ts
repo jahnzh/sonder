@@ -281,6 +281,15 @@ export function useWork(workId: string): WorkRead {
 }
 
 /**
+ * Whether the signed-in user's stored works have been read from the device database (they may be empty): until
+ * then the Library cannot tell an empty library from one not read yet (#577).
+ */
+export function useLibraryWorksStored(): boolean {
+  const store = useSyncExternalStore(subscribe, current);
+  return store.stored && store.owner === userId();
+}
+
+/**
  * The stored works of the signed-in user by work id, each with this device's newer places laid over it: what
  * today's Library reads In progress, Not started and Finished from (#556, `workProgress`).
  */

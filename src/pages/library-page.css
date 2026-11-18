@@ -1,0 +1,386 @@
+/* The Library (#577; boards Library.dc.html, LibraryList.dc.html, DesktopLibrary.dc.html). Tokens and the colours of
+   appearance.css only, so every preset applies. */
+.library-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  min-width: 0;
+}
+
+/* The head: the Title, Search and the plus, 44 high. On a phone Search opens the field in place of the Title. */
+.library-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: var(--height-control);
+}
+.library-head h1 {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+}
+.library-head-actions {
+  display: flex;
+  gap: var(--space-8);
+  flex: none;
+}
+.library-search {
+  display: none;
+  flex: 1 1 240px;
+  min-width: 0;
+  height: var(--height-control);
+  box-sizing: border-box;
+  padding: 0 var(--space-12);
+  border-radius: var(--corner-control);
+  background: var(--raised);
+  color: var(--muted);
+  align-items: center;
+  gap: var(--space-8);
+}
+.library-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  outline-offset: 4px;
+}
+.library-page[data-searching] .library-head h1 {
+  display: none;
+}
+.library-page[data-searching] .library-search {
+  display: flex;
+}
+.library-add-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.library-add {
+  width: var(--height-control);
+  padding: 0;
+  justify-content: center;
+}
+
+/* Continue: the cover 72, Continue, the title, the place line and its bar, Play. */
+.library-continue {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-12);
+  border-radius: var(--corner-group);
+  background: var(--surface);
+}
+.library-continue-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.library-continue-cover {
+  width: 72px;
+  height: 72px;
+  flex: none;
+  border-radius: var(--corner-control);
+  overflow: hidden;
+  background: var(--raised);
+}
+.library-continue-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.library-continue-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.library-continue-label,
+.library-continue-line {
+  color: var(--muted);
+}
+.library-continue-title {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.library-continue-play {
+  width: var(--height-control);
+  height: var(--height-control);
+  flex: none;
+  border: 0;
+  border-radius: var(--corner-round);
+  background: var(--accent);
+  color: var(--on-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+/* The chips: one row that scrolls sideways, to the screen's edge. */
+.library-chips {
+  display: flex;
+  gap: var(--space-8);
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin-right: calc(-1 * var(--edge));
+  padding-right: var(--edge);
+}
+.library-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.library-shelf {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  min-width: 0;
+}
+.library-shelf-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+  min-height: var(--height-control);
+}
+.library-shelf-head h2 {
+  margin: 0;
+  color: var(--text);
+}
+.library-shelf-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.library-shelf-controls .view-toggle {
+  display: flex;
+}
+
+/* Grid: three columns on a phone, as many of 140 as fit on a desktop. */
+.library-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-16) var(--space-12);
+}
+@media (min-width: 760px) {
+  .library-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
+}
+.library-tile {
+  min-width: 0;
+}
+.library-tile-open {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.library-cover {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: var(--corner-control);
+  overflow: hidden;
+  background: var(--raised);
+}
+.library-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.library-cover-title {
+  display: block;
+  padding: var(--space-8);
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 15px;
+  overflow: hidden;
+}
+.library-marks {
+  position: absolute;
+  left: var(--space-8);
+  bottom: var(--space-8);
+  height: 20px;
+  box-sizing: border-box;
+  padding: 0 6px;
+  border-radius: var(--corner-round);
+  background: var(--background);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 11px;
+  line-height: 16px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.library-tile-title {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.library-tile-author {
+  display: block;
+  margin-top: calc(-1 * var(--space-8));
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* List: Book rows without a chevron, the marks muted on the right edge. */
+.library-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-radius: var(--corner-group);
+  background: var(--surface);
+  overflow: hidden;
+}
+.library-row + .library-row {
+  border-top: 1px solid var(--border);
+}
+.library-row-open {
+  width: 100%;
+  min-height: var(--height-bar);
+  box-sizing: border-box;
+  padding: var(--space-12) var(--space-16);
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.library-row-cover {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: var(--corner-control);
+  overflow: hidden;
+  background: var(--raised);
+}
+.library-row-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.library-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.library-row-title {
+  font-weight: 500;
+}
+.library-row-title,
+.library-row-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.library-row-line {
+  color: var(--muted);
+}
+.library-row-marks {
+  flex: none;
+  display: flex;
+  gap: var(--space-4);
+  color: var(--muted);
+}
+
+.library-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-32) 0;
+  text-align: center;
+}
+.library-empty h3,
+.library-empty p {
+  margin: 0;
+}
+.library-empty p,
+.library-reading {
+  color: var(--muted);
+}
+.library-reading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  margin: 0;
+}
+
+/* A desktop: the search field always beside the Title, the plus with its words. */
+@media (min-width: 760px) {
+  .library-head {
+    flex-wrap: wrap;
+    gap: var(--space-16);
+  }
+  .library-head h1,
+  .library-page[data-searching] .library-head h1 {
+    display: block;
+    flex: none;
+  }
+  .library-search {
+    display: flex;
+    max-width: 360px;
+  }
+  .library-search-toggle {
+    display: none !important;
+  }
+  .library-add {
+    width: auto;
+    padding: 0 var(--space-16);
+  }
+  .library-add-text {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+  }
+  .library-chips {
+    margin-right: 0;
+    padding-right: 0;
+    flex-wrap: wrap;
+  }
+}
