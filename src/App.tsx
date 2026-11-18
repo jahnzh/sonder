@@ -22,9 +22,6 @@ import {
   Cloud,
   WifiOff,
   X,
-  Heart,
-  CheckCheck,
-  BookOpen,
   Loader2,
   FolderOpen,
   Link2,
@@ -49,7 +46,6 @@ import {
   selectUserStorage,
   userStorageKey,
   bytes,
-  percent,
   downloadTrack,
   getDownloadedBlob,
   clock,
@@ -106,7 +102,7 @@ import { ALL_CHIP, readChip, type LibraryChip } from "./pages/library-filter";
 
 /** The Library's chip on this device (#577), per account through `userStorageKey`. */
 const LIBRARY_CHIP_KEY = "sonder-library-chip";
-import { bookStatus, readingPercent, workProgress } from "./work-progress";
+import { bookStatus, workProgress } from "./work-progress";
 import { classifyStop, type StopCause } from "./keep";
 import { activeSaves, claimRecording, keepSaver, pauseKeep, resumeKeep, keepOffAndRemove, onKeepJob, savesInOtherTabs, startKeepSaver, stopKeepSaver, useKeptWorks } from "./keep-runtime";
 type Notice = { text: string; error?: boolean };
