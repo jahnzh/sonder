@@ -35,6 +35,7 @@ import {
 import { PlayerProvider } from "./player";
 import { SeriesDialog, type SeriesTarget } from "./components/Series";
 import { SeriesPage } from "./pages/series-page";
+import { REMOVED_TOAST as SERIES_REMOVED_TOAST } from "./pages/series-remove-model";
 import { ReaderHost } from "./components/Reader";
 import { EBOOK_DEVICE_EVENT } from "./reading";
 import {
@@ -998,6 +999,7 @@ function LibraryApp({
                 onRemoved={() => {
                   setSeriesRevision((value) => value + 1);
                   void refresh();
+                  notify(SERIES_REMOVED_TOAST);
                 }}
               />
             ) : pageRoute.name === "book-page" && pageRoute.page === "hardcover" ? <HardcoverPage key={pageRoute.workId} workId={pageRoute.workId} admin={user.role === "admin"} books={books} onChanged={() => void refresh()} /> : ebookPage ? (

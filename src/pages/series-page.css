@@ -72,3 +72,7 @@
 .series-page-new > .part-button {
   flex: none;
 }
+/* Remove series (board SeriesMore.dc.html): the last row, in the destructive colour. */
+.series-page-remove .part-row-label {
+  color: var(--danger);
+}
