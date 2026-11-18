@@ -83,6 +83,25 @@ export function seriesLine(work: Pick<LibraryWork, "series">): { label: string; 
   return { label: first.position != null ? `${first.name}${DOT}Book ${first.position}` : first.name, id: first.id, saved: !!first.saved };
 }
 
+/**
+ * The work an Add to library answered (ADR 0022) when it is not the page's own: the answer's `workId` when it names
+ * another work (the administrator's add of a Hardcover book matched it to a work on the server), else null. A server
+ * from before #574 answers no `workId`.
+ */
+export function addedElsewhere(pageWorkId: string, answer: { workId?: unknown } | null | undefined): string | null {
+  const workId = answer?.workId;
+  return typeof workId === "string" && workId && workId !== pageWorkId ? workId : null;
+}
+
+/**
+ * Get on this page adds the book first (ADR 0022): a Hardcover book outside the library under the id its import gives
+ * it (`work-hc-<n>`), which may not be a work on the server yet, so Get has no work to get a file for until it is added.
+ * Another book outside the library is added by the Get sheet itself when a file is chosen (#601).
+ */
+export function addsBeforeGet(work: Pick<LibraryWork, "workId" | "inLibrary">): boolean {
+  return !work.inLibrary && /^work-hc-[1-9][0-9]*$/.test(work.workId);
+}
+
 /** The reading sync of the chosen pair, in the facts of the status-line module; null when none was ever queued. */
 function syncFacts(job: ReadingSyncSummary | undefined): ReadingSyncJobFacts | null {
   if (!job) return null;

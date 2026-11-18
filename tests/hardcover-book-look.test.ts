@@ -132,7 +132,11 @@ test("a work matched to the book meanwhile answers as itself", async () => {
     assert.equal(work.workId, "w-quiet");
     assert.equal(work.hardcover?.id, 502);
   }
-  // Add to library on the old address adds that work.
+  // Add to library on the old address adds that work. Kim is not connected to Hardcover: the matched work is added
+  // without asking Hardcover.
+  const kim = await request(KIM, "/api/works/work-hc-502/library", "PUT");
+  assert.equal(kim.statusCode, 200, kim.body);
+  assert.deepEqual(kim.json(), { ok: true, workId: "w-quiet" });
   const added = await request(SAM, "/api/works/work-hc-502/library", "PUT");
   assert.equal(added.statusCode, 200, added.body);
   assert.deepEqual(added.json(), { ok: true, workId: "w-quiet" });
