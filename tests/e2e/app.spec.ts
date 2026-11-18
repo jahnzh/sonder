@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { skipOnMobile } from "./mobile";
+import { listenOnBookPage, playFromLibrary } from "./library-play";
 function wave() {
   const seconds = 10,
     n = 8000 * seconds,
@@ -68,14 +69,16 @@ test("dark mobile library, browsing, filters, favorites and ebook sources", asyn
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/");
+  // The Library by work (#577): the Title, one tile per work.
   await expect(
-    page.getByRole("heading", { name: "Your library." }),
+    page.getByRole("heading", { name: "Library", exact: true, level: 1 }),
   ).toBeVisible();
   // Other specs on a shared server (a repeat run) add books, so prove the six seeded books by title, not the total.
   for (const title of SEEDED_TITLES)
     await expect(
-      page.locator(".book-card").filter({ has: page.getByRole("button", { name: title, exact: true }) }),
+      page.getByRole("button", { name: `About ${title}`, exact: true }),
     ).toHaveCount(1);
+  // Guard 1 (spec #572): no horizontal overflow and the dark ground.
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     page.viewportSize()!.width,
   );
@@ -84,21 +87,42 @@ test("dark mobile library, browsing, filters, favorites and ebook sources", asyn
       .locator("body")
       .evaluate((el) => getComputedStyle(el).backgroundColor),
   ).toBe("rgb(16, 21, 16)");
+  // Guard 2: a book made a favourite (the Book page's Favorite, by work) is under the Favorites chip, after a reload too.
   await page
-    .getByRole("button", { name: "Add Frankenstein to favorites", exact: true })
+    .getByRole("button", { name: "About Frankenstein", exact: true })
     .click();
-  await page
-    .getByRole("button", { name: "Open navigation", exact: true })
-    .click();
-  await page.getByRole("button", { name: /Favorites/ }).click();
-  await expect(page.locator(".book-card")).toHaveCount(1);
+  await page.getByRole("button", { name: "Favorite", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Your favorites." }),
+    page.getByRole("button", { name: "Favorite", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page.goto("/#library");
+  const chips = page.getByRole("group", { name: "Filter your library", exact: true });
+  await chips.getByRole("button", { name: "Favorites", exact: true }).click();
+  await expect(page.locator(".library-tile")).toHaveCount(1);
+  await expect(
+    page.getByRole("button", { name: "About Frankenstein", exact: true }),
   ).toBeVisible();
   await page.reload();
-  await page.getByRole("tab", { name: "Finished", exact: true }).click();
-  await expect(page.getByText("No books")).toBeVisible();
-  await page.getByRole("tab", { name: "All books", exact: true }).click();
+  await expect(page.locator(".library-tile")).toHaveCount(1);
+  await expect(
+    page.getByRole("heading", { name: "Favorites", exact: true, level: 2 }),
+  ).toBeVisible();
+  // Guard 3: Finished with no finished book among the favourites says "No books" (the chips combine with Search too).
+  await page.getByRole("button", { name: "Search your library", exact: true }).click();
+  await page.getByRole("searchbox", { name: "Search your library", exact: true }).fill("Frankenstein");
+  await chips.getByRole("button", { name: "Finished", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "No books", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Clear filters", exact: true }).click();
+  await expect(chips.getByRole("button", { name: "All", exact: true })).toHaveAttribute("aria-pressed", "true");
+  // The favourite is taken back, so the next spec on a shared server starts without it.
+  await page
+    .getByRole("button", { name: "About Frankenstein", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Favorite", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Favorite", exact: true }),
+  ).toHaveAttribute("aria-pressed", "false");
+  await page.goto("/#library");
   await page
     .getByRole("button", { name: "Discover", exact: true })
     .last()
@@ -117,10 +141,8 @@ test("real audio playback, speed, seek, pause and recording-specific resume afte
   page,
 }) => {
   const own = await importOwnBook(page, "Playback resume");
-  await page.goto("/");
-  await page
-    .getByRole("button", { name: `Play ${own.title}`, exact: true })
-    .click();
+  await page.goto(`/#book/${encodeURIComponent(own.workId)}`);
+  await listenOnBookPage(page);
   await expect(
     page
       .locator(".player-dock")
@@ -145,11 +167,12 @@ test("real audio playback, speed, seek, pause and recording-specific resume afte
   const before = (await (await page.request.get("/api/books")).json()).find(
     (b: { id: string }) => b.id === own.id,
   ).progress.position;
+  await page.goto("/#library");
   await page.reload();
-  await page
-    .locator(".feature")
-    .getByRole("button", { name: "Continue listening", exact: true })
-    .click();
+  // Continue (#577): the book with the newest place, with Play.
+  const continued = page.getByRole("region", { name: "Continue", exact: true });
+  await expect(continued.getByRole("button", { name: `Continue ${own.title}`, exact: true })).toBeVisible();
+  await continued.getByRole("button", { name: "Play", exact: true }).click();
   await expect(
     page
       .locator(".player-dock")
@@ -230,9 +253,9 @@ test("import, complete device download, service-worker ranges and offline relaun
   });
   await page.reload();
   await page.waitForFunction(() => !!navigator.serviceWorker.controller);
-  await page
-    .getByRole("button", { name: "Add audiobook", exact: true })
-    .click();
+  // The import dialog is the navigation's Add an audiobook (the Library's plus opens Discover, #577).
+  await page.getByRole("button", { name: "Open navigation", exact: true }).click();
+  await page.getByRole("button", { name: "Add an audiobook", exact: true }).click();
   await page.locator("input[type=file]").setInputFiles({
     name: "A tiny offline story.wav",
     mimeType: "audio/wav",
@@ -249,10 +272,10 @@ test("import, complete device download, service-worker ranges and offline relaun
     .click();
   await expect(page.getByRole("dialog")).toBeHidden();
   await expect(
-    page.getByRole("button", { name: story, exact: true }),
+    page.getByRole("button", { name: `About ${story}`, exact: true }),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: story, exact: true })
+    .getByRole("button", { name: `About ${story}`, exact: true })
     .click();
   // The Book page's Keep on this device switch saves the book: the saver saves the chosen recording (#550).
   await page.getByRole("switch", { name: "Keep on this device", exact: true }).click();
@@ -269,11 +292,13 @@ test("import, complete device download, service-worker ranges and offline relaun
   await expect(
     page.getByText("You’re offline. Downloaded books are available."),
   ).toBeVisible();
-  await page.getByRole("tab", { name: "Downloaded", exact: true }).click();
-  await expect(page.locator(".book-card")).toHaveCount(1);
+  // On device (#577): Keep on and complete.
+  await page.getByRole("group", { name: "Filter your library", exact: true }).getByRole("button", { name: "On device", exact: true }).click();
+  await expect(page.locator(".library-tile")).toHaveCount(1);
   await page
-    .getByRole("button", { name: `Play ${story}`, exact: true })
+    .getByRole("button", { name: `About ${story}`, exact: true })
     .click();
+  await listenOnBookPage(page);
   await expect(
     page
       .locator(".player-dock")
@@ -342,12 +367,7 @@ test("embedded chapter controls seek within a recording without changing the phy
     await route.fulfill({ response, json: books });
   });
   await page.goto("/");
-  await page
-    .getByRole("button", {
-      name: `Play ${own.title}`,
-      exact: true,
-    })
-    .click();
+  await playFromLibrary(page, own.title);
   await expect(
     page
       .locator(".player-dock")

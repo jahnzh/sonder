@@ -5,6 +5,7 @@ import { test, expect, type Browser, type Page } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
+import { playFromLibrary } from "./library-play";
 
 test.use({ serviceWorkers: "block" });
 // The works a test made leave the library after it, so a book played here is not the Library's featured book for
@@ -176,7 +177,7 @@ test("its dialogs at phone size and on a desktop: a copy, Plays from, Report a p
     };
   });
   await page.goto("/");
-  await page.getByRole("button", { name: `Play ${work.title}`, exact: true }).click();
+  await playFromLibrary(page, work.title);
   const pause = page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true });
   await expect(pause).toBeVisible();
   await pause.click();

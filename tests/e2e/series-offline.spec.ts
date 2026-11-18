@@ -244,7 +244,7 @@ test("the Dexie upgrade to the stored series keeps every earlier table and its r
   expect(seeded).toEqual({ version: 60, hasSeries: false });
 
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Your library." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Library", exact: true, level: 1 })).toBeVisible();
   await expect
     .poll(() => page.evaluate(() => new Promise<number>((resolve) => {
       const request = indexedDB.open("sonder");
@@ -253,7 +253,7 @@ test("the Dexie upgrade to the stored series keeps every earlier table and its r
         request.result.close();
       };
     })))
-    .toBe(70);
+    .toBe(80);
   const upgraded = await page.evaluate(async (names) => {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open("sonder");
@@ -276,7 +276,7 @@ test("the Dexie upgrade to the stored series keeps every earlier table and its r
     db.close();
     return state;
   }, Object.keys(rows));
-  expect(upgraded.version).toBe(70);
+  expect(upgraded.version).toBe(80);
   expect(upgraded.stores).toEqual([...Object.keys(rows), "downloadChunks", "seriesAnswers"].sort());
   expect(upgraded.chunk).toBe("test");
   // The books table is the app's copy of `GET /api/books`, written again on every read: its rows are the server's.

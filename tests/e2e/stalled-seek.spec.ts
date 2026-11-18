@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { launchInstalledProfile, unreachableProxyArgs } from "./installed-profile";
+import { playFromLibrary } from "./library-play";
 
 const media = readFileSync("server/demo/alice-01.mp3");
 // The bytes the device has stored: everything past this point is only
@@ -102,19 +103,13 @@ async function openAlice(page: Page) {
 }
 
 async function playAlice(page: Page) {
+  // The Book page's Listen (the Library's tiles have no Play, #577); Now playing opens over it, and Back closes it.
+  await page.getByRole("region", { name: "Book", exact: true }).getByRole("button", { name: "Listen", exact: true }).click();
+  const nowPlaying = page.getByRole("dialog", { name: "Now playing", exact: true });
+  await expect(nowPlaying).toBeVisible();
+  await page.goBack();
+  await expect(nowPlaying).toBeHidden();
   await page.getByRole("button", { name: "Back to Library", exact: true }).click();
-  const dockPlay = page
-    .getByRole("button", { name: "Play Alice’s Adventures in Wonderland", exact: true })
-    .first();
-  try {
-    await dockPlay.waitFor({ timeout: 5_000 });
-    await dockPlay.click();
-  } catch {
-    await page
-      .getByRole("button", { name: /^(Start|Continue) listening$/ })
-      .first()
-      .click({ timeout: 10_000 });
-  }
   await page
     .locator(".player-dock")
     .getByRole("button", { name: "Pause", exact: true })
@@ -129,10 +124,7 @@ async function playRestoredAlice(page: Page) {
   const dockIsAlice = async () =>
     ((await dockTitle.textContent().catch(() => null)) || "").includes("Alice");
   if (!(await dockIsAlice()) || !(await page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true }).isVisible().catch(() => false))) {
-    await page
-      .getByRole("button", { name: "Play Alice’s Adventures in Wonderland", exact: true })
-      .first()
-      .click({ timeout: 15_000 });
+    await playFromLibrary(page, "Alice’s Adventures in Wonderland");
   }
   await page
     .locator(".player-dock")

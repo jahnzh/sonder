@@ -2,6 +2,7 @@ import { test, expect, type Page } from "./device-store";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { readerFixture } from "../reader-fixture";
+import { playFromLibrary } from "./library-play";
 
 // #671 (spec #548, "Activity's entries"): the reader copies an EPUB it opens to the device as a reading cache, and
 // Now playing's hidden reader does so for the book in the mini player. That copy is not kept: This device lists
@@ -59,7 +60,7 @@ const record = (page: Page, id: string) =>
 
 async function play(page: Page, title: string) {
   await page.goto("/");
-  await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+  await playFromLibrary(page, title);
   await expect(page.locator(".player-dock .dock-book")).toContainText(title);
 }
 

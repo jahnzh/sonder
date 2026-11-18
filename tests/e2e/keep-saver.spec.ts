@@ -256,7 +256,7 @@ test("a second tab does not save the same book; it shows the same line", async (
   test.setTimeout(90_000);
   const book = await importBook(page, unique("Two tabs"));
   await page.goto("/#library");
-  await expect(page.getByRole("navigation", { name: "Your shelves" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Library", exact: true, level: 1 })).toBeVisible();
   const other = await context.newPage();
   const fromFirst: number[] = [];
   const fromSecond: number[] = [];
@@ -289,7 +289,7 @@ test("the rollout turns Keep on for a recording saved before the upgrade, withou
   test.setTimeout(90_000);
   await countPersist(page);
   await page.goto("/#library");
-  await expect(page.getByRole("navigation", { name: "Your shelves" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Library", exact: true, level: 1 })).toBeVisible();
   const book = await importBook(page, unique("Saved before"));
   // The device's library by work lists the book, and its file is on the device as an earlier build saved it.
   await page.evaluate(() => window.dispatchEvent(new Event("sonder:library-changed")));

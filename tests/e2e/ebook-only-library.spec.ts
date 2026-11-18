@@ -2,7 +2,7 @@ import { test, expect, type APIRequestContext, type Page } from "@playwright/tes
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 // A book read in the reader is In progress, and one read to the end is Finished (#556; spec #548 "Books with only
-// an ebook on screen"): today's Library takes Listening, Not started and Finished from the work of each entry, so an
+// an ebook on screen"): the Library by work (#577) takes In progress, Not started and Finished from the work, so an
 // ebook-only book counts its ebook's place. `GET /api/books` keeps saying "unread" for such a book, so these
 // assertions fail without the work's state.
 const works: string[] = [];
@@ -43,16 +43,25 @@ async function read(request: APIRequestContext, book: { id: string; paragraphId:
   expect(response.ok()).toBe(true);
 }
 
-const card = (page: Page, title: string) => page.locator(".book-card").filter({ has: page.getByRole("button", { name: title, exact: true }) });
+const card = (page: Page, title: string) =>
+  page.locator(".library-tile, .library-row").filter({ has: page.getByRole("button", { name: `About ${title}`, exact: true }) });
 
 async function filterBy(page: Page, name: string) {
-  const tab = page.getByRole("tab", { name: new RegExp(`^${name}`) });
-  await tab.click();
-  // The filter took the click: a card left on screen then means its state, not a click the page lost.
-  await expect(tab).toHaveAttribute("aria-selected", "true");
+  const chip = page.getByRole("group", { name: "Filter your library", exact: true }).getByRole("button", { name, exact: true });
+  await chip.click();
+  // The chip took the click: a tile left on screen then means its state, not a click the page lost.
+  await expect(chip).toHaveAttribute("aria-pressed", "true");
 }
 
-test("an ebook-only book read past its start is under Listening after a reload; one read to the end shows Finished", async ({ page }) => {
+/** The list row's place line (LibraryList.dc.html): the list view, the row's line, then the grid again. */
+async function placeLine(page: Page, title: string) {
+  await page.getByRole("button", { name: "List view", exact: true }).click();
+  const line = await card(page, title).locator(".library-row-line").textContent();
+  await page.getByRole("button", { name: "Grid view", exact: true }).click();
+  return line;
+}
+
+test("an ebook-only book read past its start is In progress after a reload; one read to the end shows Finished", async ({ page }) => {
   const reading = `Read halfway ${randomUUID().slice(0, 8)}`;
   const done = `Read to the end ${randomUUID().slice(0, 8)}`;
   const untouched = `Not opened ${randomUUID().slice(0, 8)}`;
@@ -67,15 +76,15 @@ test("an ebook-only book read past its start is under Listening after a reload; 
 
   await page.goto("/#library");
   await page.reload();
-  await filterBy(page, "Listening");
+  await filterBy(page, "In progress");
   await expect(card(page, reading)).toBeVisible();
-  await expect(card(page, reading).locator(".book-progress")).toContainText("38%");
+  expect(await placeLine(page, reading)).toMatch(/38% of the ebook$/);
   await expect(card(page, done)).toHaveCount(0);
   await expect(card(page, untouched)).toHaveCount(0);
 
   await filterBy(page, "Finished");
   await expect(card(page, done)).toBeVisible();
-  await expect(card(page, done).locator(".finished-badge")).toHaveText("Finished");
+  expect(await placeLine(page, done)).toMatch(/Finished$/);
   await expect(card(page, reading)).toHaveCount(0);
 
   await filterBy(page, "Not started");
@@ -83,17 +92,17 @@ test("an ebook-only book read past its start is under Listening after a reload; 
   await expect(card(page, reading)).toHaveCount(0);
   await expect(card(page, done)).toHaveCount(0);
 
-  await filterBy(page, "All books");
-  await expect(card(page, reading).locator(".finished-badge")).toHaveCount(0);
+  await filterBy(page, "All");
+  expect(await placeLine(page, reading)).not.toMatch(/Finished$/);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
   await page.screenshot({ path: "artifacts/ebook-only-library-mobile.png", fullPage: true });
   await page.setViewportSize({ width: 1280, height: 900 });
-  await filterBy(page, "Listening");
+  await filterBy(page, "In progress");
   await expect(card(page, reading)).toBeVisible();
   await page.screenshot({ path: "artifacts/ebook-only-library-desktop.png", fullPage: true });
 });
 
-test("a place read on this device and not yet on the server puts the book under Listening", async ({ page }) => {
+test("a place read on this device and not yet on the server puts the book under In progress", async ({ page }) => {
   const title = `Read offline ${randomUUID().slice(0, 8)}`;
   const book = await importEbookOnly(page.request, title);
   await page.goto("/#library");
@@ -122,7 +131,7 @@ test("a place read on this device and not yet on the server puts the book under 
     { id: book.id, paragraphId: book.paragraphId, section: book.section },
   );
   await page.reload();
-  await filterBy(page, "Listening");
+  await filterBy(page, "In progress");
   await expect(card(page, title)).toBeVisible();
-  await expect(card(page, title).locator(".book-progress")).toContainText("25%");
+  expect(await placeLine(page, title)).toMatch(/25% of the ebook$/);
 });

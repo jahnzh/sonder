@@ -41,7 +41,9 @@ async function saveOnDevice(
   await page.evaluate(() => navigator.serviceWorker.ready);
   await page.reload();
   await page.waitForFunction(() => !!navigator.serviceWorker.controller);
-  await page.getByRole("button", { name: "Add audiobook", exact: true }).click();
+  // The import dialog is the navigation's Add an audiobook (the Library's plus opens Discover, #577).
+  await page.getByRole("button", { name: "Open navigation", exact: true }).click();
+  await page.getByRole("button", { name: "Add an audiobook", exact: true }).click();
   await page.locator("input[type=file]").setInputFiles(
     Array.from({ length: chapters }, (_, i) => ({
       name: chapters > 1 ? `${title} ${i + 1}.wav` : `${title}.wav`,
@@ -53,7 +55,7 @@ async function saveOnDevice(
   await page.getByRole("textbox", { name: "Author", exact: true }).fill("Sonder test");
   await page.getByRole("button", { name: "Add to my library", exact: true }).click();
   await expect(page.getByRole("dialog")).toBeHidden();
-  await page.getByRole("button", { name: title, exact: true }).click();
+  await page.getByRole("button", { name: `About ${title}`, exact: true }).click();
   // The Book page's Keep on this device switch saves the book: the saver saves the chosen recording (#550).
   await page.getByRole("switch", { name: "Keep on this device", exact: true }).click();
   await expect(page.locator("#book-keep-line")).toHaveText(/^Audiobook · /, { timeout: 20000 });
@@ -61,6 +63,11 @@ async function saveOnDevice(
   await expect(page).toHaveURL(/#library$/);
   const books = await (await page.request.get("/api/books")).json();
   const book = books.find((b: { title: string }) => b.title === title);
+  // A place just past the start makes it the book to continue (#577): the Library's Continue card plays it later, as
+  // the old card's Play did. The device stores the library with that place before the browser closes.
+  expect((await page.request.post("/api/progress", { data: { recordingId: book.recordingId, trackId: book.tracks[0].id, position: 1, duration: book.tracks[0].duration, updatedAt: Date.now() } })).ok()).toBe(true);
+  await page.evaluate(() => window.dispatchEvent(new Event("sonder:library-changed")));
+  await expect(page.getByRole("region", { name: "Continue", exact: true }).getByRole("button", { name: `Continue ${title}`, exact: true })).toBeVisible();
   if (choice)
     await page.evaluate(
       ([recordingId, value]) =>
@@ -111,9 +118,23 @@ const storedChoice = (page: import("@playwright/test").Page, recordingId: string
       }),
     recordingId,
   );
+/**
+ * Plays the kept book from the Library (#577): it is under On device (when its copy is complete), and on All the
+ * Continue card shows it (saveOnDevice gave it a place) with Play, which plays it without leaving the Library.
+ */
+async function playKept(page: import("@playwright/test").Page, title: string, complete = true) {
+  const chips = page.getByRole("group", { name: "Filter your library", exact: true });
+  if (complete) {
+    await chips.getByRole("button", { name: "On device", exact: true }).click();
+    await expect(page.getByRole("button", { name: `About ${title}`, exact: true })).toBeVisible();
+  }
+  await chips.getByRole("button", { name: "All", exact: true }).click();
+  const card = page.getByRole("region", { name: "Continue", exact: true });
+  await expect(card.getByRole("button", { name: `Continue ${title}`, exact: true })).toBeVisible();
+  await card.getByRole("button", { name: "Play", exact: true }).click();
+}
 async function playFromDock(page: import("@playwright/test").Page, title: string) {
-  await page.getByRole("tab", { name: "Downloaded", exact: true }).click();
-  await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+  await playKept(page, title);
   await expect(
     page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true }),
   ).toBeVisible();
@@ -187,7 +208,7 @@ test("unreachable launch keeps the stream error when the device copy is incomple
     const restarted = await relaunchOffline(profile, "unreachable");
     context = restarted.context;
     const page = restarted.page;
-    await page.getByRole("button", { name: `Play ${title}`, exact: true }).first().click();
+    await playKept(page, title, false);
     await expect(page.locator(".player-error")).toBeVisible();
     await expect(page.locator(".toast")).toHaveCount(0);
     await expect(page.locator(".player-dock .playback-source")).not.toHaveText("Device cache");
@@ -237,8 +258,7 @@ test("a 404 answer for the server source keeps the stream error (server source c
     const restarted = await relaunchAnswering(profile, 404);
     context = restarted.context;
     const page = restarted.page;
-    await page.getByRole("tab", { name: "Downloaded", exact: true }).click();
-    await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+    await playKept(page, title);
     await expect(page.locator(".player-error")).toBeVisible();
     await expect(page.locator(".toast")).toHaveCount(0);
     await expect(page.locator(".player-dock .playback-source")).not.toHaveText("Device cache");
@@ -267,8 +287,7 @@ test("pausing while the connection is being checked keeps the device copy paused
     });
     const page = context.pages()[0] || (await context.newPage());
     await page.goto("/");
-    await page.getByRole("tab", { name: "Downloaded", exact: true }).click();
-    await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+    await playKept(page, title);
     await probeStarted;
     // While the source is loading the dock button reads Play; tapping it pauses.
     await page.locator(".player-dock").getByRole("button", { name: "Play", exact: true }).click();
@@ -333,8 +352,7 @@ test("a stream that stalls after its first bytes switches to the device copy at 
     });
     const page = context.pages()[0] || (await context.newPage());
     await page.goto("/");
-    await page.getByRole("tab", { name: "Downloaded", exact: true }).click();
-    await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+    await playKept(page, title);
     await expect(page.locator(".player-dock .playback-source")).not.toHaveText("Device cache");
     await expect(page.locator(".toast")).toHaveCount(0);
     // The stream never errors, so only the stall switches it (10 s, plus the check).
@@ -396,8 +414,7 @@ test("a stall that clears while the connection check hangs keeps the stream and 
     });
     const page = context.pages()[0] || (await context.newPage());
     await page.goto("/");
-    await page.getByRole("tab", { name: "Downloaded", exact: true }).click();
-    await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+    await playKept(page, title);
     await expect.poll(() => probes, { timeout: 25_000 }).toBe(1);
     await expect.poll(() => audioTime(page)).toBeGreaterThan(3);
     // Not a retrying assertion: wait out the 8 s check and several stall
@@ -430,8 +447,7 @@ test("the next chapter of an unreachable server plays the device copy without an
     });
     const page = context.pages()[0] || (await context.newPage());
     await page.goto("/");
-    await page.getByRole("tab", { name: "Downloaded", exact: true }).click();
-    await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+    await playKept(page, title);
     await expect(page.locator(".player-dock .playback-source")).toHaveText("Device cache");
     // From here the server answers nothing: the sources request hangs.
     let sourcesHeld = false;
