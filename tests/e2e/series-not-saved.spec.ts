@@ -3,10 +3,46 @@
 // series line too, and Back returns to the book. Save series opens the sheet captioned Save series; saving shows the
 // saved series. The sheet's address on a reload; without a connection the address shows the Library. The measures
 // at phone size and on a desktop. Discover's View series and the changed choice are in series-discovery.spec.ts.
-import { test, expect, type Page } from "@playwright/test";
+//
+// Each test runs its own server on a throwaway database (as series-new.spec.ts does): the specs before this one on the
+// suite's server save The Crossing (#701, #702), add Crossing Two and read the Hardcover fixture's series, and this
+// spec reads a series that is not saved with only Alice in the library. On the suite's server it saw that state: the
+// sheet offered two books, not three, and Crossing Two was not on offer (#564's fix round).
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
+import { createServer, type AddressInfo } from "node:net";
+import { test as base, expect, type Page } from "@playwright/test";
 import { noOverflow } from "./overflow";
-import { saveSheet, unsaveSeries } from "./series-save";
+import { saveSheet } from "./series-save";
+
+async function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const { port } = probe.address() as AddressInfo;
+      probe.close(() => resolve(port));
+    });
+  });
+}
+
+/** `baseURL` is a server of the test's own, so `page.goto` and `page.request` reach it with the paths as written. */
+const test = base.extend({
+  baseURL: async ({}, use) => {
+    const port = await freePort();
+    const url = `http://127.0.0.1:${port}`;
+    const server: ChildProcess = spawn(process.execPath, ["--import", "tsx", "tests/browser-server.ts"], {
+      env: { ...process.env, PLAYWRIGHT_PORT: String(port), SONDER_BROWSER_TEMP: "" },
+      stdio: "ignore",
+    });
+    try {
+      await expect.poll(async () => fetch(`${url}/api/health`).then((r) => r.ok, () => false), { timeout: 30000 }).toBe(true);
+      await use(url);
+    } finally {
+      server.kill();
+    }
+  },
+});
 
 test.use({ serviceWorkers: "block" });
 
@@ -14,44 +50,27 @@ const OUT = "OUT";
 mkdirSync(OUT, { recursive: true });
 const ALICE = "Alice’s Adventures in Wonderland";
 
-type SeriesView = { works: { id: number; title: string; added: boolean }[] };
 const savedIds = async (page: Page) => ((await (await page.request.get("/api/series")).json()) as { id: number }[]).map((series) => series.id);
 const libraryBooks = async (page: Page) =>
   ((await (await page.request.get("/api/books")).json()) as { title: string; inLibrary: boolean; workId: string }[]).filter((book) => book.inLibrary);
 
 /**
- * Makes series `id` not saved for the test, with Alice (Hardcover book 501) in the library, and puts the series back
- * as it found it afterwards: saved again with the books it had, and the library as it was.
+ * Series `id` is not saved on the test's fresh server; Hardcover is connected and Alice (Hardcover book 501) is the
+ * only book of The Crossing in the library, so the sheet offers every other one.
  */
 async function notSaved(page: Page, id: number) {
   expect((await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } })).ok()).toBe(true);
   if (!(await libraryBooks(page)).some((book) => book.title === ALICE))
     expect((await page.request.post("/api/hardcover/books", { data: { id: 501 } })).ok()).toBe(true);
-  const before = new Set((await libraryBooks(page)).map((book) => book.title));
-  const savedBefore = (await savedIds(page)).includes(id);
-  const series = async () => (await (await page.request.get(`/api/series/${id}`)).json()) as SeriesView;
-  const addedBefore = savedBefore ? (await series()).works.filter((work) => work.added).map((work) => work.id) : [];
-  await unsaveSeries(page, id);
-  // A series search resets the suite's Hardcover fixture: The Crossing lists Crossing Three only from its third read
-  // after one, whatever the specs before this one read.
-  expect((await page.request.get("/api/discover/series?q=Crossing")).ok()).toBe(true);
-  return async () => {
-    await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
-    if ((await savedIds(page)).includes(id)) {
-      const added = (await series()).works.filter((work) => work.added && !before.has(work.title));
-      expect((await page.request.delete(`/api/series/${id}`, { data: { bookIds: added.map((work) => work.id) } })).ok()).toBe(true);
-    }
-    if (savedBefore) expect((await page.request.post("/api/series", { data: { id, bookIds: addedBefore } })).ok()).toBe(true);
-    expect(new Set((await libraryBooks(page)).map((book) => book.title))).toEqual(before);
-  };
+  const titles = (await libraryBooks(page)).map((book) => book.title);
+  expect(titles).toContain(ALICE);
+  expect(titles.filter((title) => /Crossing/.test(title))).toEqual([]);
+  expect(await savedIds(page)).not.toContain(id);
 }
 
-let restore: (() => Promise<void>) | null = null;
 test.afterEach(async ({ page }) => {
   await page.context().setOffline(false);
   await page.unrouteAll({ behavior: "ignoreErrors" });
-  await restore?.();
-  restore = null;
 });
 
 const region = (page: Page) => page.getByRole("region", { name: "Series", exact: true });
@@ -76,7 +95,7 @@ async function aliceInSeries(page: Page, series: { id: number; name: string; pos
 }
 
 test("a book's series line opens a series that is not saved; Back to the book; Save series from there shows the saved series", async ({ page }) => {
-  restore = await notSaved(page, 702);
+  await notSaved(page, 702);
   const workId = await aliceInSeries(page, { id: 702, name: "The Crossing", position: 1, saved: false });
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -121,7 +140,7 @@ test("a book's series line opens a series that is not saved; Back to the book; S
 });
 
 test("the Save series sheet's address on a reload opens with the defaults; without a connection the address shows the Library", async ({ page }) => {
-  restore = await notSaved(page, 701);
+  await notSaved(page, 701);
   await page.goto("/#series/701/add");
   const sheet = saveSheet(page);
   await expect(sheet.getByRole("checkbox", { name: "Crossing Two Book 2", exact: true })).toBeChecked();
@@ -142,8 +161,59 @@ test("the Save series sheet's address on a reload opens with the defaults; witho
   await expect(region(page)).toHaveCount(0);
 });
 
+test("with the other The Crossing saved and Crossing Two already in the library, #series/701 shows its own books and offers only the rest", async ({ page }) => {
+  // The state the suite's server left this spec in: Crossing Two added (saved with The Crossing, which was removed
+  // with its books kept), and the other series of the same name, Bea South's #702, saved with Alice.
+  await notSaved(page, 701);
+  expect((await page.request.post("/api/series", { data: { id: 701, bookIds: [503] } })).ok()).toBe(true);
+  expect((await page.request.delete("/api/series/701", { data: {} })).ok()).toBe(true);
+  expect((await page.request.post("/api/series", { data: { id: 702, bookIds: [501] } })).ok()).toBe(true);
+  expect(await savedIds(page)).toEqual([702]);
+  // A series search resets the Hardcover fixture, which lists Crossing Three from the third read of The Crossing.
+  expect((await page.request.get("/api/discover/series?q=Crossing")).ok()).toBe(true);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+
+  await page.goto("/#series/701");
+  // Ada North's series, not the saved one of the same name; not saved, so Save series and no Remove series.
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(["The Crossing"]);
+  await expect(region(page).getByText("Ada North · 3 books", { exact: true })).toBeVisible();
+  await expect(saveButton(page)).toBeVisible();
+  await expect(region(page).getByRole("button", { name: "Remove series", exact: true })).toHaveCount(0);
+  // Crossing Two is a book in the library: its line, and it opens.
+  await expect(row(page, "Crossing Two").getByRole("button", { name: /^2 Crossing Two / })).toBeVisible();
+  await expect(row(page, "Future Crossing")).toHaveAccessibleName(/Not released yet$/);
+
+  // The sheet offers the two books not in the library, neither chosen by default; saving sends both books in it.
+  await saveButton(page).click();
+  const sheet = saveSheet(page);
+  await expect(sheet.getByRole("heading", { level: 1 })).toHaveText("The Crossing");
+  await expect(sheet.getByText("Ada North", { exact: true })).toBeVisible();
+  await expect(sheet.getByRole("group", { name: "Not in your library · 2", exact: true })).toBeVisible();
+  await expect(sheet.getByRole("checkbox")).toHaveCount(2);
+  await expect(sheet.getByRole("checkbox", { name: "Crossing Two Book 2", exact: true })).toHaveCount(0);
+  await expect(sheet.getByRole("checkbox", { name: "Future Crossing Book 3", exact: true })).not.toBeChecked();
+  await expect(sheet.getByRole("checkbox", { name: "Crossing Companion Related work", exact: true })).not.toBeChecked();
+  const posted = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/series");
+  await sheet.getByRole("button", { name: "Save series", exact: true }).click();
+  const body = (await posted).postDataJSON();
+  expect(body.id).toBe(701);
+  expect([...body.bookIds].sort()).toEqual([501, 503]);
+  await expect(sheet).toHaveCount(0);
+  await expect(page).toHaveURL(/#series\/701$/);
+  // The saved form (the fixture lists Crossing Three from the third read of The Crossing, so the count is not fixed).
+  await expect(region(page).getByText(/^Ada North · \d+ of \d+ finished$/)).toBeVisible();
+  await expect(region(page).getByRole("button", { name: "Remove series", exact: true })).toBeVisible();
+  expect((await savedIds(page)).sort()).toEqual([701, 702]);
+  // Each book once.
+  const titles = (await libraryBooks(page)).map((book) => book.title);
+  expect(titles.filter((title) => title === "Crossing Two")).toHaveLength(1);
+  expect(titles.filter((title) => title === ALICE)).toHaveLength(1);
+  expect(errors).toEqual([]);
+});
+
 test("measured against SeriesNotSaved and SeriesSave at phone size and on a desktop", async ({ page }) => {
-  restore = await notSaved(page, 701);
+  await notSaved(page, 701);
   const page_ = async (desktop: boolean) => {
     await expect(books(page)).toBeVisible();
     // One Title, the series' name, also on a desktop: a series that is not saved is one column, not beside the list.
