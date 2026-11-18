@@ -7,19 +7,16 @@ import type { Location } from "epubjs/types/rendition";
 import {
   ArrowLeft,
   ArrowRight,
-  BookOpen,
   Bookmark,
   Search,
   Headphones,
   Loader2,
   List,
-  X,
   Play,
   Pause,
   RotateCcw,
   RotateCw,
   ChevronDown,
-  MoreHorizontal,
   PanelLeft,
 } from "lucide-react";
 import literataNormal from "@fontsource-variable/literata/files/literata-latin-wght-normal.woff2?url";
@@ -29,12 +26,10 @@ import { goBackFrom, navigate as goTo, openSheet, useAddress } from "../navigati
 import { isReaderPage, openedFrom, onPlaceRequested, publishReader, takePlace, useOpenerAny, type LiveReader, type ReaderPage, type ReaderPlace } from "../reader-pages";
 import { useAppearance } from "./Appearance";
 import { fontFamilies, paletteFor } from "../appearance";
-import { ReaderSyncRow } from "./ReaderSyncRow";
 import { useReaderMap } from "../use-reader-map";
 import { PlaybackSource } from "./PlaybackSource";
 import { FootSettingButtons, FootSettingRow, useFootSetting } from "./ReaderFootSetting";
 import { PlaybackTimeline } from "./PlaybackTimeline";
-import {PlaybackExtra,usePlaybackMenu} from "./PlaybackMenu";
 import { readerNeedsScripts } from "../reader-sandbox";
 import { lookupIndex, placeAt, type LookupIndex } from "../reader-lookup";
 import { pageToShow, pagedWords, type PagedWord } from "../reader-page-turn";
@@ -359,7 +354,6 @@ export function ReaderView({
     [loading, setLoading] = useState(true),
     [rendered, setRendered] = useState(false),
     // Chapters, Bookmarks and Search are pages of their own now (#590), not panels; Appearance docks under the text (#588).
-    [panel, setPanel] = useState<"sync" | "more" | null>(null),
     [locator, setLocator] = useState<TextLocator | null>(null),
     [map, setMap] = useState<AlignmentJob | null>(null),
     // The server confirmed `map` for the current audio in this reader (a cached map is not, until the map endpoint answers).
@@ -367,7 +361,6 @@ export function ReaderView({
     [recovering, setRecovering] = useState(false),
     [conflict, setConflict] = useState<ReadingCheckpoint | null>(null),
     [follow, setFollow] = useState(true),
-    [recoveryStatus, setRecoveryStatus] = useState(""),
     [controlsVisible, setControlsVisible] = useState(false),
     [desktop, setDesktop] = useState(() => window.matchMedia("(min-width: 900px)").matches),
     [scrub, setScrub] = useState<number | null>(null),
@@ -516,15 +509,6 @@ export function ReaderView({
       document.fonts?.removeEventListener?.("loadingdone", onWindowFonts);
     };
   }, []);
-  const playbackMenu = usePlaybackMenu();
-  useEffect(()=>{
-    if(!inline || !panel)return;
-    const frame=requestAnimationFrame(()=>{
-      const pane=viewport.current?.parentElement?.querySelector<HTMLElement>(".reader-panel");
-      pane?.querySelector<HTMLElement>('input[type="search"],button')?.focus();
-    });
-    return()=>cancelAnimationFrame(frame);
-  },[inline,panel]);
   const p = usePlayer(),
     playerRef = useRef(p);
   playerRef.current = p;
@@ -1231,6 +1215,7 @@ export function ReaderView({
   const recover = async (back: NarrationReturn, player: typeof p) => {
     if (!player.book || !player.track) return;
     const recordingId = player.book.recordingId, trackId = player.track.id;
+    messages.clearError();
     setRecovering(true);
     try {
       const result = await api<{ locator: TextLocator }>(
@@ -1250,7 +1235,6 @@ export function ReaderView({
       // The recovered passage is the narration to follow: what the return kept is dropped.
       back.confirm();
       await jumpRef.current(result.locator.paragraphId, true, recordingId);
-      setRecoveryStatus("Approximate passage · Located using local speech recognition");
     } catch {
       messages.error("locate");
     } finally {
@@ -1259,7 +1243,6 @@ export function ReaderView({
   };
   const fromAudio = async () => {
     const back = following.backToNarration();
-    setRecoveryStatus("");
     const player = playerRef.current,
       currentMap = mapRef.current;
     if (
@@ -1273,7 +1256,6 @@ export function ReaderView({
         player.book.workId !== bookRef.current?.workId
       ) {
         messages.error("no-recording");
-        setPanel("sync");
         return;
       }
       if (!isAdmin()) { messages.error("no-sync"); return; }
@@ -1345,7 +1327,6 @@ export function ReaderView({
       ),
       audio = books.find((audio) => audio.recordingId === map?.recordingId);
     if (!interval || !audio) {
-      setPanel("sync");
       messages.error("no-map");
       return;
     }
@@ -1368,7 +1349,6 @@ export function ReaderView({
       messages.notice("listening");
     }
   };
-  const listen = () => listenAt(latest.current?.paragraphId);
   const undoListen = () => {
     const toast = listenUndo.current;
     listenUndo.current = null;
@@ -1476,7 +1456,7 @@ export function ReaderView({
         defaultPrevented: event.defaultPrevented,
         ...keyEventContext(event),
         sheetOpen: !!document.querySelector(OPEN_SHEET_SELECTOR),
-        panelOpen: !!panel,
+        panelOpen: appearanceOpen,
         // The Now Playing reader stays mounted while its dialog is closed.
         readerHidden: !!viewport.current?.closest('[data-state="closed"]'),
         narration: !!player.book && !!player.track && player.book.workId === bookRef.current?.workId,
@@ -1484,11 +1464,11 @@ export function ReaderView({
       });
       if (!action) return;
       event.preventDefault();
-      if (action.type === "back-to-narration") following.backToNarration();
+      if (action.type === "back-to-narration") { if (currentInterval || isAdmin()) void fromAudio(); }
       else pageAction.current(action.direction);
     };
     window.addEventListener("keydown",key); return () => window.removeEventListener("keydown",key);
-  }, [panel]);
+  });
   const sections = book?.sections || [];
   const sectionOf = (paragraphId?: string) =>
     paragraphId ? sections.find((section) => section.paragraphs.some((fragment) => fragment.id === paragraphId)) : undefined;
@@ -1631,16 +1611,6 @@ export function ReaderView({
   }, [rendered, id, host]);
 
   const showContents = desktop && !contentsHidden;
-  const openMore = () => {
-    setPanel(null);
-    if (playbackMenu) playbackMenu.open();
-    else setPanel("more");
-  };
-  const fromMenu = (action: () => void) => () => {
-    playbackMenu?.close();
-    setPanel(null);
-    action();
-  };
   // The message in the foot (#591): a place saved elsewhere, an error, a notice with Undo, an update while paused.
   const update = useReaderUpdate(viewport);
   const message = messageToShow(messages.state, {
@@ -1649,6 +1619,7 @@ export function ReaderView({
     conflict: conflict ? { chapter: sections.find((section) => section.index === conflict.locator.section)?.title?.trim() || "" } : null,
     update,
   });
+  const shownMessage = message ?? (recovering ? { kind: "recovering" as const } : null);
   const messageActions = {
     undo: (notice: ReaderNotice) => (notice === "listening" ? undoListen() : undoRemoveBookmark()),
     retry: (failed: ReaderError) => {
@@ -1684,29 +1655,8 @@ export function ReaderView({
   const tapControls = (event: { target: EventTarget | null }) => {
     if (tappedControl(event.target)) messages.tapped();
   };
-  const moreItems = (
-    <div className="reader-more">
-      <button className="reader-more-item" onClick={fromMenu(listen)}>
-        <Headphones size={19} /> Listen from here
-      </button>
-      <button className="reader-more-item" onClick={fromMenu(() => void fromAudio())} disabled={recovering}>
-        {recovering ? <Loader2 size={19} className="spin" /> : <BookOpen size={19} />}
-        {recovering ? "Locating passage…" : "Read from audio"}
-      </button>
-      <button className="reader-more-item" onClick={fromMenu(() => openPage("bookmarks"))}>
-        <Bookmark size={19} /> Bookmarks
-      </button>
-      <button className="reader-more-item" onClick={fromMenu(() => setPanel("sync"))}>
-        <Headphones size={19} /> Reading sync
-      </button>
-      <p className="reader-sync-state" role="status">
-        {recoveryStatus || (!follow ? "Audio follow paused" : currentInterval ? "Estimated sentence timings" : map ? "No timing for this position" : "Prepare reading sync to highlight narration")}
-      </p>
-    </div>
-  );
   return (
     <div className={`reader-room ${inline ? "inline-reader" : ""}`} data-controls-visible={controls} data-appearance={appearanceOpen ? "docked" : undefined} data-contents={showContents} data-current-passage={follow ? currentInterval?.paragraphId : undefined}>
-      {inline && <PlaybackExtra>{moreItems}</PlaybackExtra>}
       {loading && (
         <p className="reader-loading" role="status">
           <Loader2 className="spin" /> Opening your book…
@@ -1717,7 +1667,7 @@ export function ReaderView({
       <header className="reader-head" data-controls={controls} onClickCapture={tapControls}>
       <p className="reader-head-rest"><span className="type-caption">{headRestLine(book?.title, currentSection?.title || barChapter)}</span></p>
       <div className="reader-topbar">
-        {onClose &&<button className="icon-button" aria-label="Close reader" onClick={() => { setControlsVisible(false); setPanel(null); setAppearanceOpen(false); onClose(); }}><ChevronDown size={22} /></button>}
+        {onClose &&<button className="icon-button" aria-label="Close reader" onClick={() => { setControlsVisible(false); setAppearanceOpen(false); onClose(); }}><ChevronDown size={22} /></button>}
         {desktop && (
           <button
             className="icon-button"
@@ -1746,8 +1696,7 @@ export function ReaderView({
           <Bookmark size={21} fill={pageBookmark ? "currentColor" : "none"} />
         </button>
         <button className="icon-button" aria-label="Search this book" disabled={!book} onClick={() => openPage("search")}><Search size={20} /></button>
-        <button className="icon-button reader-appearance-button" aria-label="Reader appearance" aria-expanded={appearanceOpen} onClick={() => { setPanel(null); setAppearanceOpen(true); }}>Aa</button>
-        <button className="icon-button" aria-label="More" aria-expanded={panel === "more"} onClick={openMore}><MoreHorizontal size={22} /></button>
+        <button className="icon-button reader-appearance-button" aria-label="Reader appearance" aria-expanded={appearanceOpen} onClick={() => { setAppearanceOpen(true); }}>Aa</button>
       </div>
       </header>
       <div className="reader-body">
@@ -1798,9 +1747,9 @@ export function ReaderView({
       </div>
       {/* The foot (#587): its box stays whether the controls show or not. At rest the progress line, where the
           narration is and a small Play or Pause; with the controls shown the timeline and the transport row. */}
-      <section className="reader-player" aria-label="Player" data-controls={controls} data-setting={footSetting ?? undefined} data-message={message?.kind} onClickCapture={tapControls}>
-        {message && (
-          <ReaderFootMessage message={message} actions={messageActions} play={p.book ? { playing: p.playing, toggle: p.toggle } : null} />
+      <section className="reader-player" aria-label="Player" data-controls={controls} data-setting={footSetting ?? undefined} data-message={shownMessage?.kind} onClickCapture={tapControls}>
+        {shownMessage && (
+          <ReaderFootMessage message={shownMessage} actions={messageActions} play={p.book ? { playing: p.playing, toggle: p.toggle } : null} />
         )}
         <div className="reader-foot-rest">
           <span className="reader-foot-line" aria-hidden="true"><i style={{ width: `${restProgress * 100}%` }} /></span>
@@ -1848,8 +1797,8 @@ export function ReaderView({
           <button
             className="icon-button reader-back-narration"
             aria-label="Back to narration"
-            disabled={follow || !currentInterval}
-            onClick={() => following.backToNarration()}
+            disabled={recovering || !audio || (currentInterval ? follow : !isAdmin())}
+            onClick={() => void fromAudio()}
           >
             <BookToHeadphones size={20} />
           </button>
@@ -1865,43 +1814,6 @@ export function ReaderView({
         {footSetting && <FootSettingRow setting={footSetting} onDone={() => setFootSetting(null)} />}
         </div>
       </section>
-      {panel && panel !== "sync" && book && (
-        <aside className="reader-panel" aria-label="Reader options">
-          <div className="reader-panel-heading">
-            <h3>
-              {
-                {
-                  sync: "Reading sync",
-                  more: "More",
-                }[panel]
-              }
-            </h3>
-            <button
-              className="icon-button"
-              aria-label="Close reader options"
-              onClick={() => setPanel(null)}
-            >
-              <X size={19} />
-            </button>
-          </div>
-          {panel === "more" && moreItems}
-        </aside>
-      )}
-      {panel === "sync" && book && (
-        <aside className="reader-panel" aria-label="Reading sync">
-          <div className="reader-panel-heading">
-            <h3>Reading sync</h3>
-            <button
-              className="icon-button"
-              aria-label="Close reader options"
-              onClick={() => setPanel(null)}
-            >
-              <X size={19} />
-            </button>
-          </div>
-          <ReaderSyncRow workId={book.workId} />
-        </aside>
-      )}
     </div>
   );
 }

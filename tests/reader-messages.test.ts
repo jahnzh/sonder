@@ -38,6 +38,8 @@ test("each kind shows on its own, with its sentence", () => {
     "A place in this book was saved elsewhere.",
   );
 
+  assert.equal(messageText({ kind: "recovering" }), "Finding the place in the text…");
+
   const narration = messageToShow(postError(noMessages, "narration", 0), at(0));
   assert.deepEqual(narration, { kind: "error", error: "narration" });
   assert.equal(messageText(narration!), "The narrated sentence could not be shown.");

@@ -38,6 +38,7 @@ export type MessageContext = {
 };
 
 export type ReaderMessage =
+  | { kind: "recovering" }
   | { kind: "conflict"; chapter: string }
   | { kind: "error"; error: ReaderError }
   | { kind: "notice"; notice: ReaderNotice }
@@ -114,6 +115,8 @@ const noticeTexts: Record<ReaderNotice, string> = {
 /** The message's sentence, in Label. */
 export function messageText(message: ReaderMessage): string {
   switch (message.kind) {
+    case "recovering":
+      return "Finding the place in the text…";
     case "conflict":
       return message.chapter ? `A place in ${message.chapter} was saved elsewhere.` : "A place in this book was saved elsewhere.";
     case "error":
