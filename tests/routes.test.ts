@@ -36,6 +36,8 @@ const table: { address: string; route: Route; place: string; parent: Route | nul
   { address: "#book/w1/sync/details", route: { name: "sync-details", workId: "w1" }, place: "library", parent: { name: "book-page", workId: "w1", page: "sync" } },
   { address: "#book/w1/get/audiobook", route: { name: "get", workId: "w1", kind: "audiobook" }, place: "library", parent: { name: "book", workId: "w1" } },
   { address: "#book/w1/get/ebook", route: { name: "get", workId: "w1", kind: "ebook" }, place: "library", parent: { name: "book", workId: "w1" } },
+  // Paste a magnet link (#606): its parent is the Get audiobook sheet it covers.
+  { address: "#book/w1/get/audiobook/magnet", route: { name: "get-magnet", workId: "w1" }, place: "library", parent: { name: "get", workId: "w1", kind: "audiobook" } },
   { address: "#series/s1", route: { name: "series", id: "s1" }, place: "library", parent: { name: "library" } },
   { address: "#series/s1/add", route: { name: "series-add", id: "s1" }, place: "library", parent: { name: "series", id: "s1" } },
   { address: "#listen/w1", route: { name: "listen", workId: "w1" }, place: "library", parent: { name: "book", workId: "w1" } },
@@ -60,6 +62,7 @@ test("a parameter with reserved characters survives writing and reading", () => 
       { name: "book-page", workId: id, page: "sync" },
       { name: "sync-details", workId: id },
       { name: "get", workId: id, kind: "ebook" },
+      { name: "get-magnet", workId: id },
       { name: "series", id },
       { name: "series-add", id },
       { name: "listen", workId: id },
@@ -114,6 +117,11 @@ test("an address that names nothing reads as nothing in the place it points into
     ["#book/w1/unknown", "library"],
     ["#book/w1/get", "library"],
     ["#book/w1/get/film", "library"],
+    // An unknown fourth part of a Get sheet's address names nothing (#606); the magnet sheet is Get audiobook's only.
+    ["#book/w1/get/audiobook/film", "library"],
+    ["#book/w1/get/audiobook/", "library"],
+    ["#book/w1/get/ebook/magnet", "library"],
+    ["#book/w1/get/audiobook/magnet/x", "library"],
     ["#book/w1/audiobook/x", "library"],
     ["#series", "library"],
     ["#series/s1/remove", "library"],
@@ -157,6 +165,9 @@ test("what an address shows: built pages as they are, everything else the first 
   // The Get ebook sheet (#604) is the administrator's, as the Get audiobook sheet is.
   assert.equal(shows("#book/w1/get/ebook"), "#book/w1/get/ebook");
   assert.equal(shows("#book/w1/get/ebook", false), "#book/w1");
+  // Its magnet sheet (#606) likewise: the administrator's; someone else gets the Book page.
+  assert.equal(shows("#book/w1/get/audiobook/magnet"), "#book/w1/get/audiobook/magnet");
+  assert.equal(shows("#book/w1/get/audiobook/magnet", false), "#book/w1");
   // Not built yet: behaves like an address that names nothing.
   assert.equal(shows("#listen/w1"), "#library");
   assert.equal(shows("#read/w1"), "#library");
@@ -210,7 +221,7 @@ test("first pages, and what covers a page", () => {
   assert.equal(isFirstPage({ name: "activity", part: "server" }), false);
   assert.equal(isFirstPage({ name: "book", workId: "w" }), false);
   assert.equal(isFirstPage({ name: "unknown", place: "library" }), true);
-  for (const address of ["#book/w/get/ebook", "#series/s/add", "#listen/w", "#read/w", "#reader/e"])
+  for (const address of ["#book/w/get/ebook", "#book/w/get/audiobook/magnet", "#series/s/add", "#listen/w", "#read/w", "#reader/e"])
     assert.equal(coversPage(readAddress(address)), true, address);
   for (const address of ["#library", "#book/w", "#series/s", "#activity", "#settings/x"])
     assert.equal(coversPage(readAddress(address)), false, address);
@@ -223,6 +234,7 @@ test("what adds a history entry and what replaces the current one", () => {
   assert.equal(step(r("#library"), r("#book/w")), "push");
   assert.equal(step(r("#book/w"), r("#book/w/audiobook")), "push");
   assert.equal(step(r("#book/w"), r("#book/w/get/ebook")), "push");
+  assert.equal(step(r("#book/w/get/audiobook"), r("#book/w/get/audiobook/magnet")), "push");
   assert.equal(step(r("#book/w"), r("#listen/w")), "push");
   assert.equal(step(r("#settings"), r("#activity")), "push");
   assert.equal(step(r("#activity/server"), r("#activity/server/wsl")), "push");

@@ -95,6 +95,7 @@ import { isReaderPage } from "./reader-pages";
 import { firstPage, parentOf, writeAddress, type Place, type Route } from "./routes";
 import { coveredPage, onPageLeftByHistory, startNavigation, useAddress } from "./navigation";
 import { GetAudiobookSheet } from "./pages/get-audiobook-sheet";
+import { GetMagnetSheet } from "./pages/get-magnet-sheet";
 import { GetEbookSheet } from "./pages/get-ebook-sheet";
 import { deviceImports } from "./device-import";
 import { Gallery, isGalleryRoute } from "./gallery/Gallery";
@@ -269,10 +270,15 @@ function LibraryApp({
   const address = useAddress();
   const page = shownPage(address.route, useRef<Page>("library"));
   // The Get audiobook sheet (#601) covers the page it was opened over; opened by a link, its Book page.
-  const getSheet = address.route.name === "get" && address.route.kind === "audiobook" ? address.route.workId : null;
+  // Paste a magnet link (#606) is a sheet over it: Get stays mounted under it, so Back shows Get as it was left.
+  const magnetSheet = address.route.name === "get-magnet" ? address.route.workId : null;
+  const getSheet = address.route.name === "get" && address.route.kind === "audiobook" ? address.route.workId : magnetSheet;
   // The Get ebook sheet (#604) likewise.
   const getEbookSheet = address.route.name === "get" && address.route.kind === "ebook" ? address.route.workId : null;
-  const pageRoute: Route = getSheet || getEbookSheet ? (coveredPage() ?? parentOf(address.route) ?? address.route) : address.route;
+  const pageRoute: Route =
+    getSheet || getEbookSheet
+      ? (coveredPage() ?? (magnetSheet ? { name: "book", workId: magnetSheet } : parentOf(address.route)) ?? address.route)
+      : address.route;
   // The Ebook page (#531) is shown in place of the page under it.
   const ebookPage = pageRoute.name === "book-page" && pageRoute.page === "ebook" ? pageRoute.workId : null;
   const [loading, setLoading] = useState(true);
@@ -961,6 +967,18 @@ function LibraryApp({
                 workId={getSheet}
                 online={online}
                 prowlarrConfigured={settings ? !!settings.prowlarrConfigured : null}
+                torboxConfigured={!!settings?.torboxConfigured}
+                onChanged={async () => {
+                  await refresh();
+                  await refreshDownloads();
+                }}
+              />
+            )}
+            {magnetSheet && admin && (
+              <GetMagnetSheet
+                key={`get-magnet:${magnetSheet}`}
+                workId={magnetSheet}
+                online={online}
                 torboxConfigured={!!settings?.torboxConfigured}
                 onChanged={async () => {
                   await refresh();

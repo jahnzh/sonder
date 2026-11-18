@@ -98,7 +98,7 @@
 .get-sheet-reason {
   color: var(--muted);
 }
-/* Drawn but off until tickets 05 (a magnet link) and 06 (files from this device). */
+/* A row that is off: the import row while another upload runs (#605). */
 .part-row.get-sheet-off {
   cursor: default;
   opacity: 0.55;

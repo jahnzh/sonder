@@ -26,6 +26,8 @@ export type Route =
   /** The Details of a book's Reading sync (#540): engine, GPU use, processing and stage times. */
   | { name: "sync-details"; workId: string }
   | { name: "get"; workId: string; kind: "audiobook" | "ebook" }
+  /** Paste a magnet link (#606): a sheet over the Get audiobook sheet. */
+  | { name: "get-magnet"; workId: string }
   | { name: "series"; id: string }
   | { name: "series-add"; id: string }
   | { name: "listen"; workId: string }
@@ -90,6 +92,9 @@ export function readAddress(hash: string): Route {
       if (rest.length === 3 && rest[1] === "sync" && rest[2] === "details") return { name: "sync-details", workId };
       if (rest.length === 3 && rest[1] === "get" && (rest[2] === "audiobook" || rest[2] === "ebook"))
         return { name: "get", workId, kind: rest[2] };
+      // The magnet sheet over Get audiobook (#606); any other fourth part names nothing.
+      if (rest.length === 4 && rest[1] === "get" && rest[2] === "audiobook" && rest[3] === "magnet")
+        return { name: "get-magnet", workId };
       return nothing("library");
     }
     case "series": {
@@ -139,6 +144,8 @@ export function writeAddress(route: Route): string {
       return `#book/${part(route.workId)}/${route.page}`;
     case "get":
       return `#book/${part(route.workId)}/get/${route.kind}`;
+    case "get-magnet":
+      return `#book/${part(route.workId)}/get/audiobook/magnet`;
     case "sync-details":
       return `#book/${part(route.workId)}/sync/details`;
     case "series":
@@ -201,6 +208,9 @@ export function parentOf(route: Route): Route | null {
       return { name: "library" };
     case "series-add":
       return { name: "series", id: route.id };
+    // The magnet sheet belongs to the Get audiobook sheet it covers (#606).
+    case "get-magnet":
+      return { name: "get", workId: route.workId, kind: "audiobook" };
     // Details belongs to the book's Reading sync page (#540).
     case "sync-details":
       return { name: "book-page", workId: route.workId, page: "sync" };
@@ -218,7 +228,7 @@ export function parentOf(route: Route): Route | null {
 
 /** A sheet, Now playing or the reader: shown over a page rather than in place of it. */
 export function coversPage(route: Route): boolean {
-  return ["get", "series-add", "listen", "read", "reader", "gallery-sheet"].includes(route.name);
+  return ["get", "get-magnet", "series-add", "listen", "read", "reader", "gallery-sheet"].includes(route.name);
 }
 
 /**
@@ -289,6 +299,9 @@ function built(route: Route): boolean {
     // The Get audiobook sheet (#601) and the Get ebook sheet (#604).
     case "get":
       return route.kind === "audiobook" || route.kind === "ebook";
+    // Its magnet sheet (#606).
+    case "get-magnet":
+      return true;
     default:
       return false;
   }
@@ -299,7 +312,7 @@ function allowed(route: Route, admin: boolean): boolean {
   if (admin) return true;
   if (route.name === "settings-page") return !(ADMIN_SETTINGS_PAGES as readonly string[]).includes(route.page);
   // Getting files is the administrator's (#601, #604).
-  if (route.name === "get") return false;
+  if (route.name === "get" || route.name === "get-magnet") return false;
   return !(route.name === "worker" || (route.name === "activity" && route.part === "server"));
 }
 
@@ -310,7 +323,7 @@ function allowed(route: Route, admin: boolean): boolean {
 export function resolve(route: Route, { admin }: { admin: boolean }): Route {
   if (route.name !== "unknown" && built(route) && allowed(route, admin)) return route;
   // Someone who is not the administrator gets the book's own page at a Get sheet's address (#601).
-  if (route.name === "get" && built(route)) return { name: "book", workId: route.workId };
+  if ((route.name === "get" || route.name === "get-magnet") && built(route)) return { name: "book", workId: route.workId };
   const first = firstPage(placeOf(route));
   // Every place's first page is built and everyone's.
   return first;

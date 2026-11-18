@@ -290,6 +290,9 @@ test("the Reading sync page's lines (#540): states, notes, steps, and the lines 
   assert.equal(lines.stoppedWhileLine("saving"), "Stopped while saving the map");
   assert.equal(lines.stoppedWhileLine(null), "Stopped");
   assert.equal(lines.notUsedLine(0.4), "Not used: it matched 40% of the text");
+  assert.equal(lines.notUsedLine(0.4, "less"), "Not used: it matched 40% of the text");
+  assert.equal(lines.notUsedLine(0, "none"), "Not used: it matched none of the text");
+  assert.equal(lines.notUsedLine(0, "language"), "Not used: the language is not supported");
   assert.equal(lines.workersOnlineLine(1, 2), "1 of 2 online");
   assert.equal(lines.passageLine("It was a dark", 6), "It was a dark · 6 sentences");
   assert.equal(lines.passageLine("", 1), "1 sentence");

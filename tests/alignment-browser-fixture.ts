@@ -1,3 +1,23 @@
+// Ebook text that carries a `pool-holds-<token>` word has its worker requests held while the token is held (#542),
+// so a spec can keep a real job running over the map in use: `holdAlignment(token, true)` before the job starts,
+// `holdAlignment(token, false)` lets every held request go on. The suite's server takes it at
+// `POST /api/__fixture/alignment-hold` with `{ token, hold }` (tests/browser-server.ts).
+const heldTokens = new Set<string>();
+const heldRequests = new Map<string, (() => void)[]>();
+export function holdAlignment(token: string, hold: boolean) {
+  if (hold) {
+    heldTokens.add(token);
+    return 0;
+  }
+  heldTokens.delete(token);
+  const waiting = heldRequests.get(token) ?? [];
+  heldRequests.delete(token);
+  for (const release of waiting) release();
+  return waiting.length;
+}
+/** How many worker requests wait on the token. */
+export const heldAlignmentRequests = (token: string) => heldRequests.get(token)?.length ?? 0;
+
 export async function installAlignmentFixture() {
   // Alignment runs only on the CTC pool (#279); this fixture is its WSL host. The server ignores ALIGNMENT_WORKER_URL.
   delete process.env.ALIGNMENT_WORKER_URL;
@@ -13,6 +33,8 @@ export async function installAlignmentFixture() {
   globalThis.fetch = withCtcPoolFetch(temp, async (input, init) => {
     if (!String(input).startsWith("http://alignment-browser.test/")) return original(input, init);
     const body = JSON.parse(String(init?.body));
+    const held = JSON.stringify(body.fragments ?? []).match(/pool-holds-[\w-]+/)?.[0];
+    if (held && heldTokens.has(held)) await new Promise<void>((release) => heldRequests.set(held, [...(heldRequests.get(held) ?? []), release]));
     // Speech samples: a narration that starts at 5 s and reads one sentence every 8 s.
     if (String(input).endsWith("/anchor") || String(input).endsWith("/anchor-batch")) {
       if (String(input).endsWith("/anchor-batch")) {
