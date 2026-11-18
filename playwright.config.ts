@@ -159,6 +159,8 @@ const desktopProjects = [
               /(^|\/)hardcover-book-look\.spec\.ts$/,
               // Now playing for a book without a recording or without an EPUB (#594).
               /(^|\/)now-playing-ebook-only\.spec\.ts$/,
+              // A stuck download says why and offers Cancel (#716).
+              /(^|\/)activity-cancel\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },
