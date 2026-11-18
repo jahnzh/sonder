@@ -190,8 +190,8 @@ test("the Dexie upgrade to the works table keeps places, downloads, favourites a
     return state;
   });
   expect(upgraded).toEqual({
-    // db.version(5) added the works table (#528), db.version(6) the keep table (#550).
-    version: 60,
+    // db.version(5) added the works table (#528), db.version(6) the keep table (#550), db.version(7) the stored series (#568).
+    version: 70,
     hasWorks: true,
     hasKeep: true,
     progress: rows.progress,
