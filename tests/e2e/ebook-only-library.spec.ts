@@ -1,4 +1,5 @@
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
+import { chooseView, listRow } from "./library-view";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 // A book read in the reader is In progress, and one read to the end is Finished (#556; spec #548 "Books with only
@@ -44,7 +45,7 @@ async function read(request: APIRequestContext, book: { id: string; paragraphId:
 }
 
 const card = (page: Page, title: string) =>
-  page.locator(".library-tile, .library-row").filter({ has: page.getByRole("button", { name: `About ${title}`, exact: true }) });
+  page.locator(".library-tile").filter({ has: page.getByRole("button", { name: `About ${title}`, exact: true }) });
 
 async function filterBy(page: Page, name: string) {
   const chip = page.getByRole("group", { name: "Filter your library", exact: true }).getByRole("button", { name, exact: true });
@@ -55,9 +56,9 @@ async function filterBy(page: Page, name: string) {
 
 /** The list row's place line (LibraryList.dc.html): the list view, the row's line, then the grid again. */
 async function placeLine(page: Page, title: string) {
-  await page.getByRole("button", { name: "List view", exact: true }).click();
-  const line = await card(page, title).locator(".library-row-line").textContent();
-  await page.getByRole("button", { name: "Grid view", exact: true }).click();
+  await chooseView(page, "List");
+  const line = await listRow(page, title).locator(".part-book-row-status").textContent();
+  await chooseView(page, "Grid");
   return line;
 }
 

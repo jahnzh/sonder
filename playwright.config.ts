@@ -151,6 +151,8 @@ const desktopProjects = [
               /(^|\/)(reader-more-gone|back-to-narration)\.spec\.ts$/,
               // A device whose browser cleared Sonder's files saves its kept books again (#554).
               /(^|\/)keep-cleared\.spec\.ts$/,
+              // The Library's sort-and-view control with the Hardcover shelf and list (#578).
+              /(^|\/)library-picker\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },

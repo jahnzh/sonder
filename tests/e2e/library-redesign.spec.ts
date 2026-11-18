@@ -10,6 +10,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
+import { chooseView, listRow } from "./library-view";
 
 // Routed answers (`/api/library`) must reach the page: no service worker in between.
 test.use({ serviceWorkers: "block" });
@@ -111,7 +112,7 @@ async function listen(page: Page, book: Imported, position: number) {
 }
 
 const tile = (page: Page, title: string) => page.locator(".library-tile").filter({ has: page.getByRole("button", { name: `About ${title}`, exact: true }) });
-const row = (page: Page, title: string) => page.locator(".library-row").filter({ has: page.getByRole("button", { name: `About ${title}`, exact: true }) });
+const row = listRow;
 const chips = (page: Page) => page.getByRole("group", { name: "Filter your library", exact: true });
 const chip = (page: Page, name: string) => chips(page).getByRole("button", { name, exact: true });
 const box = async (page: Page, selector: ReturnType<Page["locator"]>) => (await selector.boundingBox())!;
@@ -204,18 +205,18 @@ test("the Library against its boards at 390 by 844 and on a desktop: one tile pe
 
   // The list (LibraryList.dc.html): Book rows without a chevron, the author and the place line or the download's line,
   // the marks muted on the right.
-  await page.getByRole("button", { name: "List view", exact: true }).click();
+  await chooseView(page, "List");
   const epubAuthor = ((await (await page.request.get(`/api/works/${encodeURIComponent(epub.workId)}`)).json()) as { author: string }).author;
-  await expect(row(page, `Piranesi ${run}`).locator(".library-row-line")).toHaveText(epubAuthor ? `${epubAuthor} · Not started` : "Not started");
-  await expect(row(page, `Snow Crash ${run}`).locator(".library-row-line")).toHaveText("Downloading to server · 43%");
-  await expect(row(page, left.title).locator(".library-row-line")).toHaveText("Ursula K. Le Guin · Not started");
-  expect(await row(page, left.title).locator(".library-row-marks svg").evaluateAll((svgs) => svgs.map((svg) => svg.getAttribute("aria-label")))).toEqual(["Audiobook", "Reading sync ready"]);
-  await expect(row(page, `Kindred ${run}`).locator(".library-row-marks svg")).toHaveCount(0);
-  await expect(page.locator(".library-row .part-chevron")).toHaveCount(0);
+  await expect(row(page, `Piranesi ${run}`).locator(".part-book-row-status")).toHaveText(epubAuthor ? `${epubAuthor} · Not started` : "Not started");
+  await expect(row(page, `Snow Crash ${run}`).locator(".part-book-row-status")).toHaveText("Downloading to server · 43%");
+  await expect(row(page, left.title).locator(".part-book-row-status")).toHaveText("Ursula K. Le Guin · Not started");
+  expect(await row(page, left.title).locator(".part-book-row-edge-marks svg").evaluateAll((svgs) => svgs.map((svg) => svg.getAttribute("aria-label")))).toEqual(["Audiobook", "Reading sync ready"]);
+  await expect(row(page, `Kindred ${run}`).locator(".part-book-row-edge-marks svg")).toHaveCount(0);
+  await expect(page.locator(".library-list .part-chevron")).toHaveCount(0);
   expect((await box(page, row(page, left.title))).height).toBeGreaterThanOrEqual(64);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
   if (test.info().project.name === "chromium") await page.screenshot({ path: `${OUT}/library-list-phone.png` });
-  await page.getByRole("button", { name: "Grid view", exact: true }).click();
+  await chooseView(page, "Grid");
 
   // A desktop (DesktopLibrary.dc.html): the search field beside the Title, Add a book with its words, a wider grid.
   await page.setViewportSize({ width: 1280, height: 800 });

@@ -9,7 +9,7 @@
 // control, and picker rows (`PickerRow`, a row whose value opens a second list inside the same picker; that list has
 // a back button to the first). `Picker` is the one-list form: a choice applies at once and closes it.
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Button } from "./Button";
 import { Tick } from "./icons";
 import { PICKER_DESKTOP_WIDTH, pickerPlace } from "./picker-place";
@@ -67,6 +67,13 @@ export function PickerDialog({ open, title, onClose, anchor, sub, children, clas
   }
   wasOpen.current = open;
   const content = useRef<HTMLDivElement | null>(null);
+  // The portal mounts its content a render after the dialog opens: the node, kept as state, renders the picker
+  // again once it is there, so it is placed under its button before it is painted.
+  const [node, setNode] = useState<HTMLDivElement | null>(null);
+  const contentRef = useCallback((element: HTMLDivElement | null) => {
+    content.current = element;
+    setNode(element);
+  }, []);
   const [place, setPlace] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
   const placeIt = () => {
     const button = anchor?.current;
@@ -75,11 +82,16 @@ export function PickerDialog({ open, title, onClose, anchor, sub, children, clas
     // Set only when it moved: a new object every time would render again for ever.
     setPlace((now) => (now === next || (now && next && now.top === next.top && now.left === next.left && now.maxHeight === next.maxHeight) ? now : next));
   };
-  useLayoutEffect(placeIt);
+  useLayoutEffect(placeIt, [open, node, anchor, sub]);
   useEffect(() => {
     if (!open) return;
+    // The window resized, or the page under it scrolled after it opened (the button moved): stand under it again.
     window.addEventListener("resize", placeIt);
-    return () => window.removeEventListener("resize", placeIt);
+    window.addEventListener("scroll", placeIt, true);
+    return () => {
+      window.removeEventListener("resize", placeIt);
+      window.removeEventListener("scroll", placeIt, true);
+    };
   });
   // Opening or leaving the second list moves the focus to its first control, so a keyboard follows the change.
   const subTitle = sub?.title ?? null;
@@ -102,7 +114,7 @@ export function PickerDialog({ open, title, onClose, anchor, sub, children, clas
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="part-picker-overlay" data-anchored={anchored ? "" : undefined} />
         <DialogPrimitive.Content
-          ref={content}
+          ref={contentRef}
           className={["part-picker", className].filter(Boolean).join(" ")}
           data-anchored={anchored ? "" : undefined}
           data-placed={place ? "" : undefined}
@@ -124,6 +136,14 @@ export function PickerDialog({ open, title, onClose, anchor, sub, children, clas
             }
           }}
           tabIndex={-1}
+          onKeyDown={(event) => {
+            // Its own Escape: Now playing's dialog stays mounted while the dock has a book, and a layer Radix mounts
+            // after this one (the dock getting its book) takes Escape from it. Handled here, it closes the picker
+            // only; a Sheet under it sees it handled and stays (Sheet.tsx).
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            onClose();
+          }}
         >
           <div className="part-picker-head">
             {sub && <Button className="part-picker-back" icon={<BackIcon />} label={`Back to ${title}`} onClick={sub.onBack} />}

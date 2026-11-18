@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { rememberAlicesPlace } from "./alice-place";
+import { inSortPicker } from "./library-view";
 // The first test moves the shelf book to another shelf, takes it off the list and sets Alice's Hardcover edition.
 // Afterwards they go back through the same routes, so a repeat (or the next browser on this server) starts the same.
 // Use Hardcover position plays Alice and so moves her saved place; it goes back to where the test found it.
@@ -53,12 +54,21 @@ test("mobile Hardcover connection, shelves, custom lists, edition selection and 
     .locator(".mobile-nav")
     .getByRole("button", { name: "My library", exact: true })
     .click();
-  await page
-    .getByRole("combobox", { name: "Hardcover list", exact: true })
-    .selectOption("8803");
-  await page
-    .getByRole("combobox", { name: "Hardcover shelf", exact: true })
-    .selectOption("1");
+  // The Library half of guard 15 (spec #572) in its new form (#578): the shelf and list are in the sort-and-view
+  // picker, each its own list inside it, and each filter in use is a chip under the heading that clears it.
+  await inSortPicker(page, async (picker) => {
+    await picker.getByRole("button", { name: "List: All lists", exact: true }).click();
+    await picker.getByRole("radiogroup", { name: "List", exact: true }).getByRole("radio", { name: /^Weekend escapes · \d+$/ }).click();
+    await expect(picker.getByRole("button", { name: "List: Weekend escapes", exact: true })).toBeVisible();
+    await picker.getByRole("button", { name: "Shelf: All shelves", exact: true }).click();
+    await expect(picker.getByRole("radiogroup", { name: "Shelf", exact: true }).getByRole("radio")).toHaveText(["All shelves", "Want to read", "Currently reading", "Read", "Paused", "Did not finish"]);
+    await picker.getByRole("radio", { name: "Want to read", exact: true }).click();
+    await expect(picker.getByRole("button", { name: "Shelf: Want to read", exact: true })).toBeVisible();
+  });
+  await expect(page.getByRole("button", { name: "Clear the Hardcover shelf: Want to read", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Clear the Hardcover list: Weekend escapes", exact: true })).toBeVisible();
+  // The strip of old is gone: no account line, no Sync now in the Library.
+  await expect(page.getByRole("button", { name: "Sync now", exact: true })).toHaveCount(0);
   // One tile (#577): the Hardcover book with nothing yet has no marks on its cover.
   await expect(page.locator(".library-tile")).toHaveCount(1);
   await expect(page.locator(".library-tile .library-marks")).toHaveCount(0);
@@ -96,9 +106,9 @@ test("mobile Hardcover connection, shelves, custom lists, edition selection and 
   await expect(page).toHaveURL(/#book\/[^/]+$/);
   await page.getByRole("button", { name: "Back to Library", exact: true }).click();
   await expect(page).toHaveURL(/#library$/);
-  await page
-    .getByRole("button", { name: "Clear Hardcover filters", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Clear the Hardcover shelf: Want to read", exact: true }).click();
+  await page.getByRole("button", { name: "Clear the Hardcover list: Weekend escapes", exact: true }).click();
+  await expect(page.locator(".library-hardcover-chip")).toHaveCount(0);
   await page
     .getByRole("button", {
       name: "About Alice’s Adventures in Wonderland",
@@ -135,6 +145,8 @@ test("mobile Hardcover connection, shelves, custom lists, edition selection and 
   const quiet = (await quietShelf())!;
   expect((await page.request.patch("/api/hardcover/shelf", { data: { workId: quiet.workId, statusId: 1 } })).ok()).toBe(true);
   expect((await page.request.patch("/api/hardcover/lists/8803", { data: { workId: quiet.workId, included: true } })).ok()).toBe(true);
+  // Sync now is on Settings' form, not in the Library (#578).
+  await page.goto("/#settings/connections");
   await page.getByRole("button", { name: "Sync now", exact: true }).click();
   await expect
     .poll(async () => {
