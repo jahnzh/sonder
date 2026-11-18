@@ -85,6 +85,29 @@ async function showReadControls(page: Page) {
   await page.mouse.click(text.x + text.width / 2, text.y + text.height / 2);
   await expect(topbar).toBeVisible();
 }
+/**
+ * Samples the place Listen's timeline shows on every frame until `shownPlaces` reads them: a source switch must
+ * never show (or save) another place, even for a moment (#593 fix round: Firefox landed the device copy's seek short).
+ */
+const sampleShownPlace = (page: Page) =>
+  page.evaluate(() => {
+    const w = window as unknown as { __shown: number[] | null };
+    w.__shown = [];
+    const tick = () => {
+      if (!w.__shown) return;
+      const slider = document.querySelector<HTMLInputElement>(".now-playing-listen .full-seek");
+      if (slider) w.__shown.push(Number(slider.value));
+      requestAnimationFrame(tick);
+    };
+    tick();
+  });
+const shownPlaces = (page: Page) =>
+  page.evaluate(() => {
+    const w = window as unknown as { __shown: number[] | null };
+    const shown = w.__shown ?? [];
+    w.__shown = null;
+    return shown;
+  });
 const hashOf = (page: Page) => page.evaluate(() => location.hash);
 const historyLength = (page: Page) => page.evaluate(() => history.length);
 
@@ -319,16 +342,23 @@ test("Plays from switches the source and keeps the place; the Keep switch works 
   const playsFrom = face.getByRole("button", { name: "Plays from", exact: true });
   await playsFrom.click();
   const picker = page.getByRole("dialog", { name: "Plays from", exact: true });
+  await sampleShownPlace(page);
   await picker.getByRole("radio", { name: "Device copy", exact: true }).click();
   await expect(picker).toBeHidden();
   await expect(playsFrom).toHaveText("Device copy");
   await expect.poll(async () => (await audio(page)).src).toMatch(/^blob:/);
+  // Firefox reads the device copy's Blob only forward and lands the first seek short; the player seeks again once
+  // the bytes are read, and holds the place meanwhile (src/seek-landing.ts).
+  await expect.poll(async () => (await audio(page)).position).toBeCloseTo(40, 0);
   expect((await audio(page)).paused).toBe(true);
-  expect((await audio(page)).position).toBeCloseTo(40, 0);
   await playsFrom.click();
   await picker.getByRole("radio", { name: "Server copy", exact: true }).click();
   await expect.poll(async () => (await audio(page)).src).toContain(`/api/media/${tracks[0].id}?source=server`);
   await expect.poll(async () => (await audio(page)).position).toBeCloseTo(40, 0);
+  // The place shown never moved during either switch.
+  const shown = await shownPlaces(page);
+  expect(shown.length).toBeGreaterThan(0);
+  expect(shown.filter((value) => Math.abs(value - 40) > 1)).toEqual([]);
   // Off asks in place, as on the Book page; Remove turns it off.
   await keep.click();
   const question = face.getByRole("group", { name: "Turn off Keep on this device", exact: true });
