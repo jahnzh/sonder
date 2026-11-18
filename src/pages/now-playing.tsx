@@ -114,10 +114,11 @@ function NowPlayingScreen({ workId, face, open, ...props }: NowPlayingProps & { 
   useEffect(() => {
     if (open && known && exists(face)) rememberFace(workId, face);
   }, [open, known, face, listenExists, readExists, workId]);
-  // A book that is not in the player yet is made ready to play on Listen, as the expanded player did.
+  // With nothing in the player, opening Now playing on either face makes this book ready at its saved place without
+  // playing it, as the expanded player did: Read follows that place (behaviour 8 of spec #586).
   useEffect(() => {
-    if (open && face === "listen" && book && !p.book) void p.prepare(book);
-  }, [open, face, book?.id, p.book?.id]);
+    if (open && book && !p.book) void p.prepare(book);
+  }, [open, book?.id, p.book?.id]);
 
   const close = () => address.goBack({ name: "book", workId });
   const faceControl = <FaceSwitch workId={workId} face={face} admin={props.admin} exists={exists} />;

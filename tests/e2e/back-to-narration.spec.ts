@@ -4,7 +4,7 @@ import {randomUUID} from "node:crypto";
 import {readerFixture} from "../reader-fixture";
 import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
 import {appearancePanel,openAppearance} from "./reader-appearance";
-import {openRead} from "./now-playing";
+import {openRead,showReadControls} from "./now-playing";
 // Back to narration and the manual positions still waiting for their save (#417, ADR 0014): with a
 // narration to follow they are dropped, without one they are kept and saved. Sequences 1, 2 and 6 of the issue.
 test.use({serviceWorkers:"block"});
@@ -192,6 +192,11 @@ test("sequence 1: Read from audio without a narration map, inside the pause afte
  await page.route("**/api/alignments/recover",route=>{asked++;return route.fulfill({status:400,contentType:"application/json",body:JSON.stringify({error:"Locating text needs the remote alignment pool. Enable it to retry."})});});
  await withAppearance(page,{reader:{mode:"paginated"}},async()=>{
   await openWithoutMap(page,book,ebook);
+  // Read from audio is in the reader's own More panel on the Read face (#593: Playback options, which held it, left
+  // Now playing); the panel stays open under the Chapters page.
+  await showReadControls(page);
+  await page.locator(".now-playing-screen .reader-topbar").getByRole("button",{name:"More",exact:true}).click();
+  await expect(page.locator(".inline-reader .reader-more")).toBeVisible();
   expect(await contentsThen(page,1,"Read from audio")).toBeLessThan(400);
   await expect.poll(()=>asked).toBe(1);
   await expectSaved(page,ebook,{origin:"reading",section:1});
