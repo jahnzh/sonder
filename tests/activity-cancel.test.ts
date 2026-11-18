@@ -227,3 +227,14 @@ test("the same torrent added again after Cancel starts a new download in the sam
   assert.ok(rpc.some((call) => call.method === "torrent-add"), "it was added, not answered with the cancelled row");
   assert.notEqual(statusOf("b1a70445"), "cancelled");
 });
+
+test("cancelAcquisition itself refuses a finished or already cancelled download, whoever calls it", async () => {
+  const { cancelAcquisition } = await import("../server/acquisitions.ts");
+  const removed: string[] = [];
+  const removeTorrent = async (hash: string) => { removed.push(hash); };
+  await assert.rejects(cancelAcquisition("acq-ready", { removeTorrent }), (error: any) => error.statusCode === 409 && /finished/.test(error.message));
+  await assert.rejects(cancelAcquisition("acq-failed", { removeTorrent }), (error: any) => error.statusCode === 409 && /already cancelled/.test(error.message));
+  await assert.rejects(cancelAcquisition("no-such-download", { removeTorrent }), (error: any) => error.statusCode === 404);
+  assert.deepEqual(removed, []);
+  assert.equal(statusOf("acq-ready"), "ready");
+});
