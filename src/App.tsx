@@ -936,6 +936,7 @@ function LibraryApp({
                 workId={getSheet}
                 online={online}
                 prowlarrConfigured={settings ? !!settings.prowlarrConfigured : null}
+                torboxConfigured={!!settings?.torboxConfigured}
                 onChanged={async () => {
                   await refresh();
                   await refreshDownloads();

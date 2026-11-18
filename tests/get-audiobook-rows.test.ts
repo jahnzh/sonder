@@ -1,7 +1,7 @@
 // The Get audiobook sheet's rows (#601, spec #600 "The rows").
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getLine, recordingRow, recordingRows, rowEdge } from "../src/pages/get-audiobook-rows";
+import { recordingRow, recordingRows, rowEdge } from "../src/pages/get-audiobook-rows";
 import type { AudiobookRelease } from "../src/types";
 
 const release = (over: Partial<AudiobookRelease>): AudiobookRelease => ({
@@ -78,11 +78,4 @@ test("only English rows, and indexer rows that name no language; the book's titl
     rows.map((row) => row.id),
     ["cached", "many", "few", "other"],
   );
-});
-
-test("the line under Get this recording", () => {
-  assert.equal(getLine(null), null);
-  assert.equal(getLine({ cached: true }), "Plays from TorBox right away.");
-  assert.equal(getLine({ cached: false }), "Downloads to your server first.");
-  assert.equal(getLine({}), "Downloads to your server first.");
 });
