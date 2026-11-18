@@ -103,13 +103,12 @@ test("dark mobile library, browsing, filters, favorites and ebook sources", asyn
     .getByRole("button", { name: "Discover", exact: true })
     .last()
     .click();
+  // Guard 4 (spec #572): Discover opens from the navigation with its Title. Its ebook search and the Library
+  // Genesis link moved into Get (S8) and are guarded there.
   await expect(
-    page.getByRole("heading", { name: "Discover" }),
+    page.getByRole("heading", { name: "Discover", level: 1 }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Ebooks", exact: true }).click();
-  await expect(
-    page.getByRole("link", { name: "Search on Library Genesis" }),
-  ).toBeVisible();
+  await expect(page.getByRole("searchbox", { name: "Search for a book", exact: true })).toBeVisible();
   await expect(page.getByText("Anna’s Archive")).toHaveCount(0);
   expect(errors).toEqual([]);
 });

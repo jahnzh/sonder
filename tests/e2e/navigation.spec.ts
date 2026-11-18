@@ -247,7 +247,7 @@ test("the Library's filters are remembered when it is left, so the list Back ret
   // Leaving by the tab bar and coming back by the tab bar.
   await tab(page, "Discover").click();
   await expect(shown(page)).toHaveText("Discover");
-  await expect(page.getByRole("textbox", { name: "Search audiobooks" })).toHaveValue("");
+  await expect(page.getByRole("searchbox", { name: "Search for a book" })).toHaveValue("");
   await tab(page, "My library").click();
   await expect(filters.getByRole("tab", { name: "Not started", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("textbox", { name: "Search your library" })).toHaveValue(prefix);

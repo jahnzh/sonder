@@ -151,6 +151,8 @@ const desktopProjects = [
               /(^|\/)keep-cleared\.spec\.ts$/,
               // A Hardcover book opens its Book page before it is a work on the server (#574).
               /(^|\/)hardcover-book-look\.spec\.ts$/,
+              // Discover finds books (#575).
+              /(^|\/)discover\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },

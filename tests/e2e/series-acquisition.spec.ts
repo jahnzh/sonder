@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { openSeriesResult } from "./discover-search";
 import { openSavedSeries } from "./library-series";
 
 test("series save opt-ins, ebook failure, and retry show specific progress", async ({
@@ -23,11 +24,7 @@ test("series save opt-ins, ebook failure, and retry show specific progress", asy
   await page.request.put("/api/hardcover/token", {
     data: { token: "series-browser-token" },
   });
-  await page.goto("/#discover");
-  await page.getByRole("button", { name: "Series", exact: true }).click();
-  await page.getByRole("textbox", { name: "Search series" }).fill("Crossing");
-  await page.getByRole("button", { name: "Search series", exact: true }).click();
-  await page.getByRole("button", { name: "View The Crossing by Ada North" }).click();
+  await openSeriesResult(page, "Crossing", "The Crossing", "Ada North");
   await expect(
     page.getByText("Search for audiobooks (may download automatically)"),
   ).toBeVisible();

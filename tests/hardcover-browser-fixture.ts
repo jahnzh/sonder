@@ -1,4 +1,5 @@
 // Test-only Hardcover transport. Never bundled into the production server.
+import { readFileSync } from "node:fs";
 export function installHardcoverFixture() {
   const original = globalThis.fetch;
   const edition = {
@@ -37,6 +38,12 @@ export function installHardcoverFixture() {
   const matchOnlyBook = (id: number) => ({ ...book(id, "Feral Gods", "Ada North"), release_year: 2021 });
   // Books only the look spec opens (#574), one id per test from 800000 up: on Hardcover, in series 701, not on the server.
   const lookOnlyBook = (id: number) => ({ ...book(id, `Look Book ${id}`, "Lena Look"), book_series: [{ position: 9, series: { id: 701, name: "The Crossing" } }] });
+  // Discover's "banks" (#575): Hardcover's recorded answer for the search, and its books (Matter, Excession, Consider
+  // Phlebas) by id.
+  const banksSearch = JSON.parse(readFileSync(new URL("./fixtures/hardcover-search-banks.json", import.meta.url), "utf8")) as {
+    hits: { document: { id: string; title: string; author_names: string[]; release_year: number } }[];
+  };
+  const banksBooks = banksSearch.hits.map(({ document: d }) => ({ ...book(Number(d.id), d.title, d.author_names[0]), release_year: d.release_year }));
   let series701Previews = 0;
   const series = [
     { id: 701, name: "The Crossing", books_count: 4, author: { name: "Ada North" },
@@ -139,7 +146,14 @@ export function installHardcoverFixture() {
       };
       members.push(item);
       data = { insert_list_book: { id: item.id, list_book: item } };
-    } else if (q.includes("SonderSearchLinks"))
+    } else if (q.includes("SonderSearchLinks") && v.ids.some((id: number) => banksBooks.some((b) => b.id === id)))
+      data = { books: banksBooks.map(({ id, slug }) => ({ id, slug })) };
+    // A search Hardcover has no book for (DiscoverNothing.dc.html, #575).
+    else if (q.includes("SonderSearch(") && String(v.q).toLowerCase().includes("lamplighter"))
+      data = { search: { results: JSON.stringify({ hits: [] }) } };
+    else if (q.includes("SonderSearch(") && String(v.q).toLowerCase().includes("banks"))
+      data = { search: { results: JSON.stringify(banksSearch) } };
+    else if (q.includes("SonderSearchLinks"))
       data = { books: books.map(({ id, slug }) => ({ id, slug })) };
     else if (q.includes("SonderSearch"))
       data = {
@@ -157,6 +171,8 @@ export function installHardcoverFixture() {
       };
     else if (q.includes("SonderBookProgress"))
       data = { user_books: entries.filter((e) => e.book_id === v.bookId) };
+    else if (q.includes("SonderBook(") && banksBooks.some((b) => b.id === v.id))
+      data = { books_by_pk: banksBooks.find((b) => b.id === v.id) };
     else if (q.includes("SonderBook("))
       data = { books_by_pk: v.id >= 900000 ? matchOnlyBook(v.id) : v.id >= 800000 ? lookOnlyBook(v.id) : [...books, ...seriesBooks, lateSeriesBook].find((b) => b.id === v.id) || null };
     else if (q.includes("SonderShelfUpdate")) {

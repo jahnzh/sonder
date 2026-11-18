@@ -1,4 +1,5 @@
 // Remove series (#566, spec #560 "Remove series"; boards SeriesMore.dc.html, SeriesRemove.dc.html): the last row of a
+import { openSeriesResult } from "./discover-search";
 // saved series' page opens one dialog over the page. With the switch off (or for someone who is not the
 // administrator) the books stay; the administrator's "Remove the books it added" lists only the books the series
 // added, each with its line, and removes the chosen ones with the series. Cancel and Back send nothing. The measures
@@ -15,11 +16,7 @@ import { openSavedSeries, showSavedSeries, savedSeriesRow } from "./library-seri
 async function saveCrossingSeries(page: import("@playwright/test").Page) {
   await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
   await page.request.post("/api/hardcover/books", { data: { id: 501 } });
-  await page.goto("/#discover");
-  await page.getByRole("button", { name: "Series", exact: true }).click();
-  await page.getByRole("textbox", { name: "Search series" }).fill("Crossing");
-  await page.getByRole("button", { name: "Search series", exact: true }).click();
-  await page.getByRole("button", { name: "View The Crossing by Ada North" }).click();
+  await openSeriesResult(page, "Crossing", "The Crossing", "Ada North");
   await page.getByRole("checkbox", { name: /Crossing Two/ }).uncheck();
   await page.getByRole("checkbox", { name: /Crossing Companion/ }).check();
   await page.getByRole("button", { name: "Add selected works" }).click();

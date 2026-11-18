@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { openSeriesResult } from "./discover-search";
 import { openSavedSeries } from "./library-series";
 
 /**
@@ -16,11 +17,7 @@ test("a saved series keeps the provenance of a synced book and counts its comple
   );
   if (seededAlice?.id) await page.request.delete(`/api/library/${seededAlice.id}`);
   await page.request.post("/api/hardcover/books", { data: { id: 501 } });
-  await page.goto("/#discover");
-  await page.getByRole("button", { name: "Series", exact: true }).click();
-  await page.getByRole("textbox", { name: "Search series" }).fill("Crossing");
-  await page.getByRole("button", { name: "Search series", exact: true }).click();
-  await page.getByRole("button", { name: "View The Crossing by Ada North" }).click();
+  await openSeriesResult(page, "Crossing", "The Crossing", "Ada North");
   await page.getByRole("button", { name: "Add selected works" }).click();
   await expect(page.getByRole("dialog").getByText("Series saved.")).toBeVisible();
   await page.getByRole("button", { name: "Close series" }).click();
