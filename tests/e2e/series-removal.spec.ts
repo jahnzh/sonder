@@ -11,20 +11,14 @@ const OUT = "OUT";
 mkdirSync(OUT, { recursive: true });
 const ALICE = "Alice’s Adventures in Wonderland";
 import { openSavedSeries, showSavedSeries, savedSeriesRow } from "./library-series";
+import { saveSeriesOnPage, viewSeriesFromDiscover } from "./series-save";
 
 async function saveCrossingSeries(page: import("@playwright/test").Page) {
   await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
   await page.request.post("/api/hardcover/books", { data: { id: 501 } });
-  await page.goto("/#discover");
-  await page.getByRole("button", { name: "Series", exact: true }).click();
-  await page.getByRole("textbox", { name: "Search series" }).fill("Crossing");
-  await page.getByRole("button", { name: "Search series", exact: true }).click();
-  await page.getByRole("button", { name: "View The Crossing by Ada North" }).click();
-  await page.getByRole("checkbox", { name: /Crossing Two/ }).uncheck();
-  await page.getByRole("checkbox", { name: /Crossing Companion/ }).check();
-  await page.getByRole("button", { name: "Add selected works" }).click();
-  await expect(page.getByRole("dialog").getByText("Series saved.")).toBeVisible();
-  await page.getByRole("button", { name: "Close series" }).click();
+  // Saved through its page and Save series (#564), with Crossing Companion instead of Crossing Two.
+  await viewSeriesFromDiscover(page, "Crossing", "The Crossing", "Ada North");
+  await saveSeriesOnPage(page, { toggle: ["Crossing Two Book 2", "Crossing Companion Related work"] });
 }
 
 const savedIds = async (page: Page) => ((await (await page.request.get("/api/series")).json()) as { id: number }[]).map((series) => series.id);

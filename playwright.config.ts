@@ -155,6 +155,8 @@ const desktopProjects = [
               /(^|\/)library-picker\.spec\.ts$/,
               // The Server pages of Settings: Connections, Users, Library and storage, and their rewritten guards (#580).
               /(^|\/)(settings-server|hardcover-sync-form|users)\.spec\.ts$/,
+              // A series that is not saved opens its page with Save series; the specs that saved through the dialog (#564).
+              /(^|\/)series-(not-saved|discovery|acquisition)\.spec\.ts$/,
               // A Hardcover book opens its Book page before it is a work on the server (#574).
               /(^|\/)hardcover-book-look\.spec\.ts$/,
             ]
