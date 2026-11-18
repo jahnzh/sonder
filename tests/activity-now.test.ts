@@ -444,3 +444,58 @@ test("a series search's line has the icon of the file it looks for (#522)", () =
   assert.equal(row(now, "work:w2").icon, "audiobook");
   assert.equal(row(now, "work:w3").icon, "ebook");
 });
+
+test("a stuck download says why and offers Cancel; a failing one Retry with Cancel beside it; a cancelled one is finished (#716)", () => {
+  const now = build({
+    activity: answer([
+      download("acquisition:got", "got", {
+        progress: 0.0011, stuck: { reason: "No seeders", known: true }, attention: true, actions: ["cancel"], updatedAt: NOW - 2 * HOUR,
+      }),
+      download("acquisition:bad", "bad", {
+        state: "failed", attention: true, actions: ["retry", "cancel"], facts: { kind: "acquisition", status: "error", backend: "local" },
+      }),
+      download("acquisition:gone", "gone", {
+        state: "done", updatedAt: NOW - 5 * MINUTE, facts: { kind: "acquisition", status: "cancelled", backend: "local" },
+      }),
+      download("acquisition:old", "old", { progress: 0.2, stuck: { reason: "No change for 2 h" }, attention: true, actions: [] }),
+    ]),
+  });
+  const stuck = row(now, "work:got");
+  assert.equal(where(now)["work:got"], "attention");
+  assert.equal(stuck.line, "No seeders · Downloading to server · 0%", "the named cause leads, so a phone shows it");
+  assert.deepEqual(stuck.button, { action: "cancel", source: "server", itemId: "acquisition:got" });
+  assert.equal(stuck.cancel, undefined, "Cancel is the button itself: not twice");
+  const failing = row(now, "work:bad");
+  assert.equal(failing.line, "Download failed");
+  assert.deepEqual(failing.button, { action: "retry", source: "server", itemId: "acquisition:bad" });
+  assert.deepEqual(failing.cancel, { action: "cancel", source: "server", itemId: "acquisition:bad" });
+  const cancelled = row(now, "work:gone");
+  assert.equal(where(now)["work:gone"], "finished");
+  assert.equal(cancelled.line, "Download cancelled");
+  assert.equal(cancelled.button, null);
+  // An answer of a server from before #716: the current line and no button, as before.
+  const before = row(now, "work:old");
+  assert.equal(before.line, "Downloading to server · 20% · No change for 2 h");
+  assert.equal(before.button, null);
+  assert.equal(before.cancel, undefined);
+});
+
+test("a stalled download of a book that already has a copy says so, offers Cancel and stays under In progress (#716)", () => {
+  const now = build({
+    activity: answer([
+      download("acquisition:got", "got", { progress: 0.0011, superseded: true, actions: ["cancel"], updatedAt: NOW - 2 * HOUR }),
+      download("acquisition:tb", "tb", {
+        progress: null, superseded: true, actions: ["cancel"], facts: { kind: "acquisition", status: "preparing", backend: "torbox" },
+      }),
+    ]),
+  });
+  assert.equal(where(now)["work:got"], "progress", "not under Needs attention");
+  const got = row(now, "work:got");
+  assert.equal(got.line, "This book already has a copy · Downloading to server · 0%");
+  assert.equal(got.progress, null, "no bar for a download that does not move");
+  assert.equal(got.failed, false);
+  assert.deepEqual(got.button, { action: "cancel", source: "server", itemId: "acquisition:got" });
+  assert.equal(got.cancel, undefined);
+  assert.equal(row(now, "work:tb").line, "This book already has a copy · Preparing the stream");
+  assert.equal(now.dot, false, "nothing needs attention: no dot");
+});

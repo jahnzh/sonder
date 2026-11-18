@@ -10,7 +10,7 @@ import { hardcoverWorkForMedia } from "./hardcover.ts";
 import { claimWorkAudio } from "./work-library.ts";
 import * as s from "./schema.ts";
 import { getSecret, torbox } from "./services.ts";
-import { addTorrent, getTorrent, transmission } from "./transmission.ts";
+import { addTorrent, getTorrent, removeTorrent, transmission } from "./transmission.ts";
 import { getTorrentHealth } from "./torrent-health.ts";
 import { getWorkMediaState, trackWorkMediaState } from "./work-media-state.ts";
 import {
@@ -103,7 +103,8 @@ export async function acquire(
     .from(s.acquisitions)
     .where(eq(s.acquisitions.hash, hash))
     .get();
-  if (existing && existing.status !== "error") {
+  // A failed or cancelled download of the same torrent starts again; any other is joined.
+  if (existing && existing.status !== "error" && existing.status !== "cancelled") {
     db.insert(s.userAcquisitions).values({ userId: metadata.userId ?? 1, acquisitionId: existing.id }).onConflictDoNothing().run();
     if (existing.bookId) {
       db.delete(s.userHiddenLibrary).where(and(eq(s.userHiddenLibrary.userId, metadata.userId ?? 1), eq(s.userHiddenLibrary.bookId, existing.bookId))).run();
@@ -483,6 +484,50 @@ export async function controlAcquisition(
     updatedAt: Date.now(),
   });
   return { ok: true };
+}
+
+/** Statuses a download can be cancelled in (#716): on its way or failed; not while it looks for a source, not once done. */
+export const CANCELLABLE_ACQUISITION_STATUSES = ["preparing", "downloading", "paused", "error"] as const;
+
+/**
+ * Cancel a download (#716): stop and remove its torrent in the local client with its partial data, then mark it
+ * `cancelled`, so the queue neither checks nor imports it again. Nothing else is touched: the work's other recordings,
+ * its library rows and every listening position stay. A TorBox download has no local torrent; it is only marked. When
+ * the client cannot remove the torrent the download is left as it was and the client's reason is thrown.
+ */
+export async function cancelAcquisition(
+  id: string,
+  deps: { removeTorrent?: (hash: string) => Promise<void>; waitMs?: number } = {},
+) {
+  // A refresh of this download in flight would write its status after ours: wait for it, then hold the next one off.
+  const until = Date.now() + (deps.waitMs ?? 5000);
+  while (processing.has(id)) {
+    if (Date.now() > until) throw Object.assign(new Error("This download is being checked. Try again in a moment."), { statusCode: 409 });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  processing.add(id);
+  try {
+    const job = db.select().from(s.acquisitions).where(eq(s.acquisitions.id, id)).get();
+    if (!job) throw Object.assign(new Error("This download could not be found."), { statusCode: 404 });
+    if (!(CANCELLABLE_ACQUISITION_STATUSES as readonly string[]).includes(job.status))
+      throw Object.assign(
+        new Error(job.status === "ready" ? "This download is finished; its recording stays." : job.status === "cancelled" ? "This download is already cancelled." : "This download is still finding a source."),
+        { statusCode: 409 },
+      );
+    const local = job.backend !== "torbox";
+    if (local) {
+      try {
+        await (deps.removeTorrent ?? removeTorrent)(job.hash);
+      } catch (error) {
+        // The torrent is still in the client: the download stays as it was, and the client's reason is the answer.
+        throw Object.assign(new Error((error as Error).message), { statusCode: 502, cause: error });
+      }
+    }
+    setAcquisitionStatus(id, "cancelled", { error: null, updatedAt: Date.now() });
+    return { ok: true, removed: local };
+  } finally {
+    processing.delete(id);
+  }
 }
 
 /** The download queue loop (ADR 0010): checks the torrents every 10 s and imports the finished ones. */

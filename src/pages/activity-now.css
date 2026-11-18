@@ -43,6 +43,12 @@
 .activity-now-note-line {
   color: var(--muted);
 }
+/* A row's buttons: Retry with Cancel beside it for a stuck or failing download (#716). */
+.activity-now-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
 .activity-now-confirm {
   list-style: none;
   padding: var(--space-12) var(--space-16) var(--space-16);
