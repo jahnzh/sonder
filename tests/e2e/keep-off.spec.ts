@@ -212,11 +212,11 @@ test("Off asks in place with the size; Cancel keeps everything; Remove leaves no
   expect(await remove.evaluate((el) => getComputedStyle(el).color)).toBe(await danger(page));
   expect(await cancel.evaluate((el) => getComputedStyle(el).color)).not.toBe(await danger(page));
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
-  await offQuestion(page).scrollIntoViewIfNeeded();
+  await offQuestion(page).evaluate((el) => el.scrollIntoView({ block: "center" }));
   await settled(page);
   await page.screenshot({ path: `${OUT}/keep-off-phone.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
-  await offQuestion(page).scrollIntoViewIfNeeded();
+  await offQuestion(page).evaluate((el) => el.scrollIntoView({ block: "center" }));
   await settled(page);
   await page.screenshot({ path: `${OUT}/keep-off-desktop.png` });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -298,11 +298,11 @@ test("a book with two recordings switched on the Audiobook page saves the new on
   expect(Math.round(earlierBox.x + earlierBox.width - (button.x + button.width))).toBe(16);
   expect(await earlier.locator(".part-file-row-status").evaluate((el) => [getComputedStyle(el).fontSize, getComputedStyle(el).lineHeight])).toEqual(["14px", "20px"]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
-  await earlier.scrollIntoViewIfNeeded();
+  await earlier.evaluate((el) => el.scrollIntoView({ block: "center" }));
   await settled(page);
   await page.screenshot({ path: `${OUT}/keep-earlier-phone.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
-  await earlier.scrollIntoViewIfNeeded();
+  await earlier.evaluate((el) => el.scrollIntoView({ block: "center" }));
   await settled(page);
   await page.screenshot({ path: `${OUT}/keep-earlier-desktop.png` });
   await page.setViewportSize({ width: 390, height: 844 });
