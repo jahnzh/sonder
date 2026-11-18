@@ -35,6 +35,8 @@ export function installHardcoverFixture() {
   // Books only the Hardcover page's match spec finds (#529), one id per run from 900000 up: in no library, list or
   // series, so matching a work to one changes nothing another spec (or a repeat of the spec) reads.
   const matchOnlyBook = (id: number) => ({ ...book(id, "Feral Gods", "Ada North"), release_year: 2021 });
+  // Books only the look spec opens (#574), one id per test from 800000 up: on Hardcover, in series 701, not on the server.
+  const lookOnlyBook = (id: number) => ({ ...book(id, `Look Book ${id}`, "Lena Look"), book_series: [{ position: 9, series: { id: 701, name: "The Crossing" } }] });
   let series701Previews = 0;
   const series = [
     { id: 701, name: "The Crossing", books_count: 4, author: { name: "Ada North" },
@@ -156,7 +158,7 @@ export function installHardcoverFixture() {
     else if (q.includes("SonderBookProgress"))
       data = { user_books: entries.filter((e) => e.book_id === v.bookId) };
     else if (q.includes("SonderBook("))
-      data = { books_by_pk: v.id >= 900000 ? matchOnlyBook(v.id) : [...books, ...seriesBooks, lateSeriesBook].find((b) => b.id === v.id) || null };
+      data = { books_by_pk: v.id >= 900000 ? matchOnlyBook(v.id) : v.id >= 800000 ? lookOnlyBook(v.id) : [...books, ...seriesBooks, lateSeriesBook].find((b) => b.id === v.id) || null };
     else if (q.includes("SonderShelfUpdate")) {
       const item = entries.find((e) => e.id === v.id)!;
       item.status_id = v.object.status_id;

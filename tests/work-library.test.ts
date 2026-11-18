@@ -178,7 +178,8 @@ test("PUT adds every recording of a work and unhides a hidden one; the origin an
   assert.deepEqual(hiddenRows(OWNER, "w-pair"), ["ed-pair-b"]);
   const added = await membership("PUT", "w-pair");
   assert.equal(added.statusCode, 200, added.body);
-  assert.deepEqual(added.json(), { ok: true });
+  // The answer names the work that was added (#574).
+  assert.deepEqual(added.json(), { ok: true, workId: "w-pair" });
   assert.deepEqual(libraryRows(OWNER, "w-pair"), ["ed-pair-a", "ed-pair-b"]);
   assert.deepEqual(hiddenRows(OWNER, "w-pair"), []);
   assert.deepEqual(origin(OWNER, "w-pair"), { source: "manual", seriesId: null });
@@ -257,7 +258,7 @@ test("PUT of a work with no audio edition makes its placeholder and adds its row
   assert.equal((await work("w-text")).inLibrary, false);
   const added = await membership("PUT", "w-text");
   assert.equal(added.statusCode, 200, added.body);
-  assert.deepEqual(added.json(), { ok: true });
+  assert.deepEqual(added.json(), { ok: true, workId: "w-text" });
   assert.deepEqual(rows("SELECT id,narrator,cover FROM audio_editions WHERE work_id='w-text'"), [
     { id: "placeholder-w-text", narrator: "Audio not added", cover: "/covers/meditations.svg" },
   ]);
@@ -360,7 +361,8 @@ test("both routes accept an empty JSON body and no body at all", async () => {
         ...body,
       });
       assert.equal(response.statusCode, 200, `${method} ${JSON.stringify(body)}: ${response.body}`);
-      assert.deepEqual(response.json(), { ok: true });
+      // PUT names the work that was added (#574); DELETE answers as before.
+      assert.deepEqual(response.json(), method === "PUT" ? { ok: true, workId } : { ok: true });
     }
     assert.equal((await library()).includes("w-unplayed"), method === "PUT", method);
   }

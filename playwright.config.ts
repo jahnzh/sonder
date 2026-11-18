@@ -155,6 +155,8 @@ const desktopProjects = [
               /(^|\/)library-picker\.spec\.ts$/,
               // The Server pages of Settings: Connections, Users, Library and storage, and their rewritten guards (#580).
               /(^|\/)(settings-server|hardcover-sync-form|users)\.spec\.ts$/,
+              // A Hardcover book opens its Book page before it is a work on the server (#574).
+              /(^|\/)hardcover-book-look\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },
