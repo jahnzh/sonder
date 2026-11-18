@@ -3,6 +3,7 @@ import fs from "node:fs";
 import {protectBrowserMutations, closeProtectedBrowser} from "./verification-safety.mjs";
 import { chromium, expect as baseExpect } from "@playwright/test";
 import { verifyBaseURL } from "./live-check-target.mjs";
+import { createReaderControls, narratedOnPage } from "./live-reader-controls.mjs";
 const expect = baseExpect.configure({ timeout: 20000 });
 process.loadEnvFile(".env");
 const [ebookId, recordingId] = process.argv.slice(2);
@@ -62,6 +63,18 @@ try {
     await context.request.get(`/api/reader/${jobInfo.ebookId}`)
   ).json();
   const appearance = await (await context.request.get("/api/appearance")).json();
+  // The Reading sync page shows the work's chosen recording and EPUB (the Book page's pair, #540): check that pair.
+  const books = await (await context.request.get("/api/books")).json();
+  const workId = books.find((book) => book.recordingId === jobInfo.recordingId)?.workId;
+  if (!workId) throw new Error(`Recording ${jobInfo.recordingId} is not in the book listing`);
+  const work = await (await context.request.get(`/api/works/${encodeURIComponent(workId)}`)).json();
+  const chosenRecording = work.recordings?.find((r) => r.recordingId === work.chosenRecordingId)?.recordingId ?? work.recordings?.[0]?.recordingId;
+  if (chosenRecording !== jobInfo.recordingId)
+    throw new Error(`The book's chosen recording is ${chosenRecording}, not ${jobInfo.recordingId}: choose it on the book's Audiobook page first`);
+  const epubs = (work.ebooks ?? []).filter((e) => e.format === "epub");
+  const chosenEbook = epubs.find((e) => e.id === work.chosenEbookId)?.id ?? epubs[0]?.id;
+  if (chosenEbook !== jobInfo.ebookId)
+    throw new Error(`The book's chosen EPUB is ${chosenEbook}, not ${jobInfo.ebookId}: choose it on the book's Ebook page first`);
   await protectBrowserMutations(context, baseURL, report);
   await context.addInitScript(appearance => {
     localStorage.setItem("sonder-appearance-device", "true");
@@ -79,34 +92,52 @@ try {
       }
     };
   });
-  await page.goto("/#reader/" + jobInfo.ebookId);
   const room = page.locator(".reader-room:not(.inline-reader)");
-  const showControls = async () => {
-    if (await room.locator(".reader-topbar").isVisible()) return;
-    // A tap before the book's pages are in the frame reaches nothing.
-    await expect(room.locator(".reader-viewport iframe")).toBeVisible();
-    const box = await room.locator(".reader-viewport").boundingBox();
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-    await expect(room.locator(".reader-topbar")).toBeVisible();
+  // The reader has no More sheet (#592): Reading sync is the Book page's row, which opens the Reading sync page;
+  // Listen from here is the long-press on a sentence; Read from audio is Back to narration.
+  const controls = createReaderControls({ page, room });
+  const readingSync = async () => {
+    await page.goto(`/#book/${encodeURIComponent(workId)}`);
+    await page.getByRole("region", { name: "Book", exact: true }).getByRole("button", { name: /^Reading sync/ }).click();
+    const sync = page.locator(".reading-sync-page");
+    await expect(sync.getByRole("heading", { level: 1, name: "Reading sync", exact: true })).toBeVisible();
+    // The prepared map is the one in use: Ready or Partly ready, with its share of the text mapped.
+    await expect(sync.locator('.reading-sync-row[aria-label^="Ready"], .reading-sync-row[aria-label^="Partly ready"]').first()).toBeVisible();
+    await expect(sync.locator('.reading-sync-row[aria-label^="Text mapped"]')).toBeVisible();
   };
-  const more = async (name) => {
-    await showControls();
-    await room.locator(".reader-topbar").getByRole("button", { name: "More", exact: true }).click();
-    await room.locator(".reader-more").getByRole("button", { name, exact: true }).click();
+  // Long-press the sentence that starts with `text` where it is on the page the reader shows.
+  const pressSentence = async (text) => {
+    const frameElement = room.locator(".reader-viewport iframe");
+    await expect(frameElement).toBeVisible();
+    const viewport = await room.locator(".reader-viewport").boundingBox();
+    const frameBox = await frameElement.boundingBox();
+    const frame = await (await frameElement.elementHandle()).contentFrame();
+    const probe = text.trim().split(/\s+/).slice(0, 4).join(" ");
+    const rects = await frame.evaluate((probe) => {
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const at = node.data.replace(/\s+/g, " ").indexOf(probe);
+        if (at < 0) continue;
+        const range = document.createRange();
+        range.setStart(node, Math.min(at, node.data.length));
+        range.setEnd(node, Math.min(at + probe.length, node.data.length));
+        return [...range.getClientRects()].map((r) => ({ x: r.left, y: r.top, width: r.width, height: r.height }));
+      }
+      return [];
+    }, probe);
+    const point = rects
+      .map((r) => ({ x: frameBox.x + r.x + Math.min(r.width / 2, 20), y: frameBox.y + r.y + r.height / 2 }))
+      .find((p) => p.x > viewport.x && p.x < viewport.x + viewport.width && p.y > viewport.y && p.y < viewport.y + viewport.height);
+    if (!point) throw new Error(`The sentence "${probe}…" is not on the page the reader shows`);
+    await controls.hide();
+    await page.mouse.move(point.x, point.y);
+    await page.mouse.down();
+    await page.waitForTimeout(800);
+    await page.mouse.up();
+    await expect(room.getByRole("status").filter({ hasText: "Listening from here" })).toBeVisible();
   };
-  await more("Reading sync");
-  await page
-    .getByRole("combobox", { name: "Reading sync audiobook release" })
-    .selectOption(jobInfo.recordingId);
-  await expect(
-    page.getByRole("combobox", { name: "Reading sync audiobook release" }),
-  ).toHaveValue(jobInfo.recordingId);
-  await expect(page.locator(".alignment-status p").first()).toContainText(
-    `${map.pairings.length} of ${map.pairings.length}`,
-  );
-  await page
-    .getByRole("button", { name: "Close reader options", exact: true })
-    .click();
+  await readingSync();
+  await page.goto("/#reader/" + jobInfo.ebookId);
   const samples = [];
   for (const pair of [
     map.pairings[0],
@@ -134,10 +165,9 @@ try {
       );
     const chosen = candidates[Math.floor(candidates.length / 2)];
     if (!chosen) throw new Error("No sentence-sized test passage");
-    await showControls();
-    await page
-      .getByRole("button", { name: "Search this book", exact: true })
-      .click();
+    // A tap before the book's pages are in the frame reaches nothing; the helper retries a swallowed tap (#413).
+    await expect(room.locator(".reader-viewport iframe")).toBeVisible();
+    await controls.click(room.locator(".reader-topbar").getByRole("button", { name: "Search this book", exact: true }), "Search this book");
     // Search is a page of the book (#590): a result opens the reader there.
     await page
       .getByRole("searchbox", { name: "Search this book" })
@@ -147,7 +177,7 @@ try {
       .filter({ hasText: chosen.text })
       .first()
       .click();
-    await more("Listen from here");
+    await pressSentence(chosen.text);
     await page.waitForFunction(
       (expected) => {
         const audio = window.__actualAudio.find((audio) => audio.src);
@@ -170,26 +200,28 @@ try {
         error: audio.error?.message || null,
       };
     });
-    await page
-      .getByRole("button", { name: "Pause narration", exact: true })
-      .click();
+    await controls.click(room.locator(".reader-player").getByRole("button", { name: "Pause narration", exact: true }), "Pause narration");
     const paused = await page.evaluate(
       () => window.__actualAudio.find((audio) => audio.src).currentTime,
     );
     const expected = map.intervals.find(
       (interval) => interval.start <= paused && interval.end > paused,
     );
-    await more("Read from audio");
-    await expect
-      .poll(() =>
-        page.evaluate(
-          (id) =>
-            JSON.parse(localStorage.getItem("reader-position:" + id) || "null")
-              ?.checkpoint?.locator?.paragraphId,
-          jobInfo.ebookId,
-        ),
-      )
-      .toBe(expected.paragraphId);
+    // Read from audio is Back to narration: page away from the narrated sentence (at most three turns), then return.
+    await controls.hide();
+    for (let turns = 0; turns < 3 && (await narratedOnPage(room)); turns++) {
+      await controls.turn("next");
+      await page.waitForTimeout(600);
+    }
+    await controls.click(room.locator(".reader-player").getByRole("button", { name: "Back to narration", exact: true }), "Back to narration");
+    // With a sentence at the position Back to narration follows it (the reader shows it, data-current-passage);
+    // unlike the retired Read from audio it does not save a listening place of its own, so the device's stored
+    // reading place is only reported, not compared.
+    await expect(room).toHaveAttribute("data-current-passage", expected.paragraphId);
+    const storedParagraph = await page.evaluate(
+      (id) => JSON.parse(localStorage.getItem("reader-position:" + id) || "null")?.checkpoint?.locator?.paragraphId ?? null,
+      jobInfo.ebookId,
+    );
     // This deliberate direct API call bypasses browser routing. The recovery
     // worker writes its scratch output to alignment/recovery.json on the server.
     const recovery = await context.request.post("/api/alignments/recover", {
@@ -217,6 +249,7 @@ try {
       playedPosition: played.position,
       audioError: played.error,
       readBackParagraph: expected.paragraphId,
+      storedReadingParagraph: storedParagraph,
       independentLocalSpeechMatch: recovery.status(),
       speechTokenScore: recovered.score,
       sentenceDifference: difference,
@@ -227,13 +260,7 @@ try {
     path: "artifacts/sync-sentence-switching-mobile.png",
   });
   await page.reload();
-  await more("Reading sync");
-  await expect(
-    page.getByRole("combobox", { name: "Reading sync audiobook release" }),
-  ).toHaveValue(jobInfo.recordingId);
-  await expect(page.locator(".alignment-status p").first()).toContainText(
-    `${map.pairings.length} of ${map.pairings.length}`,
-  );
+  await readingSync();
   const current = await (
     await context.request.get(`/api/reader/${jobInfo.ebookId}`)
   ).json();

@@ -52,7 +52,8 @@ try {
  await expect.poll(async()=>{const a=await actual();return a&&a.ready>=2&&!a.paused&&!a.error;},{timeout:30000}).toBe(true);
  // The chosen recording is the one this check selected; another one would make every later step test the wrong map.
  const playing=await page.evaluate(()=>window.__audio.find(a=>a.src)?.src??'');
- if(!decodeURIComponent(playing).includes(pick.recordingId.replace(/^recording-/,'')))throw Error(`Listen played ${playing}, not the selected recording ${pick.recordingId}: choose it on the book's Audiobook page or pass it as the recording id`);
+ // Media addresses name the track (/api/media/<track id>), so the played file is matched against the recording's tracks.
+ if(!book.tracks.some(t=>decodeURIComponent(playing).includes(t.id)))throw Error(`Listen played ${playing}, not the selected recording ${pick.recordingId}: choose it on the book's Audiobook page or pass it as the recording id`);
  await page.evaluate(()=>window.__audio.find(a=>a.src)?.pause());
  await page.goto('/');
  await page.locator('.dock-book').click();
@@ -65,17 +66,20 @@ try {
  const surface=await room.evaluate(el=>getComputedStyle(el).backgroundColor);
  await expect(page.frameLocator('.inline-reader .reader-viewport iframe').locator('body')).toHaveCSS('background-color',surface);
  const readerBox=await waitForBox(room.locator('.reader-viewport'),{description:'reader viewport'});if(readerBox.height<844*.65)throw Error('Reader is too small on mobile');
- const more=()=>controls.click(room.locator('.reader-topbar').getByRole('button',{name:'More',exact:true}),'More');
- await more();
- const options=page.getByRole('region',{name:'Playback options',exact:true});
- await expect(options.getByRole('button',{name:'Listen from here',exact:true})).toBeVisible();
- // The reader shows the book's own text only: there is no switch between views (ADR 0017).
- await expect(options.getByRole('group',{name:'Reading mode',exact:true})).toHaveCount(0);
- for(const name of ['Page','Lyrics','Word'])await expect(options.getByRole('button',{name,exact:true})).toHaveCount(0);
- await expect(page.getByRole('button',{name:'Back to narration',exact:true})).toBeDisabled();
+ // The More sheet is gone (#592): its entries are the long-press, Back to narration, the Bookmarks page, the Book
+ // page's Reading sync row and Appearance's Follow the narration. The head holds no More.
+ const head=room.locator('.reader-topbar');
+ await controls.show(head.getByRole('button',{name:'Close reader',exact:true}),'Close reader');
+ await expect(head.getByRole('button',{name:'More',exact:true})).toHaveCount(0);
+ await expect(room.locator('.reader-more')).toHaveCount(0);
+ // The reader shows the book's own text only: there is no switch between views (ADR 0017). Appearance is closed
+ // here, so no "Reading mode" group may be on the page.
+ await expect(page.getByRole('group',{name:'Reading mode',exact:true})).toHaveCount(0);
+ for(const name of ['Page','Lyrics','Word'])await expect(full.getByRole('button',{name,exact:true})).toHaveCount(0);
+ // Following the narration, Back to narration has nothing to return to.
+ await expect(room.getByRole('button',{name:'Back to narration',exact:true})).toBeDisabled();
  await page.screenshot({path:'artifacts/live-reader-options-mobile.png'});
- await options.getByRole('button',{name:'Close playback options',exact:true}).click();
- report.checks.push({name:'EPUB fills Now Playing; More holds playback and reader options and no view switch',ebookId:ebook.id});
+ report.checks.push({name:'EPUB fills Now Playing; the head has no More, there is no view switch, Back to narration is off while following',ebookId:ebook.id});
  // Sample the audio element directly and check that Page mode follows.
  const seek=position=>page.evaluate(position=>{const a=window.__audio.find(a=>a.src);a.currentTime=position;},position);
  // Seeking the audio element stays within the loaded file: the file of the saved position, whose passages the sequence samples.

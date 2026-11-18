@@ -2,7 +2,7 @@
 //
 // What the product does (src/components/Reader.tsx, src/reader.css):
 // - The reader's page is a head, the text and a foot (#587). On a phone-width screen the head's controls
-//   (`.reader-topbar`: Close reader, More, ...) and the foot's timeline and transport row are `visibility: hidden`
+//   (`.reader-topbar`: Close reader, Search this book, Reader appearance, ...) and the foot's timeline and transport row are `visibility: hidden`
 //   while `controlsVisible` is false; the head and the foot keep their boxes, so nothing moves when they show.
 //   At rest the head names the book and the chapter and the foot shows the progress line, the time left and a
 //   small Play or Pause narration. `controls = controlsVisible || desktop`; on a phone `controlsVisible` starts false.
