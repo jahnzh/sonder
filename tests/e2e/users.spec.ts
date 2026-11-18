@@ -38,6 +38,21 @@ async function openSettingsPage(page: Page, row: string) {
   await page.getByRole("button", { name: "Settings", exact: true }).last().click();
   await page.getByRole("navigation", { name: "Settings", exact: true }).getByRole("button", { name: new RegExp(`^${row}\\b`) }).click();
 }
+/**
+ * Discover's search for a shared book (#575): its row under "On the server", no recording row for someone who is not
+ * the administrator, and Add to library on the Book page the row opens.
+ */
+async function addFromDiscover(page: Page, title: string) {
+  const discover = page.getByRole("region", { name: "Discover", exact: true });
+  await discover.getByRole("searchbox", { name: "Search for a book", exact: true }).fill(title);
+  await discover.getByRole("searchbox", { name: "Search for a book", exact: true }).press("Enter");
+  const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const result = discover.getByRole("list", { name: "On the server", exact: true }).getByRole("button", { name: new RegExp(`^${escaped} `) });
+  await expect(result).toBeVisible();
+  await expect(discover.getByRole("button", { name: /^Search for a recording/ })).toHaveCount(0);
+  await result.click();
+  await page.getByRole("region", { name: "Book", exact: true }).getByRole("button", { name: "Add to library", exact: true }).click();
+}
 test("accounts keep libraries and offline queues separate", async ({ page }) => {
   mkdirSync("artifacts", { recursive: true });
   await page.addInitScript(() => sessionStorage.setItem("test-load-count", String(Number(sessionStorage.getItem("test-load-count") || 0) + 1)));
@@ -110,14 +125,7 @@ test("accounts keep libraries and offline queues separate", async ({ page }) => 
   await page.getByRole("button", { name: "Discover", exact: true }).last().click();
   // Guard 8 (spec #572): Discover offers someone who is not the administrator no recording row; they add a shared
   // book from its Book page, opened from Discover.
-  const discover = page.getByRole("region", { name: "Discover", exact: true });
-  await discover.getByRole("searchbox", { name: "Search for a book", exact: true }).fill(book.title);
-  await discover.getByRole("searchbox", { name: "Search for a book", exact: true }).press("Enter");
-  const result = discover.getByRole("list", { name: "On the server", exact: true }).getByRole("button", { name: new RegExp(`^${book.title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} `) });
-  await expect(result).toBeVisible();
-  await expect(discover.getByRole("button", { name: /^Search for a recording/ })).toHaveCount(0);
-  await result.click();
-  await page.getByRole("region", { name: "Book", exact: true }).getByRole("button", { name: "Add to library", exact: true }).click();
+  await addFromDiscover(page, book.title);
   await expect.poll(async () => (await (await page.request.get(`${base}/api/books`)).json()).find((b: { id: string }) => b.id === book.id).inLibrary).toBe(true);
   // A legacy reader-local device fault is migrated to shared device storage
   // before automatic playback, so the service worker can see it too.
@@ -277,7 +285,7 @@ test("one account's position history is not shown to or undoable by another", as
   await page.getByLabel("Password", { exact: true }).fill("historian-password");
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.getByRole("button", { name: "Discover", exact: true }).last().click();
-  await page.getByRole("button", { name: `Add ${book.title} to library` }).click();
+  await addFromDiscover(page, book.title);
   await page.getByRole("button", { name: "My library", exact: true }).last().click();
   dialog = await openNowPlaying(book.title);
   // Same recording, other account: empty Position history and no row in either database.
