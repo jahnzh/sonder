@@ -4,7 +4,7 @@
 // It replaces the series dialog for a saved series; a series that is not saved still opens the dialog. A row's Add
 // opens the Add sheet (#563) at `#series/<id>/add`, over the page. The words and
 // rules are in series-model.ts; the books in the library come from the library by work on this device (#528).
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SeriesRemoveDialog } from "../components/SeriesRemoveDialog";
 import { SERIES_SAVED_POLL_MS } from "../components/SeriesWorkStatus";
 import { api, ApiError, userId } from "../lib";
@@ -92,6 +92,16 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
   const [series, setSeries] = useState<SavedSeries | null>(() => lastRead.get(key) ?? null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // The page is left or its series was removed: an answer still on its way changes nothing. Without this, removing
+  // the series read it once more (the revision grows), and its "could not be found" opened today's dialog for the
+  // series just removed, over the Library (#567).
+  const gone = useRef(false);
+  useEffect(() => {
+    gone.current = false;
+    return () => {
+      gone.current = true;
+    };
+  }, []);
   const [removeOpen, setRemoveOpen] = useState(false);
   // The preferred language: the Add sheet changes it, for the page under it too.
   const [language, setLanguage] = useState(seriesLanguage);
@@ -117,10 +127,12 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
         const value = await api<SavedSeries>(
           `/series/${seriesId}?language=${encodeURIComponent(seriesLanguage())}${refresh ? "&refresh=1" : ""}`,
         );
+        if (gone.current) return;
         lastRead.set(key, value);
         setSeries(value);
         setError("");
       } catch (reason) {
+        if (gone.current) return;
         // Not saved by this account: today's dialog shows the series, over the Library.
         if (reason instanceof ApiError && reason.status < 500 && /could not be found/i.test(reason.message)) {
           lastRead.delete(key);
@@ -324,6 +336,7 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
         open={removeOpen}
         onClose={() => setRemoveOpen(false)}
         onRemoved={() => {
+          gone.current = true;
           lastRead.delete(key);
           onRemoved();
           void refreshLibraryWorks().catch(() => {});

@@ -259,10 +259,13 @@ test("the refresh error: its message with Retry over the last saved list", async
 
 test("measured against the boards at phone size and on a desktop: rows 56 high, the groups' order, one Title, no overflow", async ({ page }) => {
   restore = await saveCrossing(page, [503, 504]);
-  const measure = async () => {
+  // At phone size the series is the page and its name the one Title. On a desktop a saved series stands beside the
+  // Library's list of saved series (#567, DesktopSeries.dc.html): the Library's Title is the one h1 and the series'
+  // name the first heading of the series.
+  const measure = async (desktop = false) => {
     await expect(books(page)).toBeVisible();
-    await expect(page.getByRole("heading", { level: 1 })).toHaveText(["The Crossing"]);
-    await expect(region(page).getByRole("heading", { level: 2 })).toHaveText([/^Books · \d+$/, "Related works · 1"]);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText([desktop ? "Your library." : "The Crossing"]);
+    await expect(region(page).getByRole("heading", { level: 2 })).toHaveText([...(desktop ? ["The Crossing"] : []), /^Books · \d+$/, "Related works · 1"]);
     const heights = (list: ReturnType<typeof books>) =>
       list.evaluate((element) => [...element.querySelectorAll(".part-book-row")].map((shownRow) => (shownRow as HTMLElement).getBoundingClientRect().height));
     expect(new Set(await heights(books(page)))).toEqual(new Set([56]));
@@ -278,13 +281,14 @@ test("measured against the boards at phone size and on a desktop: rows 56 high, 
   await page.mouse.move(0, 0);
   await settled(page);
   await page.screenshot({ path: `${OUT}/series-phone.png`, fullPage: true });
-  // Desktop: one centred column beside the rail.
+  // Desktop: the series to the right of the Library's list of saved series, their tops level (a series the list does
+  // not hold stays one centred column: library-series.spec.ts).
   await page.setViewportSize({ width: 1440, height: 900 });
-  await measure();
-  const main = await box(page.locator("main"));
+  await measure(true);
+  const list = await box(page.getByRole("region", { name: "Saved series", exact: true }));
   const column = await box(region(page));
-  expect(column.width).toBeLessThanOrEqual(560);
-  expect(Math.abs(column.x + column.width / 2 - (main.x + main.width / 2))).toBeLessThanOrEqual(2);
+  expect(column.x).toBeGreaterThan(list.x + list.width);
+  expect(Math.abs(column.y - list.y)).toBeLessThanOrEqual(1);
   await settled(page);
   await page.screenshot({ path: `${OUT}/series-desktop.png` });
 });

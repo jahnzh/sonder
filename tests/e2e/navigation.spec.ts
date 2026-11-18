@@ -8,7 +8,7 @@ import { defaultAppearance } from "../../src/appearance";
 import { readerFixture } from "../reader-fixture";
 import { SAVED_SERIES_701, SERIES_701_REMOVAL } from "./navigation-fixtures";
 import { tempDir } from "../temp-dir";
-import { openSavedSeries, savedSeriesList, showSavedSeries } from "./library-series";
+import { openSavedSeries, savedSeriesList, seriesChip, showSavedSeries } from "./library-series";
 
 // Addresses and the page stack (#484, ADR 0020): the browser's history is the stack, Back means the same for the
 // phone's gesture and the browser's button, and every address that works today keeps working.
@@ -402,7 +402,9 @@ test.describe("with answers from the test", () => {
     await page.goto("/#library");
     await expect(page.getByRole("button", { name: `About ${prefix} 7`, exact: true })).toBeVisible();
     await expect(page.getByText("Hardcover is connected.", { exact: false })).toBeVisible();
-    await expect(page.getByText("The Crossing", { exact: true })).toBeVisible();
+    // The saved series are read for the Series chip (#567); under All books nothing of them stands above the list.
+    await expect.poll(() => answered.series).toBeGreaterThan(0);
+    await expect(savedSeriesList(page)).toHaveCount(0);
     const target = await page.evaluate(() => Math.min(700, document.documentElement.scrollHeight - innerHeight));
     expect(target).toBeGreaterThan(300);
     await page.evaluate((y) => window.scrollTo(0, y), target);
@@ -429,6 +431,50 @@ test.describe("with answers from the test", () => {
     expect(await onScreen()).toEqual(seen);
     // The Library asks again for what sits above the list; when the answers land, the list must not move.
     await expect.poll(() => answered.hardcover > before.hardcover && answered.series > before.series).toBe(true);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    expect(await page.evaluate(() => scrollY)).toBe(target);
+    expect(await onScreen()).toEqual(seen);
+  });
+
+  test("Back restores the Series chip's list at its scroll position", async ({ page }) => {
+    // Thirty saved series, so the chip's list scrolls; the answer comes slowly and is counted (#567).
+    const many = Array.from({ length: 30 }, (_, index) => ({
+      id: 990200 + index, name: `Scroll series ${String(index).padStart(2, "0")}`, author: "Filler", count: 3, finished: 0, total: 3, covers: [],
+    }));
+    let answeredSeries = 0;
+    await page.route("**/api/series", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      await route.fulfill({ json: many });
+      answeredSeries++;
+    });
+    await page.goto("/#library");
+    await showSavedSeries(page);
+    const rows = savedSeriesList(page).getByRole("list", { name: "Series", exact: true }).getByRole("listitem");
+    await expect(rows).toHaveCount(30);
+    const target = await page.evaluate(() => Math.min(900, document.documentElement.scrollHeight - innerHeight));
+    expect(target).toBeGreaterThan(300);
+    await page.evaluate((y) => window.scrollTo(0, y), target);
+    await expect.poll(() => page.evaluate(() => scrollY)).toBe(target);
+    const onScreen = () =>
+      page.evaluate(() =>
+        [...document.querySelectorAll<HTMLElement>(".library-series-row")]
+          .map((row) => ({ row: row.innerText.split("\n")[0], top: Math.round(row.getBoundingClientRect().top) }))
+          .filter(({ top }) => top >= 0 && top < innerHeight),
+      );
+    const seen = await onScreen();
+    expect(seen.length).toBeGreaterThan(0);
+    const before = answeredSeries;
+    await tab(page, "Discover").click();
+    await expect(shown(page)).toHaveText("Discover");
+    await expect.poll(() => page.evaluate(() => scrollY)).toBe(0);
+    await page.goBack();
+    await expect(shown(page)).toHaveText("Library");
+    await expect(seriesChip(page)).toHaveAttribute("aria-selected", "true");
+    // At once, from the last answer: the same rows where they stood.
+    await expect.poll(() => page.evaluate(() => scrollY)).toBe(target);
+    expect(await onScreen()).toEqual(seen);
+    // The list is read again; when the answer lands, the list must not move.
+    await expect.poll(() => answeredSeries > before).toBe(true);
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     expect(await page.evaluate(() => scrollY)).toBe(target);
     expect(await onScreen()).toEqual(seen);
