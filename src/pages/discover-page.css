@@ -34,7 +34,8 @@
 .discover-field > svg {
   flex: none;
 }
-.discover-field > input {
+/* Repeated class: above appearance.css's rule for every text field (a filled field of its own), as Get's field does. */
+.discover-field .discover-input.discover-input.discover-input.discover-input {
   flex: 1;
   min-width: 0;
   height: 100%;
@@ -46,6 +47,9 @@
   font-size: 16px;
   line-height: 22px;
   outline-offset: 4px;
+}
+.discover-field .discover-input::-webkit-search-cancel-button {
+  display: none;
 }
 .discover-field > input::placeholder {
   color: var(--muted);

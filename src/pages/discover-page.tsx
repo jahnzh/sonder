@@ -278,6 +278,7 @@ export function DiscoverPage({
             </svg>
             <input
               ref={field}
+              className="discover-input"
               type="search"
               enterKeyHint="search"
               aria-label={segment === "books" ? "Search for a book" : "Search for a series"}
