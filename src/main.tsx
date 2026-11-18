@@ -20,13 +20,14 @@ if ("serviceWorker" in navigator && import.meta.env.PROD) {
     void navigator.serviceWorker.register("/sw.js").catch(() => {});
   });
 }
-// Keep the search shortcut available without intercepting typing in a field.
+// Keep the search shortcut available without intercepting typing in a field: "/" focuses the Library's search field
+// where it is shown (the top bar and its field went with #581).
 window.addEventListener("keydown", (e) => {
   if (
     e.key === "/" &&
     !["INPUT", "TEXTAREA", "SELECT"].includes((e.target as HTMLElement).tagName)
   ) {
-    const search = document.querySelector<HTMLInputElement>(".topbar input");
+    const search = document.querySelector<HTMLInputElement>('.library-search input[aria-label="Search your library"]');
     if (search) {
       e.preventDefault();
       search.focus();
