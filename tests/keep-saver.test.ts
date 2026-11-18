@@ -566,19 +566,100 @@ test("a pause written in another tab whose message is lost stops the save before
   assert.equal(d.records.get("r1")?.state, "paused");
 });
 
-test("cleared storage is detected only for a completed, on server choice with no local record or file", async () => {
-  const { wasCleared, clearedMessageEnds } = await import("../src/keep-saver.ts");
-  const work: KeepWork = { workId: "w", inLibrary: true, chosenRecordingId: "r", recordings: [{ recordingId: "r", tracks: [track("r", 0)] }], ebooks: [], chosenEbookId: null, readingSync: [] };
-  const state = { works: [work], keep: [], downloads: [], parts: [], records: [] };
-  const complete = { workId: "w", on: true, at: 1, completeAt: 2 };
-  assert.equal(wasCleared(complete, state), true);
-  assert.equal(wasCleared({ ...complete, completeAt: null }, state), false);
-  assert.equal(wasCleared({ ...complete, on: false }, state), false);
-  assert.equal(wasCleared(complete, { ...state, keep: [{ ...complete, pending: false }] }), false);
-  assert.equal(wasCleared(complete, { ...state, parts: [{ trackId: "r-0", recordingId: "r", loaded: 1 }] }), false);
-  const kept = [{ ...complete, pending: false }];
-  assert.equal(clearedMessageEnds(kept, [work], () => false), false);
-  assert.equal(clearedMessageEnds(kept, [work], () => true), true);
-  assert.equal(clearedMessageEnds([{ ...kept[0], on: false }], [work], () => false), true);
-  assert.equal(clearedMessageEnds(kept, [], () => true), false);
+/** A tab whose saver remembers a cleared device (#554) in the fake device database, and what it saw while saving. */
+function clearedTab(d: ReturnType<typeof device>, id = 1) {
+  const noticedWhileSaving: unknown[] = [];
+  const tab = d.tab(id, {
+    clearedAt: async () => (d.preferences.get("keep-cleared-at") as number | undefined) ?? null,
+    setClearedAt: async (at) => void (at === null ? d.preferences.delete("keep-cleared-at") : d.preferences.set("keep-cleared-at", at)),
+    saveTrack: async (t, signal, onProgress) => {
+      signal.throwIfAborted();
+      d.saves.push(`${id}:${t.id}`);
+      noticedWhileSaving.push(d.preferences.get("keep-cleared-at") ?? null);
+      if (d.failNext.delete(t.id)) {
+        d.parts.push({ trackId: t.id, recordingId: t.recordingId, loaded: 4 });
+        throw new TypeError("Failed to fetch");
+      }
+      onProgress(10, 10);
+      d.downloads.push({ trackId: t.id, recordingId: t.recordingId, size: 10 });
+    },
+  });
+  return { ...tab, noticedWhileSaving };
+}
+
+test("a cleared device notices once its library is read, takes the server's record over and saves the book again without a tap (#554)", async () => {
+  const d = device({ tracks: 2 });
+  // The server says this device completed w1; the device database and the files are empty, its library too.
+  d.server.set("w1", { workId: "w1", on: true, at: 5, completeAt: 6 });
+  const stored = d.works.splice(0);
+  const a = clearedTab(d);
+  a.saver.start();
+  await settle();
+  assert.equal(d.preferences.get("keep-cleared-at"), undefined, "nothing noticed before the library is read");
+  assert.equal(d.keep.has("w1"), false, "the completed record waits for the library");
+  assert.deepEqual(d.saves, []);
+  // The library read stores the works: the device notices, takes the record over and saves the book.
+  d.works.push(...stored);
+  await a.saver.trigger("library");
+  await settle();
+  assert.deepEqual(d.saves, ["1:r1-0", "1:r1-1"], "saved again by itself");
+  assert.deepEqual(d.persists, [], "no persist() without a tap");
+  assert.equal(d.keep.get("w1")?.on, true, "the server's record taken over");
+  assert.equal(a.noticedWhileSaving.every((at) => typeof at === "number"), true, "the note shows while the book saves");
+  assert.equal(d.preferences.get("keep-cleared-at"), undefined, "the note ends once the kept book is complete again");
+  assert.ok((d.server.get("w1")?.completeAt ?? 0) > 6, "the completion is reported again");
+  // Saved again, the device holds the book: a later run notices nothing.
+  await a.saver.trigger("foreground");
+  await settle();
+  assert.equal(d.preferences.get("keep-cleared-at"), undefined);
+  assert.equal(d.saves.length, 2);
+});
+
+test("a cleared device's note stays while a kept book is not complete, and keeps the day it was first noticed (#554)", async () => {
+  const d = device({ tracks: 3 });
+  d.server.set("w1", { workId: "w1", on: true, at: 5, completeAt: 6 });
+  d.failNext.add("r1-1");
+  const a = clearedTab(d);
+  a.saver.start();
+  await settle();
+  const noticed = d.preferences.get("keep-cleared-at");
+  assert.equal(typeof noticed, "number", "noticed at the first run");
+  assert.equal(d.records.get("r1")?.state, "interrupted");
+  // The next trigger resumes; the day stays the first one until the note ends.
+  d.failNext.add("r1-2");
+  await a.saver.trigger("online");
+  await settle();
+  assert.equal(d.preferences.get("keep-cleared-at"), noticed);
+  await a.saver.trigger("foreground");
+  await settle();
+  assert.equal(d.records.get("r1")?.state, "finished");
+  assert.equal(d.preferences.get("keep-cleared-at"), undefined);
+});
+
+test("a device that already shows the note keeps its day when it notices another cleared book (#554)", async () => {
+  const d = device({ tracks: 1 });
+  // Noticed on an earlier day; the device database lost the book's record and files again before it was complete.
+  d.preferences.set("keep-cleared-at", 7);
+  d.server.set("w1", { workId: "w1", on: true, at: 5, completeAt: 6 });
+  d.failNext.add("r1-0");
+  const a = clearedTab(d);
+  a.saver.start();
+  await settle();
+  assert.equal(d.keep.get("w1")?.on, true);
+  assert.equal(d.preferences.get("keep-cleared-at"), 7);
+});
+
+test("no cleared note for a work never completed here, a record turned off, or a device that kept its record (#554)", async () => {
+  const d = device({ works: [{ workId: "never", inLibrary: true, recordingId: "rn" }, { workId: "off", inLibrary: true, recordingId: "ro" }, { workId: "kept", inLibrary: true, recordingId: "rk" }] });
+  d.server.set("never", { workId: "never", on: true, at: 5, completeAt: null });
+  d.server.set("off", { workId: "off", on: false, at: 5, completeAt: null });
+  d.server.set("kept", { workId: "kept", on: true, at: 5, completeAt: 6 });
+  d.keep.set("kept", { workId: "kept", on: true, at: 5, completeAt: 6, pending: false });
+  const a = clearedTab(d);
+  a.saver.start();
+  await settle();
+  assert.equal(d.preferences.get("keep-cleared-at"), undefined);
+  assert.deepEqual(a.noticedWhileSaving.filter((at) => at !== null), []);
+  // The books themselves are saved as Keep says (#550): the record never completed here and the kept one.
+  assert.deepEqual(d.saves.sort(), ["1:rk-0", "1:rk-1", "1:rn-0", "1:rn-1"]);
 });

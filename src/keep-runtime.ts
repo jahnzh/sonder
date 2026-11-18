@@ -13,7 +13,7 @@ import { deviceEbookChoice, ebookDeviceCopySize } from "./ebook-device-copy";
 import { isKeptReaderFile, type ReaderFileRecord } from "./ebook-keep";
 import { loadReader, saveEpubOffline } from "./reading";
 import { KeepSaver, type KeepJob, type KeepTrigger, type LockManager, type SaverMessage } from "./keep-saver";
-import { accountDatabase, api, authDB, deleteDownloads, downloadTrack, getDownloadedBlob, listDeviceSaveRecords, localDB, removeOfflineEbook, writeDeviceSaveRecord } from "./lib";
+import { accountDatabase, api, authDB, deleteDownloads, downloadTrack, getDownloadedBlob, listDeviceSaveRecords, listOfflineEbookEditionIds, localDB, removeOfflineEbook, writeDeviceSaveRecord } from "./lib";
 import { deviceBook, type DeviceBook } from "./keep-device";
 import { removeEbookFromDevice } from "./ebook-device-copy";
 import type { Download, DownloadPart, LibraryWork, Track } from "./types";
@@ -108,8 +108,8 @@ export function startKeepSaver(account: number): KeepSaver {
         keep: await db.keep.toArray(),
         downloads,
         existingDownloads: rows.map((row) => ({ trackId: row.trackId, recordingId: row.recordingId, size: row.size })),
-        existingEbookIds: (await Promise.all(works.flatMap((work) => (work.ebooks ?? []).map(async (ebook) =>
-          (await db.preferences.get(readerFileKey(ebook.id))) ? ebook.id : null)))).filter((id): id is string => id !== null),
+        // Any copy of an EPUB, the reader's own too, in either database (#554): the browser did not clear that book.
+        existingEbookIds: await listOfflineEbookEditionIds().catch(() => [] as string[]),
         parts: await localDB.downloadParts.toArray(),
         records: await listDeviceSaveRecords().catch(() => [] as DeviceSaveRecord[]),
         ...(await readingHeld(works)),
@@ -152,7 +152,10 @@ export function startKeepSaver(account: number): KeepSaver {
         body: JSON.stringify(send.completeAt === null ? { at: send.at } : { at: send.at, completeAt: send.completeAt }),
       });
     },
-    clearedAt: async () => (await db.preferences.get(CLEARED_KEY))?.value as number | null ?? null,
+    clearedAt: async () => {
+      const value = (await db.preferences.get(CLEARED_KEY))?.value;
+      return typeof value === "number" ? value : null;
+    },
     setClearedAt: async (at) => {
       if (at === null) await db.preferences.delete(CLEARED_KEY);
       else await db.preferences.put({ key: CLEARED_KEY, value: at });
@@ -558,15 +561,25 @@ export function useDeviceBook(work: LibraryWork | null): DeviceBook | null {
   return book && work && book.workId === work.workId ? book.value : null;
 }
 
-/** Date this account noticed cleared files, shared by tabs. */
+/**
+ * When this account's device noticed that the browser cleared Sonder's files (#554), or null: This device's note
+ * under Storage. Every tab follows it: the saving tab's changes reach the others over the saver's channel.
+ */
 export function useKeepClearedAt(): number | null {
   const [at, setAt] = useState<number | null>(null);
   useEffect(() => {
     let live = true;
-    const read = () => void localDB.preferences.get(CLEARED_KEY).then((row) => { if (live) setAt(typeof row?.value === "number" ? row.value : null); });
+    const read = () =>
+      void localDB.preferences
+        .get(CLEARED_KEY)
+        .then((row) => live && setAt(typeof row?.value === "number" ? row.value : null))
+        .catch(() => {});
     read();
     window.addEventListener(KEEP_EVENT, read);
-    return () => { live = false; window.removeEventListener(KEEP_EVENT, read); };
+    return () => {
+      live = false;
+      window.removeEventListener(KEEP_EVENT, read);
+    };
   }, []);
   return at;
 }

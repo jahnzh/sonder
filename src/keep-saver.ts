@@ -37,6 +37,7 @@ import {
   type StopCause,
 } from "./keep";
 import { rememberEbook, rememberRecording, turnedOffFromServer, type KeptRecording } from "./keep-device";
+import { clearedMessageEnds, wasCleared, type DeviceHolds } from "./keep-cleared";
 
 /** Why a run was asked for. */
 export type KeepTrigger = "open" | "foreground" | "online" | "library" | "switch" | "retry";
@@ -48,8 +49,12 @@ export type SaverState = {
   works: KeepWork[];
   keep: KeepEntry[];
   downloads: HeldFile[];
-  /** Raw rows include incomplete files for cleared-storage detection. */
+  /**
+   * Every `downloads` row, also one whose bytes do not add up (#554): any file of a book, complete or not, means the
+   * browser did not clear it. Absent: `downloads`.
+   */
   existingDownloads?: HeldFile[];
+  /** Ebook editions with any copy here, kept or the reader's own (#554). */
   existingEbookIds?: string[];
   parts: HeldPart[];
   records: DeviceSaveRecord[];
@@ -67,27 +72,17 @@ export type RecordChange =
   | { state: "finished" }
   | SaveStop;
 
-/** A completed server choice with neither local choice nor any file indicates cleared storage. */
-export function wasCleared(entry: ServerKeep, state: SaverState): boolean {
-  if (!entry.on || entry.completeAt === null || state.keep.some((local) => local.workId === entry.workId)) return false;
-  const work = state.works.find((item) => item.workId === entry.workId);
-  if (!work) return false;
-  const recordings = new Set(work.recordings.map((item) => item.recordingId));
-  const ebooks = new Set((work.ebooks ?? []).map((item) => item.id));
-  return !state.records.some((item) => item.workId === entry.workId)
-    && !(state.existingDownloads ?? state.downloads).some((item) => recordings.has(item.recordingId))
-    && !state.parts.some((item) => recordings.has(item.recordingId))
-    && !(state.ebooks ?? []).some((item) => ebooks.has(item.id))
-    && !(state.existingEbookIds ?? []).some((id) => ebooks.has(id))
-    && !Object.keys(state.maps ?? {}).some((key) => [...ebooks].some((id) => key.startsWith(`reader-map:${id}:`)));
-}
-
-/** Keep the notice until every kept library work is complete. */
-export function clearedMessageEnds(keep: readonly KeepEntry[], works: readonly KeepWork[], complete: (work: KeepWork) => boolean): boolean {
-  return keep.filter((entry) => entry.on).every((entry) => {
-    const work = works.find((item) => item.workId === entry.workId);
-    return !!work && (!work.inLibrary || complete(work));
-  });
+/** What the device holds of any book, for the cleared-device check (#554). */
+function holdsOf(state: SaverState): DeviceHolds {
+  return {
+    keep: state.keep,
+    works: state.works,
+    records: state.records,
+    downloads: state.existingDownloads ?? state.downloads,
+    parts: state.parts,
+    ebookIds: [...(state.existingEbookIds ?? []), ...(state.ebooks ?? []).map((ebook) => ebook.id)],
+    mapKeys: Object.keys(state.maps ?? {}),
+  };
 }
 
 export type LockManager = {
@@ -143,6 +138,10 @@ export type SaverDeps = {
   onJob: (recordingId: string, job: KeepJob | null) => void;
   /** The device's files or records changed. */
   onChanged: () => void;
+  /**
+   * When this device noticed that the browser cleared Sonder's files (#554), and writing or ending it (null). This
+   * device's note under Storage reads it.
+   */
   clearedAt?: () => Promise<number | null>;
   setClearedAt?: (at: number | null) => Promise<void>;
   now?: () => number;
@@ -299,15 +298,18 @@ export class KeepSaver {
     } catch {
       return { keep: state.keep, synced: false };
     }
-    // Wait for the library before adopting a completed record: its files can only be identified by that work.
-    const localIds = new Set(state.keep.map((entry) => entry.workId));
-    const candidates = server.filter((entry) => entry.on && entry.completeAt !== null && !localIds.has(entry.workId));
-    const unknown = new Set(candidates.filter((entry) => !state.works.some((work) => work.workId === entry.workId)).map((entry) => entry.workId));
-    if (candidates.some((entry) => wasCleared(entry, state)) && !(await this.deps.clearedAt?.())) {
-      await this.deps.setClearedAt?.(this.now());
+    // A cleared device (#554): the server says this device completed a work it holds nothing of. It is noticed once,
+    // when the device has read its library (a cleared device has none stored yet, and only the work names its files);
+    // until then a server record of a completed work is not taken over, so the next run still sees nothing of it.
+    if (!state.works.length) {
+      const local = new Set(state.keep.map((entry) => entry.workId));
+      server = server.filter((entry) => local.has(entry.workId) || !(entry.on && entry.completeAt !== null));
+    }
+    else if (this.deps.setClearedAt && server.some((entry) => wasCleared(entry, holdsOf(state))) && !(await this.deps.clearedAt?.())) {
+      await this.deps.setClearedAt(this.now());
       this.changed();
     }
-    const merged = mergeKeep(state.keep, server.filter((entry) => !unknown.has(entry.workId)));
+    const merged = mergeKeep(state.keep, server);
     const records = new Map(merged.records.map((record) => [record.workId, record]));
     for (const send of merged.send) {
       try {
@@ -404,10 +406,11 @@ export class KeepSaver {
         if (done.complete) await this.reportComplete(entry, keep);
       } else if (stop.state === "interrupted" && stop.how === "network") return; // The others would fail as well.
     }
-    if (await this.deps.clearedAt?.()) {
+    // The note of a cleared device ends once every kept book is complete again (#554).
+    if (this.deps.setClearedAt && (await this.deps.clearedAt?.())) {
       const latest = await this.deps.read();
-      if (clearedMessageEnds(latest.keep, latest.works, (work) => this.needsOf(work, latest).complete)) {
-        await this.deps.setClearedAt?.(null);
+      if (clearedMessageEnds(latest.keep, latest.works, (work) => this.needsOf(work, latest))) {
+        await this.deps.setClearedAt(null);
         this.changed();
       }
     }

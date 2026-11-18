@@ -11,6 +11,7 @@ import { Button } from "../parts/Button";
 import { InfoMark } from "../parts/Tooltip";
 import { useKeepClearedAt } from "../keep-runtime";
 import { tip } from "../tooltip-texts";
+import { deviceClearedNote } from "../status-lines";
 import { bytes } from "../size-format";
 import { buildDevicePart, protectedLine, usedLine, usedShare, type DeviceKeptRow, type DeviceSavingRow } from "../device-part";
 import { deviceSaveEntries, type DeviceSaveInput } from "../device-saves";
@@ -160,7 +161,9 @@ export function ActivityDevice({ books, downloads, downloadParts, running, recor
   const shown = buildDevicePart({ entries, books, ebooks, online });
   const storage = useStorage(shown.used);
   const clearedAt = useKeepClearedAt();
-  const clearedNote = clearedAt === null ? undefined : `The browser cleared Sonder’s files on ${new Date(clearedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}. The kept books are being saved again.`;
+  // A device whose browser cleared Sonder's files (#554, board KeepCleared.dc.html): a muted note under Storage until
+  // every kept book is complete again, and Protected storage's button reads Turn on while it shows. No dot.
+  const clearedNote = clearedAt === null ? undefined : deviceClearedNote(clearedAt);
   const bookOf = (id: string | null) => (id ? books.find((b) => b.id === id) : undefined);
   return (
     <div className="activity-device" data-testid="activity-device">
@@ -185,8 +188,13 @@ export function ActivityDevice({ books, downloads, downloadParts, running, recor
             value={protectedLine(storage)}
             control={
               storage.persisted ? undefined : (
-                <Button kind="quiet" disabled={storage.asking} onClick={() => void storage.ask()} aria-label="Ask the browser to protect storage">
-                  Ask
+                <Button
+                  kind={clearedNote ? "secondary" : "quiet"}
+                  disabled={storage.asking}
+                  onClick={() => void storage.ask()}
+                  aria-label={clearedNote ? "Turn on protected storage" : "Ask the browser to protect storage"}
+                >
+                  {clearedNote ? "Turn on" : "Ask"}
                 </Button>
               )
             }
