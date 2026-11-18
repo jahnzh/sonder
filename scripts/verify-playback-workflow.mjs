@@ -5,7 +5,7 @@ import { chromium, expect as baseExpect } from "@playwright/test";
 import { defaultAppearance } from "../src/appearance.ts";
 import { createReaderControls, waitForBox } from "./live-reader-controls.mjs";
 import { verifyBaseURL } from "./live-check-target.mjs";
-import { requestFrom, NoSuitableRecording, NO_SUITABLE_RECORDING_EXIT } from "./live-check-recording.mjs";
+import { requestFrom, getJSON, NoSuitableRecording, NO_SUITABLE_RECORDING_EXIT } from "./live-check-recording.mjs";
 import { selectPlaybackRecording, PLAYBACK_MIN_CHAPTER_SECONDS } from "./live-check-playback.mjs";
 const expect=baseExpect.configure({timeout:20000});
 // A local test server (tests/browser-server.ts) has no .env and no password; production reads both from .env.

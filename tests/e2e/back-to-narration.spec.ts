@@ -77,7 +77,7 @@ async function withAppearance(page:Page,patch:{reader?:object;playback?:object},
  await page.request.put("/api/appearance",{data:{...appearance,reader:{...appearance.reader,...patch.reader},playback:{...appearance.playback,...patch.playback}}});
  try{await run();}finally{await page.request.put("/api/appearance",{data:appearance});}
 }
-// The listening place as Read from audio saves it, so a test can tell it from a manual position saved over it.
+// The listening place as Back to narration saves it, so a test can tell it from a manual position saved over it.
 async function seedListening(page:Page,ebook:string,book:any,manifest:any,paragraphId:string){
  const all=manifest.sections.flatMap((section:any)=>section.paragraphs);
  const section=manifest.sections.find((section:any)=>section.paragraphs.some((p:any)=>p.id===paragraphId));
@@ -127,7 +127,7 @@ async function bookmarkChapter(page:Page,ebook:string,manifest:any,section:numbe
 // Chapters in the player bar (the Chapters page, #590), chapter `index`, and as soon as the reader is shown again and the bookmark toggle shows the chapter
 // is the reader's position (its save waits out the half-second pause), `act` in the same frame. Answers the time
 // from the relocation showing to `act`.
-async function contentsThen(page:Page,index:number,act:"F"|"Read from audio"){
+async function contentsThen(page:Page,index:number,act:"F"|"Back to narration"){
  return page.evaluate(({index,act})=>new Promise<number>((done,fail)=>{
   const scope=document.querySelector(".inline-reader")!;
   const toggle=scope.querySelector<HTMLButtonElement>(".reader-bookmark-toggle")!;
@@ -141,9 +141,10 @@ async function contentsThen(page:Page,index:number,act:"F"|"Read from audio"){
    const at=performance.now();
    if(act==="F")document.body.dispatchEvent(new KeyboardEvent("keydown",{key:"f",bubbles:true,cancelable:true}));
    else{
-    const read=[...document.querySelectorAll<HTMLButtonElement>(".reader-more button")].find(button=>button.textContent?.includes("Read from audio"));
-    if(!read){fail(new Error("no Read from audio button"));return;}
-    read.click();
+    // Without a map, the administrator's Back to narration locates the passage (#592: it took over Read from audio).
+    const back=scope.querySelector<HTMLButtonElement>('.reader-back-narration[aria-label="Back to narration"]');
+    if(!back||back.disabled){fail(new Error(`Back to narration is ${back?"off":"missing"}`));return;}
+    back.click();
    }
    done(performance.now()-at);
   };
@@ -170,35 +171,37 @@ async function closeNowPlaying(page:Page){
 }
 
 // Sequence 1: without a narration map nothing replaces the manual position, so F records the wish to follow and keeps it.
+// F is Back to narration (#592): for the administrator it locates the passage, here answered with nothing found
+// (a passage found is the narration, which replaces the chosen place, as Read from audio did).
 test("sequence 1: F without a narration map, inside the pause after Contents, keeps the chosen chapter saved",async({page},testInfo)=>{
  const run=testInfo.repeatEachIndex;
  const {ebook,manifest,book}=await fixture(page,`No map then F ${run}`,{map:false});
- await bookmarkChapter(page,ebook,manifest,1,run);
- await withAppearance(page,{reader:{mode:"paginated"}},async()=>{
-  await openWithoutMap(page,book,ebook);
-  expect(await contentsThen(page,1,"F")).toBeLessThan(400);
-  await closeNowPlaying(page);
-  await expectSaved(page,ebook,{origin:"reading",section:1});
- });
-});
-
-// Sequence 1 through Read from audio: on main it dropped the waiting position before looking for a narration,
-// and speech recovery that finds nothing left no saved place at all.
-test("sequence 1: Read from audio without a narration map, inside the pause after Contents, keeps the chosen chapter saved",async({page},testInfo)=>{
- const run=testInfo.repeatEachIndex;
- const {ebook,manifest,book}=await fixture(page,`No map then Read from audio ${run}`,{map:false});
  await bookmarkChapter(page,ebook,manifest,1,run);
  let asked=0;
  await page.route("**/api/alignments/recover",route=>{asked++;return route.fulfill({status:400,contentType:"application/json",body:JSON.stringify({error:"Locating text needs the remote alignment pool. Enable it to retry."})});});
  await withAppearance(page,{reader:{mode:"paginated"}},async()=>{
   await openWithoutMap(page,book,ebook);
-  // Read from audio is in the reader's own More panel on the Read face (#593: Playback options, which held it, left
-  // Now playing); the panel stays open under the Chapters page.
-  await showReadControls(page);
-  await page.locator(".now-playing-screen .reader-topbar").getByRole("button",{name:"More",exact:true}).click();
-  await expect(page.locator(".inline-reader .reader-more")).toBeVisible();
-  expect(await contentsThen(page,1,"Read from audio")).toBeLessThan(400);
+  expect(await contentsThen(page,1,"F")).toBeLessThan(400);
   await expect.poll(()=>asked).toBe(1);
+  await closeNowPlaying(page);
+  await expectSaved(page,ebook,{origin:"reading",section:1});
+ });
+});
+
+// Sequence 1 through Back to narration, which locates the passage without a map (once the More sheet's Read from
+// audio): on main it dropped the waiting position before looking for a narration, and speech recovery that finds
+// nothing left no saved place at all.
+test("sequence 1: Back to narration without a narration map, inside the pause after Contents, keeps the chosen chapter saved",async({page},testInfo)=>{
+ const run=testInfo.repeatEachIndex;
+ const {ebook,manifest,book}=await fixture(page,`No map then Back to narration ${run}`,{map:false});
+ await bookmarkChapter(page,ebook,manifest,1,run);
+ let asked=0;
+ await page.route("**/api/alignments/recover",route=>{asked++;return route.fulfill({status:400,contentType:"application/json",body:JSON.stringify({error:"Locating text needs the remote alignment pool. Enable it to retry."})});});
+ await withAppearance(page,{reader:{mode:"paginated"}},async()=>{
+  await openWithoutMap(page,book,ebook);
+  expect(await contentsThen(page,1,"Back to narration")).toBeLessThan(400);
+  await expect.poll(()=>asked).toBe(1);
+  await expect(page.locator(".inline-reader .reader-message [role=alert]")).toHaveText("The place in the text could not be found.");
   await expectSaved(page,ebook,{origin:"reading",section:1});
  });
 });

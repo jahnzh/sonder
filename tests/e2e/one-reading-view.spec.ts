@@ -4,6 +4,7 @@ import {randomUUID} from "node:crypto";
 import {readerFixture} from "../reader-fixture";
 import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
 import {openRead} from "./now-playing";
+import {closeAppearance,openAppearance} from "./reader-appearance";
 // One reading view (ADR 0017, #501): the reader shows the book's own text and nothing else. The Lyrics and Word
 // views are gone with their switch, their settings, the `P` key and the timing correction; `F` stays.
 test.use({serviceWorkers:"block"});
@@ -98,17 +99,15 @@ test("the reader offers no view switch, P does nothing and F returns to the narr
  // A saved Lyrics choice is the case P used to act on: it switched the reader to the pages and saved that.
  await withAppearance(page,{display:"segment",mode:"paginated"},async()=>{
   const room=await openFollowing(page,book,interval);
-  // More holds the reader's options and no switch between views.
-  const box=(await room.locator(".reader-viewport").boundingBox())!;
-  await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
-  await room.locator(".reader-topbar").getByRole("button",{name:"More",exact:true}).click();
-  const more=page.locator(".reader-more:visible");
-  await expect(more.getByRole("button",{name:"Listen from here",exact:true})).toBeVisible();
-  await expect(more.getByRole("group",{name:"Reading mode"})).toHaveCount(0);
-  for(const name of ["Page","Lyrics","Word"])await expect(more.getByRole("button",{name,exact:true})).toHaveCount(0);
-  // The inline reader's More is its own panel (#593: Playback options is gone).
-  await room.getByRole("complementary",{name:"Reader options",exact:true}).getByRole("button",{name:"Close reader options",exact:true}).click();
-  await expect(more).toHaveCount(0);
+  // Appearance holds the reader's options (#592: no More sheet) and no switch between views: Reading mode is Pages or Scroll.
+  const panel=await openAppearance(page,room);
+  await expect(room.locator(".reader-topbar").getByRole("button",{name:"More",exact:true})).toHaveCount(0);
+  await expect(panel.getByRole("radiogroup",{name:"Reading mode",exact:true}).getByRole("radio")).toHaveText(["Pages","Scroll"]);
+  for(const name of ["Page","Lyrics","Word"]){
+   await expect(room.getByRole("button",{name,exact:true})).toHaveCount(0);
+   await expect(room.getByRole("radio",{name,exact:true})).toHaveCount(0);
+  }
+  await closeAppearance(room);
   // Now Playing has no view button either.
   const nowPlaying=page.getByRole("dialog",{name:"Now playing",exact:true});
   for(const name of ["Page","Lyrics","Word"])await expect(nowPlaying.getByRole("button",{name,exact:true})).toHaveCount(0);
@@ -145,20 +144,24 @@ test("Settings offers no view choice and no words per minute",async({page})=>{
  await expect(page.getByRole("slider",{name:/words per minute/i})).toHaveCount(0);
 });
 
-test("More › Reading sync offers no timing correction for the sentence on the page",async({page})=>{
+test("the reader and its Reading sync page offer no timing correction for the sentence on the page",async({page})=>{
  const {book,map}=await fixture(page,`No timing correction ${test.info().repeatEachIndex}`);
  const interval=map.intervals.find((i:any)=>i.section===1);
  // The place the correction showed: a ready map of the recording in the player, and a sentence on the page.
  const room=await openFollowing(page,book,interval);
  const box=(await room.locator(".reader-viewport").boundingBox())!;
  await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
- await room.locator(".reader-topbar").getByRole("button",{name:"More",exact:true}).click();
- await page.locator(".reader-more:visible").getByRole("button",{name:"Reading sync",exact:true}).click();
- const card=room.locator(".reader-panel");
- await expect(card.locator(".reader-panel-heading").getByRole("heading",{name:"Reading sync",exact:true})).toBeVisible();
- // The card gave way to one row opening the Reading sync page (#543).
- await expect(card.getByRole("button",{name:/^Reading sync/})).toBeVisible();
- await expect(card.getByText(/Correct this sentence/)).toHaveCount(0);
- await expect(card.getByRole("button",{name:"Save sentence timing",exact:true})).toHaveCount(0);
- await expect(card.getByRole("spinbutton")).toHaveCount(0);
+ await expect(room.locator(".reader-topbar")).toBeVisible();
+ const noCorrection=async(where:ReturnType<Page["locator"]>)=>{
+  await expect(where.getByText(/Correct this sentence/)).toHaveCount(0);
+  await expect(where.getByRole("button",{name:"Save sentence timing",exact:true})).toHaveCount(0);
+  await expect(where.getByRole("spinbutton")).toHaveCount(0);
+ };
+ await noCorrection(room);
+ // The card gave way to the Book page's row opening the Reading sync page (#543, #592).
+ await page.goto(`/#book/${encodeURIComponent(book.workId)}`);
+ await page.getByRole("region",{name:"Book",exact:true}).getByRole("button",{name:/^Reading sync/}).click();
+ const sync=page.locator(".reading-sync-page");
+ await expect(sync.getByRole("heading",{level:1,name:"Reading sync",exact:true})).toBeVisible();
+ await noCorrection(sync);
 });

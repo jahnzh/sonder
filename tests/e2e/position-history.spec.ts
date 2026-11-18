@@ -597,6 +597,26 @@ test("Use Hardcover position can be undone through the normal progress path", as
 });
 });
 
+// Listen from here is the long-press on a sentence (#592). Long-press a sentence that is on the page. The reader may
+// still be moving to the new position's passage, so look again until one is on the page.
+async function listenFromHere(page: Page, room: Locator) {
+  const paragraphs = page.frameLocator(".inline-reader .reader-viewport iframe").locator("p");
+  await paragraphs.first().waitFor();
+  const view = (await room.locator(".reader-viewport").boundingBox())!;
+  let box: { x: number; y: number; width: number; height: number } | null = null;
+  await expect.poll(async () => {
+    for (let i = 0; i < await paragraphs.count() && !box; i++) {
+      const candidate = await paragraphs.nth(i).boundingBox();
+      if (candidate && candidate.x >= view.x && candidate.x + 100 <= view.x + view.width && candidate.y >= view.y && candidate.y + 20 <= view.y + view.height) box = candidate;
+    }
+    return box !== null;
+  }, { timeout: 15000 }).toBe(true);
+  await page.mouse.move(box!.x + Math.min(box!.width / 2, 80), box!.y + Math.min(box!.height / 2, 10));
+  await page.mouse.down();
+  await page.waitForTimeout(650);
+  await page.mouse.up();
+}
+
 test("Listen from here records the position left and Earlier positions restores it", async ({ page }) => {
   const book = await narratedRecording(page, "Undo narration");
   await instrument(page);
@@ -606,9 +626,7 @@ test("Listen from here records the position left and Earlier positions restores 
   const room = page.locator(".inline-reader");
   await setPosition(page, 170.25);
   await expect(room).toHaveAttribute("data-current-passage", /.+/);
-  await revealReaderControls(page);
-  await page.locator(".inline-reader .reader-topbar").getByRole("button", { name: "More", exact: true }).evaluate((el: HTMLButtonElement) => el.click());
-  await page.locator(".inline-reader .reader-panel").getByRole("button", { name: "Listen from here", exact: true }).click();
+  await listenFromHere(page, room);
   await expect.poll(async () => (await history(page, book.recordingId)).length).toBe(1);
   expect((await history(page, book.recordingId))[0]).toMatchObject({ trackId: book.tracks[0].id, position: 170.25 });
   const pause = room.getByRole("button", { name: "Pause narration", exact: true });
@@ -627,23 +645,7 @@ test("a toast Undo for Listen from here takes back what it recorded and is not r
   const room = page.locator(".inline-reader");
   await setPosition(page, 170.25);
   await expect(room).toHaveAttribute("data-current-passage", /.+/);
-  const paragraphs = page.frameLocator(".inline-reader .reader-viewport iframe").locator("p");
-  await paragraphs.first().waitFor();
-  const view = (await room.locator(".reader-viewport").boundingBox())!;
-  let box: { x: number; y: number; width: number; height: number } | null = null;
-  // Long-press a sentence that is on the page. The reader may still be moving to the new position's passage, so
-  // look again until one is on the page.
-  await expect.poll(async () => {
-    for (let i = 0; i < await paragraphs.count() && !box; i++) {
-      const candidate = await paragraphs.nth(i).boundingBox();
-      if (candidate && candidate.x >= view.x && candidate.x + 100 <= view.x + view.width && candidate.y >= view.y && candidate.y + 20 <= view.y + view.height) box = candidate;
-    }
-    return box !== null;
-  }, { timeout: 15000 }).toBe(true);
-  await page.mouse.move(box!.x + Math.min(box!.width / 2, 80), box!.y + Math.min(box!.height / 2, 10));
-  await page.mouse.down();
-  await page.waitForTimeout(650);
-  await page.mouse.up();
+  await listenFromHere(page, room);
   const toast = room.getByRole("status").filter({ hasText: "Listening from here" });
   await expect(toast).toBeVisible();
   await expect.poll(async () => (await history(page, book.recordingId)).map((entry: any) => entry.position)).toEqual([170.25]);

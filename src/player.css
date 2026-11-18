@@ -191,8 +191,6 @@
 .reader-display-options input { width: 62px; min-height: 36px; padding: 5px; }
 .reader-follow-toggle { margin-left: auto; min-height: 36px; padding: 5px 8px; font-size: 11px; }
 .reader-follow-toggle.selected { color: var(--accent); }
-.reader-sync-state { color: var(--muted); font-size: 11px; line-height: 1.4; padding: 4px 0; flex-shrink: 0; }
-.inline-reader .reader-panel { top: 40px; }
 .inline-reader .reader-listen-controls { margin-top: 4px; padding-top: 4px; }
 .inline-reader .reader-listen-controls .button { min-height: 34px; font-size: 11px; }
 .inline-reader .reader-navigation { padding-top: 5px; }

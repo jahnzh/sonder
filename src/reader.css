@@ -118,50 +118,6 @@
   align-items: center;
   gap: 10px;
 }
-.reader-panel {
-  position: absolute;
-  z-index: 4;
-  top: 94px;
-  bottom: 0;
-  right: 0;
-  width: min(440px, 100%);
-  padding: 18px;
-  overflow-y: auto;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 15px 40px #0005;
-}
-.reader-panel-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-.reader-panel h3 {
-  font-size: 16px;
-}
-.reader-panel p {
-  font-size: 13px;
-  line-height: 1.65;
-  color: var(--muted);
-  margin: 12px 0;
-}
-.reader-panel input:not([type="checkbox"]),
-.reader-panel select {
-  width: 100%;
-  min-height: 44px;
-  min-width: 0;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--background);
-  color: var(--text);
-}
-.reader-panel input[type="range"] {
-  padding: 0;
-}
 .reader-list-item {
   display: flex;
   flex-direction: column;
@@ -252,9 +208,6 @@
   }
   .reader-book-heading span {
     display: none;
-  }
-  .reader-panel {
-    top: 88px;
   }
   .reader-listen-controls {
     gap: 5px;
@@ -583,37 +536,6 @@
 .reader-player .reader-back-narration {
   flex: 0 0 auto;
 }
-.reader-room .reader-panel {
-  z-index: 6;
-  top: 0;
-  bottom: var(--reader-bar);
-}
-.reader-more {
-  display: grid;
-  gap: 4px;
-}
-.reader-more-item {
-  min-height: 48px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 15px;
-  text-align: left;
-  cursor: pointer;
-}
-.reader-more-item:disabled {
-  color: var(--muted);
-  cursor: default;
-}
-.reader-more .reader-sync-state {
-  margin: 4px 8px 0;
-}
 .reader-contents-item {
   flex-direction: row;
   align-items: center;
@@ -808,7 +730,6 @@
     gap: 4px;
     margin: 0;
   }
-  .reader-panel { left: 0; right: auto; }
 }
 
 /* The standalone reader is full-screen; its own top bar holds Close. */

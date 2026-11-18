@@ -1,7 +1,7 @@
 # CTC worker pool
 
 All alignment work runs on these pool hosts only: alignment maps, ebook
-candidate probing and passage locating (**Read from audio**). The production
+candidate probing and passage locating (**Back to narration** without a map). The production
 server runs no alignment worker; its `sonder-alignment` container was retired
 in #279. CTC jobs use WSL first and lisa second. Each worker exposes its configured CTC
 device, precision, model availability, media root, job slots and requests in

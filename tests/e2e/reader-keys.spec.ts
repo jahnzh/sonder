@@ -93,15 +93,13 @@ test("F does nothing behind the reader's More panel or with a modifier key",asyn
  expect(await backButton.evaluate(button=>document.activeElement===button)).toBe(true);
  for(const key of ["Control+f","Alt+f","Meta+f","Control+Shift+F"])await page.keyboard.press(key);
  await stillAway(page);
- // The reader's More opens its own panel (#593: Now playing's Playback options sheet is gone).
- const options=room.getByRole("complementary",{name:"Reader options",exact:true});
- await showControls(page,room);
- await room.locator(".reader-topbar").getByRole("button",{name:"More",exact:true}).click();
- await expect(options).toBeVisible();
+ // Appearance docked under the text (#588) is open: F there is not the reader's key either. More and Playback options
+ // are gone (#592, #593).
+ const options=await openAppearance(page,room);
  await page.keyboard.press("f");
  await stillAway(page);
- await options.getByRole("button",{name:"Close reader options",exact:true}).click();
- await expect(options).toBeHidden();
+ await options.getByRole("button",{name:"Close appearance",exact:true}).click();
+ await expect(options).toHaveCount(0);
  await backWithF(page,room,interval,manifest);
 });
 
