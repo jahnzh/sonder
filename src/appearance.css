@@ -39,7 +39,6 @@ body,
 .player-dock,
 .dialog-content,
 .option-menu,
-.book-menu,
 .toast,
 .topbar {
   background: var(--surface);
@@ -47,8 +46,7 @@ body,
   border-color: var(--border);
 }
 .button.primary,
-.play-button,
-.card-play {
+.play-button {
   background: var(--accent);
   color: var(--on-accent);
 }

@@ -32,5 +32,13 @@ test("a Hardcover result is added from its Book page, and its Hardcover page use
     "https://hardcover.app/books/consider-phlebas",
   );
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  // The Library by work (#577): the added book is a tile of the Library, and still after a reload.
+  await page.goto("/#library");
+  const tile = page.locator(".library-tile").filter({
+    has: page.getByRole("button", { name: "About Consider Phlebas", exact: true }),
+  });
+  await expect(tile).toBeVisible();
+  await page.reload();
+  await expect(tile).toBeVisible();
   expect((await page.request.delete(`/api/works/${encodeURIComponent(workId)}/library`)).ok()).toBe(true);
 });

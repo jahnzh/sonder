@@ -287,13 +287,3 @@ export function keepState(facts: {
   return { on: true, line: kept(audio), resumable: audio === "partial", ...plain };
 }
 
-/** The ids of a work's entries in today's favourites list (the editions of `GET /api/books`), and whether it is a favourite. */
-export function favoriteOf(entryIds: readonly string[], favorites: readonly string[]): boolean {
-  return entryIds.some((id) => favorites.includes(id));
-}
-
-/** Today's favourites list after the heart of a work: every entry of the work joins it, or every one leaves it. */
-export function toggleWorkFavorite(entryIds: readonly string[], favorites: readonly string[]): string[] {
-  if (favoriteOf(entryIds, favorites)) return favorites.filter((id) => !entryIds.includes(id));
-  return [...favorites, ...entryIds.filter((id) => !favorites.includes(id))];
-}

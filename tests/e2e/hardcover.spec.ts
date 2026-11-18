@@ -59,13 +59,9 @@ test("mobile Hardcover connection, shelves, custom lists, edition selection and 
   await page
     .getByRole("combobox", { name: "Hardcover shelf", exact: true })
     .selectOption("1");
-  await expect(page.locator(".book-card")).toHaveCount(1);
-  await expect(
-    page.getByRole("button", {
-      name: "Find audio for The Quiet Shelf",
-      exact: true,
-    }),
-  ).toBeVisible();
+  // One tile (#577): the Hardcover book with nothing yet has no marks on its cover.
+  await expect(page.locator(".library-tile")).toHaveCount(1);
+  await expect(page.locator(".library-tile .library-marks")).toHaveCount(0);
   await page
     .getByRole("button", { name: "About The Quiet Shelf", exact: true })
     .click();

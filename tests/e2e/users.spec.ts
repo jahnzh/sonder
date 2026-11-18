@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 import { readerFixture } from "../reader-fixture";
+import { playFromLibrary } from "./library-play";
 
 // Ask the OS for a free port so this spec never collides with the shared run or another shard.
 async function freePort(): Promise<number> {
@@ -139,7 +140,7 @@ test("accounts keep libraries and offline queues separate", async ({ page }) => 
     open.onerror = () => reject(open.error);
   }), { recordingId: book.recordingId });
   await page.getByRole("button", { name: "My library", exact: true }).last().click();
-  await page.getByRole("button", { name: `Play ${book.title}`, exact: true }).click();
+  await playFromLibrary(page, book.title);
   await expect.poll(() => page.evaluate((recordingId) => new Promise<boolean>(resolve => {
     const open = indexedDB.open("sonder");
     open.onsuccess = () => {
@@ -231,7 +232,7 @@ test("one account's position history is not shown to or undoable by another", as
     })));
   }, { name, recordingId });
   const openNowPlaying = async (title: string) => {
-    await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+    await playFromLibrary(page, title);
     const pause = page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true });
     await expect(pause).toBeVisible();
     await pause.click();

@@ -1,4 +1,5 @@
 import Dexie, { type Table } from "dexie";
+import { upgradeFavoritesToWorks } from "./favorites-by-work";
 import { dropPosition, peekPosition, recentPositions, recordPosition, serialQueue, type PositionEntry, type PositionHistory } from "./position-history";
 import type { Book, LibraryWork, Progress, Download, DownloadPart, Track } from "./types";
 import { DEVICE_SAVE_KEY_PREFIX, deviceSaveKey, readDeviceSaveRecord, type DeviceSaveRecord } from "./device-saves";
@@ -135,6 +136,9 @@ export class SonderDB extends Dexie {
     this.version(6).stores({ keep: "workId" });
     // Additive: a new table for the saved series without a connection (#568); every earlier table and its rows stay.
     this.version(7).stores({ seriesAnswers: "key" });
+    // Additive: favourites by work (#577). Version 8 maps the favourite edition ids to their works into a new
+    // preference; the old one stays for an older tab, and no table changes.
+    this.version(8).stores({}).upgrade((tx) => upgradeFavoritesToWorks(tx.table("preferences"), tx.table("books")));
   }
 }
 const sharedDB = new SonderDB();
