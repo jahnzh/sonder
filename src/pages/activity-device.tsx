@@ -185,8 +185,8 @@ export function ActivityDevice({ books, downloads, downloadParts, running, recor
             value={protectedLine(storage)}
             control={
               storage.persisted ? undefined : (
-                <Button kind="quiet" disabled={storage.asking} onClick={() => void storage.ask()} aria-label="Turn on protected storage">
-                  Turn on
+                <Button kind="quiet" disabled={storage.asking} onClick={() => void storage.ask()} aria-label="Ask the browser to protect storage">
+                  Ask
                 </Button>
               )
             }
