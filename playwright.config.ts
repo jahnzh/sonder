@@ -115,12 +115,16 @@ const desktopProjects = [
               /(^|\/)(get-audiobook|releases|prowlarr|reliability)\.spec\.ts$/,
               // The Series page of a saved series (#562).
               /(^|\/)series-page\.spec\.ts$/,
+              // The Reading sync page's buttons (#541).
+              /(^|\/)reading-sync-(actions|resume|book-jobs)\.spec\.ts$/,
               // The Get audiobook sheet's language and Load more (#602).
               /(^|\/)get-audiobook-language\.spec\.ts$/,
               // The Add sheet of a saved series (#563).
               /(^|\/)series-add\.spec\.ts$/,
               // The New mark on a series and Dismiss (#565).
               /(^|\/)series-new\.spec\.ts$/,
+              // The Get ebook sheet (#604).
+              /(^|\/)get-ebook\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },

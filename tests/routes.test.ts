@@ -154,8 +154,10 @@ test("what an address shows: built pages as they are, everything else the first 
   assert.equal(shows("#series/701", false), "#series/701");
   assert.equal(shows("#series/s1/add"), "#series/s1/add");
   assert.equal(shows("#series/s1/add", false), "#series/s1/add");
+  // The Get ebook sheet (#604) is the administrator's, as the Get audiobook sheet is.
+  assert.equal(shows("#book/w1/get/ebook"), "#book/w1/get/ebook");
+  assert.equal(shows("#book/w1/get/ebook", false), "#book/w1");
   // Not built yet: behaves like an address that names nothing.
-  assert.equal(shows("#book/w1/get/ebook"), "#library");
   assert.equal(shows("#listen/w1"), "#library");
   assert.equal(shows("#read/w1"), "#library");
   assert.equal(shows("#activity/device"), "#activity/device");
