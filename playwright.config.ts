@@ -157,6 +157,8 @@ const desktopProjects = [
               /(^|\/)series-(not-saved|discovery|acquisition)\.spec\.ts$/,
               // A Hardcover book opens its Book page before it is a work on the server (#574).
               /(^|\/)hardcover-book-look\.spec\.ts$/,
+              // Now playing for a book without a recording or without an EPUB (#594).
+              /(^|\/)now-playing-ebook-only\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },
