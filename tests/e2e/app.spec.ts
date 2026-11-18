@@ -2,7 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { skipOnMobile } from "./mobile";
-import { playFromLibrary } from "./library-play";
+import { listenOnBookPage, playFromLibrary } from "./library-play";
 function wave() {
   const seconds = 10,
     n = 8000 * seconds,
@@ -142,7 +142,7 @@ test("real audio playback, speed, seek, pause and recording-specific resume afte
 }) => {
   const own = await importOwnBook(page, "Playback resume");
   await page.goto(`/#book/${encodeURIComponent(own.workId)}`);
-  await page.getByRole("button", { name: "Listen", exact: true }).click();
+  await listenOnBookPage(page);
   await expect(
     page
       .locator(".player-dock")
@@ -298,7 +298,7 @@ test("import, complete device download, service-worker ranges and offline relaun
   await page
     .getByRole("button", { name: `About ${story}`, exact: true })
     .click();
-  await page.getByRole("button", { name: "Listen", exact: true }).click();
+  await listenOnBookPage(page);
   await expect(
     page
       .locator(".player-dock")

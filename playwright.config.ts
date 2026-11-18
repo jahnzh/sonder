@@ -87,6 +87,7 @@ const desktopProjects = [
               /(^|\/)activity-worker\.spec\.ts$/,
               // The Audiobook page (#530).
               /(^|\/)audiobook-page\.spec\.ts$/,
+              // The Library by work: its chips, tiles, Continue and favourites by work (#577).
               /(^|\/)library-redesign\.spec\.ts$/,
               // The Book page (#532).
               /(^|\/)book-page\.spec\.ts$/,

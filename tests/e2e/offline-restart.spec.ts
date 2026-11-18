@@ -3,7 +3,6 @@ import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { launchInstalledProfile, unreachableProxyArgs } from "./installed-profile";
-import { playFromLibrary } from "./library-play";
 
 function wave() {
   const n = 8000 * 10,
@@ -64,6 +63,11 @@ async function saveOnDevice(
   await expect(page).toHaveURL(/#library$/);
   const books = await (await page.request.get("/api/books")).json();
   const book = books.find((b: { title: string }) => b.title === title);
+  // A place just past the start makes it the book to continue (#577): the Library's Continue card plays it later, as
+  // the old card's Play did. The device stores the library with that place before the browser closes.
+  expect((await page.request.post("/api/progress", { data: { recordingId: book.recordingId, trackId: book.tracks[0].id, position: 1, duration: book.tracks[0].duration, updatedAt: Date.now() } })).ok()).toBe(true);
+  await page.evaluate(() => window.dispatchEvent(new Event("sonder:library-changed")));
+  await expect(page.getByRole("region", { name: "Continue", exact: true }).getByRole("button", { name: `Continue ${title}`, exact: true })).toBeVisible();
   if (choice)
     await page.evaluate(
       ([recordingId, value]) =>
@@ -114,11 +118,20 @@ const storedChoice = (page: import("@playwright/test").Page, recordingId: string
       }),
     recordingId,
   );
-/** The Library's On device chip (#577), the kept book's tile, and Listen on its Book page. */
-async function playKept(page: import("@playwright/test").Page, title: string) {
-  await page.getByRole("group", { name: "Filter your library", exact: true }).getByRole("button", { name: "On device", exact: true }).click();
-  await page.getByRole("button", { name: `About ${title}`, exact: true }).click();
-  await page.getByRole("button", { name: "Listen", exact: true }).click();
+/**
+ * Plays the kept book from the Library (#577): it is under On device (when its copy is complete), and on All the
+ * Continue card shows it (saveOnDevice gave it a place) with Play, which plays it without leaving the Library.
+ */
+async function playKept(page: import("@playwright/test").Page, title: string, complete = true) {
+  const chips = page.getByRole("group", { name: "Filter your library", exact: true });
+  if (complete) {
+    await chips.getByRole("button", { name: "On device", exact: true }).click();
+    await expect(page.getByRole("button", { name: `About ${title}`, exact: true })).toBeVisible();
+  }
+  await chips.getByRole("button", { name: "All", exact: true }).click();
+  const card = page.getByRole("region", { name: "Continue", exact: true });
+  await expect(card.getByRole("button", { name: `Continue ${title}`, exact: true })).toBeVisible();
+  await card.getByRole("button", { name: "Play", exact: true }).click();
 }
 async function playFromDock(page: import("@playwright/test").Page, title: string) {
   await playKept(page, title);
@@ -195,7 +208,7 @@ test("unreachable launch keeps the stream error when the device copy is incomple
     const restarted = await relaunchOffline(profile, "unreachable");
     context = restarted.context;
     const page = restarted.page;
-    await playFromLibrary(page, title);
+    await playKept(page, title, false);
     await expect(page.locator(".player-error")).toBeVisible();
     await expect(page.locator(".toast")).toHaveCount(0);
     await expect(page.locator(".player-dock .playback-source")).not.toHaveText("Device cache");

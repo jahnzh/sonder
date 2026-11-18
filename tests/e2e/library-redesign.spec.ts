@@ -5,12 +5,26 @@
 // places, downloads, favourites and position history. The guards of spec #572's list 1, 2 and 3 in their new form.
 // Each test makes its own books under a title of its own run and takes them out of the library after it.
 import { test, expect, type Page } from "@playwright/test";
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
+import { createServer, type AddressInfo } from "node:net";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 
 // Routed answers (`/api/library`) must reach the page: no service worker in between.
 test.use({ serviceWorkers: "block" });
+
+// Ask the OS for a free port for the signed-in server of the two-account test.
+async function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const { port } = probe.address() as AddressInfo;
+      probe.close(() => resolve(port));
+    });
+  });
+}
 
 const OUT = "OUT";
 mkdirSync(OUT, { recursive: true });
@@ -464,5 +478,84 @@ test("the device database's upgrade keeps places, downloads, favourites and posi
     history: { recordingId: "old-recording", entries: [{ trackId: "old-track", position: 3, timestamp: now, kind: "seek" }] },
     // Keep's record stays this account's choice; the app's Keep runtime may add its own fields to it.
     keep: expect.objectContaining({ workId: "old-work", on: true, updatedAt: 5 }),
+  });
+});
+
+// Two accounts on one device (spec #572 guard 7; #577 "anything one account could learn about another's books"): the
+// chip and the favourites by work are each account's own, and the Library shows only the account's own works.
+test.describe("two accounts on one device", () => {
+  let server: ChildProcess | undefined;
+  let base = "";
+  test.beforeAll(async () => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const port = await freePort();
+      base = `http://127.0.0.1:${port}`;
+      server = spawn(process.execPath, ["--import", "tsx", "tests/browser-server.ts"], {
+        env: { ...process.env, PLAYWRIGHT_AUTH: "1", APP_PASSWORD: "admin-password", PLAYWRIGHT_PORT: String(port) },
+        stdio: "ignore",
+      });
+      for (let i = 0; i < 100 && server.exitCode === null; i++) {
+        try {
+          if ((await fetch(`${base}/api/health`)).ok) return;
+        } catch {}
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      server.kill();
+    }
+    throw new Error("Authenticated browser server did not start");
+  });
+  test.afterAll(() => {
+    server?.kill();
+  });
+
+  async function signIn(page: Page, username: string | null, password: string) {
+    await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+    if (username) await page.getByLabel("Username").fill(username);
+    await page.getByLabel("Password", { exact: true }).fill(password);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page.getByRole("heading", { name: "Library", exact: true, level: 1 })).toBeVisible();
+  }
+  async function signOut(page: Page) {
+    await page.goto(`${base}/#settings/account`);
+    await Promise.all([page.waitForEvent("load"), page.getByRole("button", { name: "Sign out" }).click()]);
+  }
+
+  test("the chip and the favourites are each account's own; the second account sees only its own books", async ({ page }) => {
+    await page.goto(base);
+    await signIn(page, null, "admin-password");
+    const created = await page.request.post(`${base}/api/users`, { data: { username: "shelf-reader", password: "reader-password" } });
+    expect(created.ok() || created.status() === 409).toBe(true);
+    const adminBooks = (await (await page.request.get(`${base}/api/books`)).json()) as { title: string; workId: string; inLibrary: boolean }[];
+    const frankenstein = adminBooks.find((b) => b.title === "Frankenstein")!;
+    const adminCount = new Set(adminBooks.filter((b) => b.inLibrary).map((b) => b.workId)).size;
+    expect(adminCount).toBeGreaterThan(1);
+    // The administrator's favourite and chip.
+    await page.getByRole("button", { name: "About Frankenstein", exact: true }).click();
+    await page.getByRole("button", { name: "Favorite", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Favorite", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await page.goto(`${base}/#library`);
+    await choose(page, "Favorites");
+    await expect(page.locator(".library-tile")).toHaveCount(1);
+    await signOut(page);
+
+    // The reader has Frankenstein in their own library and nothing else.
+    await signIn(page, "shelf-reader", "reader-password");
+    expect((await page.request.put(`${base}/api/works/${encodeURIComponent(frankenstein.workId)}/library`)).ok()).toBe(true);
+    await page.reload();
+    await expect(chip(page, "All")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator(".library-tile")).toHaveCount(1);
+    await expect(tile(page, "Frankenstein")).toHaveCount(1);
+    // The administrator's favourite is not the reader's.
+    await choose(page, "Favorites");
+    await expect(page.getByRole("heading", { name: "No books", exact: true })).toBeVisible();
+    await choose(page, "Not started");
+    await signOut(page);
+
+    // Back as the administrator: the administrator's chip and favourite, as they were left.
+    await signIn(page, null, "admin-password");
+    await expect(chip(page, "Favorites")).toHaveAttribute("aria-pressed", "true");
+    await expect(tile(page, "Frankenstein")).toHaveCount(1);
+    await choose(page, "All");
+    await expect(page.locator(".library-tile")).toHaveCount(adminCount);
   });
 });

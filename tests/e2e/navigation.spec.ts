@@ -9,7 +9,7 @@ import { readerFixture } from "../reader-fixture";
 import { SAVED_SERIES_701, SERIES_701_REMOVAL } from "./navigation-fixtures";
 import { tempDir } from "../temp-dir";
 import { openSavedSeries, savedSeriesList, seriesChip, showSavedSeries } from "./library-series";
-import { playFromLibrary } from "./library-play";
+import { playFromContinue } from "./library-play";
 
 // Addresses and the page stack (#484, ADR 0020): the browser's history is the stack, Back means the same for the
 // phone's gesture and the browser's button, and every address that works today keeps working.
@@ -299,7 +299,8 @@ test("Now playing has an entry: Back closes it and leaves the page where it was,
   await page.goto("/#discover");
   await tab(page, "My library").click();
   await expect(shown(page)).toHaveText("Library");
-  await playFromLibrary(page, title);
+  // Played from the Library's Continue card (#577), so no other page's entries stand ahead in the history.
+  await playFromContinue(page, title);
   const dock = page.locator(".player-dock");
   await expect(dock.locator(".dock-book")).toContainText(title);
   const wanted = await page.evaluate(() => Math.min(300, document.documentElement.scrollHeight - innerHeight));
@@ -360,7 +361,7 @@ test("a dialog opened from Now playing closes with it on Back", async ({ page })
   await page.goto("/#discover");
   await tab(page, "My library").click();
   await expect(shown(page)).toHaveText("Library");
-  await playFromLibrary(page, title);
+  await playFromContinue(page, title);
   const dock = page.locator(".player-dock");
   await expect(dock.locator(".dock-book")).toContainText(title);
   const nowPlaying = page.getByRole("dialog", { name: "Now playing", exact: true });
@@ -474,7 +475,7 @@ test.describe("with answers from the test", () => {
     await expect.poll(() => page.evaluate(() => scrollY)).toBe(0);
     await page.goBack();
     await expect(shown(page)).toHaveText("Library");
-    await expect(seriesChip(page)).toHaveAttribute("aria-selected", "true");
+    await expect(seriesChip(page)).toHaveAttribute("aria-pressed", "true");
     // At once, from the last answer: the same rows where they stood, before the list's new answer has landed.
     await expect.poll(() => page.evaluate(() => scrollY)).toBe(target);
     expect(await onScreen()).toEqual(seen);

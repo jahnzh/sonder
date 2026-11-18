@@ -302,9 +302,10 @@ function LibraryApp({
   const query = queries[queryOf];
   const setQuery = (value: string) => setQueries((q) => ({ ...q, [queryOf]: value }));
   // The Library's chip, remembered on this device for this account (#577; #455: not in the address).
-  const [filter, setFilter] = useState<LibraryChip>(() => readChip(localStorage.getItem(userStorageKey(LIBRARY_CHIP_KEY))));
+  const chipKey = () => userStorageKey(LIBRARY_CHIP_KEY);
+  const [filter, setFilter] = useState<LibraryChip>(() => readChip(localStorage.getItem(chipKey())));
   useEffect(() => {
-    localStorage.setItem(userStorageKey(LIBRARY_CHIP_KEY), filter);
+    localStorage.setItem(chipKey(), filter);
   }, [filter]);
   const [hardcoverFilter, setHardcoverFilter] = useState<HardcoverFilter>({
     shelf: "all",

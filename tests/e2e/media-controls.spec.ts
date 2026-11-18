@@ -270,7 +270,9 @@ test("Space toggles playback across views and arrows skip 30 seconds while ignor
   await page.keyboard.press("ArrowLeft");
   await expect.poll(() => audioPosition(page)).toBeCloseTo(100, 0);
   // Typing in the search box does not toggle playback or seek.
-  const search = page.getByRole("textbox", {
+  // The Library's Search opens its field in place of the Title (#577).
+  await page.getByRole("button", { name: "Search your library", exact: true }).click();
+  const search = page.getByRole("searchbox", {
     name: "Search your library",
     exact: true,
   });

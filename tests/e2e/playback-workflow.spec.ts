@@ -312,13 +312,15 @@ test("switching audiobook versions resumes each recording's own checkpoint",asyn
   // The seeded recording leaves the library after the test too (#645).
   imported.push(french.editionId);
   await page.request.post("/api/progress",{data:{recordingId:french.recordingId,trackId:french.trackId,position:42,duration:english.tracks[0].duration,updatedAt:Date.now()}});
-  // The Library still shows one tile per recording: the French one gets a title of its own there.
+  // The French entry gets a title of its own in GET /api/books (the Library shows one tile per work, #577).
   await page.route("**/api/books",async route=>{
     const response=await route.fetch(), all=await response.json();
     for (const b of all) if(b.recordingId===french.recordingId) b.title=`${title} French`;
     // A read the app gave up on meanwhile is already answered.
     await route.fulfill({response,json:all}).catch(()=>{});
   });
+  // The Library has one tile per work (#577): the English recording is the chosen one its Book page's Listen plays.
+  expect((await page.request.put(`/api/works/${encodeURIComponent(english.workId)}/recording`,{data:{recordingId:english.recordingId}})).ok()).toBe(true);
   await page.goto("/");
   await playAndPause(page,title);
   await position(page,210);
