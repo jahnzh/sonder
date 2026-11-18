@@ -36,6 +36,7 @@ import {
   type ServerKeep,
   type StopCause,
 } from "./keep";
+import { rememberRecording, turnedOffFromServer, type KeptRecording } from "./keep-device";
 
 /** Why a run was asked for. */
 export type KeepTrigger = "open" | "foreground" | "online" | "library" | "switch" | "retry";
@@ -97,6 +98,13 @@ export type SaverDeps = {
   /** Fetches and stores the pair's map (`warmMap`). */
   saveMap?: (ebookId: string, recordingId: string, signal: AbortSignal) => Promise<void>;
   writeRecord: (recordingId: string, workId: string, change: RecordChange) => Promise<void>;
+  /**
+   * Removes every file of a book from this device (#553): a Keep record a merge turned off (Remove from library on
+   * any device) frees its files at that run, as Off does.
+   */
+  removeWork?: (workId: string) => Promise<void>;
+  /** Stores the recordings saved for a book on its Keep record (#553), so an earlier copy keeps its name. */
+  remember?: (workId: string, recordings: KeptRecording[]) => Promise<void>;
   online: () => boolean;
   /**
    * Runs `save` while this tab holds the recording's own lock, so no other tab (nor the app's own save button)
@@ -282,6 +290,19 @@ export class KeepSaver {
     if (this.stopped) return;
     let state = await this.deps.read();
     let { keep, synced } = await this.sync(state);
+    // Turned off from the server (Remove from library, here or on another device): the files go now (#553).
+    const removed = turnedOffFromServer(state.keep, keep);
+    for (const workId of removed) {
+      try {
+        await this.deps.removeWork?.(workId);
+      } catch {
+        // Removed at a later run: the record is off, and Off's removal finds the files again.
+      }
+    }
+    if (removed.length) {
+      state = await this.deps.read();
+      this.changed();
+    }
     // The rollout needs the server's records first, so a choice made on the server (off) is not overwritten.
     // It also waits for a stored library: a device that has not read it yet cannot tell which saved books are in it.
     if (synced && state.works.length > 0 && !(await this.deps.rolloutDone())) {
@@ -308,6 +329,16 @@ export class KeepSaver {
       if (!work || !work.inLibrary) continue;
       const needs = this.needsOf(work, state);
       const forced = this.forced.delete(entry.workId);
+      // The kept recording is remembered on the record (#553): after a change of recording it is an earlier copy,
+      // named even when its recording has left the library.
+      const chosen = keepRecording(work);
+      if (chosen && this.deps.remember) {
+        const recordings = rememberRecording(entry.recordings, { recordingId: chosen.recordingId, narrator: chosen.narrator ?? "" });
+        if (recordings !== entry.recordings) {
+          entry.recordings = recordings;
+          await this.deps.remember(entry.workId, recordings).catch(() => {});
+        }
+      }
       if (!needs.filesTotal) continue;
       if (needs.complete) {
         if (entry.completeAt === null) await this.reportComplete(entry, keep);

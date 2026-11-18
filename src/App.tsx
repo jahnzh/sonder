@@ -99,7 +99,7 @@ import { Gallery, isGalleryRoute } from "./gallery/Gallery";
 import { refreshLibraryWorks, startLibraryWorks, useStoredWorksWithPlaces } from "./library-works-store";
 import { bookStatus, readingPercent, workProgress } from "./work-progress";
 import { classifyStop, type StopCause } from "./keep";
-import { activeSaves, claimRecording, keepSaver, pauseKeep, resumeKeep, tapKeep, onKeepJob, savesInOtherTabs, startKeepSaver, stopKeepSaver, useKeptWorks } from "./keep-runtime";
+import { activeSaves, claimRecording, keepSaver, pauseKeep, resumeKeep, keepOffAndRemove, onKeepJob, savesInOtherTabs, startKeepSaver, stopKeepSaver, useKeptWorks } from "./keep-runtime";
 type Notice = { text: string; error?: boolean };
 const nav = [
   { id: "library", label: "My library", icon: Library },
@@ -1130,8 +1130,10 @@ function LibraryApp({
                     // Every file of the book on this device: its recordings' audio and its EPUB. The place, the
                     // bookmarks and the library entry stay (ADR 0018).
                     try {
-                      // Removing the book's files is Keep off for it (#550): the saver does not save them again.
-                      await tapKeep(row.workId, false).catch(() => {});
+                      // Removing the book's files is Keep off for it (#550), the same action as the switch's Off on
+                      // the Book page (#553): every recording (earlier copies included), its EPUB copies, its maps
+                      // and its save records. The rows' own ids follow for a book the stored library does not hold.
+                      await keepOffAndRemove(row.workId);
                       for (const recordingId of row.recordingIds) await deleteDownloads(recordingId);
                       for (const editionId of row.ebookIds) {
                         await removeOfflineEbook(editionId);

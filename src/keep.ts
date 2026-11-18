@@ -32,6 +32,11 @@ export type KeepEntry = {
    * device only; the server's record has no such field.
    */
   pausedAt?: number | null;
+  /**
+   * The recordings saved for this book on this device, with their narrator (#553): an earlier copy is named from
+   * here after its recording left the library. Kept on this device only; the server's record has no such field.
+   */
+  recordings?: { recordingId: string; narrator: string }[];
 };
 
 /** A record of `GET /api/device/keep` (`server/device-keep.ts`). */
@@ -67,7 +72,11 @@ export function mergeKeep(local: readonly KeepEntry[], server: readonly ServerKe
       continue;
     }
     // A pause is this device's (#552): it stays while the book stays kept, whichever record wins.
-    const paused = (record: KeepEntry): KeepEntry => (record.on && entry.pausedAt ? { ...record, pausedAt: entry.pausedAt } : record);
+    // The recordings saved here are this device's too (#553): an earlier copy keeps its name.
+    const paused = (record: KeepEntry): KeepEntry => {
+      const named = entry.recordings ? { ...record, recordings: entry.recordings } : record;
+      return named.on && entry.pausedAt ? { ...named, pausedAt: entry.pausedAt } : named;
+    };
     if (theirs.at > entry.at || theirs.on !== entry.on) {
       records.push(paused({ ...theirs, pending: false }));
       continue;
@@ -291,7 +300,7 @@ export type KeepWork = {
   workId: string;
   inLibrary: boolean;
   chosenRecordingId?: string | null;
-  recordings: readonly { recordingId: string; tracks: readonly NeededTrack[] }[];
+  recordings: readonly { recordingId: string; narrator?: string; tracks: readonly NeededTrack[] }[];
   /** The work's ebook editions and its shared default (#551); absent in a record stored before them. */
   ebooks?: readonly NeededEbookEdition[];
   chosenEbookId?: string | null;
