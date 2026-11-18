@@ -355,8 +355,11 @@ export type ActivityKind =
   | "ebook-set"
   | "backup";
 export type ActivityState = "running" | "queued" | "paused" | "failed" | "done";
-/** An item's action, sent to `/api/activity/items/<action>`: Retry after a failure, Resume after a pause, Discard. */
-export type ActivityItemAction = "retry" | "discard" | "resume";
+/**
+ * An item's action, sent to `/api/activity/items/<action>`: Retry after a failure, Resume after a pause, Discard, and
+ * Cancel of a stuck or failing download (#716).
+ */
+export type ActivityItemAction = "retry" | "discard" | "resume" | "cancel";
 export type ActivityItem = {
   id: string;
   kind: ActivityKind;

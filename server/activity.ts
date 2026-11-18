@@ -83,18 +83,25 @@ export function buildActivity(input: ActivityInput): ActivityResponse {
 
   const items: ActivityItem[] = [];
   for (const { draft, source } of drafts) {
-    const { changedAt, permanent, dependsOn, actions, ...item } = draft;
+    const { changedAt, permanent, dependsOn, actions, stuckReason, stuckActions, ...item } = draft;
     if (item.state === "done" && now - item.updatedAt > FINISHED_VISIBLE_MS) continue;
     const waiting = item.state === "running" || item.state === "queued";
     const blockedBy = waiting && dependsOn && downService.has(dependsOn) ? dependsOn : null;
     const threshold = source.stuckAfterMs * multiplier;
     let stuck: ActivityItem["stuck"] = null;
+    let stalled = false;
     if (blockedBy) stuck = { reason: `Blocked by ${downService.get(blockedBy)}` };
     else if (source.stuck) stuck = source.stuck(draft, now, threshold);
-    else if (item.state === "running" && now - changedAt > threshold) stuck = { reason: `No change for ${formatAge(now - changedAt)}` };
+    else if (item.state === "running" && now - changedAt > threshold) {
+      // The source names why when it knows (#716); otherwise the line says how long nothing changed.
+      stuck = { reason: stuckReason || `No change for ${formatAge(now - changedAt)}` };
+      stalled = true;
+    }
+    const offered = [...(actions ?? [])];
+    if (stalled) for (const action of stuckActions ?? []) if (!offered.includes(action)) offered.push(action);
     // The one place the rule is decided for server work (#514): failed in the last seven days, stuck or blocked.
     const attention = (item.state === "failed" && now - item.updatedAt <= ATTENTION_FAILURE_MS) || !!stuck || !!blockedBy;
-    items.push({ ...item, permanent: !!permanent, actions: actions ?? [], stuck, blockedBy, attention });
+    items.push({ ...item, permanent: !!permanent, actions: offered, stuck, blockedBy, attention });
   }
 
   const rank = (item: ActivityItem) =>
@@ -184,9 +191,9 @@ export async function collectActivity(
 ) {
   const rows = sources.map((source) => source.load(deps.sqlite, { userId: options.userId ?? DEFAULT_ACTIVITY_USER_ID }));
   const none: ProbeResult<unknown> = { value: null, failure: null };
-  const probes = await Promise.all(sources.map((source) => {
+  const probes = await Promise.all(sources.map((source, index) => {
     const probe = source.probe;
-    return options.probes && probe ? within(() => probe(deps), 4000) : none;
+    return options.probes && probe ? within(() => probe(deps, rows[index]), 4000) : none;
   }));
   return buildActivity({
     now: (deps.now ?? Date.now)(),
@@ -228,13 +235,14 @@ export function registerActivity(app: FastifyInstance, deps: ActivityDeps, sourc
   }
   // An item's action goes to the source whose kind prefixes the item id. A source refuses an action its item's
   // status does not offer (#515).
-  for (const name of ["retry", "discard", "resume"] as const) {
+  for (const name of ["retry", "discard", "resume", "cancel"] as const) {
     app.post(`/api/activity/items/${name}`, async (req) => {
       deps.requireAdmin(req);
       const { id } = (req.body ?? {}) as { id?: string };
       const itemId = String(id ?? "");
       const action = sources.find((source) => itemId.startsWith(`${source.kind}:`))?.[name];
-      if (!action) throw activityFailure(400, name === "resume" ? "This item cannot be resumed." : "This item has no retry or discard yet.");
+      if (!action)
+        throw activityFailure(400, name === "resume" ? "This item cannot be resumed." : name === "cancel" ? "This item cannot be cancelled." : "This item has no retry or discard yet.");
       return action(itemId, { deps, log: app.log, userId: deps.userId?.(req) ?? DEFAULT_ACTIVITY_USER_ID });
     });
   }

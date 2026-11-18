@@ -32,6 +32,7 @@ test("a download: every line of the table, with its percentage", () => {
   assert.equal(downloadLine({ status: "ready", backend: "copy" }), "On server");
   assert.equal(downloadLine({ status: "ready", backend: "torbox" }), "Streams from TorBox");
   assert.equal(downloadLine({ status: "error" }), "Download failed");
+  assert.equal(downloadLine({ status: "cancelled" }), "Download cancelled");
 });
 
 test("a percentage is a whole number, from 0 to 100, and a missing figure is 0%", () => {
@@ -111,7 +112,7 @@ test("the fixed lines", () => {
 // The walk: every status the server can write has a line. The lists are the server's own, not copies.
 
 test("every acquisition status the server can write has a line", () => {
-  assert.deepEqual([...ACQUISITION_STATUSES], ["checking", "preparing", "downloading", "paused", "ready", "error"]);
+  assert.deepEqual([...ACQUISITION_STATUSES], ["checking", "preparing", "downloading", "paused", "ready", "error", "cancelled"]);
   for (const status of ACQUISITION_STATUSES) {
     for (const backend of ["local", "torbox", "copy"] as const) {
       const line = downloadLine({ status, progress: 0.5, backend });
