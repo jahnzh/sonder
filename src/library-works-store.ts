@@ -112,11 +112,21 @@ async function loadOnce() {
   if (!response.ok) return;
   const works = (await response.json().catch(() => null)) as LibraryWork[] | null;
   if (!Array.isArray(works) || owner !== userId()) return;
-  // What Keep on this device saves from: the recordings and their tracks, and which is chosen.
+  // What Keep on this device saves from: the recordings and their tracks, and which is chosen; the ebook editions and
+  // the shared default; the reading sync jobs as far as a map's readiness and identity go (#551), so an EPUB that
+  // arrives, a map that becomes ready and a map prepared again are saved without a tap.
   const keepFacts = (list: Iterable<LibraryWork>) =>
     JSON.stringify(
       [...list]
-        .map((w) => [w.workId, w.inLibrary, w.chosenRecordingId, (w.recordings ?? []).map((r) => [r.recordingId, (r.tracks ?? []).map((t) => t.id)])])
+        .map((w) => [
+          w.workId,
+          w.inLibrary,
+          w.chosenRecordingId,
+          (w.recordings ?? []).map((r) => [r.recordingId, (r.tracks ?? []).map((t) => t.id)]),
+          w.chosenEbookId ?? null,
+          (w.ebooks ?? []).map((e) => [e.id, e.format, e.available]),
+          (w.readingSync ?? []).map((j) => [j.id, j.ebookId, j.recordingId, j.status, j.updatedAt, j.intervalCount]),
+        ])
         .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
     );
   const before = snapshot.owner === owner && snapshot.stored ? keepFacts(snapshot.works.values()) : null;

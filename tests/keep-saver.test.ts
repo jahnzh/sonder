@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { DeviceSaveRecord } from "../src/device-saves.ts";
-import type { KeepEntry, KeepSend, NeededTrack, ServerKeep } from "../src/keep.ts";
+import type { HeldEbook, HeldMap, KeepEntry, KeepSend, KeepWork, NeededMapJob, NeededTrack, ServerKeep } from "../src/keep.ts";
 import { KeepSaver, type LockManager, type RecordChange, type SaverDeps, type SaverMessage } from "../src/keep-saver.ts";
 
 const settle = async () => {
@@ -21,14 +21,23 @@ const track = (recordingId: string, index: number): NeededTrack => ({
 });
 
 /** One browser: its device database, the server and the lock all tabs share. */
-function device(options: { tracks?: number; works?: { workId: string; inLibrary: boolean; recordingId: string }[] } = {}) {
+function device(options: { tracks?: number; works?: { workId: string; inLibrary: boolean; recordingId: string | null; ebookId?: string }[] } = {}) {
   const count = options.tracks ?? 2;
-  const works = (options.works ?? [{ workId: "w1", inLibrary: true, recordingId: "r1" }]).map((w) => ({
+  const works: KeepWork[] = (options.works ?? [{ workId: "w1", inLibrary: true, recordingId: "r1" }]).map((w) => ({
     workId: w.workId,
     inLibrary: w.inLibrary,
     chosenRecordingId: w.recordingId,
-    recordings: [{ recordingId: w.recordingId, tracks: Array.from({ length: count }, (_, i) => track(w.recordingId, i)) }],
+    recordings: w.recordingId ? [{ recordingId: w.recordingId, tracks: Array.from({ length: count }, (_, i) => track(w.recordingId!, i)) }] : [],
+    ebooks: w.ebookId ? [{ id: w.ebookId, format: "epub", available: true }] : [],
+    chosenEbookId: null,
+    readingSync: [],
   }));
+  // This device's kept EPUBs and maps (#551), and what the saver fetched of them.
+  const heldEbooks: HeldEbook[] = [];
+  const maps: Record<string, HeldMap> = {};
+  const fileSaves: string[] = [];
+  /** The map the server answers for a pair, by job. */
+  const serverMaps = new Map<string, HeldMap>();
   const keep = new Map<string, KeepEntry>();
   const downloads: { trackId: string; recordingId: string; size: number }[] = [];
   const parts: { trackId: string; recordingId: string; loaded: number }[] = [];
@@ -86,6 +95,8 @@ function device(options: { tracks?: number; works?: { workId: string; inLibrary:
         downloads: downloads.map((d) => ({ ...d })),
         parts: parts.map((p) => ({ ...p })),
         records: [...records.values()],
+        ebooks: heldEbooks.map((e) => ({ ...e })),
+        maps: { ...maps },
       }),
       writeChoice: async (workId, on) => {
         const previous = keep.get(workId);
@@ -126,6 +137,20 @@ function device(options: { tracks?: number; works?: { workId: string; inLibrary:
         onProgress(10, 10);
         downloads.push({ trackId: t.id, recordingId: t.recordingId, size: 10 });
       },
+      saveEbook: async (ebookId, signal) => {
+        signal.throwIfAborted();
+        fileSaves.push(`${id}:epub:${ebookId}`);
+        if (failNext.delete(ebookId)) throw new TypeError("Failed to fetch");
+        const index = heldEbooks.findIndex((e) => e.id === ebookId);
+        if (index >= 0) heldEbooks.splice(index, 1);
+        heldEbooks.push({ id: ebookId, fingerprint: `fp-${ebookId}`, size: 600 });
+      },
+      saveMap: async (ebookId, recordingId, signal) => {
+        signal.throwIfAborted();
+        fileSaves.push(`${id}:map:${ebookId}:${recordingId}`);
+        const job = works.flatMap((w) => w.readingSync ?? []).find((j) => j.ebookId === ebookId && j.recordingId === recordingId);
+        if (job) maps[`reader-map:${ebookId}:${recordingId}`] = serverMaps.get(job.id) ?? { id: job.id, updatedAt: job.updatedAt, fingerprint: job.fingerprint, audioFingerprint: job.audioFingerprint, intervals: [1] };
+      },
       writeRecord: async (recordingId, workId, change: RecordChange) => {
         if (change.state === "off") return;
         const previous = records.get(recordingId);
@@ -148,7 +173,7 @@ function device(options: { tracks?: number; works?: { workId: string; inLibrary:
     });
     return { saver, running };
   }
-  return { tab, keep, downloads, parts, records, server, sent, saves, failNext, persists, fetchFails, preferences };
+  return { tab, keep, downloads, parts, records, server, sent, saves, failNext, persists, fetchFails, preferences, works, heldEbooks, maps, fileSaves };
 }
 
 test("two tabs: the one holding the lock saves; a tap in the other saves the book once", async () => {
@@ -302,4 +327,114 @@ test("a choice made offline is sent at the next run with a connection", async ()
   assert.equal(d.server.get("w1")?.on, true);
   assert.equal(d.keep.get("w1")?.pending, false);
   assert.deepEqual(d.saves, ["1:r1-0", "1:r1-1"]);
+});
+
+// #551: a kept book also keeps its chosen EPUB and the pair's map, after the recording, and whatever of them arrives later.
+const readyJob = (extra: Partial<NeededMapJob> = {}): NeededMapJob => ({
+  id: "job-1",
+  ebookId: "e1",
+  recordingId: "r1",
+  status: "ready",
+  updatedAt: 100,
+  fingerprint: "fp-e1",
+  audioFingerprint: "fp-audio",
+  intervalCount: 12,
+  ...extra,
+});
+const keptOn = (d: ReturnType<typeof device>, workId = "w1") => {
+  d.keep.set(workId, { workId, on: true, at: 5, completeAt: null, pending: false });
+  d.server.set(workId, { workId, on: true, at: 5, completeAt: null });
+  d.preferences.set("keep-rollout", true);
+};
+
+test("the saver saves the recording, then the EPUB, then the map; the save counts all of them", async () => {
+  const d = device({ works: [{ workId: "w1", inLibrary: true, recordingId: "r1", ebookId: "e1" }] });
+  d.works[0].readingSync = [readyJob()];
+  const jobs: { chapter: number; total: number }[] = [];
+  const a = d.tab(1, { onJob: (_id, job) => job && jobs.push({ chapter: job.chapter, total: job.total }) });
+  a.saver.start();
+  await settle();
+  await a.saver.tap("w1", true);
+  await settle();
+  assert.deepEqual(d.saves, ["1:r1-0", "1:r1-1"]);
+  assert.deepEqual(d.fileSaves, ["1:epub:e1", "1:map:e1:r1"]);
+  // Two tracks, the EPUB and the map: four files, the last one being saved as the fourth.
+  assert.deepEqual([...new Set(jobs.map((j) => j.total))], [4]);
+  assert.equal(Math.max(...jobs.map((j) => j.chapter)), 4);
+  assert.equal(d.records.get("r1")?.state, "finished");
+  assert.equal(typeof d.server.get("w1")?.completeAt, "number", "complete with all three");
+  // Nothing is saved twice.
+  await a.saver.trigger("foreground");
+  await settle();
+  assert.deepEqual(d.fileSaves, ["1:epub:e1", "1:map:e1:r1"]);
+});
+
+test("a book that is complete except for its map is not reported complete; the map is fetched when it becomes ready", async () => {
+  const d = device({ works: [{ workId: "w1", inLibrary: true, recordingId: "r1", ebookId: "e1" }] });
+  keptOn(d);
+  d.downloads.push({ trackId: "r1-0", recordingId: "r1", size: 10 }, { trackId: "r1-1", recordingId: "r1", size: 10 });
+  d.heldEbooks.push({ id: "e1", fingerprint: "fp-e1", size: 600 });
+  // The map is still being prepared: not needed yet, the book is complete without it.
+  d.works[0].readingSync = [readyJob({ status: "processing", intervalCount: 0 })];
+  const a = d.tab(1);
+  a.saver.start();
+  await settle();
+  assert.deepEqual(d.fileSaves, []);
+  const first = d.server.get("w1")?.completeAt;
+  assert.equal(typeof first, "number");
+  // A library read says the map is ready: the next run saves it, with no tap.
+  d.works[0].readingSync = [readyJob()];
+  await a.saver.trigger("library");
+  await settle();
+  assert.deepEqual(d.fileSaves, ["1:map:e1:r1"]);
+  assert.deepEqual(d.saves, [], "the tracks are not fetched again");
+  // Prepare again published a new run: the stored map is stale and saved again, with no tap.
+  d.works[0].readingSync = [readyJob({ id: "job-2", updatedAt: 200 })];
+  await a.saver.trigger("library");
+  await settle();
+  assert.deepEqual(d.fileSaves, ["1:map:e1:r1", "1:map:e1:r1"]);
+  assert.equal(d.maps["reader-map:e1:r1"]?.id, "job-2");
+});
+
+test("an ebook arriving for a kept audiobook is saved without a tap; a new chosen EPUB too", async () => {
+  const d = device();
+  keptOn(d);
+  d.downloads.push({ trackId: "r1-0", recordingId: "r1", size: 10 }, { trackId: "r1-1", recordingId: "r1", size: 10 });
+  const a = d.tab(1);
+  a.saver.start();
+  await settle();
+  assert.deepEqual(d.fileSaves, []);
+  d.works[0].ebooks = [{ id: "e1", format: "epub", available: true }];
+  await a.saver.trigger("library");
+  await settle();
+  assert.deepEqual(d.fileSaves, ["1:epub:e1"]);
+  // The shared default moves to another edition: that one is saved; the earlier copy stays.
+  d.works[0].ebooks = [...d.works[0].ebooks!, { id: "e2", format: "epub", available: true }];
+  d.works[0].chosenEbookId = "e2";
+  await a.saver.trigger("library");
+  await settle();
+  assert.deepEqual(d.fileSaves, ["1:epub:e1", "1:epub:e2"]);
+  assert.deepEqual(d.heldEbooks.map((e) => e.id), ["e1", "e2"]);
+  // A PDF arriving is never saved.
+  d.works[0].ebooks = [...d.works[0].ebooks!, { id: "p1", format: "pdf", available: true }];
+  await a.saver.trigger("library");
+  await settle();
+  assert.deepEqual(d.fileSaves, ["1:epub:e1", "1:epub:e2"]);
+});
+
+test("a book with only an ebook keeps its EPUB; an interrupted EPUB save resumes at the next run", async () => {
+  const d = device({ works: [{ workId: "w1", inLibrary: true, recordingId: null, ebookId: "e1" }] });
+  keptOn(d);
+  d.failNext.add("e1");
+  const a = d.tab(1);
+  a.saver.start();
+  await settle();
+  assert.deepEqual(d.fileSaves, ["1:epub:e1"]);
+  assert.equal(d.server.get("w1")?.completeAt, null);
+  await a.saver.trigger("online");
+  await settle();
+  assert.deepEqual(d.fileSaves, ["1:epub:e1", "1:epub:e1"]);
+  assert.equal(typeof d.server.get("w1")?.completeAt, "number");
+  // No save record is written for a book without a recording.
+  assert.equal(d.records.size, 0);
 });

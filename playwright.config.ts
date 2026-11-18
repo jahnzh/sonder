@@ -109,6 +109,8 @@ const desktopProjects = [
               /(^|\/)book-page-states\.spec\.ts$/,
               // Keep on this device saves the chosen recording and resumes by itself (#550).
               /(^|\/)keep-saver\.spec\.ts$/,
+              // Keep on this device saves the ebook and the reading sync too (#551).
+              /(^|\/)keep-reading\.spec\.ts$/,
               // The Get audiobook sheet, and the specs that used today's release picker for a book (#601).
               /(^|\/)(get-audiobook|releases|prowlarr|reliability)\.spec\.ts$/,
               // The Series page of a saved series (#562).
