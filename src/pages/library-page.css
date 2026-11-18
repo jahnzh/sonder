@@ -38,10 +38,15 @@
   align-items: center;
   gap: var(--space-8);
 }
-.library-search input {
+.library-page .library-search input {
   flex: 1;
   min-width: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0;
   border: 0;
+  border-radius: 0;
+  box-shadow: none;
   background: transparent;
   color: var(--text);
   outline-offset: 4px;

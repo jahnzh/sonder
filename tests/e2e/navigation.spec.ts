@@ -9,6 +9,7 @@ import { readerFixture } from "../reader-fixture";
 import { SAVED_SERIES_701, SERIES_701_REMOVAL } from "./navigation-fixtures";
 import { tempDir } from "../temp-dir";
 import { openSavedSeries, savedSeriesList, seriesChip, showSavedSeries } from "./library-series";
+import { playFromLibrary } from "./library-play";
 
 // Addresses and the page stack (#484, ADR 0020): the browser's history is the stack, Back means the same for the
 // phone's gesture and the browser's button, and every address that works today keeps working.
@@ -240,30 +241,34 @@ test("the Library's filters are remembered when it is left, so the list Back ret
   await page.goto("/#discover");
   await tab(page, "My library").click();
   await expect(shown(page)).toHaveText("Library");
-  const filters = page.getByRole("tablist", { name: "Filter your library" });
-  await filters.getByRole("tab", { name: "Not started", exact: true }).click();
-  await page.getByRole("textbox", { name: "Search your library" }).fill(prefix);
+  // The chips (#577): toggle buttons in a group; Search opens its field in place of the Title.
+  const filters = page.getByRole("group", { name: "Filter your library" });
+  const search = page.getByRole("searchbox", { name: "Search your library" });
+  await filters.getByRole("button", { name: "Not started", exact: true }).click();
+  await page.getByRole("button", { name: "Search your library", exact: true }).click();
+  await search.fill(prefix);
   await expect(page.getByRole("button", { name: `About ${prefix} 1`, exact: true })).toBeVisible();
   // Leaving by the tab bar and coming back by the tab bar.
   await tab(page, "Discover").click();
   await expect(shown(page)).toHaveText("Discover");
   await expect(page.getByRole("textbox", { name: "Search audiobooks" })).toHaveValue("");
   await tab(page, "My library").click();
-  await expect(filters.getByRole("tab", { name: "Not started", exact: true })).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("textbox", { name: "Search your library" })).toHaveValue(prefix);
-  // Favorites, from the menu, is kept too; Back returns to it.
-  await page.getByRole("button", { name: "Open navigation", exact: true }).click();
-  await page.getByRole("navigation", { name: "Your shelves" }).getByRole("button", { name: /^Favorites/ }).click();
-  await expect(page.getByRole("heading", { name: "Your favorites.", level: 1 })).toBeVisible();
+  await expect(filters.getByRole("button", { name: "Not started", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(search).toHaveValue(prefix);
+  // The Favorites chip (the drawer's favourites view is gone) is kept too; Back returns to it.
+  await page.getByRole("button", { name: "Close search", exact: true }).click();
+  await filters.getByRole("button", { name: "Favorites", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Favorites", level: 2 })).toBeVisible();
   await tab(page, "Settings").click();
   await expect(shown(page)).toHaveText("Settings");
   await page.goBack();
-  await expect(page.getByRole("heading", { name: "Your favorites.", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Favorites", level: 2 })).toBeVisible();
+  await expect(filters.getByRole("button", { name: "Favorites", exact: true })).toHaveAttribute("aria-pressed", "true");
   // The Library's own item in the menu, on the Library, shows every book again.
   await page.getByRole("button", { name: "Open navigation", exact: true }).click();
   await page.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: /^My library/ }).click();
-  await expect(page.getByRole("heading", { name: "Your library.", level: 1 })).toBeVisible();
-  await expect(filters.getByRole("tab", { name: "All books", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("heading", { name: "All books", level: 2 })).toBeVisible();
+  await expect(filters.getByRole("button", { name: "All", exact: true })).toHaveAttribute("aria-pressed", "true");
 });
 
 /** Records every Audio element the player makes, so a test can see that playback was not stopped or replaced. */
@@ -294,7 +299,7 @@ test("Now playing has an entry: Back closes it and leaves the page where it was,
   await page.goto("/#discover");
   await tab(page, "My library").click();
   await expect(shown(page)).toHaveText("Library");
-  await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+  await playFromLibrary(page, title);
   const dock = page.locator(".player-dock");
   await expect(dock.locator(".dock-book")).toContainText(title);
   const wanted = await page.evaluate(() => Math.min(300, document.documentElement.scrollHeight - innerHeight));
@@ -355,7 +360,7 @@ test("a dialog opened from Now playing closes with it on Back", async ({ page })
   await page.goto("/#discover");
   await tab(page, "My library").click();
   await expect(shown(page)).toHaveText("Library");
-  await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+  await playFromLibrary(page, title);
   const dock = page.locator(".player-dock");
   await expect(dock.locator(".dock-book")).toContainText(title);
   const nowPlaying = page.getByRole("dialog", { name: "Now playing", exact: true });
@@ -412,8 +417,8 @@ test.describe("with answers from the test", () => {
     // The books on screen and where they stand, to compare with what Back shows.
     const onScreen = () =>
       page.evaluate(() =>
-        [...document.querySelectorAll<HTMLElement>(".book-card")]
-          .map((card) => ({ card: card.innerText.split("\n")[0], top: Math.round(card.getBoundingClientRect().top) }))
+        [...document.querySelectorAll<HTMLElement>(".library-tile")]
+          .map((card) => ({ card: card.querySelector(".library-tile-title")?.textContent ?? "", top: Math.round(card.getBoundingClientRect().top) }))
           .filter(({ top }) => top >= 0 && top < innerHeight),
       );
     const seen = await onScreen();
@@ -486,6 +491,11 @@ test.describe("with answers from the test", () => {
     await page.goto("/#discover");
     await tab(page, "My library").click();
     await expect(shown(page)).toHaveText("Library");
+  }
+  /** The import dialog: the navigation's Add an audiobook (the Library's plus opens Discover, #577). */
+  async function openImport(page: Page) {
+    await page.getByRole("button", { name: "Open navigation", exact: true }).click();
+    await page.getByRole("button", { name: "Add an audiobook", exact: true }).click();
   }
 
   test("the Book page is an entry of its own: Back returns to the Library, and Back again leaves it", async ({ page }) => {
@@ -563,7 +573,7 @@ test.describe("with answers from the test", () => {
 
   test("Back with the import dialog open leaves the page and closes it", async ({ page }) => {
     await libraryOverDiscover(page);
-    await page.getByRole("button", { name: "Add audiobook", exact: true }).click();
+    await openImport(page);
     const importDialog = page.getByRole("dialog", { name: "Add audiobook", exact: true });
     await expect(importDialog).toBeVisible();
     await page.goBack();
@@ -585,7 +595,7 @@ test.describe("with answers from the test", () => {
     await libraryOverDiscover(page);
     const importDialog = page.getByRole("dialog", { name: "Add audiobook", exact: true });
     const magnet = importDialog.getByRole("textbox", { name: "Magnet link" });
-    await page.getByRole("button", { name: "Add audiobook", exact: true }).click();
+    await openImport(page);
     await importDialog.getByRole("button", { name: "Magnet link", exact: true }).click();
     await magnet.fill(`magnet:?xt=urn:btih:${"a".repeat(40)}`);
     await importDialog.locator("form.magnet-form").evaluate((form: HTMLFormElement) => form.requestSubmit());
@@ -596,7 +606,7 @@ test.describe("with answers from the test", () => {
     await expect(importDialog).toBeHidden();
     await page.goForward();
     await expect(shown(page)).toHaveText("Library");
-    await page.getByRole("button", { name: "Add audiobook", exact: true }).click();
+    await openImport(page);
     await expect(importDialog).toBeVisible();
     const draft = `magnet:?xt=urn:btih:${"b".repeat(40)}`;
     await magnet.fill(draft);

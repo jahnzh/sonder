@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { playFromLibrary } from "./library-play";
 test.use({ serviceWorkers: "block" });
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "wait" });
@@ -94,12 +95,7 @@ test("an older open tab gets an update notice without interrupting playback", as
       : route.continue(),
   );
   await page.goto("/");
-  await page
-    .getByRole("button", {
-      name: "Play Alice’s Adventures in Wonderland",
-      exact: true,
-    })
-    .click();
+  await playFromLibrary(page, "Alice’s Adventures in Wonderland");
   await expect(
     page
       .locator(".player-dock")

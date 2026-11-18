@@ -160,7 +160,7 @@ test("the Dexie upgrade to the works table keeps places, downloads, favourites a
   }, rows);
   expect(seeded).toEqual({ version: 40, hasWorks: false });
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Your library." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Library", exact: true, level: 1 })).toBeVisible();
   const upgraded = await page.evaluate(async () => {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open("sonder");
@@ -227,7 +227,7 @@ test("a second user on the same device gets a works table of their own, without 
     await page.goto(base);
     await page.getByLabel("Password", { exact: true }).fill("admin-password");
     await page.getByRole("button", { name: "Sign in" }).click();
-    await expect(page.getByRole("heading", { name: "Your library." })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Library", exact: true, level: 1 })).toBeVisible();
     expect((await page.request.post(`${base}/api/users`, { data: { username: "reader", password: "reader-password" } })).ok()).toBe(true);
     const title = `Admin's own work ${Date.now()}`;
     const book = await importRecording(page, title, base);
@@ -243,7 +243,7 @@ test("a second user on the same device gets a works table of their own, without 
     await page.getByLabel("Password", { exact: true }).fill("reader-password");
     const read = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/library" && response.request().headers()["x-sonder-user-id"] === "2");
     await page.getByRole("button", { name: "Sign in" }).click();
-    await expect(page.getByRole("heading", { name: "Your library." })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Library", exact: true, level: 1 })).toBeVisible();
     const answer = await read;
     await page.goto(`${base}/#gallery`);
     await page.reload();
@@ -279,7 +279,7 @@ for (const moving of [true, false])
     });
     await page.clock.install();
     await page.goto("/");
-    await expect(page.getByRole("heading", { name: "Your library." })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Library", exact: true, level: 1 })).toBeVisible();
     await expect.poll(() => storedWorks(page).then((works) => works.map((entry) => entry.workId))).toEqual(["moving-work"]);
     // The reads of the app's start (the loader's and the shell's refresh) are over.
     await page.waitForLoadState("networkidle");

@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
+import { playFromLibrary } from "./library-play";
 
 // Books a test imports get a title unique to the run, so a repeat on the same server finds one
 // "Play <title>" button, and leave the library afterwards, so what a test played does not become
@@ -48,7 +49,7 @@ async function position(page: Page, value: number) {
   }, value);
 }
 async function playAndPause(page: Page, title: string) {
-  await page.getByRole("button", {name:`Play ${title}`,exact:true}).click();
+  await playFromLibrary(page, title);
   const pause=page.locator(".player-dock").getByRole("button",{name:"Pause",exact:true});
   await expect(pause).toBeVisible();
   await pause.click();
@@ -262,7 +263,7 @@ test("playback opens the reader and title page; downloaded sources can be switch
   await page.reload();
   await expect(manager.getByRole("button",{name:"Device copy Marked faulty",exact:true})).toBeVisible();
   await page.locator(".mobile-nav").getByRole("button",{name:"My library",exact:true}).click();
-  await page.getByRole("button",{name:`Play ${title}`,exact:true}).click();
+  await playFromLibrary(page, title);
   await expect(page.locator(".player-dock").getByRole("button",{name:"Pause",exact:true})).toBeVisible();
   await page.locator(".player-dock").getByRole("button",{name:"Pause",exact:true}).click();
   expect((await audioState(page)).src).not.toMatch(/^blob:/);

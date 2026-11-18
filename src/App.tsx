@@ -795,7 +795,7 @@ function LibraryApp({
               >
                 <n.icon size={20} strokeWidth={1.65} />
                 <span>{n.label}</span>
-                {n.id === "library" && <small>{libraryBooks.length}</small>}
+                {n.id === "library" && <small>{libraryWorks.length}</small>}
                 {n.id === "activity" &&
                   Object.keys(downloadJobs).length > 0 && (
                     <span className="activity-dot" />
@@ -805,7 +805,7 @@ function LibraryApp({
               </button>
             ))}
           </nav>
-          {user.role === "admin" && <button className="sidebar-add" onClick={() => setImportOpen(true)}>
+          {user.role === "admin" && <button className="sidebar-add" onClick={() => { setSidebarOpen(false); setImportOpen(true); }}>
             <Plus size={17} /> Add an audiobook
           </button>}
           <div className="sidebar-bottom">

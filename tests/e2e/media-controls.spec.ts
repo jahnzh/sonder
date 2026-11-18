@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { parseRange } from "../../server/range";
 import { readerFixture } from "../reader-fixture";
+import { playFromLibrary } from "./library-play";
 test.use({ serviceWorkers: "block" });
 async function instrument(page: Page) {
   await page.addInitScript(() => {
@@ -55,12 +56,7 @@ test("onscreen, lock-screen and headphone commands seek 30 seconds and persist t
 }) => {
   await instrument(page);
   await page.goto("/");
-  await page
-    .getByRole("button", {
-      name: "Play Alice’s Adventures in Wonderland",
-      exact: true,
-    })
-    .click();
+  await playFromLibrary(page, "Alice’s Adventures in Wonderland");
   await expect(
     page
       .locator(".player-dock")
@@ -163,12 +159,7 @@ test("headphone seeks cross audio files while paused and retain the 30-second of
     await route.fulfill({ response, json: books });
   });
   await page.goto("/");
-  await page
-    .getByRole("button", {
-      name: "Play Alice’s Adventures in Wonderland",
-      exact: true,
-    })
-    .click();
+  await playFromLibrary(page, "Alice’s Adventures in Wonderland");
   await expect(
     page
       .locator(".player-dock")
@@ -238,17 +229,12 @@ test("Space toggles playback across views and arrows skip 30 seconds while ignor
     );
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: "Your library." }),
+    page.getByRole("heading", { name: "Library", exact: true, level: 1 }),
   ).toBeVisible();
   // Space with no audio loaded does nothing and shows no error.
   await page.keyboard.press(" ");
   expect(await paused()).toBe(true);
-  await page
-    .getByRole("button", {
-      name: "Play Alice’s Adventures in Wonderland",
-      exact: true,
-    })
-    .click();
+  await playFromLibrary(page, "Alice’s Adventures in Wonderland");
   await expect(
     page
       .locator(".player-dock")
@@ -405,9 +391,7 @@ test("Space toggles playback across views and arrows skip 30 seconds while ignor
       ).ok(),
     ).toBe(true);
     await page.reload();
-    await page
-      .getByRole("button", { name: `Play ${readerTitle}`, exact: true })
-      .click();
+    await playFromLibrary(page, readerTitle);
     await page
       .locator(".player-dock")
       .getByRole("button", { name: "Pause", exact: true })
@@ -438,9 +422,7 @@ test("Space toggles playback across views and arrows skip 30 seconds while ignor
 test("keyboard shortcut sheet opens from Now Playing and Settings", async ({ page }) => {
   await instrument(page);
   await page.goto("/");
-  await page
-    .getByRole("button", { name: "Play Alice’s Adventures in Wonderland", exact: true })
-    .click();
+  await playFromLibrary(page, "Alice’s Adventures in Wonderland");
   await page.locator(".dock-book").click();
   await page.getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
   const sheet = page.getByRole("dialog", { name: "Keyboard shortcuts", exact: true });

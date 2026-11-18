@@ -3,6 +3,7 @@ import { showControls } from "./reader-bands";
 import { readFileSync } from "node:fs";
 import { readerFixture } from "../reader-fixture";
 import { installReaderWaitBudget, READER_WAIT_MS, timedWait } from "./timing";
+import { playFromLibrary } from "./library-play";
 // The service worker would answer the epub.js script request below before page.route sees it.
 test.use({ serviceWorkers: "block" });
 installReaderWaitBudget(test);
@@ -74,7 +75,7 @@ test("lock-screen position state carries the real rate, the chapter list shows t
   const defaultSpeed = String(Number((saved ?? 1).toFixed(2)));
   await instrument(page);
   await page.goto("/");
-  await page.getByRole("button", { name: `Play ${title}`, exact: true }).click();
+  await playFromLibrary(page, title);
   await expect(
     page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true }),
   ).toBeVisible();
@@ -222,7 +223,7 @@ test("at 3× the follow highlight stays within one sentence of the audio and the
     await reader.getByRole("spinbutton", { name: "Playback speed", exact: true }).press("End");
     await reader.getByRole("button", { name: "Done", exact: true }).click();
     await expect(speed).toHaveText("3×");
-    await page.getByRole("button", { name: "Play narration", exact: true }).click();
+    await playFromLibrary(page, "narration");
     await expect.poll(() => audioRate(page)).toBe(3);
     // Samples the audio position, the passage the reader follows and the text the highlight covers, all
     // at the same instant, until the narration is past the last sentence of the chapter.
