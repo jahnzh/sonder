@@ -38,7 +38,9 @@ test("each kind shows on its own, with its sentence", () => {
     "A place in this book was saved elsewhere.",
   );
 
-  assert.equal(messageText({ kind: "recovering" }), "Finding the place in the text…");
+  const locating = messageToShow(noMessages, at(0, { locating: true }));
+  assert.deepEqual(locating, { kind: "locating" });
+  assert.equal(messageText(locating!), "Finding the place in the text…");
 
   const narration = messageToShow(postError(noMessages, "narration", 0), at(0));
   assert.deepEqual(narration, { kind: "error", error: "narration" });
@@ -74,6 +76,18 @@ test("when two are due: a place saved elsewhere, then an error, then a notice, t
   assert.equal(messageToShow(clearNotice(clearError(state)), { ...all, conflict: null })?.kind, "update");
   // The one behind comes back once the one in front is answered.
   assert.equal(messageToShow(clearError(state), at(2, { update: "build-2" }))?.kind, "notice");
+});
+
+test("Back to narration's locating waits behind a conflict and an error, and goes before a notice and an update", () => {
+  const notice = postNotice(noMessages, "listening", 0);
+  const all = at(1, { locating: true, update: "build-2" });
+  assert.equal(messageToShow(notice, { ...all, conflict: { chapter: "Letter 4" } })?.kind, "conflict");
+  assert.equal(messageToShow(postError(notice, "locate", 1), all)?.kind, "error");
+  assert.equal(messageToShow(notice, all)?.kind, "locating");
+  assert.equal(messageToShow(noMessages, all)?.kind, "locating");
+  // Once it ends, what waited behind it shows again.
+  assert.equal(messageToShow(notice, { ...all, locating: false })?.kind, "notice");
+  assert.equal(messageToShow(noMessages, { ...all, locating: false })?.kind, "update");
 });
 
 test("a newer message of the same kind replaces the older one", () => {

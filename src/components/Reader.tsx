@@ -31,6 +31,7 @@ import { PlaybackSource } from "./PlaybackSource";
 import { FootSettingButtons, FootSettingRow, useFootSetting } from "./ReaderFootSetting";
 import { PlaybackTimeline } from "./PlaybackTimeline";
 import { readerNeedsScripts } from "../reader-sandbox";
+import { backToNarration } from "../reader-back-to-narration";
 import { lookupIndex, placeAt, type LookupIndex } from "../reader-lookup";
 import { pageToShow, pagedWords, type PagedWord } from "../reader-page-turn";
 import { keyEventContext, OPEN_SHEET_SELECTOR, readerKeyAction, typingInField } from "../keyboard";
@@ -518,6 +519,7 @@ export function ReaderView({
   // still saves them must not re-theme, which would re-paginate the whole book for nothing.
   const themeKey = JSON.stringify({ ...appearance, reader: { ...appearance.reader, display: undefined, segmentWords: undefined, wordWpm: undefined } });
   // The narrated sentence, decided by the following module: it stays through a gap until the next one begins.
+  const narrationBack = useRef<() => void>(() => {});
   const currentInterval = following.narratedSentence(map, placeOf(p.book, p.track?.id, p.position)) ?? undefined;
   const refresh = async () => {
     try {
@@ -1464,11 +1466,12 @@ export function ReaderView({
       });
       if (!action) return;
       event.preventDefault();
-      if (action.type === "back-to-narration") { if (currentInterval || isAdmin()) void fromAudio(); }
+      // `F` does what the foot's Back to narration does, and nothing while it is off (#592).
+      if (action.type === "back-to-narration") narrationBack.current();
       else pageAction.current(action.direction);
     };
     window.addEventListener("keydown",key); return () => window.removeEventListener("keydown",key);
-  });
+  }, [appearanceOpen]);
   const sections = book?.sections || [];
   const sectionOf = (paragraphId?: string) =>
     paragraphId ? sections.find((section) => section.paragraphs.some((fragment) => fragment.id === paragraphId)) : undefined;
@@ -1502,6 +1505,20 @@ export function ReaderView({
   };
   // With this book's narration loaded, the bar is the audio position and the page follows it.
   const audio = p.book && p.track && p.book.workId === book?.workId ? { book: p.book, track: p.track } : null;
+  // Back to narration (#592): it follows the narrated sentence (today); with none, the administrator's locates the
+  // passage from the audio, which the More sheet's Read from audio did; for anyone else it is off. `F` runs the same.
+  const backAction = backToNarration({
+    narration: !!audio,
+    sentence: !!currentInterval,
+    following: follow,
+    admin: isAdmin(),
+    locating: recovering,
+  });
+  const runBack = () => {
+    if (backAction === "follow") following.backToNarration();
+    else if (backAction === "locate") void fromAudio();
+  };
+  narrationBack.current = runBack;
   const audioWhole = audio ? playbackTimeline(audio.book, audio.track.id, p.position, p.length, "book") : null;
   const barChapter = audio ? currentChapter(audio.book, audio.track.id, p.position)?.title || audio.track.title : shownSection?.title || "";
   const barPercent = audio
@@ -1618,8 +1635,8 @@ export function ReaderView({
     playing: p.playing,
     conflict: conflict ? { chapter: sections.find((section) => section.index === conflict.locator.section)?.title?.trim() || "" } : null,
     update,
+    locating: recovering,
   });
-  const shownMessage = message ?? (recovering ? { kind: "recovering" as const } : null);
   const messageActions = {
     undo: (notice: ReaderNotice) => (notice === "listening" ? undoListen() : undoRemoveBookmark()),
     retry: (failed: ReaderError) => {
@@ -1747,9 +1764,9 @@ export function ReaderView({
       </div>
       {/* The foot (#587): its box stays whether the controls show or not. At rest the progress line, where the
           narration is and a small Play or Pause; with the controls shown the timeline and the transport row. */}
-      <section className="reader-player" aria-label="Player" data-controls={controls} data-setting={footSetting ?? undefined} data-message={shownMessage?.kind} onClickCapture={tapControls}>
-        {shownMessage && (
-          <ReaderFootMessage message={shownMessage} actions={messageActions} play={p.book ? { playing: p.playing, toggle: p.toggle } : null} />
+      <section className="reader-player" aria-label="Player" data-controls={controls} data-setting={footSetting ?? undefined} data-message={message?.kind} onClickCapture={tapControls}>
+        {message && (
+          <ReaderFootMessage message={message} actions={messageActions} play={p.book ? { playing: p.playing, toggle: p.toggle } : null} />
         )}
         <div className="reader-foot-rest">
           <span className="reader-foot-line" aria-hidden="true"><i style={{ width: `${restProgress * 100}%` }} /></span>
@@ -1797,8 +1814,8 @@ export function ReaderView({
           <button
             className="icon-button reader-back-narration"
             aria-label="Back to narration"
-            disabled={recovering || !audio || (currentInterval ? follow : !isAdmin())}
-            onClick={() => void fromAudio()}
+            disabled={!backAction}
+            onClick={runBack}
           >
             <BookToHeadphones size={20} />
           </button>
