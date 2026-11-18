@@ -199,3 +199,39 @@ test("for someone who is not the administrator Back to narration still follows t
   await expect(room).toHaveAttribute("data-current-passage", followed);
   await expect(backButton(page)).toBeDisabled();
 });
+
+// Listen from here is the long-press now (#592). A tap on a control ends the notice it leaves, but only that one: the
+// head's bookmark button pressed while "Listening from here" shows removes a bookmark, and its own notice stays.
+test("a control tapped while Listening from here shows ends that notice, not the one its own click posts", async ({ page }) => {
+  const { book, ebook, manifest } = await fixture(page, "Notice then bookmark", { map: true });
+  for (const section of manifest.sections)
+    for (const [index, paragraph] of section.paragraphs.entries()) {
+      const created = await page.request.post(`/api/reader/${ebook}/bookmarks`, { data: { id: `${ebook}-${section.index}-${index}`, label: paragraph.text.slice(0, 40).trim() || "Sentence", locator: { section: section.index, paragraphId: paragraph.id, progression: 0 } } });
+      expect(created.ok()).toBe(true);
+    }
+  const room = await openAt(page, book, 5);
+  await expect(room).toHaveAttribute("data-current-passage", /.+/, { timeout: 20000 });
+  const paragraphs = page.frameLocator(".inline-reader .reader-viewport iframe").locator("p");
+  const view = (await room.locator(".reader-viewport").boundingBox())!;
+  let target: { x: number; y: number; width: number; height: number } | null = null;
+  await expect.poll(async () => {
+    for (let i = 0; i < await paragraphs.count() && !target; i++) {
+      const candidate = await paragraphs.nth(i).boundingBox();
+      if (candidate && candidate.x >= view.x && candidate.x + 100 <= view.x + view.width && candidate.y >= view.y && candidate.y + 20 <= view.y + view.height) target = candidate;
+    }
+    return target !== null;
+  }, { timeout: 15000 }).toBe(true);
+  // The long-press: the pointer stays where it went down.
+  await page.mouse.move(target!.x + Math.min(target!.width / 2, 80), target!.y + Math.min(target!.height / 2, 10));
+  await page.mouse.down();
+  await page.waitForTimeout(650);
+  await page.mouse.up();
+  await expect(footMessage(page).getByRole("status")).toHaveText("Listening from here");
+  await showControls(page, room);
+  await expect(footMessage(page).getByRole("status")).toHaveText("Listening from here");
+  await room.locator(".reader-topbar").getByRole("button", { name: "Remove bookmark from current sentence", exact: true }).click();
+  await expect(footMessage(page).getByRole("status")).toHaveText("Bookmark removed");
+  // Still there once the tap's own clearing has run.
+  await page.waitForTimeout(300);
+  await expect(footMessage(page).getByRole("status")).toHaveText("Bookmark removed");
+});
