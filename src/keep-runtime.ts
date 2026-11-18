@@ -22,6 +22,7 @@ import { EBOOK_DEVICE_EVENT } from "./reading";
 /** Fired when this account's Keep records on this device changed. */
 export const KEEP_EVENT = "sonder:keep-changed";
 const ROLLOUT_KEY = "keep-rollout";
+const CLEARED_KEY = "keep-cleared-at";
 
 /** The saves running in this tab, by recording: the saver's and the app's own, so they never overlap. */
 export const activeSaves = new Map<string, AbortController>();
@@ -106,6 +107,9 @@ export function startKeepSaver(account: number): KeepSaver {
         works,
         keep: await db.keep.toArray(),
         downloads,
+        existingDownloads: rows.map((row) => ({ trackId: row.trackId, recordingId: row.recordingId, size: row.size })),
+        existingEbookIds: (await Promise.all(works.flatMap((work) => (work.ebooks ?? []).map(async (ebook) =>
+          (await db.preferences.get(readerFileKey(ebook.id))) ? ebook.id : null)))).filter((id): id is string => id !== null),
         parts: await localDB.downloadParts.toArray(),
         records: await listDeviceSaveRecords().catch(() => [] as DeviceSaveRecord[]),
         ...(await readingHeld(works)),
@@ -147,6 +151,11 @@ export function startKeepSaver(account: number): KeepSaver {
         method: "PUT",
         body: JSON.stringify(send.completeAt === null ? { at: send.at } : { at: send.at, completeAt: send.completeAt }),
       });
+    },
+    clearedAt: async () => (await db.preferences.get(CLEARED_KEY))?.value as number | null ?? null,
+    setClearedAt: async (at) => {
+      if (at === null) await db.preferences.delete(CLEARED_KEY);
+      else await db.preferences.put({ key: CLEARED_KEY, value: at });
     },
     rolloutDone: async () => (await db.preferences.get(ROLLOUT_KEY))?.value === true,
     markRolloutDone: async () => {
@@ -547,4 +556,17 @@ export function useDeviceBook(work: LibraryWork | null): DeviceBook | null {
     };
   }, [workId, shape]);
   return book && work && book.workId === work.workId ? book.value : null;
+}
+
+/** Date this account noticed cleared files, shared by tabs. */
+export function useKeepClearedAt(): number | null {
+  const [at, setAt] = useState<number | null>(null);
+  useEffect(() => {
+    let live = true;
+    const read = () => void localDB.preferences.get(CLEARED_KEY).then((row) => { if (live) setAt(typeof row?.value === "number" ? row.value : null); });
+    read();
+    window.addEventListener(KEEP_EVENT, read);
+    return () => { live = false; window.removeEventListener(KEEP_EVENT, read); };
+  }, []);
+  return at;
 }

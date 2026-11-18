@@ -48,6 +48,9 @@ export type SaverState = {
   works: KeepWork[];
   keep: KeepEntry[];
   downloads: HeldFile[];
+  /** Raw rows include incomplete files for cleared-storage detection. */
+  existingDownloads?: HeldFile[];
+  existingEbookIds?: string[];
   parts: HeldPart[];
   records: DeviceSaveRecord[];
   /** This device's kept EPUB copies (#551); not the reader's own reading cache. */
@@ -63,6 +66,29 @@ export type RecordChange =
   | { state: "saving"; job?: KeepJob | null }
   | { state: "finished" }
   | SaveStop;
+
+/** A completed server choice with neither local choice nor any file indicates cleared storage. */
+export function wasCleared(entry: ServerKeep, state: SaverState): boolean {
+  if (!entry.on || entry.completeAt === null || state.keep.some((local) => local.workId === entry.workId)) return false;
+  const work = state.works.find((item) => item.workId === entry.workId);
+  if (!work) return false;
+  const recordings = new Set(work.recordings.map((item) => item.recordingId));
+  const ebooks = new Set((work.ebooks ?? []).map((item) => item.id));
+  return !state.records.some((item) => item.workId === entry.workId)
+    && !(state.existingDownloads ?? state.downloads).some((item) => recordings.has(item.recordingId))
+    && !state.parts.some((item) => recordings.has(item.recordingId))
+    && !(state.ebooks ?? []).some((item) => ebooks.has(item.id))
+    && !(state.existingEbookIds ?? []).some((id) => ebooks.has(id))
+    && !Object.keys(state.maps ?? {}).some((key) => [...ebooks].some((id) => key.startsWith(`reader-map:${id}:`)));
+}
+
+/** Keep the notice until every kept library work is complete. */
+export function clearedMessageEnds(keep: readonly KeepEntry[], works: readonly KeepWork[], complete: (work: KeepWork) => boolean): boolean {
+  return keep.filter((entry) => entry.on).every((entry) => {
+    const work = works.find((item) => item.workId === entry.workId);
+    return !!work && (!work.inLibrary || complete(work));
+  });
+}
 
 export type LockManager = {
   /** Calls `hold` once the lock is granted; the lock is held until `hold`'s promise settles. */
@@ -117,6 +143,8 @@ export type SaverDeps = {
   onJob: (recordingId: string, job: KeepJob | null) => void;
   /** The device's files or records changed. */
   onChanged: () => void;
+  clearedAt?: () => Promise<number | null>;
+  setClearedAt?: (at: number | null) => Promise<void>;
   now?: () => number;
 };
 
@@ -271,7 +299,15 @@ export class KeepSaver {
     } catch {
       return { keep: state.keep, synced: false };
     }
-    const merged = mergeKeep(state.keep, server);
+    // Wait for the library before adopting a completed record: its files can only be identified by that work.
+    const localIds = new Set(state.keep.map((entry) => entry.workId));
+    const candidates = server.filter((entry) => entry.on && entry.completeAt !== null && !localIds.has(entry.workId));
+    const unknown = new Set(candidates.filter((entry) => !state.works.some((work) => work.workId === entry.workId)).map((entry) => entry.workId));
+    if (candidates.some((entry) => wasCleared(entry, state)) && !(await this.deps.clearedAt?.())) {
+      await this.deps.setClearedAt?.(this.now());
+      this.changed();
+    }
+    const merged = mergeKeep(state.keep, server.filter((entry) => !unknown.has(entry.workId)));
     const records = new Map(merged.records.map((record) => [record.workId, record]));
     for (const send of merged.send) {
       try {
@@ -368,6 +404,13 @@ export class KeepSaver {
         if (done.complete) await this.reportComplete(entry, keep);
       } else if (stop.state === "interrupted" && stop.how === "network") return; // The others would fail as well.
     }
+    if (await this.deps.clearedAt?.()) {
+      const latest = await this.deps.read();
+      if (clearedMessageEnds(latest.keep, latest.works, (work) => this.needsOf(work, latest).complete)) {
+        await this.deps.setClearedAt?.(null);
+        this.changed();
+      }
+    }
     void reason;
   }
 
@@ -378,7 +421,7 @@ export class KeepSaver {
     if (this.deps.online()) {
       try {
         const answer = await this.deps.sendKeep({ workId: entry.workId, kind: "complete", completeAt });
-        stored = { ...answer, pending: false };
+        stored = { ...entry, ...answer, pending: false, completePending: false };
       } catch {
         // Told at the next run's merge.
       }

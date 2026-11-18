@@ -565,3 +565,20 @@ test("a pause written in another tab whose message is lost stops the save before
   assert.deepEqual(d.saves, ["r1-0"]);
   assert.equal(d.records.get("r1")?.state, "paused");
 });
+
+test("cleared storage is detected only for a completed, on server choice with no local record or file", async () => {
+  const { wasCleared, clearedMessageEnds } = await import("../src/keep-saver.ts");
+  const work: KeepWork = { workId: "w", inLibrary: true, chosenRecordingId: "r", recordings: [{ recordingId: "r", tracks: [track("r", 0)] }], ebooks: [], chosenEbookId: null, readingSync: [] };
+  const state = { works: [work], keep: [], downloads: [], parts: [], records: [] };
+  const complete = { workId: "w", on: true, at: 1, completeAt: 2 };
+  assert.equal(wasCleared(complete, state), true);
+  assert.equal(wasCleared({ ...complete, completeAt: null }, state), false);
+  assert.equal(wasCleared({ ...complete, on: false }, state), false);
+  assert.equal(wasCleared(complete, { ...state, keep: [{ ...complete, pending: false }] }), false);
+  assert.equal(wasCleared(complete, { ...state, parts: [{ trackId: "r-0", recordingId: "r", loaded: 1 }] }), false);
+  const kept = [{ ...complete, pending: false }];
+  assert.equal(clearedMessageEnds(kept, [work], () => false), false);
+  assert.equal(clearedMessageEnds(kept, [work], () => true), true);
+  assert.equal(clearedMessageEnds([{ ...kept[0], on: false }], [work], () => false), true);
+  assert.equal(clearedMessageEnds(kept, [], () => true), false);
+});

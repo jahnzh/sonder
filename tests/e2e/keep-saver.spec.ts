@@ -342,3 +342,53 @@ test("the rollout turns Keep on for a recording saved before the upgrade, withou
   expect(saves).toEqual([]);
   expect(await persistCalls(page)).toBe(0);
 });
+
+test("cleared files are saved again and This device explains until complete", async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.addInitScript(() => {
+    (window as any).__persistCalls = 0;
+    navigator.storage.persisted = async () => false;
+    navigator.storage.persist = async () => { (window as any).__persistCalls++; return true; };
+  });
+  const book = await importBook(page, unique("Cleared"));
+  await page.goto(address(book.workId));
+  await keep(page).click();
+  await expect.poll(async () => (await serverKeep(page, book.workId))?.completeAt, { timeout: 30_000 }).toEqual(expect.any(Number));
+  await page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("sonder");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const names = ["keep", "downloads", "downloadChunks", "downloadParts", "preferences"].filter((name) => db.objectStoreNames.contains(name));
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(names, "readwrite");
+      for (const name of names) {
+        if (name === "preferences") {
+          const cursor = tx.objectStore(name).openCursor();
+          cursor.onsuccess = () => { const row = cursor.result; if (row) { if (String(row.key).startsWith("device-save:")) row.delete(); row.continue(); } };
+        } else tx.objectStore(name).clear();
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+    const root = await navigator.storage.getDirectory?.();
+    if (root) await root.removeEntry("sonder-audio", { recursive: true }).catch(() => {});
+  });
+  const gate = await gateSaves(page, book.trackId, () => true);
+  await page.goto("/#activity/device");
+  const note = page.getByText(/^The browser cleared Sonder’s files on .* The kept books are being saved again\.$/);
+  await expect(note).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("img", { name: "Background work needs attention" })).toHaveCount(0);
+  expect(await persistCalls(page)).toBe(0);
+  await page.getByRole("button", { name: "Turn on protected storage" }).click();
+  expect(await persistCalls(page)).toBe(1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  await page.screenshot({ path: `${OUT}/keep-cleared-phone.png` });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.screenshot({ path: `${OUT}/keep-cleared-desktop.png` });
+  gate.open();
+  await expect(note).toHaveCount(0, { timeout: 30_000 });
+  expect(gate.attempts.size).toBeGreaterThan(0);
+});
