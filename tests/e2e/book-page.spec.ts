@@ -309,7 +309,7 @@ test("Remove from library asks once; Cancel sends nothing; Remove sends the work
   expect(sent[0].postData()).toBeNull();
   expect(await sent[0].headerValue("content-type")).toBeNull();
   await page.reload();
-  await expect(page.getByRole("heading", { name: /Your library/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Library", exact: true, level: 1 })).toBeVisible();
   await expect(page.getByRole("button", { name: `About ${book.title}`, exact: true })).toHaveCount(0);
   expect((await (await page.request.get(`/api/works/${encodeURIComponent(book.workId)}`)).json()).inLibrary).toBe(false);
   // The recording keeps its own place: added back, the work has it as it was.
@@ -318,7 +318,7 @@ test("Remove from library asks once; Cancel sends nothing; Remove sends the work
   expect(back.recordings.map((r: any) => [r.recordingId, r.progress?.position])).toEqual([[book.recordingId, 44]]);
 });
 
-test("the heart and today's Favorites filter agree", async ({ page }) => {
+test("the heart and the Favorites chip agree", async ({ page }) => {
   const book = await importBook(page, unique("Favorite book"), false);
   await page.goto(address(book.workId));
   const heart = region(page).getByRole("button", { name: "Favorite", exact: true });
@@ -326,9 +326,8 @@ test("the heart and today's Favorites filter agree", async ({ page }) => {
   await expect(heart).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "Back to Library", exact: true }).click();
   await expect(page).toHaveURL(/#library$/);
-  await expect(page.getByRole("button", { name: `Remove ${book.title} from favorites`, exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Open navigation", exact: true }).click();
-  await page.getByRole("navigation", { name: "Your shelves" }).getByRole("button", { name: /^Favorites/ }).click();
+  // The Favorites chip (#577: favourites by work).
+  await page.getByRole("group", { name: "Filter your library", exact: true }).getByRole("button", { name: "Favorites", exact: true }).click();
   await expect(page.getByRole("button", { name: `About ${book.title}`, exact: true })).toBeVisible();
   await page.getByRole("button", { name: `About ${book.title}`, exact: true }).click();
   await expect(heart).toHaveAttribute("aria-pressed", "true");

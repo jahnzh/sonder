@@ -4,6 +4,7 @@ import {randomUUID} from "node:crypto";
 import {readerFixture} from "../reader-fixture";
 import {skipOnMobile} from "./mobile";
 import {highlightShown} from "./reader-view";
+import { playFromLibrary } from "./library-play";
 test.afterEach(async({page})=>{await page.unrouteAll({behavior:"wait"});});
 // Imports a book whose title is unique to this run, so a repeat on the same server finds exactly one
 // "Play <title>" button and its own EPUB; returns that title.
@@ -28,7 +29,7 @@ async function fixture(page:Page,name:string,language="en-US"){
 }
 async function start(page:Page,title:string){
  await page.goto("/");
- await page.getByRole("button",{name:`Play ${title}`,exact:true}).click();
+ await playFromLibrary(page, title);
  await page.locator(".player-dock").getByRole("button",{name:"Pause",exact:true}).click();
  await page.locator(".dock-book").click();
  await expect(page.getByRole("dialog",{name:"Now playing",exact:true})).toBeVisible();

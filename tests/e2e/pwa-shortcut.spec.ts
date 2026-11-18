@@ -45,9 +45,9 @@ test("the home-screen shortcut opens the app, and Back leaves it without a stuck
   await tap(/Sonder/i, "launch the icon");
   await wait(5000);
 
-  // The shortcut opens the app in Firefox, which shows the library.
+  // The shortcut opens the app in Firefox, which shows the library (its Title "Library", #577).
   expect(await focus()).toContain("org.mozilla.firefox");
-  expect(find(await androidUiDump(), /Your library/)).not.toBeNull();
+  expect(find(await androidUiDump(), /^Library$/)).not.toBeNull();
   await shot("launched");
 
   // One Back goes to Firefox's start page (its search field is showing), never to a blank or stuck screen.
@@ -57,7 +57,7 @@ test("the home-screen shortcut opens the app, and Back leaves it without a stuck
   expect(await focus()).toContain("org.mozilla.firefox");
   const start = await androidUiDump();
   expect(find(start, /Search or enter address|^Search$/), "Firefox's start page is showing").not.toBeNull();
-  expect(find(start, /Your library/), "the app is no longer on screen").toBeNull();
+  expect(find(start, /^Library$/), "the app is no longer on screen").toBeNull();
 
   // A second Back leaves Firefox for the launcher.
   await pressAndroidBack();

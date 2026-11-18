@@ -27,7 +27,7 @@ import { hardcoverRowValue } from "../hardcover-page-model";
 import { bytes } from "../size-format";
 import { tip } from "../tooltip-texts";
 import type { Book, Download, DownloadPart, LibraryWork } from "../types";
-import { addedElsewhere, addsBeforeGet, bookModel, chosenRecording, deviceHold, favoriteOf, keepState } from "./book-model";
+import { addedElsewhere, addsBeforeGet, bookModel, chosenRecording, deviceHold, keepState } from "./book-model";
 import type { Notify } from "./shared";
 import "./book-page.css";
 
@@ -56,9 +56,10 @@ type Props = {
   running: Running;
   /** The device's records of its saves (#517): how a kept book's last save stopped (#552). */
   records?: readonly DeviceSaveRecord[];
+  /** The favourites by work (work ids). */
   favorites: string[];
-  /** Every entry of the work joins today's favourites list, or every one leaves it. */
-  onFavorite: (entryIds: string[]) => void;
+  /** The Favorite button: the work joins the favourites by work, or leaves them (#577). */
+  onFavorite: (workId: string) => void;
   /** Today's save of a recording to this device (the dock's and Activity's): Resume of a book that is not kept. */
   onSave: (book: Book) => void;
   /** Stops a running save of a recording. */
@@ -156,8 +157,7 @@ export function BookPage(props: Props) {
   const epubCopy = useEbookDeviceCopy(chosenEpub ?? work?.ebooks[0]?.id ?? null, { kept: true });
   const model = work ? bookModel(work, { admin, deviceChoice, deviceEbookSize: epubCopy.size }) : null;
   const entries = useMemo(() => books.filter((b) => b.workId === workId), [books, workId]);
-  const entryIds = entries.map((b) => b.id);
-  const favorite = favoriteOf(entryIds, favorites);
+  const favorite = favorites.includes(workId);
   const chosenBook = (recording && entries.find((b) => b.recordingId === recording.recordingId)) ?? null;
   const searchTarget = chosenBook ?? entries[0] ?? (work ? ebookSearchTarget(work) : null);
   const hold = deviceHold(recording, downloads, downloadParts);
@@ -192,7 +192,7 @@ export function BookPage(props: Props) {
   const head = (
     <header className="book-page-head">
       <Button kind="secondary" icon={<BackIcon />} label={backLabel} onClick={() => address.goBack()} />
-      {work?.inLibrary && entryIds.length > 0 && (
+      {work?.inLibrary && (
         <Button
           kind="secondary"
           className="book-page-favorite"
@@ -200,7 +200,7 @@ export function BookPage(props: Props) {
           label="Favorite"
           aria-pressed={favorite}
           data-pressed={favorite ? "" : undefined}
-          onClick={() => props.onFavorite(entryIds)}
+          onClick={() => props.onFavorite(workId)}
         />
       )}
     </header>

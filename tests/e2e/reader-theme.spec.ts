@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { defaultAppearance } from "../../src/appearance";
 import { skipOnMobile } from "./mobile";
 import { closeAppearance, openAppearance, setStepper } from "./reader-appearance";
+import { playFromLibrary } from "./library-play";
 // Tapping the middle of the page shows the reader's top bar and slider.
 async function showControls(page: Page) {
   const room = page.locator(".reader-room:not(.inline-reader)");
@@ -25,12 +26,7 @@ test("appearance presets and custom colors persist without interrupting audio", 
   // window and plays audio, which the suite's Firefox cannot (#656).
   skipOnMobile(true, "measures the 390-wide window of the desktop projects and plays audio");
   await page.goto("/");
-  await page
-    .getByRole("button", {
-      name: "Play Alice’s Adventures in Wonderland",
-      exact: true,
-    })
-    .click();
+  await playFromLibrary(page, "Alice’s Adventures in Wonderland");
   const playing = () =>
     expect(
       page
