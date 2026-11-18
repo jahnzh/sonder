@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, userId } from "../lib";
 import { refreshLibraryWorks, useStoredWorksWithPlaces } from "../library-works-store";
-import { openSheet, useAddress } from "../navigation";
+import { useAddress } from "../navigation";
 import { BookRow } from "../parts/BookRow";
 import { Button } from "../parts/Button";
 import { Group } from "../parts/Group";
@@ -258,7 +258,8 @@ export function SeriesPage({ id, admin, online, books, revision, onSaved, onRemo
     if (p.book?.recordingId === book.recordingId) {
       if (!p.playing) p.toggle();
     } else await p.play(book);
-    openSheet("now-playing");
+    // Now playing on its Listen face (#593).
+    address.navigate({ name: "listen", workId });
   };
   const retry = (row: SeriesRow) =>
     run(async () => {

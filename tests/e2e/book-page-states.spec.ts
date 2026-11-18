@@ -76,7 +76,14 @@ test("a Discover result outside the library opens the Book page; Add to library 
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/#discover");
-  await page.locator("#discover-books .discover-book").filter({ hasText: CATALOGUE.title }).locator(".book-title").click();
+  // Removed from the library, it is not in Discover's start list (#575): searched for, it is on the server.
+  const discover = page.getByRole("region", { name: "Discover", exact: true });
+  await discover.getByRole("searchbox", { name: "Search for a book", exact: true }).fill(CATALOGUE.title);
+  await discover.getByRole("searchbox", { name: "Search for a book", exact: true }).press("Enter");
+  await discover
+    .getByRole("list", { name: "On the server", exact: true })
+    .getByRole("button", { name: new RegExp(`^${CATALOGUE.title} `) })
+    .click();
   await expect(page).toHaveURL(new RegExp(`#book/${CATALOGUE.workId}$`));
   const shown = region(page);
   await expect(page.getByRole("heading", { level: 1 })).toHaveText([CATALOGUE.title]);

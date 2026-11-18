@@ -68,9 +68,9 @@ import {
   ensureMediaStorage,
   torrentDownloadDir,
 } from "./storage.ts";
-import { acquireReplacing, acquisitionsLoop, controlAcquisition } from "./acquisitions.ts";
+import { acquireReplacing, acquisitionsLoop, cancelAcquisition, controlAcquisition } from "./acquisitions.ts";
 import { retrySeriesAcquisitionJob, seriesAcquisitionLoop } from "./series-acquisition.ts";
-import { transmission, transmissionConfigured } from "./transmission.ts";
+import { getTorrentStates, transmission, transmissionConfigured } from "./transmission.ts";
 import { getTorrentHealth } from "./torrent-health.ts";
 import { searchEbooks, saveEbook, listEbooks, importEbook } from "./ebooks.ts";
 import { reevaluateEbookSetForWork } from "./ebook-set.ts";
@@ -361,6 +361,8 @@ export async function createApp(options?: {
     syncHardcover,
     retryEbookSetMember,
     controlAcquisition: (id: string, action: "retry" | "resume", userId: number) => controlAcquisition(id, action, userId),
+    torrentStates: (hashes: string[]) => getTorrentStates(hashes),
+    cancelAcquisition: (id: string) => cancelAcquisition(id),
     resumeAlignment: resumeAlignmentJob,
     retrySeriesSearch: retrySeriesAcquisitionJob,
     pauseState,

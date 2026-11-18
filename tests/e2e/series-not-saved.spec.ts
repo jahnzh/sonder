@@ -2,7 +2,7 @@
 // SeriesSave.dc.html): `#series/<id>` opens the same page with Save series as its one main action, from a book's
 // series line too, and Back returns to the book. Save series opens the sheet captioned Save series; saving shows the
 // saved series. The sheet's address on a reload; without a connection the address shows the Library. The measures
-// at phone size and on a desktop. Discover's View series and the changed choice are in series-discovery.spec.ts.
+// at phone size and on a desktop. Discover's series row and the changed choice are in series-discovery.spec.ts.
 //
 // Each test runs its own server on a throwaway database (as series-new.spec.ts does): the specs before this one on the
 // suite's server save The Crossing (#701, #702), add Crossing Two and read the Hardcover fixture's series, and this

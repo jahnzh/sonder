@@ -24,7 +24,7 @@ function percentOf(fraction: number | null | undefined) {
 
 /** A download (an acquisition). `status` is null when nothing was added and there is no file. */
 export type DownloadFacts = {
-  status: "checking" | "preparing" | "downloading" | "paused" | "ready" | "error" | null;
+  status: "checking" | "preparing" | "downloading" | "paused" | "ready" | "error" | "cancelled" | null;
   /** 0 to 1. */
   progress?: number | null;
   /** Where a ready recording plays from: `torbox` streams, `local` and `copy` are kept on the server. */
@@ -47,6 +47,8 @@ export function downloadLine({ status, progress, backend }: DownloadFacts): stri
       return backend === "torbox" ? "Streams from TorBox" : "On server";
     case "error":
       return "Download failed";
+    case "cancelled":
+      return "Download cancelled";
     default:
       return null;
   }
@@ -356,7 +358,7 @@ export function seriesSearchLine({ status, search, place, retrying, reason }: Se
 
 /** What a finished entry of Now concerns, with the facts its line is written from. */
 export type FinishedFacts =
-  | { entry: "download"; backend?: "local" | "torbox" | "copy" | null }
+  | { entry: "download"; backend?: "local" | "torbox" | "copy" | null; cancelled?: boolean }
   | { entry: "server-copy" }
   | { entry: "series-search"; search: "audiobook" | "ebook" }
   | { entry: "ebook-check"; status: "accepted" | "rejected" }
@@ -367,6 +369,8 @@ export type FinishedFacts =
 export function finishedLine(facts: FinishedFacts): string | null {
   switch (facts.entry) {
     case "download":
+      // Cancelled from Activity (#716): nothing became of the file.
+      if (facts.cancelled) return "Download cancelled";
       return facts.backend === "torbox" ? "Audiobook streams from TorBox" : "Audiobook on server";
     case "server-copy":
       return "Audiobook on server";
@@ -414,6 +418,12 @@ export function failedLine(facts: FailedFacts): string {
 export function withFileCount(line: string, files: { done: number; total: number } | null | undefined): string {
   return files && files.total > 0 ? `${line}${DOT}${files.done} of ${files.total} files` : line;
 }
+
+/**
+ * A download that made no progress while its book already has a ready copy from another download (#716): this leads
+ * its line ("This book already has a copy · Downloading to server · 0%"), and the row offers Cancel.
+ */
+export const ALREADY_HAS_COPY_LINE = "This book already has a copy";
 
 /** A stuck or blocked entry's line with the server's reason ("Downloading to server · 77% · Blocked by Torrent client"). */
 export function withReason(line: string, reason: string | null | undefined): string {

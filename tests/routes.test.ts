@@ -42,6 +42,9 @@ const table: { address: string; route: Route; place: string; parent: Route | nul
   { address: "#series/s1/add", route: { name: "series-add", id: "s1" }, place: "library", parent: { name: "series", id: "s1" } },
   { address: "#listen/w1", route: { name: "listen", workId: "w1" }, place: "library", parent: { name: "book", workId: "w1" } },
   { address: "#read/w1", route: { name: "read", workId: "w1" }, place: "library", parent: { name: "book", workId: "w1" } },
+  // Discover's "Search for a recording" (#575): the Get sheet without a book, whose parent is Discover.
+  { address: "#discover/get/banks", route: { name: "discover-get", query: "banks" }, place: "discover", parent: { name: "discover" } },
+  { address: "#discover/get/The%20Lamplighter%E2%80%99s%20Atlas", route: { name: "discover-get", query: "The Lamplighter’s Atlas" }, place: "discover", parent: { name: "discover" } },
 ];
 
 test("every address in the table reads as its route, writes back the same, and names its place and parent", () => {
@@ -105,6 +108,9 @@ test("an address that names nothing reads as nothing in the place it points into
     ["#Library", "library"],
     ["#library/extra", "library"],
     ["#discover/x", "discover"],
+    ["#discover/get", "discover"],
+    ["#discover/get/", "discover"],
+    ["#discover/get/a/b", "discover"],
     ["#downloads/x", "activity"],
     ["#activity/now", "activity"],
     ["#activity/device/x", "activity"],
@@ -168,9 +174,9 @@ test("what an address shows: built pages as they are, everything else the first 
   // Its magnet sheet (#606) likewise: the administrator's; someone else gets the Book page.
   assert.equal(shows("#book/w1/get/audiobook/magnet"), "#book/w1/get/audiobook/magnet");
   assert.equal(shows("#book/w1/get/audiobook/magnet", false), "#book/w1");
-  // Not built yet: behaves like an address that names nothing.
-  assert.equal(shows("#listen/w1"), "#library");
-  assert.equal(shows("#read/w1"), "#library");
+  // Now playing's faces (#593) are built, for everyone.
+  assert.equal(shows("#listen/w1"), "#listen/w1");
+  assert.equal(shows("#read/w1", false), "#read/w1");
   assert.equal(shows("#activity/device"), "#activity/device");
   // A worker's address is the administrator's worker page (#520): it stays in the address.
   assert.equal(shows("#activity/server/wsl"), "#activity/server/wsl");
@@ -301,4 +307,12 @@ test("the reader's pages: Chapters, Bookmarks and Search are built for everyone,
   assert.equal(step(r("#book/w/chapters"), r("#book/v/bookmarks")), "push");
   assert.equal(step(r("#reader/e"), r("#book/w/chapters")), "push");
   assert.equal(step(r("#book/w/search"), r("#reader/e")), "push");
+});
+
+test("#discover/get/<query> (#575): a sheet over Discover, the administrator's; someone else gets Discover", () => {
+  const shows = (address: string, admin: boolean) => writeAddress(resolve(readAddress(address), { admin }));
+  assert.equal(shows("#discover/get/banks", true), "#discover/get/banks");
+  assert.equal(shows("#discover/get/banks", false), "#discover");
+  assert.equal(coversPage(readAddress("#discover/get/banks")), true);
+  assert.equal(step(readAddress("#discover"), readAddress("#discover/get/banks")), "push");
 });

@@ -526,7 +526,8 @@
         "error": "No seeders",
         "permanent": false,
         "actions": [
-          "retry"
+          "retry",
+          "cancel"
         ],
         "stuck": null,
         "blockedBy": null,
@@ -960,7 +961,8 @@
         "error": "Removed with series.",
         "permanent": false,
         "actions": [
-          "retry"
+          "retry",
+          "cancel"
         ],
         "stuck": null,
         "blockedBy": null,
@@ -2021,7 +2023,8 @@
         "error": "No seeders",
         "permanent": false,
         "actions": [
-          "retry"
+          "retry",
+          "cancel"
         ],
         "stuck": null,
         "blockedBy": null,
@@ -2455,7 +2458,8 @@
         "error": "Removed with series.",
         "permanent": false,
         "actions": [
-          "retry"
+          "retry",
+          "cancel"
         ],
         "stuck": null,
         "blockedBy": null,
@@ -3609,7 +3613,8 @@
         "error": "No seeders",
         "permanent": false,
         "actions": [
-          "retry"
+          "retry",
+          "cancel"
         ],
         "stuck": null,
         "blockedBy": null,
@@ -4043,7 +4048,8 @@
         "error": "Removed with series.",
         "permanent": false,
         "actions": [
-          "retry"
+          "retry",
+          "cancel"
         ],
         "stuck": null,
         "blockedBy": null,

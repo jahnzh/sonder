@@ -111,7 +111,7 @@ const status = (id: string) => (sqlite.prepare("SELECT status FROM acquisitions 
 
 test("Activity offers Retry for a failed download and a stopped reading sync, Resume for paused ones, nothing else", async () => {
   const byId = await items();
-  assert.deepEqual(byId["acquisition:acq-failed"].actions, ["retry"]);
+  assert.deepEqual(byId["acquisition:acq-failed"].actions, ["retry", "cancel"], "a failing download also offers Cancel (#716)");
   assert.deepEqual(byId["acquisition:acq-paused"].actions, ["resume"]);
   assert.deepEqual(byId["acquisition:acq-running"].actions, []);
   assert.deepEqual(byId["alignment:sync-stopped"].actions, ["retry"]);

@@ -13,6 +13,7 @@ import type {
 } from "../src/types.ts";
 import type { AlignmentPoolStatus } from "../src/reading-types.ts";
 import type { PausableProcess } from "./activity-pause-model.ts";
+import type { TorrentState } from "./transmission.ts";
 import { workCovers } from "./work-cover.ts";
 
 const MINUTE = 60_000;
@@ -39,6 +40,13 @@ export type ActivityDeps = {
    * own failure goes to `onQueueError`. Absent where a test does not need it.
    */
   retrySeriesSearch?: (jobId: string, onQueueError: (error: unknown) => void) => Record<string, unknown>;
+  /**
+   * What the local torrent client says of these torrents (#716), to name why a download is stuck. Absent where a test
+   * does not need it; a hash the client does not have is absent from the answer. Throws a `TransmissionError`.
+   */
+  torrentStates?: (hashes: string[]) => Promise<TorrentState[]>;
+  /** Cancel a download (#716): remove its torrent in the client and mark it cancelled (`cancelAcquisition`). */
+  cancelAcquisition?: (id: string) => Promise<unknown>;
   /** Resume or retry a reading sync, as the `resume` of `PATCH /api/alignments/<id>` does (#515); answers the job. */
   resumeAlignment: (id: string) => Promise<unknown>;
   /** Pause state per loop: the settings table plus the environment lock. */
@@ -78,13 +86,26 @@ export class ChangeTracker {
 }
 
 /** An item as a source reports it; Activity adds whether it is stuck, blocked or needs attention. */
-export type ActivityDraft = Omit<ActivityItem, "stuck" | "blockedBy" | "permanent" | "actions" | "attention"> & {
+export type ActivityDraft = Omit<ActivityItem, "stuck" | "blockedBy" | "permanent" | "actions" | "attention" | "superseded"> & {
   permanent?: boolean;
   /** When the item last changed, for the "no change for" rule. */
   changedAt: number;
   /** The service this item waits on while running or queued; when that service is down the item is blocked. */
   dependsOn?: string | null;
   actions?: ActivityItem["actions"];
+  /**
+   * Why the item does not move, when the source knows (#716: "No peers"); the stuck rule's reason then names it
+   * instead of "No change for …". Used only once the item is stuck by that rule.
+   */
+  stuckReason?: string | null;
+  /** Actions offered besides `actions` while the item is stuck by the no-change rule (#716: Cancel, and Retry where it helps). */
+  stuckActions?: ActivityItem["actions"];
+  /**
+   * What the item fetches is already there (#716: the work has a ready copy from another download). Once stuck by the
+   * no-change rule it is not a problem of the book: it is not stuck and needs no attention, but it is marked
+   * `superseded` and still offers its `stuckActions`. Nothing is cancelled automatically.
+   */
+  superseded?: boolean;
 };
 
 /** A service a source probes (torrent client, alignment workers), listed as a process of type "service". */
@@ -156,8 +177,11 @@ export type ActivitySource<Rows = unknown, Probe = never> = {
   stuckAfterMs: number;
   /** Read the feature's rows, with the work of each item (`withWorks`). */
   load(sqlite: ActivityDeps["sqlite"], context: LoadContext): Rows;
-  /** Ask a service this work depends on; Activity runs it with a time limit and only when probes are wanted. */
-  probe?(deps: ActivityDeps): Promise<Probe>;
+  /**
+   * Ask a service this work depends on; Activity runs it with a time limit and only when probes are wanted. It is
+   * given the rows `load` read, so it can ask about those items only (#716).
+   */
+  probe?(deps: ActivityDeps, rows: Rows): Promise<Probe>;
   /** Turn rows into items, and the probe into services. Pure. */
   report(rows: Rows, probe: ProbeResult<Probe>, context: ReportContext): ActivityReport;
   /** A stuck rule of the source's own, used instead of "running with no change for longer than the threshold". */
@@ -166,6 +190,8 @@ export type ActivitySource<Rows = unknown, Probe = never> = {
   discard?: ActivityAction;
   /** Resume a paused item (#515). */
   resume?: ActivityAction;
+  /** Cancel a stuck or failing item (#716). */
+  cancel?: ActivityAction;
   /** Actions on the services this source reports, whose ids start with `prefix`. */
   services?: { prefix: string; restart?: ServiceAction; disable?: ServiceAction };
 };

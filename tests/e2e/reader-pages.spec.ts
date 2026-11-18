@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 import { showControls } from "./reader-bands";
 import { highlightShown, textShown } from "./reader-view";
+import {openRead} from "./now-playing";
 // Chapters, Bookmarks and Search as pages (#590, spec #586; boards Chapters.dc.html, ReaderBookmarks.dc.html,
 // ReaderSearch.dc.html): `#book/<workId>/chapters`, `/bookmarks`, `/search`, each a Page with one Title, "Back to the
 // book" and the book's title. A row opens the reader there, paged away, and Back to narration returns.
@@ -51,7 +52,7 @@ async function openFollowing(page: Page, book: any, map: any) {
   const previous = (await (await page.request.get("/api/books")).json()).find((b: any) => b.recordingId === book.recordingId)?.progress?.updatedAt || 0;
   expect((await page.request.post("/api/progress", { data: { recordingId: book.recordingId, trackId: book.tracks[0].id, position: interval.start + 1, duration: book.tracks[0].duration, updatedAt: Math.max(Date.now(), previous + 1) } })).ok()).toBe(true);
   await page.goto("/");
-  await page.getByRole("button", { name: "Open ebook reader", exact: true }).click();
+  await openRead(page);
   const room = page.locator(".inline-reader");
   await expect(room).toHaveAttribute("data-current-passage", interval.paragraphId, { timeout: 20000 });
   await expect.poll(() => highlightShown(room), { timeout: 20000 }).toBe(true);

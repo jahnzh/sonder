@@ -27,7 +27,10 @@ export function ReleasePicker({
   onQueued,
   refresh,
   notify,
+  searchAtOnce = false,
 }: {
+  /** Search for the query when shown (Discover's "Search for a recording", #575). */
+  searchAtOnce?: boolean;
   query: string;
   onQuery: (query: string) => void;
   prowlarrConfigured?: boolean;
@@ -126,6 +129,11 @@ export function ReleasePicker({
     void localDB.preferences.get("release-language").then((value) => {
       if (typeof value?.value === "string") setLanguage(value.value);
     });
+  }, []);
+  useEffect(() => {
+    if (searchAtOnce) void search();
+    // Once, for the query it was opened with.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(
     () => () => {
