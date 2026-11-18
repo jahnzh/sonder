@@ -405,7 +405,7 @@ export function BookPage(props: Props) {
             }
           />
         )}
-        {/* With both files the row opens the Reading sync page (#540); the reader's More sheet keeps today's card. */}
+        {/* With both files the row opens the Reading sync page (#540), as More › Reading sync in the reader does (#543). */}
         {model.sync.opens ? (
           <FileRow kind="sync" name="Reading sync" status={model.sync.line} info={syncInfo} onClick={() => address.navigate({ name: "book-page", workId, page: "sync" })} />
         ) : (

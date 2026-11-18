@@ -913,15 +913,15 @@ worker under one worker lease. Unset, nothing of the window runner changes.
   The host the job was started on (`firstHost`) is never held back. Window-runner
   jobs and ebook-set probes keep plain rank order. The rule reads the host
   configuration (`device`, `rank`), never a host id (ADR 0013).
-* **Reading sync card.** Each poll also stores the worker's counts for its stage
+* **Reading sync page.** Each poll also stores the worker's counts for its stage
   in `bookJob.counts` (`tracksTotal`, `tracksDecoded`, `tracksEncoded`,
   `groupsTotal`, `groupsDone`, `encodeQueuePosition`, `resumeQueuePosition`,
   `waitingForWindowRequests`; a count that is not a non-negative integer is left
-  out). The card shows a running whole-book job as its stage and the count that
-  moves in it (`syncProgressLine` in `src/reading-sync-status.ts`), for example
-  "Decoding audio: 24 of 43 files", "Encoding audio: 1 of 2 files", "Waiting for
-  other alignment work: 1 book ahead", "Aligning text: 34 of 83 parts", and its
-  pause button reads "Pause": the worker's job is cancelled at once.
+  out). The Reading sync page (`#book/<workId>/sync`, #540) shows a running
+  whole-book job as its steps with the count of the running one (`runPoint` in
+  `src/pages/reading-sync-model.ts`), for example "24 of 43 files",
+  "1 of 2 files", "1 book ahead", "34 of 83 parts", and its pause button reads
+  "Pause": the worker's job is cancelled at once.
 * **Start, poll, fetch, publish.** The start request carries the ebook's
   sentences in reading order and the staged tracks in play order, with the
   durations the database holds. The worker's job id is the job's id and
@@ -986,7 +986,7 @@ worker under one worker lease. Unset, nothing of the window runner changes.
 
 Tests: `tests/alignment-book-job.test.ts` against the fake whole-book worker
 `tests/fake-book-worker.ts` (real HTTP on 127.0.0.2, fake SSH staging); the
-card's line and labels in `tests/reading-sync-status.test.ts`.
+page's steps and labels in `tests/reading-sync-model.test.ts`.
 
 ## Overlapped audio extraction (#346)
 

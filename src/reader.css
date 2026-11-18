@@ -186,68 +186,20 @@
   display: flex;
   align-items: center;
 }
-.reader-appearance,
-.reading-sync {
+.reader-appearance {
   display: grid;
   gap: 15px;
 }
-.reader-appearance label,
-.reading-sync label {
+.reader-appearance label {
   display: grid;
   gap: 8px;
   font-size: 13px;
   color: var(--text);
 }
-.reading-sync h3,
 .player-reading h3 {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-.reading-sync details {
-  margin: 4px 0;
-}
-.reading-sync details > label {
-  margin: 15px 0;
-}
-.reading-sync summary {
-  cursor: pointer;
-  line-height: 1.65;
-  font-size: 14px;
-}
-.reading-sync .button {
-  min-height: 44px;
-  font-size: 12px;
-  white-space: normal;
-}
-.reading-sync-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-.alignment-status {
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-}
-.alignment-status strong {
-  font-size: 14px;
-}
-.alignment-status progress {
-  width: 100%;
-  height: 8px;
-  accent-color: var(--accent);
-  margin-top: 14px;
-}
-.alignment-status p {
-  font-size: 12px;
-}
-.alignment-flags {
-  margin: 8px 0 0;
-  padding-left: 18px;
-  font-size: 12px;
-  color: var(--muted);
-  overflow-wrap: anywhere;
 }
 .reader-follow {
   display: flex;
@@ -259,9 +211,6 @@
 .reader-follow input {
   width: 20px;
   height: 20px;
-}
-.reader-background-sync {
-  display: none;
 }
 .player-reading {
   margin: 20px 0;
@@ -321,40 +270,6 @@
   .reader-toolbar .icon-button {
     width: 40px;
   }
-}
-.chapter-bounds {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin: 10px 0 18px;
-}
-.chapter-bounds label {
-  min-width: 0;
-}
-.chapter-bounds input {
-  width: 100%;
-  min-height: 44px;
-}
-.sync-release-info,
-.sync-preparation-help,
-.sync-alternatives p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.65;
-}
-.sync-match-count {
-  display: inline-block;
-  margin-inline-start: 8px;
-  color: var(--muted);
-  font-size: 12px;
-}
-.sync-alternatives {
-  display: grid;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
 }
 
 /* Page mode (#22): the page fills the room, the player bar stays at the
