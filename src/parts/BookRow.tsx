@@ -39,9 +39,9 @@ export type BookRowProps = {
   raised?: boolean;
   /**
    * Which files the book has, as muted 12 px marks on the right edge in place of the chevron (the Library's list,
-   * LibraryList.dc.html); read out after the status line.
+   * LibraryList.dc.html); read out after the status line, by their own name ("Reading sync ready") or the kind's.
    */
-  edgeMarks?: FileKind[];
+  edgeMarks?: { kind: FileKind; name?: string }[];
 };
 
 export function BookRow({ title, status, lead, cover, number, marks = [], progress, onClick, action, failed, trailing, coverIcon, raised, edgeMarks }: BookRowProps) {
@@ -96,9 +96,9 @@ export function BookRow({ title, status, lead, cover, number, marks = [], progre
       )}
       {edgeMarks && (
         <span className="part-book-row-edge-marks">
-          {edgeMarks.map((kind, index) => (
-            <span key={`${kind}-${index}`} id={`${id}-edge-${index}`}>
-              <FileIcon kind={kind} size={12} name={fileKindName[kind]} />
+          {edgeMarks.map((mark, index) => (
+            <span key={`${mark.kind}-${index}`} id={`${id}-edge-${index}`}>
+              <FileIcon kind={mark.kind} size={12} name={mark.name ?? fileKindName[mark.kind]} />
             </span>
           ))}
         </span>

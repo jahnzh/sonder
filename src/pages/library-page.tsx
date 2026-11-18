@@ -326,7 +326,7 @@ function WorkTile({ work, onOpen }: { work: LibraryWork; onOpen: () => void }) {
  */
 function WorkRow({ work, onOpen }: { work: LibraryWork; onOpen: () => void }) {
   const marks = coverMarks(work);
-  const kinds: FileKind[] = marks.kind === "downloading" ? ["audiobook"] : marks.marks.map((mark) => MARK_KIND[mark]);
+  const kinds = marks.kind === "downloading" ? [{ kind: "audiobook" as const }] : marks.marks.map((mark) => ({ kind: MARK_KIND[mark], name: COVER_MARK_NAMES[mark] }));
   return <BookRow title={work.title} status={listRowLine(work)} cover={work.cover || null} edgeMarks={kinds} onClick={onOpen} />;
 }
 
