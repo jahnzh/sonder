@@ -77,6 +77,14 @@ async function playAndPause(page: Page, title: string) {
 const screen = (page: Page) => page.getByRole("dialog", { name: "Now playing", exact: true });
 const faces = (page: Page) => screen(page).getByRole("radiogroup", { name: "Listen or read", exact: true });
 const listen = (page: Page) => page.locator(".now-playing-listen");
+/** The Read face's controls, shown by a tap in the middle of the text; at rest they are hidden. */
+async function showReadControls(page: Page) {
+  const topbar = page.locator(".now-playing-screen .reader-topbar");
+  if (await topbar.isVisible()) return;
+  const text = (await page.locator(".now-playing-screen .reader-viewport").boundingBox())!;
+  await page.mouse.click(text.x + text.width / 2, text.y + text.height / 2);
+  await expect(topbar).toBeVisible();
+}
 const hashOf = (page: Page) => page.evaluate(() => location.hash);
 const historyLength = (page: Page) => page.evaluate(() => history.length);
 
@@ -100,8 +108,7 @@ test("the first opening is Listen; Read is remembered; a face switch replaces th
   expect(await historyLength(page)).toBe(before + 1);
   await expect(page.frameLocator(".now-playing-screen .reader-viewport iframe").getByText("Alice was beginning", { exact: false })).toBeVisible();
   // The face control is in the reader's head, with the controls shown (a tap in the middle of the text).
-  const text = (await page.locator(".now-playing-screen .reader-viewport").boundingBox())!;
-  await page.mouse.click(text.x + text.width / 2, text.y + text.height / 2);
+  await showReadControls(page);
   await expect(page.locator(".now-playing-screen .reader-topbar").getByRole("radiogroup", { name: "Listen or read", exact: true })).toHaveCount(1);
   // Back closes Now playing, back to the Library it was opened over.
   await page.goBack();
@@ -110,6 +117,8 @@ test("the first opening is Listen; Read is remembered; a face switch replaces th
   // Reopening opens the face last shown: Read.
   await page.locator(".dock-book").click();
   await expect.poll(() => hashOf(page)).toBe(`#read/${encodeURIComponent(workId)}`);
+  await expect(page.locator(".now-playing-screen .reader-viewport iframe")).toBeVisible();
+  await showReadControls(page);
   await expect(faces(page).getByRole("radio", { name: "Read", exact: true })).toHaveAttribute("aria-checked", "true");
   // The last face is kept on this device for the account and the work; nothing else holds it.
   expect(await page.evaluate((workId) => localStorage.getItem(`face:${workId}`), workId)).toBe("read");
