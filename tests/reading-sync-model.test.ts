@@ -354,6 +354,19 @@ test("someone who is not the administrator: no buttons, no worker names, no Prep
   assert.deepEqual(again.buttons, []);
   // Not one worker's name anywhere in what the page shows.
   for (const model of [preparing, stopped, ready, again]) assert.doesNotMatch(JSON.stringify(model), /wsl|lisa/);
+  // No Details (spec #537: the pair, the status and the passages only), in every state that has it for the administrator.
+  const rebuild = (status: ListedJob["status"], extra: Partial<NonNullable<ListedJob["rebuild"]>> = {}) =>
+    job("ready", { coverage: 0.96, rebuild: { status, progress: 0.2, engine: BOOK_ENGINE, error: null, updatedAt: AT, ...extra } });
+  const states = [
+    job("processing"), job("paused"), job("error"), job("ready", { coverage: 1 }), job("partial", { coverage: 0.6 }), job("partial", { outcome: "unsynced" }),
+    rebuild("paused"), rebuild("error"), rebuild("error", { outcome: "rejected", coverage: 0.4 }),
+  ];
+  for (const listed of states) {
+    assert.equal(page(listed).details, true, `${listed.status}: the administrator's Details`);
+    assert.equal(page(listed, facts).details, false, `${listed.status}: no Details`);
+  }
+  // Prepare again running has no Details for anyone (board ReadingSyncAgain).
+  assert.equal(page(rebuild("processing")).details, false);
 });
 
 test("no connection: the line from the stored work, No connection, nothing to act on", () => {

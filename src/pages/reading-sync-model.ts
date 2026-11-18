@@ -302,8 +302,16 @@ export function needsPoolCount(job: ListedJob | null | undefined): boolean {
   return (job.status === "ready" || job.status === "partial") && job.rebuild?.status === "error" && job.rebuild.outcome !== "rejected";
 }
 
-/** What the page shows for the pair. */
+/**
+ * What the page shows for the pair. Someone who is not the administrator sees the pair, the status and the passages:
+ * no buttons, no worker names and no Details (spec #537 "The page").
+ */
 export function readingSyncPage(input: SyncPageFacts): SyncPageModel {
+  const model = pageModel(input);
+  return input.admin || !model.details ? model : { ...model, details: false };
+}
+
+function pageModel(input: SyncPageFacts): SyncPageModel {
   const { admin, job, now } = input;
   const none: Omit<SyncPageModel, "state" | "blocks"> = { buttons: [], note: null, prepareAgainRow: null, workers: null, details: false, passages: null };
   const only = (buttons: SyncButton[]) => (admin ? buttons : []);
