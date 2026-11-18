@@ -471,7 +471,7 @@ test("the device database's upgrade keeps places, downloads, favourites and posi
     return result;
   });
   expect(after).toEqual({
-    version: 70,
+    version: 80,
     // An older tab's own list is left as it was.
     favorites: [secondEdition, placeholder, "edition-the-device-does-not-know"],
     workFavorites: [left.workId, ebookOnly.workId],

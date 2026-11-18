@@ -93,11 +93,10 @@ test("F does nothing behind Playback options, a dialog above the reader or with 
  for(const key of ["Control+f","Alt+f","Meta+f","Control+Shift+F"])await page.keyboard.press(key);
  await stillAway(page);
  const options=page.getByRole("region",{name:"Playback options"});
- // The reader's More opens Now Playing's Playback options sheet; no reader panel is open with it.
- await showControls(page,room);
- await room.locator(".reader-topbar").getByRole("button",{name:"More",exact:true}).click();
+ // Now Playing's Playback options sheet opens from the dialog heading's ⋯ (the reader's head has no More, #592);
+ // a DOM click, as the heading is clipped under the reader (#22).
+ await page.locator(".playback-menu-trigger").evaluate((el:HTMLButtonElement)=>el.click());
  await expect(options).toBeVisible();
- await expect(room.locator(".reader-panel")).toHaveCount(0);
  await page.keyboard.press("f");
  await stillAway(page);
  // Dialogs without a text field focus their container, so the key reaches the window while the reader is mounted.

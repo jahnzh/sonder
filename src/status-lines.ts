@@ -281,6 +281,18 @@ export function keepFailureLine({ failure, missing, audio }: KeepFailureFacts): 
 /** Under Storage on This device when a kept book's save failed because the device is full (board KeepFull.dc.html). */
 export const DEVICE_FULL_NOTE = "This device is full. Remove a book here or free space on the phone, then Retry.";
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/**
+ * Under Storage on This device, muted, while a device whose browser cleared Sonder's files saves its kept books
+ * again (#554, board KeepCleared.dc.html): "The browser cleared Sonder’s files on 14 Nov. …". The day is the day the
+ * device noticed, in its own time zone.
+ */
+export function deviceClearedNote(noticedAt: number): string {
+  const day = new Date(noticedAt);
+  return `The browser cleared Sonder’s files on ${day.getDate()} ${MONTHS[day.getMonth()]}. The kept books are being saved again.`;
+}
+
 /** A book of a series the user has not added. */
 export const NOT_IN_LIBRARY_LINE = "Not in your library";
 /** A queue that is switched off. */
@@ -478,6 +490,9 @@ export const SYNC_STATE_LINES = {
   notAvailable: "Not available",
   notPrepared: "Not prepared",
 } as const;
+
+/** A page shows what this device kept because the server cannot be reached (the Series page's card, #568). */
+export const NO_CONNECTION_LINE = "No connection";
 
 /** The line under a state's name. */
 export const SYNC_STATE_NOTES = {

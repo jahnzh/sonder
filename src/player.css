@@ -315,8 +315,6 @@
 .reader-display-options input { width: 62px; min-height: 36px; padding: 5px; }
 .reader-follow-toggle { margin-left: auto; min-height: 36px; padding: 5px 8px; font-size: 11px; }
 .reader-follow-toggle.selected { color: var(--accent); }
-.reader-sync-state { color: var(--muted); font-size: 11px; line-height: 1.4; padding: 4px 0; flex-shrink: 0; }
-.inline-reader .reader-panel { top: 40px; }
 .inline-reader .reader-listen-controls { margin-top: 4px; padding-top: 4px; }
 .inline-reader .reader-listen-controls .button { min-height: 34px; font-size: 11px; }
 .inline-reader .reader-navigation { padding-top: 5px; }
@@ -398,7 +396,6 @@
 .player-transport-timer .player-text-button { min-width: 44px; min-height: 44px; }
 .player-transport-timer .option-menu { left: auto; right: 0; transform: none; bottom: 48px; }
 .with-reader .reader-viewport { min-height: 0; }
-.with-reader .reader-panel { top: 0; }
 @media (max-width: 650px) {
   .playback-options-panel { left: 8px; right: 8px; width: auto; top: 58px; bottom: 120px; padding: 12px; }
 }

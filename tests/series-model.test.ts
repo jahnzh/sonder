@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { NEW_MARK, seriesPageModel, withoutNew, type SeriesPageSeries, type SeriesPageWork } from "../src/pages/series-model.ts";
 import {
   NEEDS_ADMIN_LINE,
+  NO_CONNECTION_LINE,
   NOT_IN_LIBRARY_LINE,
   NOT_RELEASED_LINE,
   SERIES_SEARCH_FAILED_LINE,
@@ -362,4 +363,56 @@ test("no card without new works; Dismiss clears the card and the marks", () => {
   ]);
   // The answer itself is not changed.
   assert.equal(answer.works[0].new, true);
+});
+
+// #568 (spec #560 "Without a connection"): the series this device kept, shown without a connection.
+test("no connection: the No connection card where the refresh error would stand; Add, Retry, Dismiss and Remove series off", () => {
+  const works = [
+    book(1, 1, { title: "In progress" }),
+    book(2, 2, { title: "Failed search", acquisition: { audio: null, ebook: failed("ebook") } }),
+    book(3, 3, { title: "Missing", workId: null, new: true }),
+    book(4, null, { title: "Companion", workId: null }),
+  ];
+  const library = libraryOf(
+    libraryWork("work-1", { recordings: [recording("work-1-rec", place("work-1-rec", 2, 100))] }),
+    libraryWork("work-2"),
+  );
+  const answer = series(works, { refreshError: "Hardcover could not be reached. Showing the last saved list." });
+
+  const online = seriesPageModel(answer, facts(library));
+  assert.equal(online.noConnection, null);
+  assert.equal(online.refreshError, "Hardcover could not be reached. Showing the last saved list.");
+  assert.equal(online.removeOff, false);
+  assert.equal(online.dismissOff, false);
+  assert.deepEqual([...online.books, ...online.related].map((row) => [row.title, row.action?.kind ?? null, row.actionOff]), [
+    ["In progress", "play", false],
+    ["Failed search", "retry-search", false],
+    ["Missing", "add", false],
+    ["Companion", "add", false],
+  ]);
+
+  const offline = seriesPageModel(answer, { ...facts(library), offline: true });
+  // The card: "No connection", and no refresh error card (the stored answer's error is not this read's).
+  assert.equal(offline.noConnection, NO_CONNECTION_LINE);
+  assert.equal(NO_CONNECTION_LINE, "No connection");
+  assert.equal(offline.refreshError, null);
+  // Buttons off: Add, Retry, Dismiss and Remove series; the play button is not a request to the server and stays on.
+  assert.equal(offline.removeOff, true);
+  assert.equal(offline.dismissOff, true);
+  assert.deepEqual([...offline.books, ...offline.related].map((row) => [row.title, row.action?.kind ?? null, row.actionOff]), [
+    ["In progress", "play", false],
+    ["Failed search", "retry-search", true],
+    ["Missing", "add", true],
+    ["Companion", "add", true],
+  ]);
+  // The books' lines are the same as with a connection, from the library by work on the device.
+  assert.deepEqual(
+    [...offline.books, ...offline.related].map((row) => row.line),
+    [...online.books, ...online.related].map((row) => row.line),
+  );
+  assert.equal(offline.intro, online.intro);
+  assert.deepEqual(offline.newCard, online.newCard);
+  // A row without a button keeps its chevron; nothing is off that has no button.
+  const plain = seriesPageModel(series([book(5, 1)]), { ...facts(libraryOf(libraryWork("work-5", { recordings: [] }))), offline: true });
+  assert.deepEqual(plain.books.map((row) => [row.chevron, row.actionOff]), [[true, false]]);
 });

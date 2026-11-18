@@ -14,9 +14,9 @@ async function showControls(page: Page) {
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await expect(room.locator(".reader-topbar")).toBeVisible();
 }
-async function openMore(page: Page) {
+async function openChapters(page: Page) {
   await showControls(page);
-  await page.locator(".reader-room:not(.inline-reader) .reader-topbar").getByRole("button", { name: "More", exact: true }).click();
+  await page.locator(".reader-room:not(.inline-reader) .reader-player").getByRole("button", { name: "Chapters", exact: true }).click();
 }
 
 test("appearance presets and custom colors persist without interrupting audio", async ({
@@ -135,22 +135,21 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   const checkpoint = (
     await (await page.request.get(`/api/reader/${id}`)).json()
   ).checkpoint;
-  await openMore(page);
-  const more = page.locator(".reader-room:not(.inline-reader) .reader-more");
-  await expect(more.getByRole("button", { name: "Read from audio" })).toBeVisible();
-  await expect(more.getByRole("button", { name: "Listen from here" })).toBeVisible();
-  await page
-    .getByRole("button", { name: "Close reader options", exact: true })
-    .click();
+  // The More sheet is gone (#592): Read from audio is the foot's Back to narration; Listen from here is the
+  // long-press further down.
+  await showControls(page);
+  const reader = page.locator(".reader-room:not(.inline-reader)");
+  await expect(reader.locator(".reader-topbar").getByRole("button", { name: "More", exact: true })).toHaveCount(0);
+  await expect(reader.locator(".reader-player").getByRole("button", { name: "Back to narration", exact: true })).toBeVisible();
   await page
     .getByRole("button", { name: "Bookmark current sentence", exact: true })
     .click();
   await expect(
     page.getByRole("button", { name: "Remove bookmark from current sentence", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
-  // More's Bookmarks opens the Bookmarks page (#590), which lists the bookmark; Back returns to the reader.
-  await openMore(page);
-  await more.getByRole("button", { name: "Bookmarks", exact: true }).click();
+  // Chapters' Bookmarks segment opens the Bookmarks page (#590), which lists the bookmark; Back returns to the reader.
+  await openChapters(page);
+  await page.getByRole("radio", { name: "Bookmarks", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Bookmarks", exact: true })).toBeVisible();
   await expect(page.getByRole("list", { name: "Bookmarks", exact: true }).getByRole("listitem")).toHaveCount(1);
   await page.getByRole("button", { name: "Back to the book", exact: true }).click();
@@ -277,18 +276,15 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await expect(
     page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").locator("body"),
   ).toBeVisible();
-  await openMore(page);
+  await showControls(page);
   await expect(page.getByRole("button", { name: "Save ebook offline", exact: true })).toHaveCount(0);
-  await page
-    .getByRole("button", { name: "Close reader options", exact: true })
-    .click();
-  // The reading sync's pair is still the chosen recording (#543): More › Reading sync opens the page, whose Recording
-  // row names it from the stored work.
-  await openMore(page);
-  await page.locator(".reader-room:not(.inline-reader) .reader-more").getByRole("button", { name: "Reading sync", exact: true }).click();
-  await page.locator(".reader-room:not(.inline-reader) .reader-panel").getByRole("button", { name: /^Reading sync/ }).click();
+  // The reading sync's pair is still the chosen recording (#543): the Book page's Reading sync row opens the page,
+  // whose Recording row names it from the stored work.
+  await page.evaluate((hash) => { location.hash = hash; }, `#book/${encodeURIComponent(audioBook.workId)}`);
+  await page.getByRole("region", { name: "Book", exact: true }).getByRole("button", { name: /^Reading sync/ }).click();
   await expect(sync).toHaveAttribute("data-state", "offline");
   await expect(sync.getByRole("button", { name: /^Recording/ })).toHaveText(`Recording${audioBook.narrator?.trim() || "Unknown narrator"}`);
+  await page.goBack();
   await page.goBack();
   await expect(
     page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").locator("body"),

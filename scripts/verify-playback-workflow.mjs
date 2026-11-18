@@ -5,7 +5,7 @@ import { chromium, expect as baseExpect } from "@playwright/test";
 import { defaultAppearance } from "../src/appearance.ts";
 import { createReaderControls, waitForBox } from "./live-reader-controls.mjs";
 import { verifyBaseURL } from "./live-check-target.mjs";
-import { requestFrom, NoSuitableRecording, NO_SUITABLE_RECORDING_EXIT } from "./live-check-recording.mjs";
+import { requestFrom, getJSON, NoSuitableRecording, NO_SUITABLE_RECORDING_EXIT } from "./live-check-recording.mjs";
 import { selectPlaybackRecording, PLAYBACK_MIN_CHAPTER_SECONDS } from "./live-check-playback.mjs";
 const expect=baseExpect.configure({timeout:20000});
 process.loadEnvFile(".env");
@@ -46,42 +46,49 @@ try {
     return a && {position:a.currentTime,paused:a.paused,duration:a.duration,src:a.src,ready:a.readyState,error:a.error?.message,sourceLabel:document.querySelector(".player-dock .playback-source")?.textContent};
   });
   readAudio=actual;
-  await page.goto("/");
-  await page.getByRole("button",{name:`About ${book.title}`,exact:true}).first().click();
-  const detail=page.getByRole("dialog",{name:"Book details",exact:true});
-  const editions=detail.getByRole("combobox",{name:"Audiobook release",exact:true});
-  if(await editions.count()) await editions.selectOption(book.id);
+  // The Book page (#532) replaced the book dialog: Listen plays the book's chosen recording.
+  await page.goto(`/#book/${encodeURIComponent(book.workId)}`);
+  const bookPage=page.getByRole("region",{name:"Book",exact:true});
+  await expect(bookPage).toBeVisible();
   // The book's Hardcover row (shown when this account connected Hardcover) opens the Hardcover page (#529), whose
   // Open on Hardcover is the canonical link. Only read: nothing on the page is changed.
-  const hardcoverRow=detail.getByRole("button",{name:/^Hardcover /});
+  const hardcoverRow=bookPage.getByRole("button",{name:/^Hardcover /});
   if(book.hardcover?.slug && await hardcoverRow.count()){
     await hardcoverRow.click();
     const link=page.getByRole("link",{name:"Open on Hardcover",exact:true});
     await expect(link).toHaveAttribute("href",`https://hardcover.app/books/${encodeURIComponent(book.hardcover.slug)}`);
     check("canonical Hardcover link",{href:await link.getAttribute("href")});
     await page.getByRole("button",{name:"Back to the book",exact:true}).click();
-    await page.getByRole("button",{name:`About ${book.title}`,exact:true}).first().click();
-    if(await editions.count()) await editions.selectOption(book.id);
+    await expect(bookPage).toBeVisible();
   }
-  await detail.getByRole("button",{name:/^(Continue listening|Start listening)$/}).click();
+  await bookPage.getByRole("button",{name:"Listen",exact:true}).click();
   await expect.poll(async()=>{const a=await actual();return !!a && a.ready>=2 && !a.paused && !a.error;},{timeout:30000}).toBe(true);
-  await detail.getByRole("button",{name:"Pause",exact:true}).click();
-  await detail.getByRole("button",{name:"Close dialog",exact:true}).click();
+  // The chosen recording is the one this check selected: media addresses name the track (/api/media/<track id>).
+  const playing=decodeURIComponent((await actual()).src);
+  if(!book.tracks.some(track=>playing.includes(track.id))) throw new Error(`Listen played ${playing}, not the selected recording ${pick.recordingId}: choose it on the book's Audiobook page or pass it as the recording id`);
+  // Listen opens Now playing over the dock: pause there.
+  await page.getByRole("dialog",{name:"Now playing",exact:true}).getByRole("button",{name:/^Pause( narration)?$/}).filter({visible:true}).first().click();
+  await expect.poll(async()=>(await actual()).paused).toBe(true);
   check("real audio decodes",{duration:(await actual()).duration});
-  await page.locator(".dock-book").click();
+  const nowPlaying=page.getByRole("dialog",{name:"Now playing",exact:true});
+  const openNowPlaying=async()=>{if(!(await nowPlaying.isVisible())) await page.locator(".dock-book").click();await expect(nowPlaying).toBeVisible();};
+  await openNowPlaying();
   await expect(page.getByText("Loading ebook…",{exact:true})).toBeHidden();
   const room=page.locator(".inline-reader");
   if(hasEbook) await expect(room.locator(".reader-viewport iframe")).toBeVisible();
   // The reader's controls toggle on a tap and reset when it remounts; every use of them goes through this helper (#413).
   const controls=createReaderControls({page,room});
+  // Plays from is on the Audiobook page (#530), opened by Now playing's Audiobook. With an ebook that button is in the
+  // dialog's own Playback options (the reader's head has no More, #592); a DOM click, as the dialog's heading is
+  // clipped under the reader (#22). The page stays on the same address between rounds, so the sources are read here.
+  const manager=page.getByRole("region",{name:"Audiobook",exact:true});
+  const playsFrom=manager.getByRole("button",{name:/^Plays from: /});
   const openSources=async()=>{
-    if(await room.count()) await controls.click(room.locator(".reader-topbar").getByRole("button",{name:"More",exact:true}),"More");
-    else if(await page.getByRole("button",{name:"Playback options",exact:true}).isVisible()) await page.getByRole("button",{name:"Playback options",exact:true}).click();
-    const refreshed=page.waitForResponse(response=>new URL(response.url()).pathname===`/api/recordings/${encodeURIComponent(book.recordingId)}/sources`&&response.request().method()==="GET"&&response.ok());
-    await page.getByRole("button",{name:"Versions & sources",exact:true}).click();
-    const state=await (await refreshed).json();
-    await expect(page.getByRole("dialog",{name:"Versions & sources",exact:true}).getByRole("combobox",{name:"Playback source choice",exact:true})).toBeEnabled();
-    return state;
+    if(await room.count()) await page.locator(".playback-menu-trigger").evaluate(el=>el.click());
+    await page.getByRole("button",{name:"Audiobook",exact:true}).click();
+    await expect(page.getByRole("dialog",{name:"Now playing",exact:true})).toBeHidden();
+    await expect(playsFrom).toBeEnabled();
+    return getJSON(requestFrom(context),`/api/recordings/${encodeURIComponent(book.recordingId)}/sources`,body=>Array.isArray(body?.tracks)?null:"expected {tracks: [...]}");
   };
   const slider=page.getByRole("slider",{name:"Seek in chapter",exact:true});
   await controls.show(slider,"Seek in chapter slider");
@@ -129,22 +136,21 @@ try {
   check("desktop timeline expands",{width:desktop.width});
   await page.screenshot({path:"artifacts/live-playback-chapter-desktop.png",fullPage:true});
   const sourceState=await openSources();
-  const manager=page.getByRole("dialog",{name:"Versions & sources",exact:true});
-  const source=manager.getByRole("combobox",{name:"Playback source choice",exact:true});
-  await expect(source).toBeEnabled();
   const unchanged=(await actual()).position;
+  const sourceNames={original:"Original stream",server:"Server copy"};
   for(const mode of ["original","server"]){
-    await expect(source).toBeEnabled();
-    const option=source.locator(`option[value="${mode}"]`);
-    // The dialog can render cached options before its asynchronous refresh settles.
     const playing=await actual();
     const availability=sourceState.tracks.find(track=>playing.src.includes(encodeURIComponent(track.id))) || sourceState.tracks[0];
     if(!availability?.[mode] || sourceState.faults?.[mode])continue;
-    await expect(option).toBeEnabled();
     report.sourceMode=mode;
-    await source.selectOption(mode);
-    await manager.getByRole("button",{name:"Apply source",exact:true}).click();
-    await expect(source).toHaveValue(mode);
+    await expect(playsFrom).toBeEnabled();
+    await playsFrom.click();
+    const picker=page.getByRole("dialog",{name:"Plays from",exact:true});
+    const option=picker.getByRole("radio",{name:sourceNames[mode],exact:true});
+    await expect(option).toBeEnabled();
+    await option.click();
+    await expect(picker).toBeHidden();
+    await expect(manager.getByRole("button",{name:`Plays from: ${sourceNames[mode]}`,exact:true})).toBeVisible();
     // Selecting the source already in use need not reload the audio URL.
     // Assert the reported delivery source and decoded audio instead of URL shape.
     await expect.poll(async()=>{
@@ -154,19 +160,17 @@ try {
     },{timeout:40000}).toBe(true);
     await expect.poll(async()=>(await actual()).position).toBeCloseTo(unchanged,0);
     expect((await actual()).paused).toBe(true);
-    await manager.getByRole("button",{name:"Close dialog",exact:true}).click();
     await page.locator(".player-dock").getByRole("button",{name:"Play",exact:true}).click();
     await expect.poll(async()=>{const a=await actual();return !a.paused&&a.position>unchanged;},{timeout:30000}).toBe(true);
     await page.locator(".player-dock").getByRole("button",{name:"Pause",exact:true}).click();
     // Return to the same time so both delivery modes are checked against it.
-    await page.locator(".dock-book").click();
+    await openNowPlaying();
     await controls.show(slider,"Seek in chapter slider");
     await slider.fill(String(Math.round(preview)));
     await openSources();
     check("delivery source plays",{source:mode});
   }
   await page.screenshot({path:"artifacts/live-playback-versions-desktop.png",fullPage:true});
-  await manager.getByRole("button",{name:"Close dialog",exact:true}).click();
   await page.setViewportSize({width:390,height:844});
   const openReader=page.getByRole("button",{name:"Open ebook reader",exact:true});
   if(hasEbook){
@@ -177,9 +181,10 @@ try {
     check("compact player opens linked EPUB");
     await controls.click(room.locator(".reader-topbar").getByRole("button",{name:"Close reader",exact:true}),"Close reader");
   } else check("no linked EPUB available");
+  // The player's cover opens the Book page (#532).
   await page.getByRole("button",{name:`Open title page for ${book.title}`,exact:true}).click();
-  await expect(detail).toBeVisible();
-  check("compact player cover opens title page");
+  await expect(bookPage).toBeVisible();
+  check("compact player cover opens the Book page");
   expect(report.errors).toEqual([]);
   report.ok=true;
 } catch(error) {

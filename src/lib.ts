@@ -4,6 +4,7 @@ import { dropPosition, peekPosition, recentPositions, recordPosition, serialQueu
 import type { Book, LibraryWork, Progress, Download, DownloadPart, Track } from "./types";
 import { DEVICE_SAVE_KEY_PREFIX, deviceSaveKey, readDeviceSaveRecord, type DeviceSaveRecord } from "./device-saves";
 import type { KeepEntry } from "./keep";
+import type { StoredSeriesAnswer } from "./series-store";
 import { isKeptReaderFile, type ReaderFileRecord } from "./ebook-keep";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -104,6 +105,11 @@ export class SonderDB extends Dexie {
   positionHistory!: Table<PositionHistory, string>;
   /** Keep on this device, this account's choices on this device (#550, ADR 0021): one record per work. */
   keep!: Table<KeepEntry, string>;
+  /**
+   * The last answer of `GET /api/series` and of each saved series opened on this device (#568, spec #560 "Without a
+   * connection"): the Library's Series chip and the Series page show it without a connection.
+   */
+  seriesAnswers!: Table<StoredSeriesAnswer, string>;
   downloads!: Table<Download, string>;
   preferences!: Table<{ key: string; value: unknown }, string>;
   downloadParts!: Table<DownloadPart, string>;
@@ -128,9 +134,11 @@ export class SonderDB extends Dexie {
     this.version(5).stores({ works: "workId" });
     // Additive: a new table, nothing of the earlier ones changes (places, downloads, favourites, history stay).
     this.version(6).stores({ keep: "workId" });
-    // Additive: favourites by work (#577). Version 7 maps the favourite edition ids to their works into a new
+    // Additive: a new table for the saved series without a connection (#568); every earlier table and its rows stay.
+    this.version(7).stores({ seriesAnswers: "key" });
+    // Additive: favourites by work (#577). Version 8 maps the favourite edition ids to their works into a new
     // preference; the old one stays for an older tab, and no table changes.
-    this.version(7).stores({}).upgrade((tx) => upgradeFavoritesToWorks(tx.table("preferences"), tx.table("books")));
+    this.version(8).stores({}).upgrade((tx) => upgradeFavoritesToWorks(tx.table("preferences"), tx.table("books")));
   }
 }
 const sharedDB = new SonderDB();

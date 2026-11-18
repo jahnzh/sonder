@@ -196,8 +196,8 @@ The state where the reader shows something other than the narrated sentence beca
 _Avoid_: Off narration, unlinked
 
 **Back to narration**:
-The action that returns a paged-away reader to the narrated sentence and resumes following.
-_Avoid_: Relink, resync
+The action that returns a paged-away reader to the narrated sentence and resumes following. With no narrated sentence at the position, the administrator's Back to narration locates the passage from the audio instead (#592).
+_Avoid_: Relink, resync, Read from audio
 
 **Bookmark**:
 A saved sentence in an ebook edition: the narrated sentence while following, otherwise the first sentence on screen.

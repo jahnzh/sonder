@@ -163,16 +163,10 @@ async function openPlaybackOptions(page: Page) {
   await expect(dialog).toBeVisible();
   const options = page.locator(".playback-options-panel");
   if (!(await options.isVisible())) {
-    // With the reader, the dialog heading ⋯ (aria-label "Playback options") is clipped under
-    // the reader chrome (#22); the reader's top-bar ⋯ (aria-label "More") opens the same panel.
-    // Never use the Chapters button. DOM click avoids the clipped heading's hit-target.
-    const inline = dialog.locator(".inline-reader");
-    if (await inline.count()) {
-      await revealReaderControls(page);
-      await inline.getByRole("button", { name: "More", exact: true }).evaluate((el: HTMLButtonElement) => el.click());
-    } else {
-      await dialog.locator(".playback-menu-trigger").evaluate((el: HTMLButtonElement) => el.click());
-    }
+    // The dialog heading ⋯ (aria-label "Playback options"); with the reader it is clipped under the reader chrome
+    // (#22), and the reader's head has no More since #592. Never use the Chapters button. DOM click avoids the
+    // clipped heading's hit-target.
+    await dialog.locator(".playback-menu-trigger").evaluate((el: HTMLButtonElement) => el.click());
   }
   await expect(options).toBeVisible();
   return options;
