@@ -116,7 +116,7 @@ async function activity() {
 test("the owner's stuck download names why, from the client, and offers Cancel", async () => {
   const byId = await activity();
   const stuck = byId["acquisition:b1a70445"];
-  assert.deepEqual(stuck.stuck, { reason: "No seeders" });
+  assert.deepEqual(stuck.stuck, { reason: "No seeders", known: true });
   assert.deepEqual(stuck.actions, ["cancel"]);
   assert.equal(stuck.attention, true);
   assert.equal(JSON.stringify(stuck).includes(STUCK), false, "the torrent's hash is not sent to the page");

@@ -80,12 +80,12 @@ function items(rows: ReturnType<typeof row>[], probe: AcquisitionProbe | null, f
 test("a stuck download names why when the client knows and offers Cancel; Retry stays with the failed download", () => {
   const byId = items([row("peers")], { health: health(), torrents: states(torrent({ peersConnected: 0, peersSendingToUs: 0, trackerStats: [] })) });
   const stuck = byId["acquisition:peers"];
-  assert.deepEqual(stuck.stuck, { reason: "No peers" });
+  assert.deepEqual(stuck.stuck, { reason: "No peers", known: true });
   assert.equal(stuck.attention, true);
   assert.deepEqual(stuck.actions, ["cancel"], "re-adding a torrent the client has mends nothing: Cancel only");
 
   const gone = items([row("gone")], { health: health(), torrents: states() })["acquisition:gone"];
-  assert.deepEqual(gone.stuck, { reason: "Not in the torrent client" });
+  assert.deepEqual(gone.stuck, { reason: "Not in the torrent client", known: true });
   assert.deepEqual(gone.actions, ["cancel"], "the queue marks it failed on its next check, which offers Retry");
 });
 

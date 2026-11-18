@@ -94,7 +94,7 @@ export function buildActivity(input: ActivityInput): ActivityResponse {
     else if (source.stuck) stuck = source.stuck(draft, now, threshold);
     else if (item.state === "running" && now - changedAt > threshold) {
       // The source names why when it knows (#716); otherwise the line says how long nothing changed.
-      stuck = { reason: stuckReason || `No change for ${formatAge(now - changedAt)}` };
+      stuck = stuckReason ? { reason: stuckReason, known: true } : { reason: `No change for ${formatAge(now - changedAt)}` };
       stalled = true;
     }
     const offered = [...(actions ?? [])];

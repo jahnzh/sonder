@@ -239,7 +239,10 @@ function serverEntry(item: ActivityItem, now: number): Entry | null {
   else line = movingLine(item);
   // A finished series search for the audiobook has no line: the download it starts takes over the row.
   if (line === null && entry === "series-search" && item.state === "done") return null;
-  if (!notBook && item.stuck) line = withReason(line ?? item.detail ?? "", item.stuck.reason);
+  // A cause the source named leads the line (#716: "No peers · Downloading to server · 0%"), so a row with a button
+  // still shows it on a phone; "No change for …" and "Blocked by …" follow the line as before.
+  if (!notBook && item.stuck)
+    line = item.stuck.known ? withReason(item.stuck.reason, line ?? item.detail) : withReason(line ?? item.detail ?? "", item.stuck.reason);
   const action = firstAction(item.actions);
   const syncOpen = entry === "reading-sync" && item.state !== "done";
   return {

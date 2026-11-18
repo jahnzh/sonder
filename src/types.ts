@@ -379,7 +379,11 @@ export type ActivityItem = {
   permanent: boolean;
   /** What the administrator can do with this item now. An older client ignores an action it does not know (#515). */
   actions: ActivityItemAction[];
-  stuck: { reason: string } | null;
+  /**
+   * Why the item does not move. `known` is set when the source named the cause (#716: "No peers", from the torrent
+   * client) rather than "No change for …" or "Blocked by …"; Now then leads the line with it, so a narrow row shows it.
+   */
+  stuck: { reason: string; known?: true } | null;
   /** The background process this item cannot move without, while that process is down. */
   blockedBy: string | null;
   /** The work the item concerns; null for an acquisition with no work yet, a Hardcover queue and a backup (#514). */
