@@ -141,6 +141,8 @@ const desktopProjects = [
               /(^|\/)keep-off\.spec\.ts$/,
               // Paste a magnet link for the book, over Get audiobook (#606).
               /(^|\/)get-magnet\.spec\.ts$/,
+              // The saved series without a connection (#568).
+              /(^|\/)series-offline\.spec\.ts$/,
               // More › Reading sync opens the Reading sync page; the specs that opened the card (#543).
               /(^|\/)(reader-sync-row|chapterless-sync|one-reading-view)\.spec\.ts$/,
               // The More sheet goes; Back to narration locates the passage without a map (#592).

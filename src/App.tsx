@@ -306,12 +306,14 @@ function LibraryApp({
   const [view, setView] = useState<"grid" | "list">("grid");
   const [favorites, setFavorites] = useState<string[]>([]);
   const [showFavorites, setShowFavorites] = useState(false);
+  const [online, setOnline] = useState(navigator.onLine);
   const [seriesTarget, setSeriesTarget] = useState<SeriesTarget | null>(null);
   const [seriesRevision, setSeriesRevision] = useState(0);
   // The Library's Series chip (#567): the saved series, read again whenever the Library or a series is shown.
   const savedSeries = useSavedSeries(
     seriesRevision,
     address.route.name === "library" ? "library" : address.route.name === "series" || address.route.name === "series-add" ? `series` : "other",
+    online,
   );
   const seriesRouteId = pageRoute.name === "series" || pageRoute.name === "series-add" ? pageRoute.id : null;
   // A desktop shows a saved series beside the chip's list (DesktopSeries.dc.html); a series that is not saved stays one
@@ -337,7 +339,6 @@ function LibraryApp({
     Record<string, { progress: number; chapter: number; total: number; loaded?: number; size?: number }>
   >({});
   const [saveRecords, setSaveRecords] = useState<DeviceSaveRecord[]>([]);
-  const [online, setOnline] = useState(navigator.onLine);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [installPrompt, setInstallPrompt] = useState<
