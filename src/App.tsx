@@ -71,6 +71,7 @@ import { Dialog } from "./components/ui/dialog";
 import { SignIn, type Account } from "./components/SignIn";
 import { Join } from "./components/Join";
 import { PlayerDock } from "./components/Player";
+import { NowPlaying } from "./pages/now-playing";
 import { AppUpdate } from "./components/AppUpdate";
 import { type Page, Mark, Empty } from "./pages/shared";
 import { LibraryPage } from "./pages/library-page";
@@ -283,8 +284,10 @@ function LibraryApp({
   const getSheet = address.route.name === "get" && address.route.kind === "audiobook" ? address.route.workId : magnetSheet;
   // The Get ebook sheet (#604) likewise.
   const getEbookSheet = address.route.name === "get" && address.route.kind === "ebook" ? address.route.workId : null;
+  // Now playing (#593) covers the page it was opened over too; opened by a link, its Book page.
+  const nowPlaying = address.route.name === "listen" || address.route.name === "read";
   const pageRoute: Route =
-    getSheet || getEbookSheet
+    getSheet || getEbookSheet || nowPlaying
       ? (coveredPage() ?? (magnetSheet ? { name: "book", workId: magnetSheet } : parentOf(address.route)) ?? address.route)
       : address.route;
   // The Ebook page (#531) is shown in place of the page under it.
@@ -955,7 +958,7 @@ function LibraryApp({
               />
             )}
             {/* The Book page (#532), its Hardcover (#529) and Ebook (#531) pages, and the reader's Chapters, Bookmarks and Search (#590) stand in place of the place's page. */}
-            {audiobookWorkId ? null : pageRoute.name === "book-page" && isReaderPage(pageRoute.page) ? <ReaderPages key={`${pageRoute.workId}:${pageRoute.page === "search" ? "search" : "chapters"}`} workId={pageRoute.workId} page={pageRoute.page} /> : bookWorkId ? (
+            {audiobookWorkId ? null : pageRoute.name === "book-page" && isReaderPage(pageRoute.page) ? <ReaderPages key={`${pageRoute.workId}:${pageRoute.page === "search" ? "search" : "chapters"}`} workId={pageRoute.workId} page={pageRoute.page} books={books} /> : bookWorkId ? (
               <BookPage
                 key={bookWorkId}
                 workId={bookWorkId}
@@ -1161,8 +1164,6 @@ function LibraryApp({
         </nav>
         <AppUpdate />
         <PlayerDock
-          books={books}
-          notify={notify}
           fallback={featured}
           isDownloaded={downloaded}
           hasPartialDownload={(book) =>
@@ -1174,9 +1175,24 @@ function LibraryApp({
           downloadJobs={downloadJobs}
           onDownload={(book) => void startDownload(book)}
           onPauseDownload={(book) => pauseSave(book.recordingId)}
-          onViewDownloads={openDevice}
           onBookDetails={openBookOf}
           onManageSources={openAudiobook}
+        />
+        {/* Now playing, its Listen and Read faces (#593): over the page, at #listen/<work> and #read/<work>. */}
+        <NowPlaying
+          books={books}
+          downloads={downloads}
+          downloadParts={downloadParts}
+          running={savesRunning}
+          records={saveRecords}
+          admin={admin}
+          online={online}
+          notify={notify}
+          onSave={(book) => void startDownload(book)}
+          onDevice={async () => {
+            await refreshDownloads();
+            await refreshOfflineEbooks();
+          }}
         />
         <ReaderHost books={books} notify={notify} />
         {notice && (

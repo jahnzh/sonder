@@ -7,6 +7,7 @@ import { tip } from "../../src/tooltip-texts";
 import { bandBoxes, expectTextUncovered, showControls } from "./reader-bands";
 import { appearancePanel, closeAppearance, expectDockedUncovered, insideBand, openAppearance, setStepper } from "./reader-appearance";
 import { installReaderWaitBudget, READER_WAIT_MS } from "./timing";
+import { openRead } from "./now-playing";
 // Appearance docked under the text (#588; spec #586 "Appearance docked under the text"; board
 // ReaderAppearance.dc.html): Aa docks the panel in place of the foot, the text is laid out again in what is left with
 // the narrated sentence in view, and closing it brings the foot back. In the standalone reader and in Now playing.
@@ -47,11 +48,10 @@ async function openAt(page: Page, where: Where, book: any, ebook: string, interv
   const saved = await page.request.post("/api/progress", { data: { recordingId: book.recordingId, trackId: book.tracks[0].id, position: interval.start + 0.5, duration: book.tracks[0].duration, updatedAt: Math.max(Date.now(), previous + 1) } });
   expect(saved.ok()).toBe(true);
   await page.goto("/");
-  const open = page.locator(".player-dock").getByRole("button", { name: "Open ebook reader", exact: true });
-  await expect(open).toBeVisible();
+  await expect(page.locator(".player-dock .dock-book")).toBeVisible();
   // Now playing loads the resumed recording's track; for the standalone reader it is closed again, the book
   // staying in the player, as the reader-bands spec does.
-  await open.click();
+  await openRead(page);
   if (where === "standalone") {
     await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
     await page.keyboard.press("Escape");

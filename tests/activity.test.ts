@@ -35,7 +35,7 @@ const base = (over: Partial<Omit<ActivityInput, "snapshots"> & Rows> = {}): Acti
   return {
     now: NOW, multiplier: 1, tracker: new ChangeTracker(), ...rest,
     snapshots: [
-      { source: acquisitionSource, rows: acquisitions, probe: { value: torrent, failure: torrentFailure } },
+      { source: acquisitionSource, rows: acquisitions, probe: { value: torrent && { health: torrent, torrents: null }, failure: torrentFailure } },
       { source: serverCopySource, rows: copies, probe: none },
       { source: seriesAcquisitionSource, rows: seriesJobs, probe: none },
       { source: alignmentSource, rows: alignments, probe: { value: pool, failure: poolFailure } },

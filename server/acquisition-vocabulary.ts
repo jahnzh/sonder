@@ -12,6 +12,8 @@ export const ACQUISITION_STATUSES = [
   "paused",
   "ready",
   "error",
+  // Cancelled from Activity (#716): the torrent was removed from the client; nothing is fetched or imported again.
+  "cancelled",
 ] as const;
 export type AcquisitionStatus = (typeof ACQUISITION_STATUSES)[number];
 
@@ -27,6 +29,7 @@ export const ACTIVE_ACQUISITION_STATUSES = [
 export const FINISHED_ACQUISITION_STATUSES = [
   "ready",
   "error",
+  "cancelled",
 ] as const satisfies readonly AcquisitionStatus[];
 
 const active = new Set<string>(ACTIVE_ACQUISITION_STATUSES);

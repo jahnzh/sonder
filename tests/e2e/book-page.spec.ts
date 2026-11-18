@@ -217,8 +217,12 @@ test("Listen plays the chosen recording from its place; Read opens the chosen EP
   // so a poll of it can miss 61 and read on to 71 when its time runs out.
   await expect.poll(async () => (await audioState(page))?.startedAt ?? null).not.toBeNull();
   expect(Math.round((await audioState(page))!.startedAt!)).toBe(61);
-  await page.getByRole("dialog", { name: "Now playing" }).getByRole("button", { name: "Pause narration" }).first().click().catch(() => {});
-  await page.evaluate(() => ((window as any).__audioElements as HTMLAudioElement[]).forEach((audio) => audio.pause()));
+  // Now playing opens on its Listen face (the face rule's first opening, #593), whose transport pauses it. The old
+  // "Pause narration" of the expanded player is gone: a click on it waited out the test's whole time (#593 fix round).
+  const listen = page.getByRole("dialog", { name: "Now playing" }).locator(".now-playing-listen");
+  await expect(listen).toBeVisible();
+  await listen.getByRole("button", { name: "Pause", exact: true }).click();
+  await expect.poll(async () => (await audioState(page))?.paused).toBe(true);
 });
 
 test("a book whose audiobook is downloading: the download's line and bar, Get for the ebook, Needs an ebook", async ({ page }) => {

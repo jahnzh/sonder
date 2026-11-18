@@ -5,6 +5,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type AddressInfo } from "node:net";
 import { readerFixture } from "../reader-fixture";
 import { installReaderWaitBudget, READER_WAIT_MS, timedWait } from "./timing";
+import { listenFace, nowPlaying, openListen, openRead } from "./now-playing";
 import { playFromLibrary } from "./library-play";
 import { connectHardcover } from "./connections";
 
@@ -92,23 +93,40 @@ async function startPaused(page: Page, title: string) {
 }
 
 
+// Now playing is one screen with Listen and Read (#593): the mini player opens it on its face rule, and the head's
+// Listen or Read control switches faces. Earlier positions (today's Position history) is a row on Listen.
 async function openPlayer(page: Page) {
-  // Phone layouts hide dock-actions (including the list icon); the dock book row opens Now Playing there.
-  const list = page.locator(".player-dock").getByRole("button", { name: "Chapters and now playing", exact: true });
-  if (await list.isVisible()) await list.click();
-  else await page.locator(".player-dock .dock-book").click();
-  const dialog = page.getByRole("dialog", { name: "Now playing", exact: true });
+  const dialog = nowPlaying(page);
+  if (await dialog.isVisible()) await switchFace(page, "listen");
+  else await openListen(page);
   await expect(dialog).toBeVisible();
   return dialog;
 }
 
 async function openReaderPlayer(page: Page) {
-  const dialog = await openPlayer(page);
-  // has-ebook is set when PlaybackReader selects an edition; with-reader follows onAvailable.
-  await expect(dialog.locator(".playback-reader.has-ebook")).toBeVisible({ timeout: 20000 });
-  await expect(dialog).toHaveClass(/with-reader/, { timeout: 20000 });
+  const dialog = nowPlaying(page);
+  if (await dialog.isVisible()) await switchFace(page, "read");
+  else await openRead(page);
   await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible({ timeout: 20000 });
   return dialog;
+}
+
+/** The face shown now, by the address. */
+async function shownFace(page: Page): Promise<"listen" | "read"> {
+  return (await page.evaluate(() => location.hash.split("/")[0])) === "#read" ? "read" : "listen";
+}
+
+/** Switches Now playing to a face with the head's Listen or Read control. */
+async function switchFace(page: Page, face: "listen" | "read") {
+  if ((await shownFace(page)) === face) return;
+  if (face === "listen") {
+    await revealReaderControls(page);
+    await page.locator(".inline-reader .reader-topbar").getByRole("radio", { name: "Listen", exact: true }).click();
+    await expect(listenFace(page)).toBeVisible();
+  } else {
+    await listenFace(page).getByRole("radio", { name: "Read", exact: true }).click();
+    await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible({ timeout: 20000 });
+  }
 }
 
 async function importWithEbook(page: Page, title: string, tracks = 1) {
@@ -123,7 +141,6 @@ async function importWithEbook(page: Page, title: string, tracks = 1) {
 }
 
 async function revealReaderControls(page: Page) {
-  await closePlaybackOptions(page);
   const room = page.locator(".inline-reader");
   await expect(room.locator(".reader-viewport iframe")).toBeVisible();
   const topbar = room.locator(".reader-topbar");
@@ -138,45 +155,33 @@ async function revealReaderControls(page: Page) {
   }).toPass({ timeout: 15000 });
 }
 
-async function openPlaybackOptions(page: Page) {
-  const dialog = page.getByRole("dialog", { name: "Now playing", exact: true });
-  await expect(dialog).toBeVisible();
-  const options = page.locator(".playback-options-panel");
-  if (!(await options.isVisible())) {
-    // The dialog heading ⋯ (aria-label "Playback options"); with the reader it is clipped under the reader chrome
-    // (#22), and the reader's head has no More since #592. Never use the Chapters button. DOM click avoids the
-    // clipped heading's hit-target.
-    await dialog.locator(".playback-menu-trigger").evaluate((el: HTMLButtonElement) => el.click());
-  }
-  await expect(options).toBeVisible();
-  return options;
+/** The Earlier positions row on Listen (on Read, reached by switching to Listen). */
+async function earlierPositions(page: Page) {
+  await expect(nowPlaying(page)).toBeVisible();
+  await switchFace(page, "listen");
+  return listenFace(page).getByRole("button", { name: "Earlier positions", exact: true });
 }
 
-// Plays from on the Audiobook page (#530): a picker that keeps the place.
+// Plays from on Listen (#593): the Audiobook page's picker, which keeps the place.
 async function playFrom(page: Page, source: string) {
-  await page.getByRole("region", { name: "Audiobook", exact: true }).getByRole("button", { name: /^Plays from: / }).click();
+  const button = listenFace(page).getByRole("button", { name: "Plays from", exact: true });
+  await expect(button).toBeEnabled();
+  await button.click();
   const picker = page.getByRole("dialog", { name: "Plays from", exact: true });
   await picker.getByRole("radio", { name: source, exact: true }).click();
   await expect(picker).toBeHidden();
 }
 
-async function closePlaybackOptions(page: Page) {
-  const options = page.locator(".playback-options-panel");
-  if (await options.isVisible()) {
-    await options.getByRole("button", { name: "Close playback options", exact: true }).click();
-    await expect(options).toBeHidden();
-  }
-}
-
 async function openPositionHistory(page: Page) {
-  const options = await openPlaybackOptions(page);
-  await options.getByRole("button", { name: "Position history", exact: true }).click();
+  await (await earlierPositions(page)).click();
   const historyDialog = page.getByRole("dialog", { name: "Position history", exact: true });
   await expect(historyDialog).toBeVisible();
   return historyDialog;
 }
 
+/** Restores the newest entry from Earlier positions, and returns to the face it started on. */
 async function restoreLatest(page: Page) {
+  const face = await shownFace(page);
   const historyDialog = await openPositionHistory(page);
   await historyDialog.locator(".position-history-entry").first().click();
   await timedWait(
@@ -184,8 +189,16 @@ async function restoreLatest(page: Page) {
     () => expect(historyDialog).toBeHidden({ timeout: READER_WAIT_MS.historyRestore }),
     { testName: test.info().title },
   );
-  // Options stay open under the history dialog; dismiss so the reader is clickable again.
-  await closePlaybackOptions(page);
+  await switchFace(page, face);
+}
+
+/** A chapter of the recording, from the Chapters row on Listen: the row moves the narration and returns to Listen. */
+async function jumpToChapter(page: Page, index: number) {
+  await switchFace(page, "listen");
+  await listenFace(page).getByRole("button", { name: /^Chapters\b/ }).click();
+  const list = page.getByRole("list", { name: "Chapters", exact: true });
+  await list.getByRole("button").nth(index).click();
+  await expect(listenFace(page)).toBeVisible();
 }
 
 async function seekInPlayer(page: Page, dialog: Locator, value: string) {
@@ -340,14 +353,13 @@ test("book-bar seek across tracks can be undone exactly and saves the restored p
   const original = (await audioState(page)).position;
   const dialog = await openReaderPlayer(page);
   {
-    const options = await openPlaybackOptions(page);
-    const historyButton = options.getByRole("button", { name: "Position history", exact: true });
+    const historyButton = await earlierPositions(page);
     await expect(historyButton).toBeEnabled();
     await historyButton.click();
     const historyDialog = page.getByRole("dialog", { name: "Position history", exact: true });
     await expect(historyDialog.getByText("No jumps in the last 24 hours")).toBeVisible();
     await historyDialog.getByRole("button", { name: "Close dialog", exact: true }).click();
-    await options.getByRole("button", { name: "Close playback options", exact: true }).click();
+    await switchFace(page, "read");
   }
   await seekInPlayer(page, dialog, String(Math.round(book.tracks[0].duration + 55)));
   await expect.poll(async () => (await audioState(page)).src).toContain(book.tracks[1].id);
@@ -424,7 +436,8 @@ test("recordings keep separate histories across switches and reload", async ({ p
   let dialog = await openPlayer(page);
   await dialog.getByRole("slider", { name: "Seek in audiobook", exact: true }).fill("180");
   await expect.poll(async () => (await history(page, first.recordingId)).length).toBe(1);
-  await dialog.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await dialog.getByRole("button", { name: "Close now playing", exact: true }).click();
+  await expect(dialog).toBeHidden();
   await startPaused(page, second.title);
   await setPosition(page, 50.5);
   dialog = await openPlayer(page);
@@ -433,6 +446,9 @@ test("recordings keep separate histories across switches and reload", async ({ p
   expect((await history(page, first.recordingId)).map((entry: any) => entry.position)).toEqual([80.25, 180]);
   expect((await history(page, second.recordingId)).map((entry: any) => entry.position)).toEqual([50.5]);
   await page.reload();
+  // The address names Now playing (#593), so the reload shows it again: close it to reach the Library.
+  await nowPlaying(page).getByRole("button", { name: "Close now playing", exact: true }).click();
+  await expect(nowPlaying(page)).toBeHidden();
   await startPaused(page, second.title);
   await openPlayer(page);
   await restoreLatest(page);
@@ -447,16 +463,16 @@ test("chapter jumps can be undone and removing the recording clears its history"
   await startPaused(page, book.title);
   await setPosition(page, 42.5);
   const dialog = await openReaderPlayer(page);
-  const options = await openPlaybackOptions(page);
-  await options.locator(".chapter-list .chapter-row").nth(1).click();
+  await jumpToChapter(page, 1);
   await expect.poll(async () => (await audioState(page)).src).toContain(book.tracks[1].id);
-  const pause = dialog.getByRole("region", { name: "Player", exact: true }).getByRole("button", { name: "Pause narration", exact: true });
+  const pause = listenFace(page).getByRole("button", { name: "Pause", exact: true });
   await expect(pause).toBeVisible();
   await pause.click();
   await expect.poll(async () => (await history(page, book.recordingId))[0]?.kind).toBe("chapter");
   await restoreLatest(page);
   await expect.poll(async () => (await audioState(page)).src).toContain(book.tracks[0].id);
   await expect.poll(async () => (await audioState(page)).position).toBe(42.5);
+  await switchFace(page, "read");
   await revealReaderControls(page);
   await dialog.getByRole("region", { name: "Player", exact: true }).getByRole("button", { name: "Forward 30 seconds", exact: true }).click();
   await expect.poll(async () => (await history(page, book.recordingId)).length).toBe(1);
@@ -478,8 +494,8 @@ test("source reloads only record a jump when the new source moves the position",
   await startPaused(page, book.title);
   await setPosition(page, 150.25);
   await openReaderPlayer(page);
-  await (await openPlaybackOptions(page)).getByRole("button", { name: "Audiobook", exact: true }).click();
-  await expect(page.getByRole("region", { name: "Audiobook", exact: true }).getByRole("button", { name: /^Plays from: / })).toBeEnabled();
+  // Plays from is a row on Listen (#593).
+  await switchFace(page, "listen");
   await playFrom(page, "Server copy");
   await expect.poll(async () => (await audioState(page)).src).toContain("?source=server");
   await expect.poll(async () => (await audioState(page)).position).toBe(150.25);
@@ -599,7 +615,7 @@ async function listenFromHere(page: Page, room: Locator) {
   await page.mouse.up();
 }
 
-test("Listen from here records the position left and the expanded player restores it", async ({ page }) => {
+test("Listen from here records the position left and Earlier positions restores it", async ({ page }) => {
   const book = await narratedRecording(page, "Undo narration");
   await instrument(page);
   await page.goto("/");
@@ -631,8 +647,8 @@ test("a toast Undo for Listen from here takes back what it recorded and is not r
   const toast = room.getByRole("status").filter({ hasText: "Listening from here" });
   await expect(toast).toBeVisible();
   await expect.poll(async () => (await history(page, book.recordingId)).map((entry: any) => entry.position)).toEqual([170.25]);
-  // Undo is the foot's message action (#591). Opening Playback options first would end the notice: the next tap on a
-  // control ends a notice with Undo (spec #586 "How long").
+  // Undo is the foot's message action (#591). Switching to Listen first would end the notice: the head's face control
+  // is a control, and the next tap on a control ends a notice with Undo (spec #586 "How long").
   await room.locator(".reader-message").getByRole("button", { name: "Undo", exact: true }).click();
   await expect(toast).toBeHidden();
   await room.getByRole("button", { name: "Pause narration", exact: true }).click();
@@ -641,8 +657,7 @@ test("a toast Undo for Listen from here takes back what it recorded and is not r
   // The listen's entry is gone and the toast's own move recorded nothing.
   await expect.poll(async () => (await history(page, book.recordingId)).length).toBe(0);
   {
-    const options = await openPlaybackOptions(page);
-    const historyButton = options.getByRole("button", { name: "Position history", exact: true });
+    const historyButton = await earlierPositions(page);
     await expect(historyButton).toBeEnabled();
     await historyButton.click();
     await expect(page.getByRole("dialog", { name: "Position history", exact: true }).getByText("No jumps in the last 24 hours")).toBeVisible();
@@ -709,11 +724,10 @@ test("an undo right after a chapter jump restores that jump", async ({ page }) =
   await expect.poll(async () => (await audioState(page)).src).toContain(book.tracks[1].id);
   await setPosition(page, 70.25);
   const left = (await audioState(page)).position;
-  const options = await openPlaybackOptions(page);
-  await options.locator(".chapter-list .chapter-row").nth(0).click();
+  await jumpToChapter(page, 0);
   await expect.poll(async () => (await audioState(page)).src).toContain(book.tracks[0].id);
   await expect.poll(async () => (await history(page, book.recordingId)).at(-1)).toMatchObject({ kind: "chapter", position: left });
-  const pause = dialog.getByRole("region", { name: "Player", exact: true }).getByRole("button", { name: "Pause narration", exact: true });
+  const pause = listenFace(page).getByRole("button", { name: "Pause", exact: true });
   if (await pause.isVisible()) await pause.click();
   await restoreLatest(page);
   await expect.poll(async () => (await audioState(page)).src).toContain(book.tracks[1].id);
@@ -721,7 +735,7 @@ test("an undo right after a chapter jump restores that jump", async ({ page }) =
   await expect.poll(async () => (await history(page, book.recordingId)).map((entry: any) => entry.position)).toEqual([30.5]);
 });
 
-test("Playback options opens Position history with or without the reader and the bottom bar has no Undo jump", async ({ page }) => {
+test("Earlier positions on Listen opens Position history, also when Now playing opened on Read, and no bar has Undo jump", async ({ page }) => {
   const book = await importWithEbook(page, "Undo layout");
   await instrument(page);
   await page.goto("/");
@@ -735,7 +749,7 @@ test("Playback options opens Position history with or without the reader and the
   const historyDialog = await openPositionHistory(page);
   await expect(historyDialog.getByRole("listitem").first()).toBeVisible();
   await historyDialog.getByRole("button", { name: "Close dialog", exact: true }).click();
-  await expect(page.getByRole("region", { name: "Playback options" }).getByRole("button", { name: "Position history", exact: true })).toBeFocused();
+  await expect(listenFace(page).getByRole("button", { name: "Earlier positions", exact: true })).toBeFocused();
 });
 
 test("empty Position history stays enabled and shows the empty state", async ({ page }) => {
@@ -744,8 +758,7 @@ test("empty Position history stays enabled and shows the empty state", async ({ 
   await page.goto("/");
   await startPaused(page, book.title);
   await openPlayer(page);
-  const options = await openPlaybackOptions(page);
-  const historyButton = options.getByRole("button", { name: "Position history", exact: true });
+  const historyButton = await earlierPositions(page);
   await expect(historyButton).toBeEnabled();
   await historyButton.click();
   const historyDialog = page.getByRole("dialog", { name: "Position history", exact: true });
@@ -754,7 +767,7 @@ test("empty Position history stays enabled and shows the empty state", async ({ 
   await expect(historyButton).toBeFocused();
 });
 
-test("restoring an older Position history entry works from the player panel", async ({ page }) => {
+test("restoring an older Position history entry works from Earlier positions on Listen", async ({ page }) => {
   const book = await importRecording(page, "Older history entry");
   await instrument(page);
   await page.goto("/");
@@ -774,7 +787,7 @@ test("restoring an older Position history entry works from the player panel", as
   await expect.poll(async () => (await history(page, book.recordingId)).map((entry: any) => entry.position)).toEqual([120]);
 });
 
-test("reader-open Now Playing still exposes Position history from Playback options", async ({ page }) => {
+test("Now playing on Read reaches Earlier positions by switching to Listen", async ({ page }) => {
   const book = await importWithEbook(page, "Reader open history");
   await instrument(page);
   await page.goto("/");
@@ -788,7 +801,7 @@ test("reader-open Now Playing still exposes Position history from Playback optio
   await expect.poll(async () => (await history(page, book.recordingId)).length).toBe(0);
 });
 
-test("inline reader Chapters button opens the ebook's Chapters page, not Playback options", async ({ page }) => {
+test("the Read face's Chapters button opens the ebook's Chapters page", async ({ page }) => {
   const book = await importWithEbook(page, "Chapters opens contents");
   await instrument(page);
   await page.goto("/");
@@ -800,7 +813,7 @@ test("inline reader Chapters button opens the ebook's Chapters page, not Playbac
   // The Chapters page (#590) lists the ebook's sections.
   await expect(page.getByRole("heading", { level: 1, name: "Chapters", exact: true })).toBeVisible();
   await expect(page.getByRole("list", { name: "Chapters", exact: true }).getByRole("button").first()).toBeVisible();
-  await expect(page.getByRole("region", { name: "Playback options" })).toBeHidden();
+  await expect(page.getByRole("region", { name: "Playback options" })).toHaveCount(0);
 });
 
 test.describe("failed source loads", () => {
@@ -817,8 +830,7 @@ test.describe("failed source loads", () => {
       const audio = ((window as any).__jumpAudio as HTMLAudioElement[]).find((item) => !!item.src)!;
       Object.defineProperty(audio, "duration", { configurable: true, get: () => 100 });
     });
-    const dialog = await openPlayer(page);
-    await dialog.getByRole("button", { name: "Audiobook", exact: true }).click();
+    await openPlayer(page);
     await playFrom(page, "Server copy");
     await expect.poll(async () => page.evaluate(() => ((window as any).__jumpAudio as HTMLAudioElement[]).find((item) => !!item.src)!.error !== null)).toBe(true);
     await expect(page.getByText("The audio source is unavailable. Please try again.").first()).toBeVisible();

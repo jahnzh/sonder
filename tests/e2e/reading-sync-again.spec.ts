@@ -12,6 +12,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 import { BOOK_ENGINE, bookWorkerJobId } from "../../src/reading-types";
+import {openRead} from "./now-playing";
 
 test.use({ serviceWorkers: "block" });
 const OUT = "OUT";
@@ -71,7 +72,7 @@ async function openReaderAt(page: Page, book: any, interval: { start: number; pa
   });
   expect(saved.ok()).toBe(true);
   await page.goto("/");
-  await page.getByRole("button", { name: "Open ebook reader", exact: true }).click();
+  await openRead(page);
   await expect(page.locator(".inline-reader")).toHaveAttribute("data-current-passage", interval.paragraphId, { timeout: 30000 });
 }
 const following = (page: Page) => page.locator(".inline-reader").getAttribute("data-current-passage");
