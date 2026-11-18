@@ -133,6 +133,9 @@ export function SeriesPage({ id, admin, online, books, revision, onNotSaved, onR
       try {
         const value = await api<SavedSeries>(
           `/series/${seriesId}?language=${encodeURIComponent(seriesLanguage())}${refresh ? "&refresh=1" : ""}`,
+          // Not the browser's HTTP cache: without a connection it would answer as if the server had (Firefox does), and
+          // the page would offer what cannot be done; the device's own copy stands in for it (#568).
+          { cache: "no-store" },
         );
         if (gone.current) return;
         lastRead.set(key, value);

@@ -35,7 +35,7 @@ export function useSavedSeries(revision: number, visit: string, online = true): 
   useEffect(() => {
     let active = true;
     lastSeries
-      .read(() => api<SavedSeriesItem[]>("/series"))
+      .read(() => api<SavedSeriesItem[]>("/series", { cache: "no-store" }))
       .then((answer) => {
         if (!answer || !active) return;
         setItems(answer.value);
