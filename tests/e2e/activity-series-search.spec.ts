@@ -62,6 +62,14 @@ test("a failed series search says which search failed and why, with Retry; the w
   await expect(rowOf(page, "This Inevitable Ruin")).toContainText("Waiting · 4th in line");
   await expect(rowOf(page, "A Parade of Horribles")).toContainText("Waiting to try again · Library Genesis could not be reached");
   await expect(waiting.getByRole("listitem")).toHaveCount(4);
+  // In the queue's order, after the search that waits to try its source again.
+  await expect(waiting.getByRole("listitem")).toHaveText([
+    /A Parade of Horribles/, /The Dungeon Anarchist's Cookbook/, /The Eye of the Bedlam Bride/, /This Inevitable Ruin/,
+  ]);
+  // The reason is read whole at phone width: the failed line wraps rather than end in an ellipsis.
+  const failedLine = rowOf(page, "The Butcher's Masquerade").locator(".part-book-row-status");
+  await expect(failedLine).toBeVisible();
+  expect(await failedLine.evaluate((el) => el.scrollWidth <= el.clientWidth && el.scrollHeight <= el.clientHeight + 1)).toBe(true);
   await expect(nowPart(page).getByText("Waiting for series search")).toHaveCount(0);
   await expect(nowPart(page).getByText("Series search failed")).toHaveCount(0);
   await noOverflow(page);

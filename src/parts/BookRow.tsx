@@ -37,9 +37,14 @@ export type BookRowProps = {
   coverIcon?: ReactNode;
   /** The row stands out on the raised fill (the Series page's book to continue). */
   raised?: boolean;
+  /**
+   * The status line wraps instead of ending in an ellipsis, and the row grows past 64 to hold it (Now's failed series
+   * search, whose line says why it failed, #717).
+   */
+  wrap?: boolean;
 };
 
-export function BookRow({ title, status, lead, cover, number, marks = [], progress, onClick, action, failed, trailing, coverIcon, raised }: BookRowProps) {
+export function BookRow({ title, status, lead, cover, number, marks = [], progress, onClick, action, failed, trailing, coverIcon, raised, wrap }: BookRowProps) {
   const id = useId();
   const numbered = number != null && number !== "";
   const names = [numbered && `${id}-number`, `${id}-title`, ...marks.map((_, index) => `${id}-mark-${index}`), `${id}-status`, trailing && !action && `${id}-trailing`].filter(Boolean).join(" ");
@@ -86,6 +91,7 @@ export function BookRow({ title, status, lead, cover, number, marks = [], progre
     "data-numbered": numbered ? "" : undefined,
     "data-moving": progress != null ? "" : undefined,
     "data-failed": failed ? "" : undefined,
+    "data-wrap": wrap ? "" : undefined,
   };
   if (action) {
     return (

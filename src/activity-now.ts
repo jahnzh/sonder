@@ -121,8 +121,11 @@ export type NowInput = {
   now: number;
 };
 
-/** One entry before rows are joined by work. */
-type Entry = Omit<NowRow, "key" | "changedAt"> & { group: NowGroupId; changedAt: number };
+/**
+ * One entry before rows are joined by work. `place` is a waiting series search's place in its queue (#717), which
+ * orders those rows in Waiting.
+ */
+type Entry = Omit<NowRow, "key" | "changedAt"> & { group: NowGroupId; changedAt: number; place?: number | null };
 
 const firstAction = (actions: readonly ActivityItemAction[]): ActivityItemAction | null =>
   (["retry", "resume", "discard"] as const).find((action) => actions.includes(action)) ?? null;
@@ -266,7 +269,18 @@ function serverEntry(item: ActivityItem, now: number): Entry | null {
         ? { to: syncOpen ? "reading-sync" : "book", workId: item.workId, bookId: item.bookId }
         : null,
     changedAt: item.updatedAt,
+    place: group === "waiting" && item.facts.kind === "series-acquisition" ? item.facts.place ?? null : null,
   };
+}
+
+/**
+ * The order of a group's rows: newest change first; in Waiting, the series searches with a place in the queue come
+ * after the rest, in the queue's order (#717), so "2nd in line" is above "3rd in line".
+ */
+function byGroupOrder(a: NowRow & { place: number | null }, b: NowRow & { place: number | null }) {
+  if ((a.place === null) !== (b.place === null)) return a.place === null ? -1 : 1;
+  if (a.place !== null && b.place !== null && a.place !== b.place) return a.place - b.place;
+  return b.changedAt - a.changedAt || a.key.localeCompare(b.key);
 }
 
 /** Whether a background process needs attention (and lights the dot): it is down. A worker switched off is never down. */
@@ -360,16 +374,16 @@ export function buildNow({ activity, saves, books, admin, online, now }: NowInpu
 
   const byKey = new Map<string, Entry[]>();
   for (const { key, entry } of entries) byKey.set(key, [...(byKey.get(key) ?? []), entry]);
-  const rows: (NowRow & { group: NowGroupId })[] = [];
+  const rows: (NowRow & { group: NowGroupId; place: number | null })[] = [];
   for (const [key, joined] of byKey) {
-    const { group, ...shown } = shownEntry(joined);
+    const { group, place, ...shown } = shownEntry(joined);
     // A save's row has no title of its own when the device does not know the book: take the server's.
     const title = shown.title || joined.find((entry) => entry.title)?.title || "";
     const cover = shown.book ? shown.cover ?? joined.find((entry) => entry.cover)?.cover ?? null : null;
     const bookId = shown.bookId ?? joined.find((entry) => entry.bookId)?.bookId ?? null;
     const opens = shown.opens && shown.opens.to !== "worker" && shown.opens.to !== "server" ? { ...shown.opens, bookId: shown.opens.bookId ?? bookId } : shown.opens;
     rows.push({
-      ...shown, key, group, title, cover, bookId, opens,
+      ...shown, key, group, place: place ?? null, title, cover, bookId, opens,
       changedAt: Math.max(...joined.map((entry) => entry.changedAt)),
     });
   }
@@ -378,8 +392,8 @@ export function buildNow({ activity, saves, books, admin, online, now }: NowInpu
     title,
     rows: rows
       .filter((row) => row.group === id)
-      .sort((a, b) => b.changedAt - a.changedAt || a.key.localeCompare(b.key))
-      .map(({ group: _group, ...row }) => row),
+      .sort(byGroupOrder)
+      .map(({ group: _group, place: _place, ...row }) => row),
   }));
   return {
     groups,
