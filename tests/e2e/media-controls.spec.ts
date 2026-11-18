@@ -445,10 +445,13 @@ test("keyboard shortcut sheet opens from Now Playing and Settings", async ({ pag
   await page.locator("main").getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Keyboard shortcuts", exact: true }).getByText("Play or pause")).toBeVisible();
 });
-test("a form dialog focuses its first text field when it opens", async ({ page }) => {
-  // The book dialog's Hardcover match dialog became the Hardcover page (#529); Add an audiobook is a form dialog.
-  await page.goto("/#library");
-  await page.getByRole("button", { name: "Open navigation", exact: true }).click();
-  await page.getByRole("button", { name: "Add an audiobook", exact: true }).click();
-  await expect(page.getByRole("dialog").getByRole("textbox", { name: "Book title" })).toBeFocused();
+test("a dialog without a text field starts on itself, not on a button", async ({ page }) => {
+  // The import dialog, the form dialog this test opened, went with the drawer's Add an audiobook (#581; a book's
+  // files are imported in its Get sheet). The same rule's other branch: a dialog with no text field takes the focus
+  // on its container, so Space does not activate a focused button (components/ui/dialog.tsx).
+  await page.goto("/#settings/playback");
+  await page.locator("main").getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Keyboard shortcuts", exact: true });
+  await expect(dialog).toBeVisible();
+  await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute("role"))).toBe("dialog");
 });

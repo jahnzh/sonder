@@ -37,7 +37,7 @@ export async function playFromLibrary(page: Page, title: string) {
   const library = page.getByRole("heading", { name: "Library", exact: true, level: 1 });
   // From another place, the Library by its own button in the navigation (once the app has shown its first page).
   const shown = await library.waitFor({ timeout: 5000 }).then(() => true, () => false);
-  if (!shown) await page.getByRole("button", { name: /^My library/ }).filter({ visible: true }).first().click();
+  if (!shown) await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button", { name: "Library", exact: true }).click();
   await expect(library).toBeVisible();
   await page.getByRole("button", { name: `About ${title}`, exact: true }).first().click();
   await listenOnBookPage(page);

@@ -558,7 +558,9 @@ function LibraryApp({
   const openWork = (workId: string) => openBook(workId);
   const openBookOf = (book: Book) => openBook(book.workId);
   // The tab bar and the rail (#581): another place adds an entry, the current one returns to its first page.
+  // On the Library, its own tab shows every book again (the rail's Library item did, before #581).
   const choosePlace = (p: Place) => {
+    if (p === "library" && page === "library") setFilter(ALL_CHIP);
     leavePage(p);
     address.goPlace(p);
   };

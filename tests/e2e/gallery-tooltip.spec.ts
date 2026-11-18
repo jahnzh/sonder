@@ -397,7 +397,7 @@ test("an icon without a label shows its name on hover, on one line in the Captio
 
 test("a tooltip is not in the address: Back with one open leaves the page", async ({ page }) => {
   await openWith(page, defaultAppearance, "/#library");
-  await expect(page.locator(".topbar")).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Main", exact: true })).toBeVisible();
   await page.evaluate(() => {
     location.hash = "#gallery";
   });
@@ -410,6 +410,6 @@ test("a tooltip is not in the address: Back with one open leaves the page", asyn
   expect(await page.evaluate(() => history.length)).toBe(length);
   await page.goBack();
   await expect(page).toHaveURL(/#library$/);
-  await expect(page.locator(".topbar")).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Main", exact: true })).toBeVisible();
   await expect(tip(page)).toHaveCount(0);
 });

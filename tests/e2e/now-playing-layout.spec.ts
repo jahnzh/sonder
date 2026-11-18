@@ -581,5 +581,5 @@ test.describe("#122 reader Back to narration layout",()=>{
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   await expect(page.locator(".player-dock .dock-book")).toBeFocused();
-  await page.locator(".mobile-nav").getByRole("button", {name:"Settings",exact:true}).click();
+  await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button", {name:"Settings",exact:true}).click();
  });

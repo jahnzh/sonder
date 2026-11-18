@@ -92,7 +92,7 @@ async function onBookPage(page: Page, press: "Retry" | "Resume") {
 }
 /** Activity took the Downloads slot in the tab bar (#516); its name stays "Activity" while the dot is lit. */
 const activityTab = (page: Page) =>
-  page.getByRole("navigation", { name: "Mobile navigation" }).getByRole("button", { name: "Activity", exact: true });
+  page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button", { name: "Activity", exact: true });
 
 /** Reaches this device's saves the way the owner does: the Activity tab, which opens on Now, then This device. */
 async function openDevice(page: Page) {
