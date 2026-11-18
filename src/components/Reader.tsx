@@ -7,19 +7,16 @@ import type { Location } from "epubjs/types/rendition";
 import {
   ArrowLeft,
   ArrowRight,
-  BookOpen,
   Bookmark,
   Search,
   Headphones,
   Loader2,
   List,
-  X,
   Play,
   Pause,
   RotateCcw,
   RotateCw,
   ChevronDown,
-  MoreHorizontal,
   PanelLeft,
 } from "lucide-react";
 import literataNormal from "@fontsource-variable/literata/files/literata-latin-wght-normal.woff2?url";
@@ -29,13 +26,12 @@ import { goBackFrom, navigate as goTo, openSheet, useAddress } from "../navigati
 import { isReaderPage, openedFrom, onPlaceRequested, publishReader, takePlace, useOpenerAny, type LiveReader, type ReaderPage, type ReaderPlace } from "../reader-pages";
 import { useAppearance } from "./Appearance";
 import { fontFamilies, paletteFor } from "../appearance";
-import { ReaderSyncRow } from "./ReaderSyncRow";
 import { useReaderMap } from "../use-reader-map";
 import { PlaybackSource } from "./PlaybackSource";
 import { FootSettingButtons, FootSettingRow, useFootSetting } from "./ReaderFootSetting";
 import { PlaybackTimeline } from "./PlaybackTimeline";
-import {PlaybackExtra,usePlaybackMenu} from "./PlaybackMenu";
 import { readerNeedsScripts } from "../reader-sandbox";
+import { backToNarration } from "../reader-back-to-narration";
 import { lookupIndex, placeAt, type LookupIndex } from "../reader-lookup";
 import { pageToShow, pagedWords, type PagedWord } from "../reader-page-turn";
 import { keyEventContext, OPEN_SHEET_SELECTOR, readerKeyAction, typingInField } from "../keyboard";
@@ -359,7 +355,6 @@ export function ReaderView({
     [loading, setLoading] = useState(true),
     [rendered, setRendered] = useState(false),
     // Chapters, Bookmarks and Search are pages of their own now (#590), not panels; Appearance docks under the text (#588).
-    [panel, setPanel] = useState<"sync" | "more" | null>(null),
     [locator, setLocator] = useState<TextLocator | null>(null),
     [map, setMap] = useState<AlignmentJob | null>(null),
     // The server confirmed `map` for the current audio in this reader (a cached map is not, until the map endpoint answers).
@@ -367,7 +362,6 @@ export function ReaderView({
     [recovering, setRecovering] = useState(false),
     [conflict, setConflict] = useState<ReadingCheckpoint | null>(null),
     [follow, setFollow] = useState(true),
-    [recoveryStatus, setRecoveryStatus] = useState(""),
     [controlsVisible, setControlsVisible] = useState(false),
     [desktop, setDesktop] = useState(() => window.matchMedia("(min-width: 900px)").matches),
     [scrub, setScrub] = useState<number | null>(null),
@@ -516,15 +510,6 @@ export function ReaderView({
       document.fonts?.removeEventListener?.("loadingdone", onWindowFonts);
     };
   }, []);
-  const playbackMenu = usePlaybackMenu();
-  useEffect(()=>{
-    if(!inline || !panel)return;
-    const frame=requestAnimationFrame(()=>{
-      const pane=viewport.current?.parentElement?.querySelector<HTMLElement>(".reader-panel");
-      pane?.querySelector<HTMLElement>('input[type="search"],button')?.focus();
-    });
-    return()=>cancelAnimationFrame(frame);
-  },[inline,panel]);
   const p = usePlayer(),
     playerRef = useRef(p);
   playerRef.current = p;
@@ -534,6 +519,7 @@ export function ReaderView({
   // still saves them must not re-theme, which would re-paginate the whole book for nothing.
   const themeKey = JSON.stringify({ ...appearance, reader: { ...appearance.reader, display: undefined, segmentWords: undefined, wordWpm: undefined } });
   // The narrated sentence, decided by the following module: it stays through a gap until the next one begins.
+  const narrationBack = useRef<() => void>(() => {});
   const currentInterval = following.narratedSentence(map, placeOf(p.book, p.track?.id, p.position)) ?? undefined;
   const refresh = async () => {
     try {
@@ -1231,6 +1217,7 @@ export function ReaderView({
   const recover = async (back: NarrationReturn, player: typeof p) => {
     if (!player.book || !player.track) return;
     const recordingId = player.book.recordingId, trackId = player.track.id;
+    messages.clearError();
     setRecovering(true);
     try {
       const result = await api<{ locator: TextLocator }>(
@@ -1250,7 +1237,6 @@ export function ReaderView({
       // The recovered passage is the narration to follow: what the return kept is dropped.
       back.confirm();
       await jumpRef.current(result.locator.paragraphId, true, recordingId);
-      setRecoveryStatus("Approximate passage · Located using local speech recognition");
     } catch {
       messages.error("locate");
     } finally {
@@ -1259,7 +1245,6 @@ export function ReaderView({
   };
   const fromAudio = async () => {
     const back = following.backToNarration();
-    setRecoveryStatus("");
     const player = playerRef.current,
       currentMap = mapRef.current;
     if (
@@ -1273,7 +1258,6 @@ export function ReaderView({
         player.book.workId !== bookRef.current?.workId
       ) {
         messages.error("no-recording");
-        setPanel("sync");
         return;
       }
       if (!isAdmin()) { messages.error("no-sync"); return; }
@@ -1345,7 +1329,6 @@ export function ReaderView({
       ),
       audio = books.find((audio) => audio.recordingId === map?.recordingId);
     if (!interval || !audio) {
-      setPanel("sync");
       messages.error("no-map");
       return;
     }
@@ -1368,7 +1351,6 @@ export function ReaderView({
       messages.notice("listening");
     }
   };
-  const listen = () => listenAt(latest.current?.paragraphId);
   const undoListen = () => {
     const toast = listenUndo.current;
     listenUndo.current = null;
@@ -1476,7 +1458,7 @@ export function ReaderView({
         defaultPrevented: event.defaultPrevented,
         ...keyEventContext(event),
         sheetOpen: !!document.querySelector(OPEN_SHEET_SELECTOR),
-        panelOpen: !!panel,
+        panelOpen: appearanceOpen,
         // The Now Playing reader stays mounted while its dialog is closed.
         readerHidden: !!viewport.current?.closest('[data-state="closed"]'),
         narration: !!player.book && !!player.track && player.book.workId === bookRef.current?.workId,
@@ -1484,11 +1466,12 @@ export function ReaderView({
       });
       if (!action) return;
       event.preventDefault();
-      if (action.type === "back-to-narration") following.backToNarration();
+      // `F` does what the foot's Back to narration does, and nothing while it is off (#592).
+      if (action.type === "back-to-narration") narrationBack.current();
       else pageAction.current(action.direction);
     };
     window.addEventListener("keydown",key); return () => window.removeEventListener("keydown",key);
-  }, [panel]);
+  }, [appearanceOpen]);
   const sections = book?.sections || [];
   const sectionOf = (paragraphId?: string) =>
     paragraphId ? sections.find((section) => section.paragraphs.some((fragment) => fragment.id === paragraphId)) : undefined;
@@ -1522,6 +1505,20 @@ export function ReaderView({
   };
   // With this book's narration loaded, the bar is the audio position and the page follows it.
   const audio = p.book && p.track && p.book.workId === book?.workId ? { book: p.book, track: p.track } : null;
+  // Back to narration (#592): it follows the narrated sentence (today); with none, the administrator's locates the
+  // passage from the audio, which the More sheet's Read from audio did; for anyone else it is off. `F` runs the same.
+  const backAction = backToNarration({
+    narration: !!audio,
+    sentence: !!currentInterval,
+    following: follow,
+    admin: isAdmin(),
+    locating: recovering,
+  });
+  const runBack = () => {
+    if (backAction === "follow") following.backToNarration();
+    else if (backAction === "locate") void fromAudio();
+  };
+  narrationBack.current = runBack;
   const audioWhole = audio ? playbackTimeline(audio.book, audio.track.id, p.position, p.length, "book") : null;
   const barChapter = audio ? currentChapter(audio.book, audio.track.id, p.position)?.title || audio.track.title : shownSection?.title || "";
   const barPercent = audio
@@ -1631,16 +1628,6 @@ export function ReaderView({
   }, [rendered, id, host]);
 
   const showContents = desktop && !contentsHidden;
-  const openMore = () => {
-    setPanel(null);
-    if (playbackMenu) playbackMenu.open();
-    else setPanel("more");
-  };
-  const fromMenu = (action: () => void) => () => {
-    playbackMenu?.close();
-    setPanel(null);
-    action();
-  };
   // The message in the foot (#591): a place saved elsewhere, an error, a notice with Undo, an update while paused.
   const update = useReaderUpdate(viewport);
   const message = messageToShow(messages.state, {
@@ -1648,6 +1635,7 @@ export function ReaderView({
     playing: p.playing,
     conflict: conflict ? { chapter: sections.find((section) => section.index === conflict.locator.section)?.title?.trim() || "" } : null,
     update,
+    locating: recovering,
   });
   const messageActions = {
     undo: (notice: ReaderNotice) => (notice === "listening" ? undoListen() : undoRemoveBookmark()),
@@ -1681,32 +1669,15 @@ export function ReaderView({
     dismissUpdate,
   };
   // The next tap on a control ends a notice with Undo (spec #586 "How long").
+  // The notice leaves on the next task, not in the capture phase: React would unmount the message's own Play or Pause
+  // before its click reached it, and the narration would not stop (#592, found with Listen from here's long-press).
+  // Only the notice shown at the tap leaves, not one the control's own click posted (removing a bookmark).
   const tapControls = (event: { target: EventTarget | null }) => {
-    if (tappedControl(event.target)) messages.tapped();
+    const seen = messages.state.notice;
+    if (seen && tappedControl(event.target)) setTimeout(() => messages.tapped(seen), 0);
   };
-  const moreItems = (
-    <div className="reader-more">
-      <button className="reader-more-item" onClick={fromMenu(listen)}>
-        <Headphones size={19} /> Listen from here
-      </button>
-      <button className="reader-more-item" onClick={fromMenu(() => void fromAudio())} disabled={recovering}>
-        {recovering ? <Loader2 size={19} className="spin" /> : <BookOpen size={19} />}
-        {recovering ? "Locating passage…" : "Read from audio"}
-      </button>
-      <button className="reader-more-item" onClick={fromMenu(() => openPage("bookmarks"))}>
-        <Bookmark size={19} /> Bookmarks
-      </button>
-      <button className="reader-more-item" onClick={fromMenu(() => setPanel("sync"))}>
-        <Headphones size={19} /> Reading sync
-      </button>
-      <p className="reader-sync-state" role="status">
-        {recoveryStatus || (!follow ? "Audio follow paused" : currentInterval ? "Estimated sentence timings" : map ? "No timing for this position" : "Prepare reading sync to highlight narration")}
-      </p>
-    </div>
-  );
   return (
     <div className={`reader-room ${inline ? "inline-reader" : ""}`} data-controls-visible={controls} data-appearance={appearanceOpen ? "docked" : undefined} data-contents={showContents} data-current-passage={follow ? currentInterval?.paragraphId : undefined}>
-      {inline && <PlaybackExtra>{moreItems}</PlaybackExtra>}
       {loading && (
         <p className="reader-loading" role="status">
           <Loader2 className="spin" /> Opening your book…
@@ -1717,7 +1688,7 @@ export function ReaderView({
       <header className="reader-head" data-controls={controls} onClickCapture={tapControls}>
       <p className="reader-head-rest"><span className="type-caption">{headRestLine(book?.title, currentSection?.title || barChapter)}</span></p>
       <div className="reader-topbar">
-        {onClose &&<button className="icon-button" aria-label="Close reader" onClick={() => { setControlsVisible(false); setPanel(null); setAppearanceOpen(false); onClose(); }}><ChevronDown size={22} /></button>}
+        {onClose &&<button className="icon-button" aria-label="Close reader" onClick={() => { setControlsVisible(false); setAppearanceOpen(false); onClose(); }}><ChevronDown size={22} /></button>}
         {desktop && (
           <button
             className="icon-button"
@@ -1746,8 +1717,7 @@ export function ReaderView({
           <Bookmark size={21} fill={pageBookmark ? "currentColor" : "none"} />
         </button>
         <button className="icon-button" aria-label="Search this book" disabled={!book} onClick={() => openPage("search")}><Search size={20} /></button>
-        <button className="icon-button reader-appearance-button" aria-label="Reader appearance" aria-expanded={appearanceOpen} onClick={() => { setPanel(null); setAppearanceOpen(true); }}>Aa</button>
-        <button className="icon-button" aria-label="More" aria-expanded={panel === "more"} onClick={openMore}><MoreHorizontal size={22} /></button>
+        <button className="icon-button reader-appearance-button" aria-label="Reader appearance" aria-expanded={appearanceOpen} onClick={() => { setAppearanceOpen(true); }}>Aa</button>
       </div>
       </header>
       <div className="reader-body">
@@ -1848,8 +1818,8 @@ export function ReaderView({
           <button
             className="icon-button reader-back-narration"
             aria-label="Back to narration"
-            disabled={follow || !currentInterval}
-            onClick={() => following.backToNarration()}
+            disabled={!backAction}
+            onClick={runBack}
           >
             <BookToHeadphones size={20} />
           </button>
@@ -1865,43 +1835,6 @@ export function ReaderView({
         {footSetting && <FootSettingRow setting={footSetting} onDone={() => setFootSetting(null)} />}
         </div>
       </section>
-      {panel && panel !== "sync" && book && (
-        <aside className="reader-panel" aria-label="Reader options">
-          <div className="reader-panel-heading">
-            <h3>
-              {
-                {
-                  sync: "Reading sync",
-                  more: "More",
-                }[panel]
-              }
-            </h3>
-            <button
-              className="icon-button"
-              aria-label="Close reader options"
-              onClick={() => setPanel(null)}
-            >
-              <X size={19} />
-            </button>
-          </div>
-          {panel === "more" && moreItems}
-        </aside>
-      )}
-      {panel === "sync" && book && (
-        <aside className="reader-panel" aria-label="Reading sync">
-          <div className="reader-panel-heading">
-            <h3>Reading sync</h3>
-            <button
-              className="icon-button"
-              aria-label="Close reader options"
-              onClick={() => setPanel(null)}
-            >
-              <X size={19} />
-            </button>
-          </div>
-          <ReaderSyncRow workId={book.workId} />
-        </aside>
-      )}
     </div>
   );
 }

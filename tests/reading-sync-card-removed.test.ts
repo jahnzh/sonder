@@ -29,7 +29,7 @@ test("of reading-sync-controls only what the page uses is left", async () => {
 });
 
 test("the reader's map loading reads no /alignments/options", () => {
-  for (const file of ["src/reader-map.ts", "src/use-reader-map.ts", "src/alignment-map-deps.ts", "src/components/ReaderSyncRow.tsx"])
+  for (const file of ["src/reader-map.ts", "src/use-reader-map.ts", "src/alignment-map-deps.ts"])
     assert.doesNotMatch(readFileSync(join(root, file), "utf8"), /alignments\/options/, file);
   assert.doesNotMatch(readFileSync(join(root, "src/components/Reader.tsx"), "utf8"), /alignments\/options/);
 });

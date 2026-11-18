@@ -15,17 +15,14 @@ test("a single audio file without chapter markers gets reading sync prepared aut
  await expect(page.getByRole("dialog",{name:"Reader"})).toBeVisible();
  const reader=page.locator(".reader-dialog");
  await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
- const viewport=(await reader.locator(".reader-viewport").boundingBox())!;
- await page.mouse.click(viewport.x+viewport.width/2,viewport.y+viewport.height/2);
- await reader.getByRole("button",{name:"More",exact:true}).click();
- await reader.locator(".reader-more").getByRole("button",{name:"Reading sync",exact:true}).click();
  // Importing with a workId queues the backfill job; the alignment stub finishes it almost at once.
  await expect.poll(async()=>{
   const jobs=(await(await page.request.get(`/api/alignments?ebookId=${id}`)).json()).jobs;
   return jobs.some((j:any)=>j.recordingId===book.recordingId&&j.origin==="backfill"&&j.mode==="anchored"&&j.anchoring?.anchors?.length>0);
  },{timeout:20000}).toBe(true);
- // More › Reading sync opens the Reading sync page (#543): Ready or Partly ready there.
- await reader.locator(".reader-panel").getByRole("button",{name:/^Reading sync/}).click();
+ // The Book page's Reading sync row opens the Reading sync page (#543, #592): Ready or Partly ready there.
+ await page.goto(`/#book/${encodeURIComponent(book.workId)}`);
+ await page.getByRole("region",{name:"Book",exact:true}).getByRole("button",{name:/^Reading sync/}).click();
  const sync=page.locator(".reading-sync-page");
  await expect(sync).toHaveAttribute("data-state",/^(ready|partial)$/,{timeout:20000});
  await expect(sync.locator(".reading-sync-block .part-group > li").first()).toHaveText(/^(Ready|Partly ready)/);
