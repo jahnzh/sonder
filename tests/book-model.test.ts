@@ -265,6 +265,44 @@ test("the This device switch is the Keep record; its line says what is kept, sav
   assert.equal(keepState({ keep: false, hold: deviceHold(null, [], []), saving: null, ebookSize: null, hasRecording: false }).on, false);
 });
 
+test("the Keep row counts the tracks, the EPUB and the map, and names what is kept (#551)", () => {
+  const r = recording("r1");
+  const complete = deviceHold(r, [file("r1", 1), file("r1", 2), file("r1", 3)], []);
+  const tracks = r.tracks;
+  const needs = (filesSaved: number, filesTotal: number, ebook: { complete: boolean; size: number } | null, withTracks = true) => ({
+    filesSaved,
+    filesTotal,
+    complete: filesSaved === filesTotal && filesTotal > 0,
+    tracks: withTracks ? tracks : [],
+    ebook: ebook && { id: "e1", ...ebook },
+  });
+  // Every track here, the EPUB here, the map missing: not complete, counting all five files.
+  assert.deepEqual(
+    keepState({ keep: true, hold: complete, saving: null, ebookSize: 600_000, hasRecording: true, needs: needs(4, 5, { complete: true, size: 600_000 }) }),
+    { on: true, line: "Not complete · 4 of 5 files", resumable: true },
+  );
+  // All five: the audiobook and the ebook and their size.
+  assert.equal(
+    keepState({ keep: true, hold: complete, saving: null, ebookSize: 600_000, hasRecording: true, needs: needs(5, 5, { complete: true, size: 600_000 }) }).line,
+    "Audiobook and ebook · 3.6 MB",
+  );
+  // The EPUB still missing (the reader's own copy is not kept).
+  assert.equal(
+    keepState({ keep: true, hold: complete, saving: null, ebookSize: null, hasRecording: true, needs: needs(3, 4, { complete: false, size: 0 }) }).line,
+    "Not complete · 3 of 4 files",
+  );
+  // A book with only an ebook: "Ebook · 600 KB" once kept, "Not complete · 0 of 1 files" before.
+  const none = deviceHold(null, [], []);
+  assert.equal(keepState({ keep: true, hold: none, saving: null, ebookSize: 600_000, hasRecording: false, needs: needs(1, 1, { complete: true, size: 600_000 }, false) }).line, "Ebook · 600 KB");
+  assert.equal(keepState({ keep: true, hold: none, saving: null, ebookSize: null, hasRecording: false, needs: needs(0, 1, { complete: false, size: 0 }, false) }).line, "Not complete · 0 of 1 files");
+  // Nothing needed (a PDF only, or nothing yet): "Nothing to save yet".
+  assert.equal(keepState({ keep: true, hold: none, saving: null, ebookSize: null, hasRecording: false, needs: needs(0, 0, null, false) }).line, "Nothing to save yet");
+  // A running save names its files out of all of them: "Saving · 11 of 12 files".
+  assert.equal(keepState({ keep: true, hold: complete, saving: { filesSaved: 11, filesTotal: 12 }, ebookSize: null, hasRecording: true, needs: needs(11, 12, null) }).line, "Saving · 11 of 12 files");
+  // Off: the needs do not matter.
+  assert.equal(keepState({ keep: false, hold: complete, saving: null, ebookSize: null, hasRecording: true, needs: needs(3, 5, null) }).line, "Audiobook · 3 MB");
+});
+
 test("the heart: pressed when any entry of the work is a favourite, toggling all of them", () => {
   assert.equal(favoriteOf(["a", "b"], []), false);
   assert.equal(favoriteOf(["a", "b"], ["x", "b"]), true);

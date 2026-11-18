@@ -84,13 +84,13 @@ export function alignmentJobNeedsPolling(
 const gone = (status: number | undefined) => status === 404 || status === 410;
 
 /** A cached map is only reused for the same job run, built from the EPUB that is
- * current now. The summary cannot tell whether the audio changed in place; only
+ * current now. Keep on this device (#551) counts a kept map as complete by the same rule. The summary cannot tell whether the audio changed in place; only
  * the map endpoint checks that. */
-function cachedMapMatches(
-  cached: AlignmentJob | undefined,
-  job: AlignmentJob,
+export function cachedMapMatches<T extends Pick<AlignmentJob, "id" | "updatedAt" | "fingerprint" | "audioFingerprint"> & { intervals?: readonly unknown[] }>(
+  cached: T | undefined,
+  job: Pick<AlignmentJob, "id" | "updatedAt" | "fingerprint" | "audioFingerprint">,
   ebookFingerprint: string | undefined,
-): cached is AlignmentJob {
+): cached is T {
   return (
     !!cached?.intervals?.length &&
     cached.id === job.id &&

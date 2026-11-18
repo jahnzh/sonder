@@ -20,9 +20,9 @@ import { InfoMark } from "../parts/Tooltip";
 import { backName } from "../parts/back-name";
 import { usePlayer } from "../player";
 import { openReader } from "../reading";
-import { ebookDeviceCopySize, EBOOK_DEVICE_EVENT, removeEbookFromDevice, saveEbookToDevice, useDeviceEbookChoice, useEbookDeviceCopy } from "../ebook-device-copy";
+import { ebookDeviceCopySize, EBOOK_DEVICE_EVENT, removeEbookFromDevice, useDeviceEbookChoice, useEbookDeviceCopy } from "../ebook-device-copy";
 import { ebookSearchTarget } from "./ebook-page";
-import { keepSaver, tapKeep, useKeepRecord } from "../keep-runtime";
+import { keepSaver, removeWorkMaps, tapKeep, useKeepRecord, useKeptNeeds } from "../keep-runtime";
 import { hardcoverRowValue } from "../hardcover-page-model";
 import { bytes } from "../size-format";
 import { tip } from "../tooltip-texts";
@@ -178,12 +178,14 @@ export function BookPage(props: Props) {
   const hold = deviceHold(recording, downloads, downloadParts);
   const job = recording ? running[recording.recordingId] : undefined;
   const epubSize = chosenEpub && epubCopy.known ? epubCopy.size : null;
+  const needs = useKeptNeeds(work, downloads, downloadParts);
   const keep = keepState({
     keep: keepRecord?.on === true,
     hold,
     saving: job ? { filesSaved: Math.max(0, job.chapter - 1), filesTotal: job.total } : null,
     ebookSize: epubSize,
     hasRecording: !!recording && recording.tracks.length > 0,
+    needs,
   });
   const deviceSize = useDeviceSize(work, downloads, downloadParts);
   const hardcoverValue = hardcoverRowValue(hardcover, work?.hardcover ?? null);
@@ -279,15 +281,11 @@ export function BookPage(props: Props) {
     });
 
   // Keep on this device (#550): on stores the choice and asks the saver to make this device hold the book; the saver
-  // saves the chosen recording now and whatever arrives later. Only this tap asks for persistent storage (`tap`). The chosen
-  // EPUB is saved once here, as before, until Keep saves it too.
+  // saves the chosen recording, the chosen EPUB and the pair's map now, and whatever of them arrives later (#551).
+  // Only this tap asks for persistent storage (`tap`).
   const keepOn = () => {
     setError("");
     void tapKeep(workId, true).catch((e: Error) => setError(e.message));
-    if (chosenEpub && epubSize == null)
-      void saveEbookToDevice(chosenEpub)
-        .then(() => epubCopy.read())
-        .catch((e: Error) => setError(e.message));
   };
   // Resume: a kept book's save is the saver's; another is today's save.
   const resume = () => {
@@ -307,7 +305,10 @@ export function BookPage(props: Props) {
         }
         await deleteDownloads(r.recordingId);
       }
+      // A book with only an ebook saves under its EPUB's name (#551).
+      for (const ebook of work.ebooks) keepSaver()?.pause(`ebook:${ebook.id}`, "off");
       for (const ebook of work.ebooks) if ((await ebookDeviceCopySize(ebook.id)) != null) await removeEbookFromDevice(ebook.id);
+      await removeWorkMaps(work);
       window.dispatchEvent(new Event("sonder:downloads-changed"));
       await props.onDevice();
       setConfirmKeepOff(false);

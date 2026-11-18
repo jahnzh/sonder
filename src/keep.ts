@@ -2,7 +2,8 @@
  * Keep on this device as a standing choice (#550, ADR 0018 and ADR 0021, decided in #465): the pure rules.
  *
  * - `mergeKeep`: the device's `keep` table merged with `GET /api/device/keep`.
- * - `keptNeeds`: what a kept book needs on this device; for now the chosen recording's tracks.
+ * - `keptNeeds`: what a kept book needs on this device: the chosen recording's tracks, the chosen EPUB and the
+ *   pair's reading sync map (#551).
  * - `classifyStop`: what became of a save that stopped, for the device's record of it (#517).
  * - `stallGuard`: a range that delivers nothing for 30 seconds is aborted.
  * - `rolloutChoices`: the books a device that saved before Keep existed turns Keep on for, once.
@@ -10,6 +11,9 @@
  * No React, no `window`, no Dexie, no fetch: the unit tests read it as plain data. The server must not import this
  * file: the production image copies only four files of `src/`.
  */
+import { cachedMapMatches } from "./alignment-map-lifecycle";
+import { chosenEbook } from "./ebook-choice";
+import type { LibraryWork, ReadingSyncSummary } from "./types";
 
 /** A Keep record as the device stores it (`keep` table of the account's device database). */
 export type KeepEntry = {
@@ -79,16 +83,41 @@ export type HeldFile = { trackId: string; recordingId: string; size: number };
 /** A file partly on this device. */
 export type HeldPart = { trackId: string; recordingId: string; loaded: number };
 
+/** An ebook edition of a work as Keep reads it from the stored work. */
+export type NeededEbookEdition = Pick<LibraryWork["ebooks"][number], "id" | "format" | "available"> & { size?: number };
+/** The reading sync job of a pair as the read by work lists it (`LibraryWork.readingSync`). */
+export type NeededMapJob = Pick<ReadingSyncSummary, "id" | "ebookId" | "recordingId" | "status" | "updatedAt" | "fingerprint" | "audioFingerprint" | "intervalCount">;
+/** This device's kept copy of an EPUB (`reader-file:<id>` that is not the reader's own cache), and its size. */
+export type HeldEbook = { id: string; fingerprint: string; size: number };
+/** This device's stored map of a pair (`reader-map:<ebookId>:<recordingId>`), as far as the match needs it. */
+export type HeldMap = Pick<NeededMapJob, "id" | "updatedAt" | "fingerprint" | "audioFingerprint"> & { intervals?: readonly unknown[] };
+
+/** What Keep reads of a work's ebooks and reading sync, and what this device holds of them. */
+export type KeepReading = {
+  work: Pick<LibraryWork, "ebooks" | "chosenEbookId"> & { readingSync?: readonly NeededMapJob[] };
+  /** This user's choice of edition on this device (the Ebook page's rule, #531). */
+  deviceChoice?: string | null;
+  /** This device's kept EPUB copies. */
+  ebooks: readonly HeldEbook[];
+  /** This device's stored maps, by `reader-map:<ebookId>:<recordingId>`. */
+  maps: Readonly<Record<string, HeldMap | undefined>>;
+};
+
 export type KeptNeeds = {
   /** The chosen recording, or null when the work has none. */
   recordingId: string | null;
-  /** Every file the book needs, in order. */
+  /** Every track the book needs, in order. */
   tracks: NeededTrack[];
   /** Of those, the ones not complete on this device. */
   missing: NeededTrack[];
+  /** The chosen EPUB, when the work has one on the server; a PDF is never needed. */
+  ebook: { id: string; complete: boolean; size: number } | null;
+  /** The pair's map, when the read says it is ready or partly ready. */
+  map: { ebookId: string; recordingId: string; jobId: string; complete: boolean } | null;
+  /** Tracks, the EPUB and the map: every file the book needs. */
   filesTotal: number;
   filesSaved: number;
-  /** Bytes the complete files take. */
+  /** Bytes the complete files take (the audio files and the EPUB). */
   size: number;
   /** Bytes of the missing files already saved in sections. */
   sections: number;
@@ -96,36 +125,71 @@ export type KeptNeeds = {
   complete: boolean;
 };
 
+/** Whether the read lists the pair's map as one to read with: ready or partly ready, with sentences. */
+export function mapReady(job: Pick<NeededMapJob, "status" | "intervalCount"> | null | undefined): boolean {
+  return !!job && (job.status === "ready" || job.status === "partial") && job.intervalCount > 0;
+}
+
+export const readerFileKey = (ebookId: string) => `reader-file:${ebookId}`;
+export const readerMapKey = (ebookId: string, recordingId: string) => `reader-map:${ebookId}:${recordingId}`;
+
 /**
- * What a kept book needs on this device, for now its chosen recording's tracks as the latest read of the library
- * lists them. A track counts as saved by today's size check: a complete file of the same recording with a size.
- * A file of a track the read no longer lists does not count.
+ * What a kept book needs on this device (spec #548 "On the device: what a kept book needs"):
+ * - the chosen recording's tracks as the latest read of the library lists them; a track counts as saved by today's
+ *   size check (a complete file of the same recording with a size); a file of a track the read no longer lists does
+ *   not count;
+ * - the chosen EPUB by the Ebook page's rule (`chosenEbook`), complete when this device keeps `reader-file:<id>`;
+ *   a PDF is never needed;
+ * - the pair's map when the read says it is ready or partly ready, complete when `reader-map:<ebookId>:<recordingId>`
+ *   matches that job and the kept EPUB's fingerprint (`cachedMapMatches`, the reader's own rule).
  */
 export function keptNeeds(
   recording: { recordingId: string; tracks: readonly NeededTrack[] } | null,
   downloads: readonly HeldFile[],
   parts: readonly HeldPart[] = [],
+  reading: KeepReading | null = null,
 ): KeptNeeds {
-  if (!recording) return { recordingId: null, tracks: [], missing: [], filesTotal: 0, filesSaved: 0, size: 0, sections: 0, complete: false };
-  const files = new Map(
-    downloads.filter((file) => file.recordingId === recording.recordingId && file.size > 0).map((file) => [file.trackId, file]),
-  );
-  const tracks = [...recording.tracks];
+  const files = recording
+    ? new Map(downloads.filter((file) => file.recordingId === recording.recordingId && file.size > 0).map((file) => [file.trackId, file]))
+    : new Map<string, HeldFile>();
+  const tracks = recording ? [...recording.tracks] : [];
   const missing = tracks.filter((track) => !files.has(track.id));
-  const size = tracks.reduce((sum, track) => sum + (files.get(track.id)?.size ?? 0), 0);
+  const audioSize = tracks.reduce((sum, track) => sum + (files.get(track.id)?.size ?? 0), 0);
   const missingIds = new Set(missing.map((track) => track.id));
-  const sections = parts
-    .filter((part) => part.recordingId === recording.recordingId && missingIds.has(part.trackId))
-    .reduce((sum, part) => sum + Math.max(0, part.loaded), 0);
+  const sections = recording
+    ? parts
+        .filter((part) => part.recordingId === recording.recordingId && missingIds.has(part.trackId))
+        .reduce((sum, part) => sum + Math.max(0, part.loaded), 0)
+    : 0;
+
+  const chosen = reading ? chosenEbook(reading.work as Pick<LibraryWork, "ebooks" | "chosenEbookId">, reading.deviceChoice ?? null) : null;
+  const held = chosen ? reading!.ebooks.find((copy) => copy.id === chosen.id) ?? null : null;
+  const ebook = chosen ? { id: chosen.id, complete: !!held, size: held?.size ?? 0 } : null;
+  const job =
+    chosen && recording ? reading!.work.readingSync?.find((j) => j.ebookId === chosen.id && j.recordingId === recording.recordingId) ?? null : null;
+  const map =
+    chosen && recording && job && mapReady(job)
+      ? {
+          ebookId: chosen.id,
+          recordingId: recording.recordingId,
+          jobId: job.id,
+          complete: cachedMapMatches(reading!.maps[readerMapKey(chosen.id, recording.recordingId)], job, held?.fingerprint),
+        }
+      : null;
+
+  const filesTotal = tracks.length + (ebook ? 1 : 0) + (map ? 1 : 0);
+  const filesSaved = tracks.length - missing.length + (ebook?.complete ? 1 : 0) + (map?.complete ? 1 : 0);
   return {
-    recordingId: recording.recordingId,
+    recordingId: recording?.recordingId ?? null,
     tracks,
     missing,
-    filesTotal: tracks.length,
-    filesSaved: tracks.length - missing.length,
-    size,
+    ebook,
+    map,
+    filesTotal,
+    filesSaved,
+    size: audioSize + (ebook?.size ?? 0),
     sections,
-    complete: tracks.length > 0 && missing.length === 0,
+    complete: filesTotal > 0 && filesSaved === filesTotal,
   };
 }
 
@@ -201,6 +265,10 @@ export type KeepWork = {
   inLibrary: boolean;
   chosenRecordingId?: string | null;
   recordings: readonly { recordingId: string; tracks: readonly NeededTrack[] }[];
+  /** The work's ebook editions and its shared default (#551); absent in a record stored before them. */
+  ebooks?: readonly NeededEbookEdition[];
+  chosenEbookId?: string | null;
+  readingSync?: readonly NeededMapJob[];
 };
 
 /** The chosen recording of a work: the stored choice while it is one of its recordings, otherwise the first. */
