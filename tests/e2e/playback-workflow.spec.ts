@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
+import { listenFace, openAudiobookPage, openListen, openRead } from "./now-playing";
 import { playFromLibrary } from "./library-play";
 
 // Books a test imports get a title unique to the run, so a repeat on the same server finds one
@@ -62,19 +63,19 @@ async function showReaderControls(page: Page) {
   await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
   await expect(topbar).toBeVisible();
 }
+// The Audiobook page, from Now playing (#593): Listen's book button, then the Book page's Audiobook row.
 async function manage(page: Page) {
-  await page.locator(".dock-book").click();
-  await expect(page.getByText("Loading ebook…",{exact:true})).toBeHidden();
-  // With an ebook, Playback options open from the dialog heading's ⋯ (the reader's head has no More, #592); a DOM
-  // click, as the heading is clipped under the reader (#22).
-  if(await page.locator(".inline-reader").count()){
-    await page.locator(".playback-menu-trigger").evaluate((el:HTMLButtonElement)=>el.click());
-  }
-  // The player's "Audiobook" opens the Audiobook page (#530).
-  await page.getByRole("button",{name:"Audiobook",exact:true}).click();
-  const audiobook=page.getByRole("region",{name:"Audiobook",exact:true});
+  const audiobook=await openAudiobookPage(page);
   await expect(audiobook.getByRole("radiogroup",{name:"Recordings",exact:true})).toBeVisible();
   return audiobook;
+}
+// Plays from on Now playing's Listen face (#593): the Audiobook page's picker, which keeps the place.
+async function playFromListen(page: Page, source: string) {
+  await listenFace(page).getByRole("button",{name:"Plays from",exact:true}).click();
+  const picker=page.getByRole("dialog",{name:"Plays from",exact:true});
+  await picker.getByRole("radio",{name:source,exact:true}).click();
+  await expect(picker).toBeHidden();
+  await expect(listenFace(page).getByRole("button",{name:"Plays from",exact:true})).toHaveText(source);
 }
 // Plays from: a picker that keeps the place (#530).
 async function playFrom(page: Page, audiobook: ReturnType<Page["getByRole"]>, source: string) {
@@ -114,7 +115,10 @@ test("chapter progress persists; precision dragging previews, slows with distanc
     await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button",{name:"Library",exact:true}).click();
     await playAndPause(page,"Alice’s Adventures in Wonderland");
     await position(page,150.12345678);
-    await page.locator(".dock-book").click();
+    // The mouse's pointer id differs between engines (Chromium 1, Firefox 0): synthetic events use the real one.
+    await page.evaluate(()=>addEventListener("pointerdown",event=>{(window as any).__pointerId=event.pointerId;},true));
+    const pointerId=()=>page.evaluate(()=>(window as any).__pointerId as number);
+    await openListen(page);
     const slider=page.getByRole("slider",{name:"Seek in chapter",exact:true});
     expect(Number(await slider.getAttribute("max"))).toBeCloseTo(180,8);
     await expect(slider).toHaveValue("30");
@@ -138,7 +142,7 @@ test("chapter progress persists; precision dragging previews, slows with distanc
     await slider.fill("30");
     await page.mouse.move(x,y); await page.mouse.down();
     await page.mouse.move(x+30,y);
-    await slider.dispatchEvent("pointercancel",{pointerId:1});
+    await slider.dispatchEvent("pointercancel",{pointerId:await pointerId()});
     await page.mouse.up();
     expect((await audioState(page)).position).toBeCloseTo(150,0);
     await slider.focus(); await page.keyboard.press("ArrowRight");
@@ -148,22 +152,23 @@ test("chapter progress persists; precision dragging previews, slows with distanc
     await page.mouse.move(x,y); await page.mouse.down();
     await page.mouse.move(x+30,y-156);
     const shown=Number(await slider.inputValue());
-    await slider.locator("..").dispatchEvent("pointerup",{pointerId:1,clientX:x+130,clientY:y});
+    await slider.locator("..").dispatchEvent("pointerup",{pointerId:await pointerId(),clientX:x+130,clientY:y});
     await page.mouse.up();
     await expect.poll(async()=>(await audioState(page)).position).toBeCloseTo(120.12345678+shown,5);
     await slider.fill("31");
     const mobileWidth=box.width;
     await page.screenshot({path:"artifacts/playback-chapter-mobile.png",fullPage:true});
     await page.setViewportSize({width:1440,height:1000});
-    await expect.poll(async()=>(await slider.boundingBox())!.width).toBeGreaterThan(mobileWidth*1.7);
+    // Listen keeps its rows in one column of at most 560 on a wide window (#593): the bar fills it.
+    await expect.poll(async()=>(await slider.boundingBox())!.width).toBeGreaterThan(mobileWidth*1.5);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(1440);
     await page.screenshot({path:"artifacts/playback-chapter-desktop.png",fullPage:true});
-    await page.getByRole("button",{name:"Close dialog",exact:true}).click();
+    await listenFace(page).getByRole("button",{name:"Close now playing",exact:true}).click();
     await page.setViewportSize({width:390,height:844});
     await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button",{name:"Settings",exact:true}).click();
     await page.getByRole("button",{name:/^Playback\b/}).click();
     await page.getByRole("radiogroup",{name:"Progress bar shows",exact:true}).getByRole("radio",{name:"Whole audiobook",exact:true}).click();
-    await page.locator(".dock-book").click();
+    await openListen(page);
     await expect(page.getByRole("slider",{name:"Seek in audiobook",exact:true})).toHaveValue("151");
     expect((await audioState(page)).paused).toBe(true);
     await page.setViewportSize({width:320,height:740});
@@ -189,7 +194,7 @@ test("whole-audiobook seeking crosses real audio files and preserves pause",asyn
   await page.goto("/");
   await playAndPause(page,title);
   await expect.poll(()=>held).toBe(true);
-  await page.locator(".dock-book").click();
+  await openListen(page);
   const length=book.tracks[0].duration;
   const slider=page.getByRole("slider",{name:"Seek in audiobook",exact:true});
   await slider.fill(String(Math.round(length+100)));
@@ -217,13 +222,13 @@ test("playback opens the reader and title page; downloaded sources can be switch
   await page.waitForFunction(()=>!!navigator.serviceWorker.controller);
   await playAndPause(page,title);
   await position(page,160);
-  await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
-  await expect(page.getByRole("dialog",{name:"Now playing"})).toBeVisible();
+  // Now playing opens the Read face (#593).
+  await openRead(page);
   await expect(page.frameLocator(".inline-reader .reader-viewport iframe").getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
   await showReaderControls(page);
-  await page.getByRole("button",{name:"Close reader",exact:true}).click();
-  await page.getByRole("button",{name:`Open title page for ${title}`,exact:true}).click();
-  // The player's "Open title page" opens the Book page (#532), with Read; its This device switch saves the book.
+  // Listen, and its head's book button opens the Book page (#532), with Read; its This device switch saves the book.
+  await page.locator(".inline-reader .reader-topbar").getByRole("radio",{name:"Listen",exact:true}).click();
+  await listenFace(page).getByRole("button",{name:"Open this book’s page",exact:true}).click();
   const bookPage=page.getByRole("region",{name:"Book",exact:true});
   await expect(bookPage).toBeVisible();
   await expect(bookPage.getByRole("button",{name:"Read",exact:true})).toBeEnabled();
@@ -231,17 +236,16 @@ test("playback opens the reader and title page; downloaded sources can be switch
   await keep.click();
   await expect(keep).toHaveAttribute("aria-checked","true");
   await expect(page.locator("#book-keep-line")).toHaveText(/^Audiobook and ebook · /,{timeout:20000});
-  // The Book page's Audiobook row opens the Audiobook page, and only the page (#530).
-  await bookPage.getByRole("button",{name:/^Audiobook /}).click();
-  const manager=page.getByRole("region",{name:"Audiobook",exact:true});
-  await expect(manager).toBeVisible();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(manager.getByRole("button",{name:/^Plays from: Automatic$/})).toBeEnabled();
-  await playFrom(page,manager,"Device copy");
+  // Back to Listen: Plays from switches the source and keeps the place (#593).
+  await page.goBack();
+  await expect(listenFace(page)).toBeVisible();
+  await expect(listenFace(page).getByRole("button",{name:"Plays from",exact:true})).toHaveText("Automatic");
+  await playFromListen(page,"Device copy");
   await expect.poll(async()=>(await audioState(page)).src).toMatch(/^blob:/);
+  // The new source seeks to the place once it has loaded (Firefox reports the switch before the seek).
+  await expect.poll(async()=>(await audioState(page)).position).toBeCloseTo(160,0);
   expect((await audioState(page)).paused).toBe(true);
-  expect((await audioState(page)).position).toBeCloseTo(160,0);
-  await playFrom(page,manager,"Server copy");
+  await playFromListen(page,"Server copy");
   await expect.poll(async()=>(await audioState(page)).src).toContain("?source=server");
   await expect.poll(async()=>(await audioState(page)).position).toBeCloseTo(160,0);
   const response=await page.evaluate(async(id)=>{
@@ -249,6 +253,13 @@ test("playback opens the reader and title page; downloaded sources can be switch
     return {status:response.status,source:response.headers.get("X-Sonder-Media-Source")};
   },book.tracks[0].id);
   expect(response).toEqual({status:206,source:"server"});
+  // Flagging and removing a copy is the Audiobook page's (#530), and only the page.
+  await listenFace(page).getByRole("button",{name:"Open this book’s page",exact:true}).click();
+  await bookPage.getByRole("button",{name:/^Audiobook /}).click();
+  const manager=page.getByRole("region",{name:"Audiobook",exact:true});
+  await expect(manager).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(manager.getByRole("button",{name:/^Plays from: Server copy$/})).toBeEnabled();
   await report(page,manager,"Device copy");
   // The device copy's row says it is marked, and its dialog says so with the reason.
   const deviceRow=manager.getByRole("button",{name:"Device copy Marked faulty",exact:true});
@@ -340,14 +351,15 @@ test("switching audiobook versions resumes each recording's own checkpoint",asyn
 
 test.describe("touch seeking",()=>{
   test.use({hasTouch:true,isMobile:true});
-  test("releasing a fine-seek gesture keeps the exact previewed destination",async({page,context})=>{
+  test("releasing a fine-seek gesture keeps the exact previewed destination",async({page,context,browserName})=>{
+    test.skip(browserName!=="chromium","Touch input is sent through CDP, which only Chromium has");
     await instrument(page);
     const title=unique("Touch seek story");
     await importBook(page,{title,author:"Seek QA",file:{name:"Chapter.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}});
     await page.goto("/");
     await playAndPause(page,title);
     await position(page,200);
-    await page.locator(".dock-book").click();
+    await openListen(page);
     const slider=page.getByRole("slider",{name:"Seek in audiobook",exact:true});
     await slider.scrollIntoViewIfNeeded();
     const cdp=await context.newCDPSession(page);
@@ -373,7 +385,7 @@ test.describe("touch seeking",()=>{
     await expect(slider).toHaveAttribute("aria-valuetext",text!);
     expect(await page.evaluate(()=>(window as any).__seekEvents)).toEqual([preview]);
 
-    await page.getByRole("button",{name:"Close dialog",exact:true}).click();
+    await listenFace(page).getByRole("button",{name:"Close now playing",exact:true}).click();
     const compact=page.getByRole("slider",{name:"Playback position",exact:true});
     const compactBox=(await compact.boundingBox())!,compactWidth=compactBox.width-18;
     const cx=compactBox.x+9+preview/length*compactWidth,cy=compactBox.y+compactBox.height/2;

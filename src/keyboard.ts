@@ -23,7 +23,7 @@ const IGNORED_TAGS = new Set([
   "A",
 ]);
 export const BLOCKING_DIALOG_SELECTOR =
-  '[role="dialog"][data-state="open"]:not(.now-playing-dialog):not(.reader-dialog)';
+  '[role="dialog"][data-state="open"]:not(.now-playing-screen):not(.reader-dialog)';
 /** Situations in which a key belongs to something else: a field, a dialog, a shortcut. */
 function keyIgnored({
   defaultPrevented = false,
@@ -90,8 +90,9 @@ export function playbackKeyAction({
     return canSeek ? { type: "skip", seconds: 30 } : null;
   return null;
 }
-/** An open sheet that is not a dialog: Now Playing's Playback options, which sits above the reader. */
-export const OPEN_SHEET_SELECTOR = '.playback-options-panel:not([hidden])';
+/** An open panel that is not a dialog: the More panel of the reader on Now playing's Read face (#593), which took the
+ * place of Playback options above the reader. */
+export const OPEN_SHEET_SELECTOR = '.inline-reader .reader-panel';
 const TEXT_ENTRY_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
 /** The key goes to a field the reader is typing in: it must reach the field, not a shortcut. */
 export function typingInField({ targetTag = null, contentEditable = false }: Pick<PlaybackKeyInput, "targetTag" | "contentEditable">) {

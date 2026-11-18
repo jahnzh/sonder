@@ -147,16 +147,22 @@ const desktopProjects = [
               /(^|\/)series-offline\.spec\.ts$/,
               // More › Reading sync opens the Reading sync page; the specs that opened the card (#543).
               /(^|\/)(reader-sync-row|chapterless-sync|one-reading-view)\.spec\.ts$/,
+              // Now playing as one screen with Listen and Read, and the specs of the screens it replaces (#593).
+              /(^|\/)(now-playing-faces|playback-workflow|media-controls|playback-speed|playback-speed-rate|position-history|integrated-reader)\.spec\.ts$/,
               // The More sheet goes; Back to narration locates the passage without a map (#592).
               /(^|\/)(reader-more-gone|back-to-narration)\.spec\.ts$/,
               // A device whose browser cleared Sonder's files saves its kept books again (#554).
               /(^|\/)keep-cleared\.spec\.ts$/,
+              // A series that is not saved opens its page with Save series; the specs that saved through the dialog (#564).
+              /(^|\/)series-(not-saved|discovery|acquisition)\.spec\.ts$/,
               // A Hardcover book opens its Book page before it is a work on the server (#574).
               /(^|\/)hardcover-book-look\.spec\.ts$/,
               // Discover finds books (#575).
               /(^|\/)discover\.spec\.ts$/,
               // The shell: the tab bar, the rail and the offline line (#581).
               /(^|\/)shell\.spec\.ts$/,
+              // A stuck download says why and offers Cancel (#716).
+              /(^|\/)activity-cancel\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },

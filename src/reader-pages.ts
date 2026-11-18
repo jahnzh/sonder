@@ -55,7 +55,25 @@ export function publishReader(key: Pick<LiveReader, "ebookId" | "host">, reader:
 /** A reader's head or foot opens one of its pages: that reader is the one the page lists and sends back. */
 export function openedFrom(reader: Pick<LiveReader, "ebookId" | "host">) {
   opener = live.get(keyOf(reader)) ?? null;
+  listenOpener = null;
   emit();
+}
+
+/**
+ * Now playing's Listen face opens Chapters (#593, spec #586 "Chapters, Bookmarks and Search as pages"): the page lists
+ * the recording's chapters, not the ebook's sections. The page takes this once, as it opens, and keeps it in its entry.
+ */
+let listenOpener: string | null = null;
+export function openedFromListen(workId: string) {
+  opener = null;
+  listenOpener = workId;
+  emit();
+}
+/** Whether the page of this work that is opening was opened from Listen; forgotten as it is taken. */
+export function takeListenOpener(workId: string): boolean {
+  const from = listenOpener === workId;
+  listenOpener = null;
+  return from;
 }
 
 /** The reader a page of this work was opened from, while it is still mounted. */
@@ -65,6 +83,7 @@ export function openerOf(workId: string): LiveReader | null {
 
 /** Forgets the opener: a page reached some other way (a link, a reload) lists the book itself. */
 export function forgetOpener() {
+  listenOpener = null;
   if (!opener) return;
   opener = null;
   emit();

@@ -1,0 +1,203 @@
+/* Now playing (#593, board NowPlaying.dc.html): one screen over the page, the whole window, with Listen and Read as
+   its faces. The dialog's own heading names it for a screen reader only; the face draws its head. */
+.dialog-content.now-playing-screen {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  transform: none;
+  translate: none;
+  animation: none;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--background);
+  color: var(--text);
+}
+.now-playing-screen > .dialog-heading {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.now-playing-screen > .dialog-heading > button {
+  display: none;
+}
+/* Kept mounted under the Read face's pages (#590): closed, it keeps its layout but is neither seen, tapped nor read. */
+.now-playing-screen[data-state="closed"],
+.now-playing-screen[data-state="closed"] * {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+.now-playing-face {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.now-playing-face > .reader-room {
+  flex: 1;
+  min-height: 0;
+}
+/* The Read face carries the phone's safe areas in its head and foot, as the reader on its own does. */
+.now-playing-face > .reader-room.inline-reader {
+  --reader-safe-top: var(--sonder-safe-top, env(safe-area-inset-top, 0px));
+  --reader-safe-bottom: var(--sonder-safe-bottom, env(safe-area-inset-bottom, 0px));
+}
+.reader-topbar-face {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-4);
+}
+
+/* The head: Close, Listen or Read, and on Listen the book's page; each 44. */
+.now-playing-head {
+  flex: none;
+  height: var(--height-control);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+}
+.now-playing-face > .now-playing-head {
+  padding: calc(var(--space-16) + var(--sonder-safe-top, env(safe-area-inset-top, 0px))) var(--space-16) 0;
+}
+.now-playing-head-end {
+  width: var(--height-control);
+  flex: none;
+}
+.now-playing-switch {
+  width: 136px;
+  flex: none;
+}
+.now-playing-switch .part-segmented {
+  width: 100%;
+}
+
+/* Listen: the window less 16 on each side, its rows 16 apart, scrolling inside when the window is short. */
+.now-playing-listen {
+  flex: 1;
+  min-height: 0;
+  box-sizing: border-box;
+  padding: calc(var(--space-16) + var(--sonder-safe-top, env(safe-area-inset-top, 0px))) var(--space-16)
+    calc(var(--space-16) + var(--sonder-safe-bottom, env(safe-area-inset-bottom, 0px)));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  overflow-y: auto;
+}
+.now-playing-body {
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+.now-playing-intro {
+  display: flex;
+  align-items: center;
+  gap: var(--space-16);
+  min-width: 0;
+}
+.now-playing-cover {
+  width: 120px;
+  height: 120px;
+  flex: none;
+  border-radius: var(--corner-control);
+  object-fit: cover;
+  background: var(--raised);
+}
+.now-playing-names {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.now-playing-names h1 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.now-playing-names p {
+  margin: 0;
+  color: var(--muted);
+}
+.now-playing-timeline {
+  min-width: 0;
+}
+.now-playing-transport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-24);
+}
+.now-playing-skip {
+  width: 56px;
+  height: 56px;
+  flex: none;
+  border: 0;
+  border-radius: var(--corner-round);
+  background: var(--raised);
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+}
+.now-playing-play {
+  width: 72px;
+  height: 72px;
+  flex: none;
+  border: 0;
+  border-radius: var(--corner-round);
+  background: var(--accent);
+  color: var(--on-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.now-playing-skip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.now-playing-skip:focus-visible,
+.now-playing-play:focus-visible,
+.now-playing-opens:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.now-playing-error {
+  margin: 0;
+  color: var(--danger, var(--text));
+}
+.now-playing-speed {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+/* A row's value that opens something (Plays from, Earlier positions): the value and a chevron, 44 high. */
+.now-playing-opens {
+  min-height: var(--height-control);
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.now-playing-opens:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

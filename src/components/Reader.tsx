@@ -1,5 +1,5 @@
 import { isAdmin } from "../lib";
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type EpubBook from "epubjs/types/book";
 import type Rendition from "epubjs/types/rendition";
 import type Contents from "epubjs/types/contents";
@@ -22,7 +22,7 @@ import {
 import literataNormal from "@fontsource-variable/literata/files/literata-latin-wght-normal.woff2?url";
 import literataItalic from "@fontsource-variable/literata/files/literata-latin-wght-italic.woff2?url";
 import { Dialog } from "./ui/dialog";
-import { goBackFrom, navigate as goTo, openSheet, useAddress } from "../navigation";
+import { goBackFrom, navigate as goTo, useAddress } from "../navigation";
 import { isReaderPage, openedFrom, onPlaceRequested, publishReader, takePlace, useOpenerAny, type LiveReader, type ReaderPage, type ReaderPlace } from "../reader-pages";
 import { useAppearance } from "./Appearance";
 import { fontFamilies, paletteFor } from "../appearance";
@@ -338,6 +338,7 @@ export function ReaderView({
   books,
   onClose,
   onGone,
+  faceControl,
 }: {
   id: string;
   fromAudio: boolean;
@@ -346,6 +347,8 @@ export function ReaderView({
   onClose?: () => void;
   /** The server says the ebook is gone and no copy of it is on this device. */
   onGone?: () => void;
+  /** Now playing's Listen or Read control (#593), in the head after Close, in the title's place. */
+  faceControl?: ReactNode;
   books: Book[];
   /** Kept for the callers: every message while reading is in the foot (#591), none goes to the app's toast. */
   notify?: (text: string, error?: boolean) => void;
@@ -1574,7 +1577,8 @@ export function ReaderView({
   const host: LiveReader["host"] = inline ? "now-playing" : "reader";
   const narratedSecondsLeft = audio && narratedChapter ? Math.ceil(chapterTimeLeft(narratedChapter, p.position, p.speed) / 30) * 30 : 0;
   const shown = useRef<() => void>(() => {});
-  shown.current = () => (inline ? openSheet("now-playing") : goTo({ name: "reader", ebookId: id }));
+  // Now playing's Read face (#593) is shown again at its own address; the reader on its own at the old one.
+  shown.current = () => (inline ? book && goTo({ name: "read", workId: book.workId }) : goTo({ name: "reader", ebookId: id }));
   const removeShown = useRef(removeBookmark);
   removeShown.current = removeBookmark;
   useEffect(() => {
@@ -1703,10 +1707,14 @@ export function ReaderView({
             <PanelLeft size={20} />
           </button>
         )}
-        <div className="reader-topbar-title">
-          <strong>{book?.title}</strong>
-          <span>{book?.author}</span>
-        </div>
+        {faceControl ? (
+          <div className="reader-topbar-face">{faceControl}</div>
+        ) : (
+          <div className="reader-topbar-title">
+            <strong>{book?.title}</strong>
+            <span>{book?.author}</span>
+          </div>
+        )}
         <button
           className="icon-button reader-bookmark-toggle"
           aria-label={pageBookmark ? "Remove bookmark from current sentence" : "Bookmark current sentence"}

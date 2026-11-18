@@ -183,7 +183,7 @@ test("a reload keeps the entry's place in the stack", async () => {
 test("an address the app did not write counts as a step, and one that names nothing is replaced by what it shows", async () => {
   const browser = new FakeBrowser("/#library");
   const nav = await load(browser);
-  browser.followHash("#listen/w1");
+  browser.followHash("#book/w1/nothing");
   await settle();
   assert.deepEqual(browser.hashes, ["#library", "#library"]);
   browser.followHash("#settings/nothing");

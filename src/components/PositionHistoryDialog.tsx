@@ -1,5 +1,4 @@
 import { type RefObject } from "react";
-import { History } from "lucide-react";
 import { Dialog } from "./ui/dialog";
 import { usePlayer } from "../player";
 import { clock } from "../lib";
@@ -16,27 +15,7 @@ const jumpKindLabel: Record<JumpKind, string> = {
   source: "Source",
 };
 
-/** Trigger for the player's Playback options panel. Always enabled. */
-export function PositionHistoryButton({
-  triggerRef,
-  onClick,
-}: {
-  triggerRef?: RefObject<HTMLButtonElement | null>;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      ref={triggerRef}
-      type="button"
-      className="button subtle"
-      onClick={onClick}
-    >
-      <History size={16} /> Position history
-    </button>
-  );
-}
-
-/** Radix dialog listing recent jumps; keep nested under Now Playing so hideOthers stacks. */
+/** Position history (Earlier positions on Now playing's Listen face, #593): recent jumps; a row restores one. */
 export function PositionHistoryDialog({
   open,
   onOpenChange,

@@ -133,3 +133,48 @@ export async function addTorrent(magnet: string, downloadDir: string) {
   if (!torrent) throw new Error("Transmission did not return a torrent.");
   return torrent;
 }
+
+/**
+ * What Transmission says of a torrent that does not move (#716): its error, whether it has its metadata, and its peers.
+ * Field names as the RPC answers `torrent-get` (`error` 1 tracker warning, 2 tracker error, 3 local error).
+ */
+export type TorrentState = {
+  hashString: string;
+  status: number;
+  error: number;
+  errorString: string;
+  percentDone: number;
+  metadataPercentComplete: number;
+  peersConnected: number;
+  peersSendingToUs: number;
+  trackerStats?: { seederCount: number; lastAnnounceSucceeded?: boolean; lastAnnounceResult?: string }[];
+};
+
+/** The states of the torrents with these hashes; a hash the client does not have is absent from the answer. */
+export async function getTorrentStates(hashes: string[], timeoutMs = 3000) {
+  if (!hashes.length) return [] as TorrentState[];
+  const result = await transmission<{ torrents: TorrentState[] }>(
+    "torrent-get",
+    {
+      ids: hashes,
+      fields: [
+        "hashString",
+        "status",
+        "error",
+        "errorString",
+        "percentDone",
+        "metadataPercentComplete",
+        "peersConnected",
+        "peersSendingToUs",
+        "trackerStats",
+      ],
+    },
+    timeoutMs,
+  );
+  return result.torrents ?? [];
+}
+
+/** Stop and remove a torrent with its partial data; a hash the client does not have is no error to Transmission. */
+export async function removeTorrent(hash: string) {
+  await transmission("torrent-remove", { ids: [hash], "delete-local-data": true });
+}

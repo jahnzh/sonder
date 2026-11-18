@@ -4,7 +4,10 @@
 // position; with none, "No saved series" and Find a series, which opens Discover's series search; on a desktop the list
 // and the series side by side, another series replacing the entry, Back leaving the Library; a series the list does
 // not hold stays one centred column; the old section above the shelf is gone.
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+// Each test runs its own server (own-server.ts): on the suite's server the specs before it leave The Crossing's
+// fixture showing Crossing Three, and the page counted 3 books where the list counted 2 (#564's second fix round).
+import { test, expect } from "./own-server";
 import { mkdirSync } from "node:fs";
 import { savedSeriesList, savedSeriesRow, seriesChip, showSavedSeries } from "./library-series";
 

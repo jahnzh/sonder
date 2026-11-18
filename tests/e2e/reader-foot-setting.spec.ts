@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 import { skipOnMobile } from "./mobile";
 import { bandBoxes, expectTextUncovered, intersects, showControls } from "./reader-bands";
+import { openRead } from "./now-playing";
 // Speed and the sleep timer in the reader's foot (#589, spec #586 "Speed and the sleep timer in the foot"; boards
 // ReaderSpeed.dc.html, ReaderSleep.dc.html): each takes the place of the foot's transport row with its label, a
 // Stepper and Done; the timeline above stays, nothing covers the text and the view is not laid out again.
@@ -56,10 +57,9 @@ async function readerWithNarration(page: Page, book: any, ebook: string) {
   const response = await page.request.post("/api/progress", { data: { recordingId: book.recordingId, trackId: book.tracks[0].id, position: 5, duration: book.tracks[0].duration, updatedAt: Date.now() } });
   expect(response.ok()).toBe(true);
   await page.goto("/");
-  const open = page.locator(".player-dock").getByRole("button", { name: "Open ebook reader", exact: true });
-  await expect(open).toBeVisible();
+  await expect(page.locator(".player-dock .dock-book")).toBeVisible();
   // Now playing loads the resumed recording's track; closed again, the book stays in the player.
-  await open.click();
+  await openRead(page);
   await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "Now playing", exact: true })).toBeHidden();

@@ -8,35 +8,29 @@ import { useEffect, useMemo, useState } from "react";
 import { useHardcover } from "../components/Hardcover";
 import { api, localDB } from "../lib";
 import { refreshLibraryWorks, useWork } from "../library-works-store";
-import { openSheet, useAddress } from "../navigation";
+import { useAddress } from "../navigation";
 import { Button } from "../parts/Button";
 import { FileRow } from "../parts/FileRow";
 import { Group } from "../parts/Group";
-import { ProgressBar } from "../parts/ProgressBar";
 import { Row } from "../parts/Row";
-import { Switch } from "../parts/Switch";
 import { InfoMark } from "../parts/Tooltip";
 import { backName } from "../parts/back-name";
 import { usePlayer } from "../player";
 import { openReader } from "../reading";
 import { useDeviceEbookChoice, useEbookDeviceCopy } from "../ebook-device-copy";
 import { ebookSearchTarget } from "./ebook-page";
-import { keepOffAndRemove, keepSaver, removeBookFiles, removeEarlierCopy, resumeKeep, tapKeep, useDeviceBook, useKeepRecord, useKeptNeeds } from "../keep-runtime";
+import { keepOffAndRemove, removeBookFiles, useDeviceBook, useKeepRecord } from "../keep-runtime";
 import type { DeviceSaveRecord } from "../device-saves";
 import { hardcoverRowValue } from "../hardcover-page-model";
 import { bytes } from "../size-format";
 import { tip } from "../tooltip-texts";
 import type { Book, Download, DownloadPart, LibraryWork } from "../types";
-import { addedElsewhere, addsBeforeGet, bookModel, chosenRecording, deviceHold, keepState } from "./book-model";
+import { addedElsewhere, addsBeforeGet, bookModel, chosenRecording } from "./book-model";
 import type { Notify } from "./shared";
+import { KeepItems } from "./keep-item";
 import "./book-page.css";
 
-/** Removing the book's files from this device keeps these (board KeepOff.dc.html). */
-export const KEEP_OFF_KEEPS = "Your place, bookmarks and library entry stay.";
-/** Turning Keep off asks this, with the size of every file of the book on this device. */
-export const keepOffQuestion = (size: number) => `Remove ${bytes(size)} from this device? ${KEEP_OFF_KEEPS}`;
-/** An earlier copy's Remove asks this (board KeepEarlier.dc.html). */
-export const earlierQuestion = (size: number) => `Remove ${bytes(size)} from this device?`;
+export { KEEP_OFF_KEEPS, keepOffQuestion, earlierQuestion } from "./keep-item";
 /** Remove from library's question adds this when this device holds files of the book. */
 export const removedFromDevice = (size: number) => `It is also removed from this device, ${bytes(size)}.`;
 /** Remove from library keeps these. */
@@ -68,7 +62,7 @@ type Props = {
   onFindAudio: (book: Book) => void;
   /** Today's ebook search for the book (Get ebook, until slice "Get"). */
   onFindEbook: (book: Book) => void;
-  /** A saved series opens its Series page (#562); another one today's series dialog. */
+  /** Opens the series' page, saved or not (#562, #564). */
   onSeries: (id: number, saved: boolean) => void;
   /** The library changed (an add, a removal, a mark): read the books again. */
   onChanged: () => Promise<void> | void;
@@ -131,9 +125,6 @@ export function BookPage(props: Props) {
   const keepRecord = useKeepRecord(workId);
   const [expanded, setExpanded] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
-  const [confirmKeepOff, setConfirmKeepOff] = useState(false);
-  // The earlier copy whose Remove asks in place (#553), by recording.
-  const [confirmEarlier, setConfirmEarlier] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -143,8 +134,6 @@ export function BookPage(props: Props) {
   }, [status, workId]);
   useEffect(() => {
     setConfirmRemove(false);
-    setConfirmKeepOff(false);
-    setConfirmEarlier(null);
     setExpanded(false);
     setError("");
   }, [workId]);
@@ -160,29 +149,6 @@ export function BookPage(props: Props) {
   const favorite = favorites.includes(workId);
   const chosenBook = (recording && entries.find((b) => b.recordingId === recording.recordingId)) ?? null;
   const searchTarget = chosenBook ?? entries[0] ?? (work ? ebookSearchTarget(work) : null);
-  const hold = deviceHold(recording, downloads, downloadParts);
-  const epubSize = chosenEpub && epubCopy.known ? epubCopy.size : null;
-  const needs = useKeptNeeds(work, downloads, downloadParts);
-  // The save of the book: its recording's, or for a book with only an ebook its EPUB's (#551).
-  const saveId = recording ? recording.recordingId : needs?.ebook ? `ebook:${needs.ebook.id}` : null;
-  const job = saveId ? running[saveId] : undefined;
-  const saveRecord = saveId ? props.records?.find((r) => r.recordingId === saveId) : undefined;
-  // How the kept book's last save stopped (#552): a failure waits for Retry, a pause (on any tab) for Resume.
-  const stop =
-    saveRecord?.state === "failed"
-      ? { why: "failed" as const, failure: saveRecord.failure ?? null }
-      : keepRecord?.pausedAt || saveRecord?.state === "paused"
-        ? { why: "paused" as const }
-        : null;
-  const keep = keepState({
-    keep: keepRecord?.on === true,
-    hold,
-    saving: job ? { filesSaved: Math.max(0, job.chapter - 1), filesTotal: job.total } : null,
-    ebookSize: epubSize,
-    hasRecording: !!recording && recording.tracks.length > 0,
-    needs,
-    stop,
-  });
   // Every file of the book on this device (#553): what Off frees and the earlier copies.
   const onDevice = useDeviceBook(work);
   const hardcoverValue = hardcoverRowValue(hardcover, work?.hardcover ?? null);
@@ -231,13 +197,13 @@ export function BookPage(props: Props) {
     if (p.book?.recordingId === chosenBook.recordingId) {
       if (!p.playing) p.toggle();
     } else await p.play(chosenBook);
-    openSheet("now-playing");
+    // Now playing on its Listen face (#593).
+    address.navigate({ name: "listen", workId });
   };
   const read = () => {
     if (!model.readEbookId) return;
-    // The book in the player reads beside the narration, as the player's own Read does.
-    if (p.book?.workId === workId)
-      window.dispatchEvent(new CustomEvent("sonder:playback-reader", { detail: { id: model.readEbookId, workId } }));
+    // The book in the player reads beside the narration: Now playing on its Read face (#593).
+    if (p.book?.workId === workId) address.navigate({ name: "read", workId });
     else openReader(model.readEbookId);
   };
   /**
@@ -303,40 +269,6 @@ export function BookPage(props: Props) {
       setConfirmRemove(false);
       if (back.name === "library") address.goBack();
       else address.navigate({ name: "library" }, { replace: true });
-    });
-
-  // Keep on this device (#550): on stores the choice and asks the saver to make this device hold the book; the saver
-  // saves the chosen recording, the chosen EPUB and the pair's map now, and whatever of them arrives later (#551).
-  // Only this tap asks for persistent storage (`tap`).
-  const keepOn = () => {
-    setError("");
-    void tapKeep(workId, true).catch((e: Error) => setError(e.message));
-  };
-  // Resume: a kept book's save is the saver's; another is today's save.
-  // Resume and Retry of a kept book clear its pause and ask the tab that saves to save it again (#552).
-  const resume = () => {
-    if (keepRecord?.on && keepSaver()) void resumeKeep(workId).catch((e: Error) => setError(e.message));
-    else if (chosenBook) props.onSave(chosenBook);
-  };
-  // Off (#553): removes every file of the book from this device (its recordings, complete and partial, earlier copies
-  // included, its EPUB copies, its maps and its save records) and writes off. The place, bookmarks and library entry
-  // stay. Remove on Activity's This device is the same action.
-  const keepOff = () =>
-    run(async () => {
-      await keepOffAndRemove(workId, work);
-      await props.onDevice();
-      setConfirmKeepOff(false);
-    });
-  // The switch turned off asks in place with the size; with nothing on the device it turns off without asking.
-  const switchOff = () => {
-    if (onDevice?.any) setConfirmKeepOff(true);
-    else void keepOff();
-  };
-  const removeEarlier = (recordingId: string) =>
-    run(async () => {
-      await removeEarlierCopy(workId, recordingId);
-      await props.onDevice();
-      setConfirmEarlier(null);
     });
 
   const audiobookAction =
@@ -446,78 +378,20 @@ export function BookPage(props: Props) {
 
       {model.device && (
         <Group caption="This device">
-          <li className="book-page-keep-item" aria-labelledby={`book-keep-name${keep.line ? " book-keep-line" : ""}`}>
-            <div className="part-file-row book-page-keep" data-moving={job ? "" : undefined}>
-              <span className="part-file-row-text">
-                <span className="part-file-row-title">
-                  <span id="book-keep-name" className="part-file-row-name type-body">
-                    Keep on this device
-                  </span>
-                  <InfoMark name="Keep on this device" text={tip("keep")} />
-                </span>
-                {keep.line && (
-                  <span id="book-keep-line" className="part-file-row-status type-label" data-failed={keep.failed ? "" : undefined}>
-                    {keep.line}
-                  </span>
-                )}
-                {job && <ProgressBar progress={job.progress / 100} />}
-              </span>
-              <span className="part-file-row-end">
-                {keep.resumable && !job && (chosenBook || keepRecord?.on) && (
-                  <Button kind="quiet" disabled={busy || !online} onClick={resume}>
-                    Resume
-                  </Button>
-                )}
-                <Switch
-                  label="Keep on this device"
-                  on={keep.on}
-                  disabled={busy || keepRecord === undefined}
-                  onChange={(on) => (on ? keepOn() : switchOff())}
-                />
-              </span>
-            </div>
-          </li>
-          {/* A failed save: its reason in one line and Retry (board KeepNotComplete.dc.html). */}
-          {keep.failed && keep.reason && !job && (
-            <li className="part-file-row book-page-keep-failure">
-              <span className="part-file-row-text">
-                <span className="part-file-row-status type-label" id="book-keep-reason">
-                  {keep.reason}
-                </span>
-              </span>
-              <span className="part-file-row-end">
-                <Button aria-label="Retry saving on this device" aria-describedby="book-keep-reason" disabled={busy || !online} onClick={resume}>
-                  Retry
-                </Button>
-              </span>
-            </li>
-          )}
-          {/* Turning the switch off asks in place under the row (board KeepOff.dc.html); the switch stays on until Remove. */}
-          {confirmKeepOff && (
-            <li className="book-page-device-confirm" role="group" aria-label="Turn off Keep on this device">
-              <span className="type-body">{keepOffQuestion(onDevice?.size ?? 0)}</span>
-              <span className="book-page-device-confirm-buttons">
-                <Button onClick={() => setConfirmKeepOff(false)}>Cancel</Button>
-                <Button className="book-page-device-remove" disabled={busy} onClick={() => void keepOff()}>
-                  Remove
-                </Button>
-              </span>
-            </li>
-          )}
-          {/* An earlier copy (board KeepEarlier.dc.html): a row per copy with Remove, which asks once in place. */}
-          {keep.on &&
-            (onDevice?.earlier ?? []).map((copy) => (
-              <EarlierRow
-                key={copy.recordingId}
-                narrator={copy.narrator}
-                size={copy.size}
-                asking={confirmEarlier === copy.recordingId}
-                busy={busy}
-                onAsk={() => setConfirmEarlier(copy.recordingId)}
-                onCancel={() => setConfirmEarlier(null)}
-                onRemove={() => void removeEarlier(copy.recordingId)}
-              />
-            ))}
+          <KeepItems
+            workId={workId}
+            work={work}
+            chosenEpub={chosenEpub}
+            chosenBook={chosenBook}
+            online={online}
+            downloads={downloads}
+            downloadParts={downloadParts}
+            running={running}
+            records={props.records}
+            onSave={props.onSave}
+            onDevice={props.onDevice}
+            onError={setError}
+          />
         </Group>
       )}
 
@@ -571,36 +445,5 @@ export function BookPage(props: Props) {
       )}
 
     </section>
-  );
-}
-
-/** An earlier copy's row: "Earlier recording", the narrator and its size, and Remove that asks once in place. */
-function EarlierRow(props: { narrator: string; size: number; asking: boolean; busy: boolean; onAsk: () => void; onCancel: () => void; onRemove: () => void }) {
-  const status = [props.narrator, bytes(props.size)].filter(Boolean).join(" · ");
-  return (
-    <>
-      <li className="part-file-row book-page-earlier" data-asking={props.asking ? "" : undefined}>
-        <span className="part-file-row-text">
-          <span className="part-file-row-name type-body">Earlier recording</span>
-          <span className="part-file-row-status type-label">{status}</span>
-        </span>
-        <span className="part-file-row-end">
-          <Button aria-label="Remove the earlier recording from this device" aria-expanded={props.asking} disabled={props.busy} onClick={props.onAsk}>
-            Remove
-          </Button>
-        </span>
-      </li>
-      {props.asking && (
-        <li className="book-page-device-confirm" role="group" aria-label="Remove the earlier recording from this device">
-          <span className="type-body">{earlierQuestion(props.size)}</span>
-          <span className="book-page-device-confirm-buttons">
-            <Button onClick={props.onCancel}>Cancel</Button>
-            <Button className="book-page-device-remove" disabled={props.busy} onClick={props.onRemove}>
-              Remove
-            </Button>
-          </span>
-        </li>
-      )}
-    </>
   );
 }

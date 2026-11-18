@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
-import { openSeriesResult } from "./discover-search";
 import { openSavedSeries } from "./library-series";
+import { saveSeriesOnPage, saveSheet, unsaveSeries, viewSeriesFromDiscover } from "./series-save";
 
 test("series save opt-ins, ebook failure, and retry show specific progress", async ({
   page,
@@ -24,19 +24,21 @@ test("series save opt-ins, ebook failure, and retry show specific progress", asy
   await page.request.put("/api/hardcover/token", {
     data: { token: "series-browser-token" },
   });
-  await openSeriesResult(page, "Crossing", "The Crossing", "Ada North");
-  await expect(
-    page.getByText("Search for audiobooks (may download automatically)"),
-  ).toBeVisible();
-  await expect(
-    page.getByText("Search for ebooks (may download automatically)"),
-  ).toBeVisible();
-  await page.getByRole("checkbox", { name: /Search for audiobooks/ }).check();
-  await page.getByRole("checkbox", { name: /Search for ebooks/ }).check();
-  await page.getByRole("checkbox", { name: /Crossing Two/ }).uncheck();
-  await page.getByRole("checkbox", { name: /Crossing Companion/ }).check();
-  await page.getByRole("button", { name: "Add selected works" }).click();
-  await expect(page.getByRole("dialog").getByText("Series saved.")).toBeVisible();
+  // Saved through its page (#564): the administrator's sheet offers Get the audiobooks and Get the ebooks.
+  await unsaveSeries(page, 701);
+  await viewSeriesFromDiscover(page, "Crossing", "The Crossing", "Ada North");
+  await page.getByRole("region", { name: "Series", exact: true }).getByRole("button", { name: "Save series", exact: true }).click();
+  const sheet = saveSheet(page);
+  await expect(sheet.getByRole("switch", { name: "Get the audiobooks", exact: true })).toBeVisible();
+  await expect(sheet.getByRole("switch", { name: "Get the ebooks", exact: true })).toBeVisible();
+  await sheet.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(sheet).toHaveCount(0);
+  const posted = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/series");
+  await saveSeriesOnPage(page, { get: ["audiobooks", "ebooks"], toggle: ["Crossing Two Book 2", "Crossing Companion Related work"] });
+  const body = (await posted).postDataJSON() as { bookIds: number[]; searchAudio: boolean; searchEbooks: boolean };
+  expect(body.searchAudio).toBe(true);
+  expect(body.searchEbooks).toBe(true);
+  // A chosen book that already has audio is skipped: Alice, linked with the series as a book of the library.
   await expect.poll(async () => {
     const view = await (await page.request.get("/api/series/701")).json();
     const alice = view.works.find(
@@ -44,9 +46,7 @@ test("series save opt-ins, ebook failure, and retry show specific progress", asy
     );
     return alice?.acquisition?.audio?.skipReason ?? null;
   }).toBe("has_audio");
-  await expect(page.getByRole("dialog").getByText(/^Audio: /).first()).toBeVisible();
 
-  await page.getByRole("button", { name: "Close series" }).click();
   await page.goto("/#library");
   // The saved series opens its Series page (#562); Crossing Companion is a related work there.
   await openSavedSeries(page, "The Crossing", "Ada North");

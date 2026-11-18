@@ -34,8 +34,7 @@ body,
   color: var(--text);
 }
 .player-dock,
-.dialog-content,
-.option-menu {
+.dialog-content {
   background: var(--surface);
   color: var(--text);
   border-color: var(--border);
@@ -78,7 +77,6 @@ textarea {
 }
 .settings-form label,
 .settings-section h2,
-.chapter-row,
 .book-title {
   color: var(--text);
 }

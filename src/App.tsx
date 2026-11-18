@@ -8,7 +8,6 @@ import {
 import { PlayerProvider } from "./player";
 import { OfflineLine, PlaceNav, Toast, useConnection } from "./shell";
 import { offlineLineShown } from "./connection";
-import { SeriesDialog, type SeriesTarget } from "./components/Series";
 import { SeriesPage } from "./pages/series-page";
 import { REMOVED_TOAST as SERIES_REMOVED_TOAST } from "./pages/series-remove-model";
 import { useSavedSeries } from "./pages/library-series";
@@ -48,6 +47,7 @@ import type {
 import { SignIn, type Account } from "./components/SignIn";
 import { Join } from "./components/Join";
 import { PlayerDock } from "./components/Player";
+import { NowPlaying } from "./pages/now-playing";
 import { AppUpdate } from "./components/AppUpdate";
 import { type HardcoverFilter } from "./components/Hardcover";
 import { type Page, Mark } from "./pages/shared";
@@ -256,8 +256,10 @@ function LibraryApp({
   const getEbookSheet = address.route.name === "get" && address.route.kind === "ebook" ? address.route.workId : null;
   // Discover's "Search for a recording" (#575): a sheet over Discover.
   const recordingQuery = address.route.name === "discover-get" ? address.route.query : null;
+  // Now playing (#593) covers the page it was opened over too; opened by a link, its Book page.
+  const nowPlaying = address.route.name === "listen" || address.route.name === "read";
   const pageRoute: Route =
-    getSheet || getEbookSheet || recordingQuery !== null
+    getSheet || getEbookSheet || recordingQuery !== null || nowPlaying
       ? (coveredPage() ?? (magnetSheet ? { name: "book", workId: magnetSheet } : parentOf(address.route)) ?? address.route)
       : address.route;
   // The offline line (#581): while there is no connection, on a place or page that does not say so itself.
@@ -294,7 +296,6 @@ function LibraryApp({
   // The favourites by work (#577): work ids, read from this account's device database.
   const [favorites, setFavorites] = useState<string[]>([]);
   const [online, setOnline] = useState(navigator.onLine);
-  const [seriesTarget, setSeriesTarget] = useState<SeriesTarget | null>(null);
   const [seriesRevision, setSeriesRevision] = useState(0);
   // The Library's Series chip (#567): the saved series, read again whenever the Library or a series is shown.
   const savedSeries = useSavedSeries(
@@ -530,8 +531,7 @@ function LibraryApp({
     () =>
       onPageLeftByHistory(() => {
         leftByHistory.current++;
-        setSeriesTarget(null);
-          }),
+      }),
     [],
   );
   // Opening a page from a flow (a link, a finished task): adds an entry.
@@ -720,7 +720,10 @@ function LibraryApp({
       books={books}
       revision={seriesRevision}
       beside={beside}
-      onNotSaved={(seriesId) => setSeriesTarget({ id: seriesId, mode: "preview" })}
+      onSaved={() => {
+        setSeriesRevision((value) => value + 1);
+        void refresh();
+      }}
       onRemoved={() => {
         setSeriesRevision((value) => value + 1);
         // The Library it lands on shows the Series chip (spec #560, "Remove series").
@@ -812,7 +815,7 @@ function LibraryApp({
               />
             )}
             {/* The Book page (#532), its Hardcover (#529) and Ebook (#531) pages, and the reader's Chapters, Bookmarks and Search (#590) stand in place of the place's page. */}
-            {audiobookWorkId ? null : pageRoute.name === "book-page" && isReaderPage(pageRoute.page) ? <ReaderPages key={`${pageRoute.workId}:${pageRoute.page === "search" ? "search" : "chapters"}`} workId={pageRoute.workId} page={pageRoute.page} /> : bookWorkId ? (
+            {audiobookWorkId ? null : pageRoute.name === "book-page" && isReaderPage(pageRoute.page) ? <ReaderPages key={`${pageRoute.workId}:${pageRoute.page === "search" ? "search" : "chapters"}`} workId={pageRoute.workId} page={pageRoute.page} books={books} /> : bookWorkId ? (
               <BookPage
                 key={bookWorkId}
                 workId={bookWorkId}
@@ -829,7 +832,7 @@ function LibraryApp({
                 onPauseSave={pauseSave}
                 onFindAudio={findAudio}
                 onFindEbook={(b) => findEbook(b.workId)}
-                onSeries={(id, saved) => (saved ? address.navigate({ name: "series", id: String(id) }) : setSeriesTarget({ id, mode: "preview" }))}
+                onSeries={(id) => address.navigate({ name: "series", id: String(id) })}
                 onChanged={refresh}
                 onDevice={async () => {
                   await refreshDownloads();
@@ -996,8 +999,6 @@ function LibraryApp({
         {offlineLine && <OfflineLine />}
         <AppUpdate />
         <PlayerDock
-          books={books}
-          notify={notify}
           fallback={featured}
           isDownloaded={downloaded}
           hasPartialDownload={(book) =>
@@ -1009,16 +1010,27 @@ function LibraryApp({
           downloadJobs={downloadJobs}
           onDownload={(book) => void startDownload(book)}
           onPauseDownload={(book) => pauseSave(book.recordingId)}
-          onViewDownloads={openDevice}
           onBookDetails={openBookOf}
           onManageSources={openAudiobook}
         />
+        {/* Now playing, its Listen and Read faces (#593): over the page, at #listen/<work> and #read/<work>. */}
+        <NowPlaying
+          books={books}
+          downloads={downloads}
+          downloadParts={downloadParts}
+          running={savesRunning}
+          records={saveRecords}
+          admin={admin}
+          online={online}
+          notify={notify}
+          onSave={(book) => void startDownload(book)}
+          onDevice={async () => {
+            await refreshDownloads();
+            await refreshOfflineEbooks();
+          }}
+        />
         <ReaderHost books={books} notify={notify} />
         {notice && <Toast text={notice.text} error={notice.error} onDismiss={() => setNotice(null)} />}
-        <SeriesDialog target={seriesTarget} onClose={() => setSeriesTarget(null)} downloads={downloads} savedEbooks={savedEbooks}
-          offlineEbookEditionIds={offlineEbookEditionIds}
-          canAcquire={user.role === "admin"}
-          onSaved={() => { setSeriesRevision((value) => value + 1); void refresh(); notify("Series saved."); }} />
       </div>
     </PlayerProvider>
   );
