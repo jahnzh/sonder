@@ -24,7 +24,7 @@ test("server-only changes run Chromium only", () => {
 
 test("client, test-support, config and check tooling run the full suite", () => {
   for (const file of [
-    "src/components/ReadingSync.tsx",
+    "src/components/Reader.tsx",
     "src/types.ts",
     "public/sw.js",
     "tests/e2e/app.spec.ts",
