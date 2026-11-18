@@ -499,3 +499,15 @@ test("a spare edition's sync that stopped still needs attention (#718)", () => {
   assert.deepEqual(where(now), { "work:w-x": "attention" });
   assert.equal(row(now, "work:w-x").line, "Reading sync stopped");
 });
+
+test("a book whose spare-edition syncs all ended today is not listed under Finished today (#718)", () => {
+  const now = build({
+    activity: answer([
+      sync("alignment:d1", "w-done", "ready", { state: "done", updatedAt: NOW - HOUR }, spare),
+      sync("alignment:d2", "w-done", "partial", { state: "done", updatedAt: NOW - 2 * HOUR }, { ...spare, coverage: 0.9 }),
+      // The read edition's own sync that finished today is listed as before.
+      sync("alignment:mine", "w-mine", "ready", { state: "done", updatedAt: NOW - HOUR }, { spare: false, background: true }),
+    ]),
+  });
+  assert.deepEqual(where(now), { "work:w-mine": "finished" });
+});
