@@ -42,7 +42,10 @@ export type SeriesPageWork = SeriesBookCandidate & {
   mediaState?: { state: string } | null;
 };
 
-/** `GET /api/series/<id>`, as far as the page reads it. */
+/** The not-saved page's one main action, under the intro (board SeriesNotSaved.dc.html). */
+export const SAVE_SERIES_LABEL = "Save series";
+
+/** `GET /api/series/<id>` (a saved series) or `GET /api/hardcover/series/<id>` (one that is not saved), as far as the page reads it. */
 export type SeriesPageSeries = {
   id: number;
   name: string;
@@ -53,7 +56,7 @@ export type SeriesPageSeries = {
 };
 
 export type SeriesRowAction =
-  /** Not in the library: Add opens the series' choice of books (today's dialog in its saved mode until the Add sheet). */
+  /** Not in the library, on a saved series: Add opens the Add sheet with that book chosen. */
   | { kind: "add" }
   /** A series search failed: the series acquisition retry of each failed kind. */
   | { kind: "retry-search"; kinds: ("audio" | "ebook")[] }
@@ -95,8 +98,12 @@ export type SeriesRow = {
 
 export type SeriesPageModel = {
   title: string;
-  /** "Iain M. Banks · 3 of 10 finished". */
+  /** The series is saved by this account; a series that is not saved has Save series and no Add, card or Remove series. */
+  saved: boolean;
+  /** "Iain M. Banks · 3 of 10 finished"; "Ursula K. Le Guin · 8 books" when it is not saved. */
   intro: string;
+  /** The page's one main action under the intro: Save series on a series that is not saved; null on a saved one. */
+  save: { label: string } | null;
   /** One row per number, in reading order. */
   books: SeriesRow[];
   /** Works without a number, as Book rows: listed, not counted. */
@@ -184,23 +191,25 @@ function libraryLine(work: SeriesPageWork, entry: LibraryWork): Line {
  * The line of a book that is not in the library: one that waits for the administrator to link it (no Add; the
  * administrator reads it as several matches), then "Not released yet", else "Not in your library", each with Add.
  */
-function outsideLine(work: SeriesPageWork, admin: boolean): Line {
+function outsideLine(work: SeriesPageWork, admin: boolean, saved: boolean): Line {
   if (work.needsAdmin) return { line: admin ? SEVERAL_MATCHES_LINE : NEEDS_ADMIN_LINE, failed: false, action: null, progress: null };
-  return { line: work.unreleased ? NOT_RELEASED_LINE : NOT_IN_LIBRARY_LINE, failed: false, action: { kind: "add" }, progress: null };
+  // A series that is not saved has no Add on its rows: Save series chooses the books (board SeriesNotSaved.dc.html).
+  return { line: work.unreleased ? NOT_RELEASED_LINE : NOT_IN_LIBRARY_LINE, failed: false, action: saved ? { kind: "add" } : null, progress: null };
 }
 
-function rowOf(work: SeriesPageWork, number: number | null, library: ReadonlyMap<string, LibraryWork>, admin: boolean): SeriesRow {
+function rowOf(work: SeriesPageWork, number: number | null, library: ReadonlyMap<string, LibraryWork>, admin: boolean, saved: boolean): SeriesRow {
   const entry = libraryWorkOf(work, library);
-  const line = entry ? libraryLine(work, entry) : outsideLine(work, admin);
+  const line = entry ? libraryLine(work, entry) : outsideLine(work, admin, saved);
   const marks = entry ? coverMarks(entry) : null;
+  const isNew = saved && !!work.new;
   return {
     bookId: work.id,
     number,
     title: work.title,
     cover: entry?.cover || work.cover || null,
-    line: work.new ? `${NEW_MARK}${DOT}${line.line}` : line.line,
+    line: isNew ? `${NEW_MARK}${DOT}${line.line}` : line.line,
     status: line.line,
-    isNew: !!work.new,
+    isNew,
     marks: marks?.kind === "marks" ? marks.marks.map((mark) => (mark === "reading-sync" ? "sync" : mark)) : [],
     progress: line.progress ?? (marks?.kind === "downloading" ? marks.percent / 100 : null),
     workId: entry ? entry.workId : null,
@@ -229,19 +238,31 @@ function continueBook(rows: SeriesRow[], library: ReadonlyMap<string, LibraryWor
   return playable.find((row) => workProgress(library.get(row.workId!)!) === "not-started") ?? null;
 }
 
-/** What the Series page shows for a saved series. */
+/** "8 books"; "1 book". */
+export function bookCount(count: number): string {
+  return count === 1 ? "1 book" : `${count} books`;
+}
+
+/**
+ * What the Series page shows: for a saved series (`GET /api/series/<id>`), or for one that is not saved
+ * (`GET /api/hardcover/series/<id>`, `saved: false`): the same rows, with "<author> · M books" and Save series.
+ */
 export function seriesPageModel(
   series: SeriesPageSeries,
   facts: {
     library: ReadonlyMap<string, LibraryWork>;
     admin: boolean;
     language: string;
+    /** This account saved the series; false for a series that is not saved. Saved when not given. */
+    saved?: boolean;
     /** The series is the answer this device kept, as the server cannot be reached (#568). */
     offline?: boolean;
   },
 ): SeriesPageModel {
   const { library, admin, language } = facts;
-  const offline = !!facts.offline;
+  const saved = facts.saved ?? true;
+  // A series that is not saved needs a connection (its address shows the Library without one): never offline here.
+  const offline = saved && !!facts.offline;
   // Membership and Finished come from this device's library by work, so a place saved here counts before the server has it.
   const candidates = series.works.map((work) => {
     const entry = libraryWorkOf(work, library);
@@ -249,25 +270,29 @@ export function seriesPageModel(
   });
   const inLibrary = new Set(candidates.filter((work) => libraryWorkOf(work, library)).map((work) => work.id));
   const { numbers, related, finished, total } = seriesBooks(candidates, inLibrary, language);
-  const books = numbers.map(({ position, book }) => rowOf(book, position, library, admin));
-  const relatedRows = related.map((work) => rowOf(work, null, library, admin));
+  const books = numbers.map(({ position, book }) => rowOf(book, position, library, admin, saved));
+  const relatedRows = related.map((work) => rowOf(work, null, library, admin, saved));
   const next = continueBook([...books, ...relatedRows], library);
   if (next) next.action = { kind: "play" };
   if (next) next.chevron = false;
   // Without a connection Add and Retry are off; the play button is not a request to the server.
   if (offline) for (const row of [...books, ...relatedRows]) row.actionOff = !!row.action && row.action.kind !== "play";
-  const counts = `${finished} of ${total} finished`;
-  const newRows = [...books, ...relatedRows].filter((row) => row.isNew);
+  // Saved: how many are finished; not saved: how many books it has, one per number (related works are not counted).
+  const counts = saved ? `${finished} of ${total} finished` : bookCount(numbers.length);
+  // The New card and its marks are a saved series' (Hardcover listed the book after the user saved it).
+  const newRows = saved ? [...books, ...relatedRows].filter((row) => row.isNew) : [];
   const newCard = newRows.length
     ? { titles: newRows.map((row) => row.title).join(", "), bookIds: series.works.filter((work) => work.new).map((work) => work.id) }
     : null;
   return {
     title: series.name,
+    saved,
     intro: series.author ? `${series.author}${DOT}${counts}` : counts,
+    save: saved ? null : { label: SAVE_SERIES_LABEL },
     books,
     related: relatedRows,
     continueWith: next ? { bookId: next.bookId, workId: next.workId! } : null,
-    refreshError: offline ? null : series.refreshError || null,
+    refreshError: offline || !saved ? null : series.refreshError || null,
     noConnection: offline ? NO_CONNECTION_LINE : null,
     removeOff: offline,
     dismissOff: offline,
