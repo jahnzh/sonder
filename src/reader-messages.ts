@@ -14,8 +14,7 @@ export type ReaderError =
   | "bookmark-remove"
   | "no-sync"
   | "no-map"
-  | "no-recording"
-  | "save-offline";
+  | "no-recording";
 
 /** The notices with Undo. */
 export type ReaderNotice = "listening" | "bookmark-removed";
@@ -35,12 +34,15 @@ export type MessageContext = {
   conflict: { chapter: string } | null;
   /** The newer build on the server, unless it was dismissed. */
   update: string | null;
+  /** Back to narration is locating the passage from the audio (#592); absent in callers from before it. */
+  locating?: boolean;
 };
 
 export type ReaderMessage =
   | { kind: "conflict"; chapter: string }
   | { kind: "error"; error: ReaderError }
   | { kind: "notice"; notice: ReaderNotice }
+  | { kind: "locating" }
   | { kind: "update"; build: string };
 
 export const noMessages: ReaderMessages = { error: null, notice: null };
@@ -67,8 +69,12 @@ export function clearNotice(state: ReaderMessages, which?: ReaderNotice): Reader
   return { ...state, notice: null };
 }
 
-/** The next tap on a control (any but the message's own buttons) ends a notice; what needs an answer stays. */
-export function controlTapped(state: ReaderMessages): ReaderMessages {
+/**
+ * The next tap on a control (any but the message's own buttons) ends a notice; what needs an answer stays. With
+ * `seen`, only that notice ends: the tap is handled after the control's own click, which may have posted a newer one.
+ */
+export function controlTapped(state: ReaderMessages, seen?: ReaderMessages["notice"]): ReaderMessages {
+  if (seen !== undefined && state.notice !== seen) return state;
   return clearNotice(state);
 }
 
@@ -84,10 +90,15 @@ export function noticeLeavesIn(state: ReaderMessages, now: number): number | nul
   return noticeDue(state, now) ? state.notice!.at + NOTICE_MS - now : null;
 }
 
-/** The one message to show: a place saved elsewhere, then an error, then a notice with Undo, then an update. */
+/**
+ * The one message to show: a place saved elsewhere, then an error, then Back to narration's locating while it runs,
+ * then a notice with Undo, then an update. The locating line is a status of the reader's own: it waits behind what
+ * needs an answer, and its own failure is the error that replaces it.
+ */
 export function messageToShow(state: ReaderMessages, context: MessageContext): ReaderMessage | null {
   if (context.conflict) return { kind: "conflict", chapter: context.conflict.chapter };
   if (state.error) return { kind: "error", error: state.error.error };
+  if (context.locating) return { kind: "locating" };
   if (state.notice && noticeDue(state, context.now)) return { kind: "notice", notice: state.notice.notice };
   if (context.update && !context.playing) return { kind: "update", build: context.update };
   return null;
@@ -103,7 +114,6 @@ const errorTexts: Record<ReaderError, string> = {
   "no-map": "Prepare a matching audiobook map for this passage first.",
   // Back to narration while the player holds no recording of this book.
   "no-recording": "Choose this recording and prepare its reading sync first.",
-  "save-offline": "The ebook could not be saved on this device.",
 };
 
 const noticeTexts: Record<ReaderNotice, string> = {
@@ -114,6 +124,8 @@ const noticeTexts: Record<ReaderNotice, string> = {
 /** The message's sentence, in Label. */
 export function messageText(message: ReaderMessage): string {
   switch (message.kind) {
+    case "locating":
+      return "Finding the place in the text…";
     case "conflict":
       return message.chapter ? `A place in ${message.chapter} was saved elsewhere.` : "A place in this book was saved elsewhere.";
     case "error":

@@ -150,9 +150,9 @@ for (const [mode, label] of [["paginated", "pages"], ["scroll", "scroll"]] as co
     });
   });
 
-// The controls named and ordered as on ReaderControls.dc.html (Listen or Read joins the head in ticket 07; More stays
-// until the More sheet goes; Sleep timer and Speed carry the board's names since ticket 03, #589).
-const HEAD = ["Close reader", "Bookmark current sentence", "Search this book", "Reader appearance", "More"];
+// The controls named and ordered as on ReaderControls.dc.html (Listen or Read joins the head in ticket 07; More left with
+// the More sheet, #592; Sleep timer and Speed carry the board's names since ticket 03, #589).
+const HEAD = ["Close reader", "Bookmark current sentence", "Search this book", "Reader appearance"];
 const FOOT = ["Chapters", "Back to narration", "Back 30 seconds", /^(Play|Pause) narration$/, "Forward 30 seconds", /^Sleep timer: /, /^Speed [\d.]+ times$/];
 const left = async (button: Locator) => (await button.boundingBox())!.x;
 async function inOrder(scope: Locator, names: (string | RegExp)[]) {

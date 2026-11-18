@@ -36,7 +36,10 @@ export function useReaderMessages() {
   const notice = useCallback((value: ReaderNotice) => setState((current) => postNotice(current, value, Date.now())), []);
   const clearAnError = useCallback((which?: ReaderError) => setState((current) => clearError(current, which)), []);
   const clearANotice = useCallback((which?: ReaderNotice) => setState((current) => clearNotice(current, which)), []);
-  const tapped = useCallback(() => setState((current) => (current.notice ? controlTapped(current) : current)), []);
+  const tapped = useCallback(
+    (seen?: ReaderMessages["notice"]) => setState((current) => (current.notice ? controlTapped(current, seen) : current)),
+    [],
+  );
   return useMemo(
     () => ({ state, error, notice, clearError: clearAnError, clearNotice: clearANotice, tapped }),
     [state, error, notice, clearAnError, clearANotice, tapped],

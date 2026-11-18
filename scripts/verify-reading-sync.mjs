@@ -4,6 +4,7 @@ import { protectBrowserMutations, closeProtectedBrowser } from "./verification-s
 import { sampleSentences, pageExpectations } from "./reading-sync-verification-utils.mjs";
 import { chromium, expect as baseExpect } from "@playwright/test";
 import { verifyBaseURL } from "./live-check-target.mjs";
+import { createReaderControls, narratedOnPage } from "./live-reader-controls.mjs";
 
 const expect = baseExpect.configure({ timeout: 20000 });
 if (fs.existsSync(".env")) process.loadEnvFile(".env");
@@ -113,27 +114,48 @@ try {
     page.goto(`/#reader/${encodeURIComponent(ebookId)}`),
   ]);
   const room = page.locator(".reader-room:not(.inline-reader)");
-  const showControls = async () => {
-    if (await room.locator(".reader-topbar").isVisible()) return;
-    await expect(room.locator(".reader-viewport iframe")).toBeVisible();
-    const box = await room.locator(".reader-viewport").boundingBox();
-    if (!box) throw new Error("The reader viewport has no bounds.");
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-    await expect(room.locator(".reader-topbar")).toBeVisible();
-  };
-  const more = async (name) => {
-    await showControls();
-    await room.locator(".reader-topbar").getByRole("button", { name: "More", exact: true }).click();
-    await room.locator(".reader-more").getByRole("button", { name, exact: true }).click();
+  // The reader has no More sheet (#592): Listen from here is the long-press on a sentence and Read from audio
+  // is the foot's Back to narration. The helper reveals the controls and retries a swallowed tap (#413).
+  const controls = createReaderControls({ page, room });
+  // Long-press the sentence that starts with `text` where it is on the page the reader shows.
+  const pressSentence = async (text) => {
+    const frameElement = room.locator(".reader-viewport iframe");
+    await expect(frameElement).toBeVisible();
+    const viewport = await room.locator(".reader-viewport").boundingBox();
+    const frameBox = await frameElement.boundingBox();
+    if (!viewport || !frameBox) throw new Error("The reader viewport has no bounds.");
+    const frame = await (await frameElement.elementHandle()).contentFrame();
+    const probe = text.trim().split(/\s+/).slice(0, 4).join(" ");
+    const rects = await frame.evaluate((probe) => {
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const at = node.data.replace(/\s+/g, " ").indexOf(probe);
+        if (at < 0) continue;
+        const range = document.createRange();
+        range.setStart(node, Math.min(at, node.data.length));
+        range.setEnd(node, Math.min(at + probe.length, node.data.length));
+        return [...range.getClientRects()].map((r) => ({ x: r.left, y: r.top, width: r.width, height: r.height }));
+      }
+      return [];
+    }, probe);
+    const point = rects
+      .map((r) => ({ x: frameBox.x + r.x + Math.min(r.width / 2, 20), y: frameBox.y + r.y + r.height / 2 }))
+      .find((p) => p.x > viewport.x && p.x < viewport.x + viewport.width && p.y > viewport.y && p.y < viewport.y + viewport.height);
+    if (!point) throw new Error(`The sentence "${probe}…" is not on the page the reader shows`);
+    await controls.hide();
+    await page.mouse.move(point.x, point.y);
+    await page.mouse.down();
+    await page.waitForTimeout(800);
+    await page.mouse.up();
+    await expect(room.getByRole("status").filter({ hasText: "Listening from here" })).toBeVisible();
   };
   for (const chosen of samples) {
-    await showControls();
-    await page.getByRole("button", { name: "Search this book", exact: true }).click();
+    await expect(room.locator(".reader-viewport iframe")).toBeVisible();
+    await controls.click(room.locator(".reader-topbar").getByRole("button", { name: "Search this book", exact: true }), "Search this book");
+    // Search is a page of the book (#590): a result opens the reader there.
     await page.getByRole("searchbox", { name: "Search this book" }).fill(chosen.text);
-    const result = page.locator(".reader-pages-result").filter({ hasText: chosen.text }).filter({ hasText: chosen.section.title });
-    await expect(result).toHaveCount(1);
-    await result.click();
-    await more("Listen from here");
+    await page.locator(".reader-pages-result").filter({ hasText: chosen.text }).first().click();
+    await pressSentence(chosen.text);
     const mediaPath = `/api/media/${encodeURIComponent(chosen.interval.trackId)}`;
     await page.waitForFunction(({ start, mediaPath }) => {
       const audio = window.__actualAudio.find((item) => item.src && new URL(item.src).pathname === mediaPath);
@@ -143,15 +165,24 @@ try {
       const audio = window.__actualAudio.find((item) => item.src && new URL(item.src).pathname === mediaPath);
       return { position: audio.currentTime, duration: audio.duration, error: audio.error?.message || null };
     }, mediaPath);
-    await page.getByRole("button", { name: "Pause narration", exact: true }).click();
+    await controls.click(room.locator(".reader-player").getByRole("button", { name: "Pause narration", exact: true }), "Pause narration");
     const paused = await page.evaluate((mediaPath) => window.__actualAudio.find((item) => item.src && new URL(item.src).pathname === mediaPath).currentTime, mediaPath);
     const expected = map.intervals.find((interval) => interval.trackId === chosen.interval.trackId && interval.start <= paused && interval.end > paused);
     if (!expected) throw new Error(`No mapped interval at ${chosen.interval.trackId}:${paused} after pausing.`);
-    await more("Read from audio");
-    await expect.poll(() => page.evaluate(({ id, userId }) => {
+    // Read from audio is Back to narration: page away from the narrated sentence (at most three turns), then return.
+    await controls.hide();
+    for (let turns = 0; turns < 3 && (await narratedOnPage(room)); turns++) {
+      await controls.turn("next");
+      await page.waitForTimeout(600);
+    }
+    await controls.click(room.locator(".reader-player").getByRole("button", { name: "Back to narration", exact: true }), "Back to narration");
+    // Back to narration follows the narrated sentence (data-current-passage). Unlike the retired Read from audio it
+    // saves no reading place of its own, so the device's stored reading place is only reported, not compared.
+    await expect(room).toHaveAttribute("data-current-passage", expected.paragraphId);
+    const storedParagraph = await page.evaluate(({ id, userId }) => {
       const key = `reader-position:${id}`;
-      return JSON.parse(localStorage.getItem(userId === 1 ? key : `sonder-user-${userId}:${key}`) || "null")?.checkpoint?.locator?.paragraphId;
-    }, { id: ebookId, userId: auth.user.id })).toBe(expected.paragraphId);
+      return JSON.parse(localStorage.getItem(userId === 1 ? key : `sonder-user-${userId}:${key}`) || "null")?.checkpoint?.locator?.paragraphId ?? null;
+    }, { id: ebookId, userId: auth.user.id });
 
     // This direct POST bypasses browser interception. The probe stages audio on a pool host and writes worker output.
     const recovery = await context.request.post("/api/alignments/recover", { data: {
@@ -164,7 +195,7 @@ try {
     report.samples.push({
       section: chosen.section.index, trackId: chosen.interval.trackId, paragraphId: chosen.interval.paragraphId,
       expectedStart: chosen.interval.start, playedPosition: played.position, audioError: played.error,
-      readBackParagraph: expected.paragraphId, independentLocalSpeechMatch: recovery.status(),
+      readBackParagraph: expected.paragraphId, storedReadingParagraph: storedParagraph, independentLocalSpeechMatch: recovery.status(),
       speechTokenScore: recovered.score, sentenceDifference: difference,
     });
     console.log(JSON.stringify(report.samples.at(-1)));

@@ -41,17 +41,27 @@ async function showControls(page:Page,scope:string){
  await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
  await expect(topbar).toBeVisible();
 }
-// The standalone reader's More panel, whose status line says whether a reading sync map is shown.
-async function syncState(page:Page){
- const reader=page.locator(".reader-dialog");
- await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
- if(!await reader.locator(".reader-more").count()){
-  await showControls(page,".reader-dialog");
-  await reader.locator(".reader-topbar").getByRole("button",{name:"More",exact:true}).click();
- }
- return reader.locator(".reader-more .reader-sync-state");
+// The player paused on `interval`, then Now playing's reader opened from a fresh load: with a map shown, the reader
+// follows that sentence (`data-current-passage`; the More sheet's status line is gone, #592).
+async function pauseAt(page:Page,book:any,interval:any){
+ const previous=(await(await page.request.get("/api/books")).json()).find((b:any)=>b.recordingId===book.recordingId)?.progress?.updatedAt||0;
+ expect((await page.request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position:interval.start+1,duration:book.tracks[0].duration,updatedAt:Math.max(Date.now(),previous+1)}})).ok()).toBe(true);
 }
-const NO_MAP="Prepare reading sync to highlight narration";
+async function openReader(page:Page){
+ await page.goto("/");
+ await page.getByRole("button",{name:"Open ebook reader",exact:true}).click();
+ const room=page.locator(".inline-reader");
+ await expect(room.locator(".reader-viewport iframe")).toBeVisible();
+ return room;
+}
+/** No map shown: the recording is in the player (its seek bar is in the foot), yet the reader follows no sentence. */
+async function expectNoMapShown(page:Page,room:ReturnType<Page["locator"]>){
+ await showControls(page,".inline-reader");
+ await expect(room.getByRole("slider",{name:/^Seek in /})).toBeVisible();
+ // A cached map may still be on its way; give it time.
+ await page.waitForTimeout(1500);
+ await expect(room).not.toHaveAttribute("data-current-passage",/.+/);
+}
 async function checkTransport(page:Page,scope:string){
  const transport=page.locator(scope);
  const previous=transport.getByRole("button",{name:"Rewind 30 seconds",exact:true}),next=transport.getByRole("button",{name:"Forward 30 seconds",exact:true});
@@ -106,15 +116,14 @@ test("page gestures show controls and long-press listens from that sentence",asy
  await slider.fill(String(Math.ceil(target.start)+1));
  await expect(room).toHaveAttribute("data-current-passage",target.paragraphId);
  await expect(room.locator(".reader-player-info")).toContainText("% of book");
- const more=page.getByRole("region",{name:"Playback options"});
+ // No More sheet (#592): Listen from here is the long-press above, Read from audio the foot's Back to narration.
  await showControls(page,".inline-reader");
- await room.getByRole("button",{name:"More",exact:true}).click();
- await more.getByRole("button",{name:"Listen from here"}).click();
+ await expect(room.locator(".reader-topbar").getByRole("button",{name:"More",exact:true})).toHaveCount(0);
+ await page.mouse.click(pageBox.x+pageBox.width*0.9,pageBox.y+pageBox.height/2);
+ await expect(room).not.toHaveAttribute("data-current-passage",/.+/);
+ await showControls(page,".inline-reader");
+ await room.getByRole("button",{name:"Back to narration",exact:true}).click();
  await expect(room).toHaveAttribute("data-current-passage",target.paragraphId);
- await showControls(page,".inline-reader");
- await room.getByRole("button",{name:"More",exact:true}).click();
- await more.getByRole("button",{name:"Read from audio"}).click();
- await expect.poll(async()=>(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint?.origin).toBe("listening");
 });
 test("page controls follow the prepared narration",async({page})=>{
  const {title}=await fixture(page,"Page narration","en-GB");
@@ -182,9 +191,14 @@ test("an ebook without a map remains readable and offers sync setup", async ({pa
  const reader=page.getByRole("dialog",{name:"Reader"});
  await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
  await expect(page.frameLocator(".reader-dialog .reader-viewport iframe").locator("p").first()).toBeVisible();
- await expect(await syncState(page)).toHaveText(NO_MAP);
- await reader.locator(".reader-more").getByRole("button",{name:"Reading sync",exact:true}).click();
- await expect(reader.locator(".reader-panel-heading").getByRole("heading",{name:"Reading sync",exact:true})).toBeVisible();
+ // No map shown, and no narration to go back to.
+ await showControls(page,".reader-dialog");
+ await expect(reader.locator(".reader-room")).not.toHaveAttribute("data-current-passage",/.+/);
+ await expect(reader.getByRole("button",{name:"Back to narration",exact:true})).toBeDisabled();
+ // Sync setup is the Book page's Reading sync row (#592), which names what is missing.
+ const {workId}=await(await page.request.get(`/api/reader/${id}`)).json();
+ await page.goto(`/#book/${encodeURIComponent(workId)}`);
+ await expect(page.getByRole("region",{name:"Book",exact:true}).getByRole("listitem").filter({hasText:/^Reading sync/})).toHaveText(/Needs an audiobook$/);
 });
 
 test("reader keys in a gap and with modifiers leave playback and the page alone", async ({page}) => {
@@ -228,9 +242,10 @@ test("Contents navigation during a follow jump wins and is saved", async ({page}
  await expect.poll(async()=>(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint?.locator.section).toBe(0);
  const before=(await(await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint.revision;
  // Start a follow jump to chapter two and choose chapter one before it lands.
+ await expect(room.locator(".reader-back-narration")).toBeEnabled();
  await page.evaluate(()=>{
   const scope=document.querySelector(".inline-reader")!;
-  const read=[...document.querySelectorAll<HTMLButtonElement>('.playback-options-panel .reader-more button')].find(b=>b.textContent?.includes("Read from audio"))!;
+  const read=scope.querySelector<HTMLButtonElement>(".reader-back-narration")!;
   const chapter=[...scope.querySelectorAll<HTMLButtonElement>('[aria-label="Contents sidebar"] button')].find(b=>b.textContent==="Down the Rabbit-Hole")!;
   read.click(); chapter.click();
  });
@@ -347,26 +362,26 @@ test(`following narration on ${label} never paints another page on the way`,asyn
 });
 
 test("a cached sync map is not used once the server refuses it", async ({page}) => {
- const {ebook}=await fixture(page,"Changed narration","en-ZA");
- await page.goto(`/#reader/${ebook}`);
+ const {book,map}=await fixture(page,"Changed narration","en-ZA");
+ const interval=map.intervals.find((i:any)=>i.section===1&&i.start>104);
+ await pauseAt(page,book,interval);
+ const room=await openReader(page);
  // The map is loaded and cached on this device.
- await expect(await syncState(page)).not.toHaveText(NO_MAP);
- await expect(await syncState(page)).toHaveText(/\S/);
+ await expect(room).toHaveAttribute("data-current-passage",interval.paragraphId);
  // The audio changes in place: the job summary is unchanged, but the server
  // no longer serves the map.
  await page.route("**/api/alignments/*/map",route=>route.fulfill({status:410,json:{error:"The ebook or audio changed. Rebuild this alignment before using it.",code:"alignment_stale"}}));
- await page.reload();
- const state=await syncState(page);
- // The status also says so briefly before a cached map loads; give that time.
- await page.waitForTimeout(1500);
- await expect(state).toHaveText(NO_MAP);
+ await openReader(page);
+ await expectNoMapShown(page,room);
 });
 
 test("a cached sync map survives a server that is restarting", async ({page}) => {
- const {ebook}=await fixture(page,"Restarting server","en-IE");
+ const {book,map}=await fixture(page,"Restarting server","en-IE");
+ const interval=map.intervals.find((i:any)=>i.section===1&&i.start>104);
  {
-  await page.goto(`/#reader/${ebook}`);
-  await expect(await syncState(page)).not.toHaveText(NO_MAP);
+  await pauseAt(page,book,interval);
+  const room=await openReader(page);
+  await expect(room).toHaveAttribute("data-current-passage",interval.paragraphId);
   for(const failure of [
    {status:502,contentType:"text/html",body:"<html><body>Bad gateway</body></html>"},
    {status:503,json:{error:"The media drive is not available."}},
@@ -374,10 +389,8 @@ test("a cached sync map survives a server that is restarting", async ({page}) =>
   ]){
    await page.unrouteAll({behavior:"wait"});
    await page.route("**/api/alignments/*/map",route=>route.fulfill(failure));
-   await page.reload();
-   const state=await syncState(page);
-   await page.waitForTimeout(1500);
-   await expect(state).not.toHaveText(NO_MAP);
+   await openReader(page);
+   await expect(room).toHaveAttribute("data-current-passage",interval.paragraphId);
    expect(await page.evaluate(async()=>{
     const names=(await indexedDB.databases()).map(d=>d.name).filter(n=>n?.startsWith("sonder"));
     for(const name of names){
