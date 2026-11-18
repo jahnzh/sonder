@@ -55,6 +55,7 @@ export function LibraryPage({
   savedSeries,
   openSeries,
   findSeries,
+  findBook,
   beside,
   favorites,
   onDevice,
@@ -83,6 +84,8 @@ export function LibraryPage({
   savedSeries: { items: SavedSeriesItem[] | undefined; error: string };
   openSeries: (id: number) => void;
   findSeries: () => void;
+  /** The plus, "Add a book" (#575): Discover with its field focused. */
+  findBook: () => void;
   /** A desktop's `#series/<id>`: the Series chip's list with this series beside it (DesktopSeries.dc.html). */
   beside?: { id: number; page: ReactNode } | null;
   /** The favourites by work. */
@@ -149,7 +152,7 @@ export function LibraryPage({
           ) : (
             <Button className="library-search-toggle" icon={<Search size={20} />} label="Search your library" onClick={() => setSearching(true)} />
           )}
-          <Button className="library-add" icon={<Plus size={20} />} label="Add a book" onClick={() => navigate("discover")}>
+          <Button className="library-add" icon={<Plus size={20} />} label="Add a book" onClick={findBook}>
             <span className="library-add-text">Add a book</span>
           </Button>
         </div>

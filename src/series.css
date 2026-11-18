@@ -1,6 +1,0 @@
-.series-results { display: grid; gap: .75rem; }
-.series-result { display: flex; align-items: center; gap: 1rem; padding: 1rem; border: 1px solid var(--border, #ddd); border-radius: .75rem; }
-.series-result > div { flex: 1; min-width: 0; }
-.series-result p { margin: .25rem 0; }
-.series-result img { width: 3rem; height: 4rem; object-fit: cover; border-radius: .25rem; }
-@media (max-width: 480px) { .series-result { flex-wrap: wrap; } .series-result button { width: 100%; } }

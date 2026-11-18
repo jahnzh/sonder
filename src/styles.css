@@ -1145,198 +1145,6 @@ input[type="range"]::-moz-range-thumb {
   background: var(--surface);
   transition: width 0.25s;
 }
-.discover-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  min-height: 288px;
-  border-radius: 9px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  padding: 29px 37px;
-  overflow: hidden;
-  margin-bottom: 33px;
-  position: relative;
-}
-.discover-banner > div:first-child {
-  position: relative;
-  z-index: 2;
-}
-.discover-banner .eyebrow {
-  font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  color: var(--muted);
-  letter-spacing: 1.5px;
-}
-.discover-banner h2 {
-  font-family: var(--font-body);
-  font-size: calc(38px * var(--ui-scale, 1));
-  line-height: 1.08;
-  letter-spacing: -0.6px;
-  font-weight: 400;
-  color: var(--muted);
-  margin-top: 15px;
-}
-.discover-banner p {
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  line-height: 1.8;
-  margin-top: 14px;
-  color: var(--muted);
-}
-.discover-banner button {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  color: var(--muted);
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  font-weight: 500;
-  padding: 0;
-  margin-top: 20px;
-}
-.discover-art {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 13px;
-  width: 45%;
-  position: relative;
-  padding-right: 26px;
-}
-.discover-art > img {
-  width: 125px;
-  border-radius: 3px;
-  box-shadow: 4px 9px 15px color-mix(in srgb, var(--shadow) 17%, transparent);
-  transform: rotate(-11deg);
-  position: relative;
-  z-index: 1;
-}
-.discover-art > img:nth-child(2) {
-  width: 133px;
-  transform: rotate(12deg) translateY(13px);
-  margin-left: -30px;
-  z-index: 2;
-}
-.discover-star {
-  position: absolute;
-  left: -17px;
-  top: 6px;
-  font-size: calc(31px * var(--ui-scale, 1));
-  color: var(--text);
-}
-.discover-art:before,
-.discover-art:after {
-  content: "";
-  position: absolute;
-  inset: -65px;
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  transform: rotate(-30deg);
-}
-.discover-art:after {
-  inset: -93px;
-}
-.discovery-sources {
-  display: flex;
-  gap: 25px;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 28px;
-}
-.discovery-sources > button {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  position: relative;
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  padding: 0 0 15px;
-  color: var(--text);
-}
-.discovery-sources > button.selected {
-  font-weight: 600;
-  color: var(--muted);
-}
-.discovery-sources > button.selected:after {
-  content: "";
-  position: absolute;
-  bottom: -1px;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: var(--surface);
-}
-.genre-chips {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin: 20px 0 26px;
-}
-.genre-chips > button {
-  font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  color: var(--muted);
-  padding: 7px 12px;
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  background: var(--surface);
-}
-.genre-chips > button.selected {
-  background: var(--surface);
-  border-color: var(--border);
-  color: var(--muted);
-}
-.genre-chips > button:hover {
-  background: var(--surface);
-}
-.discover-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 28px;
-}
-.discover-book .book-cover {
-  max-height: 255px;
-}
-.discovery-genre {
-  font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-  color: var(--text);
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  display: block;
-  margin-top: 14px;
-  margin-bottom: 6px;
-}
-.discover-book .book-title {
-  font-size: calc(12px * var(--ui-scale, 1));
-}
-.discover-book .book-author {
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-}
-.discovery-book-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 10px;
-}
-.discovery-book-footer > span {
-  font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  color: var(--text);
-}
-.discovery-book-footer > button {
-  width: 27px;
-  height: 27px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--muted);
-  border-radius: 50%;
-}
-.discovery-book-footer > button:hover {
-  background: var(--surface);
-  color: var(--muted);
-}
-.discovery-book-footer > button.saved {
-  background: transparent;
-  color: var(--text);
-  border-color: transparent;
-}
 .external-search > p {
   font-size: calc(11px * var(--ui-scale, 1));
   color: var(--muted);
@@ -1372,55 +1180,6 @@ input[type="range"]::-moz-range-thumb {
 }
 .external-loading svg {
   width: 20px;
-}
-.external-results {
-  margin-top: 25px;
-}
-.external-results > article {
-  display: flex;
-  align-items: center;
-  gap: 17px;
-  padding: 20px 0;
-  border-bottom: 1px solid var(--line);
-}
-.external-results > article > img {
-  width: 52px;
-  height: 74px;
-  object-fit: cover;
-  border-radius: 3px;
-}
-.external-results > article > div {
-  flex: 1;
-  min-width: 0;
-}
-.external-results h3 {
-  font-size: calc(12px * var(--ui-scale, 1));
-  font-weight: 500;
-  line-height: 1.6;
-}
-.external-results p {
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  color: var(--muted);
-  margin-top: 5px;
-}
-.external-results small {
-  display: block;
-  font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  line-height: 1.8;
-  color: var(--text);
-  margin-top: 8px;
-}
-.external-results .button {
-  font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  min-height: 32px;
-  padding: 7px 10px;
-}
-.external-results > article > .discovery-actions {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
 }
 .ebook-browser-search {
   border: 1px solid var(--line);
@@ -2250,18 +2009,6 @@ input[type="range"]::-moz-range-thumb {
   .dock-book small {
     max-width: 185px;
   }
-  .discover-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-  .discover-art > img {
-    width: 105px;
-  }
-  .discover-art > img:nth-child(2) {
-    width: 115px;
-  }
-  .discover-art {
-    padding-right: 10px;
-  }
   .settings-section-heading p {
     font-size: max(11px, calc(9px * var(--ui-scale, 1)));
   }
@@ -2363,27 +2110,6 @@ input[type="range"]::-moz-range-thumb {
   }
   .dock-actions > .expand-player {
     display: none;
-  }
-  .discover-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  .discover-banner {
-    padding: 27px;
-  }
-  .discover-banner h2 {
-    font-size: calc(34px * var(--ui-scale, 1));
-  }
-  .discover-banner p {
-    font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  }
-  .discover-art {
-    width: 40%;
-  }
-  .discover-art > img {
-    width: 97px;
-  }
-  .discover-art > img:nth-child(2) {
-    width: 105px;
   }
   .quiet-tag {
     font-size: max(11px, calc(8px * var(--ui-scale, 1)));
@@ -2602,77 +2328,6 @@ input[type="range"]::-moz-range-thumb {
   .dock-book > img {
     width: 35px;
     height: 48px;
-  }
-  .discover-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  .discover-banner {
-    min-height: 260px;
-    padding: 24px;
-  }
-  .discover-banner h2 {
-    font-size: calc(30px * var(--ui-scale, 1));
-  }
-  .discover-banner p {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-    max-width: 240px;
-  }
-  .discover-banner .eyebrow {
-    font-size: max(11px, calc(6px * var(--ui-scale, 1)));
-    letter-spacing: 1px;
-  }
-  .discover-banner button {
-    font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  }
-  .discover-art {
-    position: absolute;
-    right: -22px;
-    top: 60px;
-    width: 170px;
-    opacity: 0.9;
-  }
-  .discover-art > img {
-    width: 86px;
-  }
-  .discover-art > img:nth-child(2) {
-    width: 94px;
-  }
-  .discover-art:before,
-  .discover-art:after {
-    inset: -50px;
-    opacity: 0.5;
-  }
-  .discover-star {
-    display: none;
-  }
-  .discovery-sources {
-    gap: 22px;
-  }
-  .discovery-sources > button {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  }
-  .genre-chips {
-    gap: 6px;
-  }
-  .genre-chips > button {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-    padding: 6px 9px;
-  }
-  .discover-book .book-title {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  }
-  .discover-book .book-author {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  }
-  .discovery-genre {
-    font-size: max(11px, calc(6px * var(--ui-scale, 1)));
-  }
-  .discovery-book-footer > span {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  }
-  .discovery-book-footer > button {
-    width: 24px;
-    height: 24px;
   }
   .page-heading > .quiet-tag {
     display: none;
@@ -3170,80 +2825,6 @@ input[type="range"]::-moz-range-thumb {
     font-size: max(11px, calc(9px * var(--ui-scale, 1)));
     margin-top: 19px;
   }
-  .discover-banner {
-    min-height: 264px;
-    padding: 25px 22px;
-  }
-  .discover-banner h2 {
-    font-size: calc(34px * var(--ui-scale, 1));
-  }
-  .discover-banner .eyebrow {
-    font-size: max(11px, calc(6px * var(--ui-scale, 1)));
-    letter-spacing: 1.1px;
-    max-width: 210px;
-  }
-  .discover-banner p {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-    max-width: 210px;
-  }
-  .discover-banner button {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-    gap: 7px;
-  }
-  .discover-art {
-    right: -14px;
-    top: 70px;
-    width: 170px;
-  }
-  .discover-art > img {
-    width: 87px;
-  }
-  .discover-art > img:nth-child(2) {
-    width: 94px;
-  }
-  .discover-banner {
-    margin-bottom: 27px;
-  }
-  .discovery-sources {
-    gap: 24px;
-    margin-bottom: 24px;
-  }
-  .discovery-sources > button {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-    padding-bottom: 14px;
-    gap: 4px;
-  }
-  .discovery-sources svg {
-    width: 11px;
-  }
-  .genre-chips {
-    gap: 6px;
-    margin: 19px 0 23px;
-  }
-  .genre-chips > button {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-    padding: 6px 9px;
-  }
-  .discover-grid {
-    gap: 25px 16px;
-  }
-  .discover-book .book-title {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  }
-  .discover-book .book-author {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  }
-  .discovery-genre {
-    font-size: max(11px, calc(6px * var(--ui-scale, 1)));
-    margin-top: 12px;
-  }
-  .discovery-book-footer > span {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-  }
-  .discovery-book-footer > button {
-    width: 23px;
-    height: 23px;
-  }
   .section-heading .small {
     font-size: max(11px, calc(7px * var(--ui-scale, 1)));
   }
@@ -3268,26 +2849,6 @@ input[type="range"]::-moz-range-thumb {
   }
   .external-search .button > svg {
     width: 14px;
-  }
-  .external-results > article {
-    gap: 13px;
-    flex-wrap: wrap;
-  }
-  .external-results > article > img {
-    width: 43px;
-    height: 62px;
-  }
-  .external-results h3 {
-    font-size: calc(11px * var(--ui-scale, 1));
-  }
-  .external-results p {
-    font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  }
-  .external-results small {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  }
-  .external-results .button {
-    margin-left: auto;
   }
   .page-settings .page-heading h1 {
     font-size: calc(29px * var(--ui-scale, 1));
@@ -3495,28 +3056,6 @@ input[type="range"]::-moz-range-thumb {
   }
   .dock-book {
     gap: 9px;
-  }
-  .discover-banner {
-    padding-left: 19px;
-  }
-  .discover-banner h2 {
-    font-size: calc(31px * var(--ui-scale, 1));
-  }
-  .discover-banner p {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-    max-width: 190px;
-  }
-  .discover-art {
-    right: -36px;
-  }
-  .discover-banner .eyebrow {
-    font-size: max(11px, calc(5px * var(--ui-scale, 1)));
-  }
-  .discovery-sources {
-    gap: 21px;
-  }
-  .discovery-sources > button {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
   }
   .section-heading .small {
     font-size: max(11px, calc(6px * var(--ui-scale, 1)));
@@ -3934,85 +3473,11 @@ input[type="range"]::-moz-range-thumb {
 .download-progress > i {
   background: var(--surface);
 }
-.discover-banner {
-  background: linear-gradient(105deg, var(--accent-soft), var(--raised));
-  border-color: var(--border);
-}
-.discover-banner .eyebrow {
-  color: var(--accent);
-}
-.discover-banner h2 {
-  color: var(--text);
-}
-.discover-banner p {
-  color: var(--muted);
-}
-.discover-banner button {
-  color: var(--text);
-}
-.discover-art:before,
-.discover-art:after {
-  border-color: color-mix(in srgb, var(--border) 38%, transparent);
-}
-.discover-star {
-  color: var(--muted);
-}
-.discovery-sources > button {
-  color: var(--muted);
-  font-size: calc(11px * var(--ui-scale, 1));
-}
-.discovery-sources > button.selected {
-  color: var(--text);
-}
-.discovery-sources > button.selected:after {
-  background: var(--surface);
-}
-.genre-chips > button {
-  background: var(--raised);
-  border-color: var(--border);
-  color: var(--text);
-  font-size: calc(11px * var(--ui-scale, 1));
-}
-.genre-chips > button.selected {
-  background: var(--surface);
-  border-color: var(--border);
-  color: var(--text);
-}
-.genre-chips > button:hover {
-  background: var(--raised);
-}
-.discovery-genre {
-  color: var(--muted);
-}
-.discovery-book-footer > span {
-  color: var(--muted);
-}
-.discovery-book-footer > button {
-  background: var(--raised);
-  border-color: var(--border);
-  color: var(--text);
-}
-.discovery-book-footer > button:hover {
-  background: var(--surface);
-  color: var(--text);
-}
-.discovery-book-footer > button.saved {
-  color: var(--text);
-}
 .external-search > p {
   color: var(--text);
 }
 .external-loading {
   color: var(--text);
-}
-.external-results h3 {
-  color: var(--text);
-}
-.external-results p {
-  color: var(--text);
-}
-.external-results small {
-  color: var(--muted);
 }
 .settings-section-heading h2 {
   color: var(--text);
@@ -4342,12 +3807,6 @@ input[type="range"]::-moz-range-thumb {
   .dock-progress > span {
     font-size: max(11px, calc(8px * var(--ui-scale, 1)));
   }
-  .discovery-sources > button {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  }
-  .genre-chips > button {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  }
 }
 @media (max-width: 800px) {
   .sort-control {
@@ -4478,44 +3937,6 @@ input[type="range"]::-moz-range-thumb {
   }
   .breadcrumb {
     font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  }
-  .discover-banner .eyebrow {
-    font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-  }
-  .discover-banner p {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-    max-width: 210px;
-  }
-  .discover-banner button {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  }
-  .discover-art {
-    opacity: 0.6;
-    right: -25px;
-  }
-  .discovery-sources {
-    gap: 20px;
-    overflow: auto;
-    scrollbar-width: none;
-  }
-  .discovery-sources > button {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-    flex-shrink: 0;
-  }
-  .genre-chips > button {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  }
-  .discover-book .book-title {
-    font-size: calc(12px * var(--ui-scale, 1));
-  }
-  .discover-book .book-author {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  }
-  .discovery-genre {
-    font-size: max(11px, calc(8px * var(--ui-scale, 1)));
-  }
-  .discovery-book-footer > span {
-    font-size: max(11px, calc(9px * var(--ui-scale, 1)));
   }
   .external-search > p {
     font-size: calc(12px * var(--ui-scale, 1));
@@ -4724,12 +4145,6 @@ input[type="range"]::-moz-range-thumb {
   .connection-tag {
     font-size: max(11px, calc(8px * var(--ui-scale, 1)));
   }
-  .discovery-sources {
-    gap: 17px;
-  }
-  .discovery-sources > button {
-    font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  }
 }
 .additional-setting {
   margin-top: 18px;
@@ -4740,56 +4155,10 @@ input[type="range"]::-moz-range-thumb {
 .ebook-source-note + .ebook-source-tabs {
   margin-top: 10px;
 }
-.discover-ebook-callout {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 19px 20px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--raised);
-  margin-top: 28px;
-  gap: 15px;
-}
-.discover-ebook-callout > div {
-  display: flex;
-  align-items: center;
-  gap: 13px;
-  color: var(--text);
-}
-.discover-ebook-callout strong {
-  display: block;
-  font-size: calc(13px * var(--ui-scale, 1));
-  font-weight: 500;
-  color: var(--text);
-}
-.discover-ebook-callout p {
-  font-size: calc(11px * var(--ui-scale, 1));
-  margin-top: 6px;
-  color: var(--muted);
-}
-.discover-ebook-callout .button {
-  font-size: calc(11px * var(--ui-scale, 1));
-}
 .ebooks-saved-list {
   margin-bottom: 25px;
 }
 @media (max-width: 650px) {
-  .discover-ebook-callout {
-    padding: 16px;
-    flex-wrap: wrap;
-    gap: 15px;
-  }
-  .discover-ebook-callout strong {
-    font-size: calc(13px * var(--ui-scale, 1));
-  }
-  .discover-ebook-callout p {
-    font-size: calc(11px * var(--ui-scale, 1));
-    line-height: 1.8;
-  }
-  .discover-ebook-callout > .button {
-    margin-left: auto;
-  }
   .source-explainer strong {
     font-size: calc(12px * var(--ui-scale, 1));
   }
@@ -4824,18 +4193,6 @@ input[type="range"]::-moz-range-thumb {
   }
   .feature-eyebrow {
     font-size: max(11px, calc(7px * var(--ui-scale, 1)));
-  }
-  .discovery-sources {
-    justify-content: space-between;
-    gap: 13px;
-  }
-  .discovery-sources > button {
-    font-size: calc(11px * var(--ui-scale, 1));
-  }
-}
-@media (max-width: 390px) {
-  .discovery-sources > button {
-    font-size: max(11px, calc(10px * var(--ui-scale, 1)));
   }
 }
 /* Hardcover organization stays close to the shelf on small screens. */

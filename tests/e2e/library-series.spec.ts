@@ -217,7 +217,7 @@ test("with no saved series the chip says so, and Find a series opens Discover's 
   await page.screenshot({ path: `${OUT}/library-series-empty-390x844.png` });
   await list.getByRole("button", { name: "Find a series", exact: true }).click();
   await expect(page).toHaveURL(/#discover$/);
-  const field = page.getByRole("textbox", { name: "Search series", exact: true });
+  const field = page.getByRole("searchbox", { name: "Search for a series", exact: true });
   await expect(field).toBeVisible();
   await expect(field).toBeFocused();
   await expect(field).toBeInViewport();

@@ -159,6 +159,8 @@ const desktopProjects = [
               /(^|\/)hardcover-book-look\.spec\.ts$/,
               // Now playing for a book without a recording or without an EPUB (#594).
               /(^|\/)now-playing-ebook-only\.spec\.ts$/,
+              // Discover finds books (#575).
+              /(^|\/)discover\.spec\.ts$/,
               // A stuck download says why and offers Cancel (#716).
               /(^|\/)activity-cancel\.spec\.ts$/,
             ]
