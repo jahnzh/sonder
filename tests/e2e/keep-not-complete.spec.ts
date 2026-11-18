@@ -169,6 +169,7 @@ test("a full device: This device is full on the book, and the note under Storage
   const first = kept.locator(":scope > li").first();
   await expect(first).toContainText(book.title);
   await expect(first.getByRole("button", { name: `Retry saving ${book.title}` })).toBeVisible();
+  await expect(first.getByRole("button", { name: `Remove ${book.title} from this device`, exact: true })).toBeVisible(); // Remove stays beside Retry (fix of #552)
   const firstBox = await first.boundingBox();
   expect(firstBox && Math.round(firstBox.height)).toBe(64);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);

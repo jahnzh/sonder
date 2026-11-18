@@ -103,14 +103,16 @@ function KeptRow({ row, book, online, onOpen, onRemove, onRetry }: { row: Device
         failed={row.failed}
         onClick={book ? () => onOpen(book) : undefined}
         action={
-          // A failed save offers Retry where the others offer Remove (board KeepFull.dc.html).
-          row.failed && onRetry ? (
-            <Button aria-label={`Retry saving ${row.title}`} disabled={!online} onClick={() => onRetry(row)}>
-              Retry
-            </Button>
-          ) : (
+          // A failed save offers Retry (board KeepFull.dc.html) and keeps its Remove: Remove here is Keep off
+          // (spec #548), and a failed book is the one most likely to be given up.
+          <span className="activity-device-actions">
+            {row.failed && onRetry && (
+              <Button aria-label={`Retry saving ${row.title}`} disabled={!online} onClick={() => onRetry(row)}>
+                Retry
+              </Button>
+            )}
             <Button kind="quiet" icon={<Trash2 size={20} />} label={name} aria-expanded={asking} onClick={() => setAsking((open) => !open)} />
-          )
+          </span>
         }
       />
       {asking && (

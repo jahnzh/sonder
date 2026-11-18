@@ -62,3 +62,9 @@
 .activity-device-failed {
   color: var(--danger);
 }
+/* A kept row's buttons: Retry of a failed save, then Remove, 8 apart. */
+.activity-device-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}

@@ -3,8 +3,8 @@ import { readFileSync } from "node:fs";
 import { parseRange } from "../../server/range";
 
 // The device remembers how each save ended (#517): a failed or paused save to this device keeps its state in
-// Activity's This device (#518; Now until then) after a reload, from the device's own records. Until Keep on this
-// device (S10) and Now's rows (#521), Retry and Resume are the book dialog's save button, which the Kept row opens.
+// Activity's This device (#518) after a reload, from the device's own records. A failed save of a kept book waits for
+// Retry, a paused one for Resume (#552); Remove on This device is Keep off, failed or not (spec #548).
 test.use({ serviceWorkers: "block" });
 
 // A save first asks the browser to protect its storage. Firefox asks the owner in a prompt that nobody answers in a
@@ -76,16 +76,18 @@ const line = (page: Page) => row(page).locator(".part-book-row-status");
 /** The book's row while its save runs, in Saving now. */
 const saving = (page: Page) => page.getByRole("list", { name: "Saving now", exact: true }).getByRole("listitem").filter({ hasText: TITLE });
 /**
- * Retry and Resume until Now's rows: the Kept row opens the Book page (#532), where Resume carries on a save that has
- * files on this device and the Keep on this device switch starts one that has none.
+ * The Book page, opened from the Kept row (#532), with Keep on: a failed save waits for Retry under the reason, a
+ * paused one for Resume (#552). Each offers only its own.
  */
-async function saveAgain(page: Page) {
+async function onBookPage(page: Page, press: "Retry" | "Resume") {
   await row(page).getByRole("button", { name: new RegExp(`^${TITLE}`) }).click();
   const book = page.getByRole("region", { name: "Book", exact: true });
-  const keep = book.getByRole("switch", { name: "Keep on this device", exact: true });
-  await expect(keep).toBeVisible();
-  if ((await keep.getAttribute("aria-checked")) === "true") await book.getByRole("button", { name: "Resume", exact: true }).click();
-  else await keep.click();
+  await expect(book.getByRole("switch", { name: "Keep on this device", exact: true })).toHaveAttribute("aria-checked", "true");
+  const retry = book.getByRole("button", { name: "Retry saving on this device", exact: true });
+  const resume = book.getByRole("button", { name: "Resume", exact: true });
+  await expect(press === "Retry" ? retry : resume).toBeVisible();
+  await expect(press === "Retry" ? resume : retry).toHaveCount(0);
+  await (press === "Retry" ? retry : resume).click();
   await book.getByRole("button", { name: /^Back to / }).click();
 }
 /** Activity took the Downloads slot in the tab bar (#516); its name stays "Activity" while the dot is lit. */
@@ -153,8 +155,12 @@ test("a save that fails is still Not complete with Retry after a reload, and Ret
   expect(await deviceRecordsOf(page, "recording-alice")).toMatchObject({ record: { value: { state: "failed", reason: "The source is gone." } } });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
+  // This device lists the failed book with Retry and its Remove (spec #548).
+  await expect(row(page).getByRole("button", { name: `Retry saving ${TITLE}`, exact: true })).toBeVisible();
+  await expect(row(page).getByRole("button", { name: `Remove ${TITLE} from this device`, exact: true })).toBeVisible();
+
   fail = false;
-  await saveAgain(page);
+  await onBookPage(page, "Retry");
   await expect(line(page)).toHaveText(/^Audiobook · \d/, { timeout: 20000 });
   await page.reload();
   await expect(line(page)).toHaveText(/^Audiobook · \d/);
@@ -192,7 +198,7 @@ test("a paused save offers Resume after a reload, and Resume finishes it", async
   expect(await deviceRecordsOf(page, "recording-alice")).toMatchObject({ record: { value: { state: "paused" } } });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
-  await saveAgain(page);
+  await onBookPage(page, "Resume");
   await expect(line(page)).toHaveText(/^Audiobook · \d/, { timeout: 20000 });
 });
 
