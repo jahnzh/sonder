@@ -1,8 +1,8 @@
 // The Get audiobook sheet (#601, spec #600 "The sheet"; boards GetAudiobook.dc.html, BookGetting.dc.html):
 // `#book/<workId>/get/audiobook`, the administrator's. Close, the caption "Get audiobook", the book (cover, title as
 // the one heading, author), the search field (the title and author, searched on open and on Enter or the search
-// key), Recordings with one choice row per recording found, the Group of the other ways to get one (off until
-// tickets 05 and 06) and Get this recording with its line. The rows are get-audiobook-rows.ts, the search's
+// key), Recordings with one choice row per recording found, the Group of the other ways to get one (the
+// magnet link off until ticket 06; the import, get-import-row.tsx) and Get this recording with its line. The rows are get-audiobook-rows.ts, the search's
 // states get-audiobook-state.ts. The language button beside the field opens a Picker (#602): the choice applies at
 // once and is stored on this device; Load more recordings asks AudioBookBay's next page. The words, the rows, the
 // pages loaded, the language and the choice are kept in the history entry; a reload searches again (as many pages).
@@ -18,6 +18,7 @@ import { Picker } from "../parts/Picker";
 import { Sheet } from "../parts/Sheet";
 import { InfoMark } from "../parts/Tooltip";
 import { tip } from "../tooltip-texts";
+import { useTorrentHealth } from "../components/TorrentHealth";
 import type { Acquisition, AudiobookRelease } from "../types";
 import { GET_LANGUAGE, getLine, LANGUAGE_KEY, languageChoices, languageName, recordingRows } from "./get-audiobook-rows";
 import {
@@ -35,6 +36,7 @@ import {
   type GetSearch,
   type SourceId,
 } from "./get-audiobook-state";
+import { GetImportRow } from "./get-import-row";
 import "./get-audiobook-sheet.css";
 
 /** What the sheet keeps in its history entry. */
@@ -105,15 +107,19 @@ type Props = {
   online: boolean;
   /** Prowlarr is connected; null while the settings are not read yet (the first search waits for them). */
   prowlarrConfigured: boolean | null;
+  /** TorBox is connected: the line under the button says whether a recording plays at once. */
+  torboxConfigured: boolean;
   /** The library changed: the shell reads the books again. */
   onChanged: () => Promise<void> | void;
 };
 
-export function GetAudiobookSheet({ workId, online, prowlarrConfigured, onChanged }: Props) {
+export function GetAudiobookSheet({ workId, online, prowlarrConfigured, torboxConfigured, onChanged }: Props) {
   const address = useAddress();
   const route: Route = { name: "get", workId, kind: "audiobook" };
   const parent: Route = { name: "book", workId };
   const { work } = useWork(workId);
+  // Today's hook: the line under the button warns when the torrent client a recording would need is not working.
+  const { health } = useTorrentHealth();
   const [initial] = useState(() => keptOf(pageData(), workId));
   const [fresh] = useState(() => {
     const was = documentFresh;
@@ -221,7 +227,7 @@ export function GetAudiobookSheet({ workId, online, prowlarrConfigured, onChange
     if (chosen && !recordingRows(loaded, title, next).some((row) => row.id === chosen)) setChosen(null);
   };
   const chosenRow = view.rows.find((row) => row.id === chosen) ?? null;
-  const line = getLine(chosenRow?.release ?? null);
+  const line = getLine({ chosen: chosenRow?.release ?? null, mediaState: work?.mediaState, torboxConnected: torboxConfigured, health });
   const asked = Object.keys(search.sources) as SourceId[];
   const named = (asked.length ? asked : sources()).map((source) => SOURCE_NAMES[source]);
   const sourcesLine = `From ${named.join(" and ")}.`;
@@ -235,7 +241,11 @@ export function GetAudiobookSheet({ workId, online, prowlarrConfigured, onChange
       if (!work.inLibrary) await api(`/works/${encodeURIComponent(workId)}/library`, { method: "PUT" });
       const job = await api<Acquisition>(release.source === "prowlarr" ? "/discover/prowlarr/add" : "/discover/abb/add", {
         method: "POST",
-        body: JSON.stringify(release.source === "prowlarr" ? { id: release.id, workId } : { slug: release.id, workId }),
+        // Sent only when the line under the button says the add replaces the download on its way.
+        body: JSON.stringify({
+          ...(release.source === "prowlarr" ? { id: release.id, workId } : { slug: release.id, workId }),
+          ...(line?.replaceActive ? { replaceActive: true } : {}),
+        }),
       });
       if (job?.status === "error") throw new Error(job.error || NOT_QUEUED);
       await refreshLibraryWorks().catch(() => {});
@@ -264,7 +274,11 @@ export function GetAudiobookSheet({ workId, online, prowlarrConfigured, onChange
       <Button kind="primary" disabled={!chosenRow || getting || !online} onClick={() => void get()}>
         Get this recording
       </Button>
-      {line && <p className="get-sheet-line">{line}</p>}
+      {line && (
+        <p className={line.failed ? "get-sheet-line get-sheet-line-failed" : "get-sheet-line"} data-testid="get-line">
+          {line.text}
+        </p>
+      )}
     </>
   );
 
@@ -366,7 +380,7 @@ export function GetAudiobookSheet({ workId, online, prowlarrConfigured, onChange
 
       <div className="part-group-block">
         <ul className="part-group" role="list" aria-label="Other ways to get it">
-          {["Paste a magnet link", "Import files from this device"].map((label) => (
+          {["Paste a magnet link"].map((label) => (
             <li className="part-row-item" key={label}>
               <button type="button" className="part-row get-sheet-off" data-opens="" aria-disabled="true">
                 <span className="part-row-label type-body">{label}</span>
@@ -376,6 +390,7 @@ export function GetAudiobookSheet({ workId, online, prowlarrConfigured, onChange
               </button>
             </li>
           ))}
+          <GetImportRow kind="audiobook" workId={workId} title={title} />
         </ul>
       </div>
     </Sheet>

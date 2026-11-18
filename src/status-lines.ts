@@ -76,6 +76,25 @@ export function serverCopyLine({ status, progress }: ServerCopyFacts): string | 
   }
 }
 
+/** An import from this device into a book (#605): the bytes going, then the server's work until it answers. */
+export type DeviceImportFacts = {
+  kind: "audiobook" | "ebook";
+  phase: "uploading" | "processing";
+  /** 0 to 1 of the bytes sent. */
+  progress?: number | null;
+};
+
+export function deviceImportLine({ kind, phase, progress }: DeviceImportFacts): string | null {
+  switch (phase) {
+    case "uploading":
+      return `Uploading${DOT}${percentOf(progress)}`;
+    case "processing":
+      return kind === "audiobook" ? "Preparing the audio…" : "Importing…";
+    default:
+      return null;
+  }
+}
+
 /**
  * An ebook edition's check against the narration (an ebook-set member). A `held` member is read by its hold reason,
  * which a held member always has.

@@ -96,6 +96,7 @@ import { firstPage, parentOf, writeAddress, type Place, type Route } from "./rou
 import { coveredPage, onPageLeftByHistory, startNavigation, useAddress } from "./navigation";
 import { GetAudiobookSheet } from "./pages/get-audiobook-sheet";
 import { GetEbookSheet } from "./pages/get-ebook-sheet";
+import { deviceImports } from "./device-import";
 import { Gallery, isGalleryRoute } from "./gallery/Gallery";
 import { refreshLibraryWorks, startLibraryWorks, useStoredWorksWithPlaces } from "./library-works-store";
 import { bookStatus, readingPercent, workProgress } from "./work-progress";
@@ -429,6 +430,19 @@ function LibraryApp({
       setLoading(false);
     }
   }, []);
+  // An import from this device into a book (#605) ends in the shell: the library is read again before its sheet
+  // closes to the Book page, and with no sheet open its end is the toast.
+  useEffect(
+    () =>
+      deviceImports.configure({
+        refresh: async () => {
+          await refreshLibraryWorks().catch(() => {});
+          window.dispatchEvent(new Event("sonder:library-changed"));
+        },
+        notify,
+      }),
+    [notify],
+  );
   // A download or a copy to the server that finishes joins the library: read it again, as the Downloads page did.
   const finishedOnServer = useRef<Set<string> | null>(null);
   useEffect(() => {
@@ -947,6 +961,7 @@ function LibraryApp({
                 workId={getSheet}
                 online={online}
                 prowlarrConfigured={settings ? !!settings.prowlarrConfigured : null}
+                torboxConfigured={!!settings?.torboxConfigured}
                 onChanged={async () => {
                   await refresh();
                   await refreshDownloads();
