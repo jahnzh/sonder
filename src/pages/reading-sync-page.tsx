@@ -32,6 +32,7 @@ import type { LibraryWork, WorkEbook, WorkRecording } from "../types";
 import { chosenRecording } from "./book-model";
 import { recordingName } from "./audiobook-model";
 import {
+  needsPoolCount,
   readingSyncDetails,
   readingSyncPage,
   shownAfterPrepare,
@@ -300,7 +301,7 @@ export function ReadingSyncPage({ workId, admin }: { workId: string; admin: bool
   const ids = pair ? { ebookId: pair.ebook.id, recordingId: pair.recording.recordingId } : null;
   const languageMatch = useLanguageMatch(ids, job === null);
   const actions = useSyncActions(ids, listing);
-  const pool = usePoolCount(admin && job?.status === "error");
+  const pool = usePoolCount(admin && needsPoolCount(job));
   const header = (
     <PageHeader title="Reading sync" back parent={{ name: "book", workId }} info={<InfoMark name="Reading sync" text={tip("syncTitle")} />} />
   );
