@@ -9,6 +9,7 @@ export function pageName(route: Route): string {
     case "unknown":
       return "Library";
     case "discover":
+    case "discover-get":
       return "Discover";
     case "activity":
       return route.part === "device" ? "This device" : route.part === "server" ? "Server" : "Activity";

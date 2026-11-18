@@ -30,7 +30,6 @@ import {
   Menu,
 } from "lucide-react";
 import { PlayerProvider } from "./player";
-import { askSeriesSearch } from "./components/Series";
 import { SeriesPage } from "./pages/series-page";
 import { REMOVED_TOAST as SERIES_REMOVED_TOAST } from "./pages/series-remove-model";
 import { useSavedSeries } from "./pages/library-series";
@@ -76,7 +75,8 @@ import { AppUpdate } from "./components/AppUpdate";
 import { type HardcoverFilter } from "./components/Hardcover";
 import { type Page, Mark, Empty } from "./pages/shared";
 import { LibraryPage } from "./pages/library-page";
-import { DiscoverPage } from "./pages/discover-page";
+import { askDiscoverSearch, DiscoverPage } from "./pages/discover-page";
+import { RecordingSearchSheet } from "./pages/recording-search-sheet";
 import { ActivityServer } from "./pages/activity-server";
 import { ActivityNow } from "./pages/activity-now";
 import { ActivityPlace } from "./pages/activity-place";
@@ -251,6 +251,8 @@ function shownPage(route: Route, under: { current: Page }): Page {
   if (route.name === "library" || route.name === "discover" || route.name === "settings" || route.name === "activity")
     under.current = route.name;
   else if (route.name === "settings-page") under.current = "settings";
+  // The recording search without a book (#575) is a sheet over Discover.
+  else if (route.name === "discover-get") under.current = "discover";
   // A worker's page (#520) is a page of Activity's Server.
   else if (route.name === "worker") under.current = "activity";
   return under.current;
@@ -281,10 +283,12 @@ function LibraryApp({
   const getSheet = address.route.name === "get" && address.route.kind === "audiobook" ? address.route.workId : magnetSheet;
   // The Get ebook sheet (#604) likewise.
   const getEbookSheet = address.route.name === "get" && address.route.kind === "ebook" ? address.route.workId : null;
+  // Discover's "Search for a recording" (#575): a sheet over Discover.
+  const recordingQuery = address.route.name === "discover-get" ? address.route.query : null;
   // Now playing (#593) covers the page it was opened over too; opened by a link, its Book page.
   const nowPlaying = address.route.name === "listen" || address.route.name === "read";
   const pageRoute: Route =
-    getSheet || getEbookSheet || nowPlaying
+    getSheet || getEbookSheet || recordingQuery !== null || nowPlaying
       ? (coveredPage() ?? (magnetSheet ? { name: "book", workId: magnetSheet } : parentOf(address.route)) ?? address.route)
       : address.route;
   // The Ebook page (#531) is shown in place of the page under it.
@@ -333,7 +337,12 @@ function LibraryApp({
   // On a desktop choosing a series replaces the entry, as choosing a worker beside the Server list does (ADR 0020).
   const openSeries = (id: number) => address.navigate({ name: "series", id: String(id) }, { replace: sideBySide });
   const findSeries = () => {
-    askSeriesSearch();
+    askDiscoverSearch("series");
+    navigate("discover");
+  };
+  // The Library's plus (spec #572, "The Library"): Discover with its field focused.
+  const findBook = () => {
+    askDiscoverSearch("books");
     navigate("discover");
   };
   const [importOpen, setImportOpen] = useState(false);
@@ -849,20 +858,12 @@ function LibraryApp({
               </span>
             </div>
             <div className="topbar-end">
-              {page !== "settings" && page !== "library" && (
+              {page !== "settings" && page !== "discover" && page !== "library" && (
                 <label className="search-input">
                   <Search size={17} />
                   <input
-                    placeholder={
-                      page === "discover"
-                        ? "Search books…"
-                        : "Search your library…"
-                    }
-                    aria-label={
-                      page === "discover"
-                        ? "Search audiobooks"
-                        : "Search your library"
-                    }
+                    placeholder="Search your library…"
+                    aria-label="Search your library"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                   />
@@ -913,6 +914,19 @@ function LibraryApp({
                   await refresh();
                   await refreshDownloads();
                 }}
+              />
+            )}
+            {recordingQuery !== null && admin && (
+              <RecordingSearchSheet
+                key={`recording:${recordingQuery}`}
+                query={recordingQuery}
+                prowlarrConfigured={!!settings?.prowlarrConfigured}
+                onQueued={() => {
+                  void refresh();
+                  navigate("activity");
+                }}
+                refresh={refresh}
+                notify={notify}
               />
             )}
             {magnetSheet && admin && (
@@ -1010,6 +1024,7 @@ function LibraryApp({
                 savedSeries={savedSeries}
                 openSeries={openSeries}
                 findSeries={findSeries}
+                findBook={findBook}
                 beside={seriesBeside && seriesRouteId !== null ? { id: Number(seriesRouteId), page: seriesPage(seriesRouteId, true) } : null}
                 favorites={favorites}
                 onDevice={keptComplete}
@@ -1022,21 +1037,13 @@ function LibraryApp({
             {page === "discover" && (
               <DiscoverPage
                 admin={user.role === "admin"}
-                settings={settings}
-                onQueued={() => {
-                  void refresh();
-                  navigate("activity");
-                }}
-                books={visible}
-                query={query}
-                onQuery={setQuery}
-                onDetail={openBookOf}
-                onAdd={(b) => void mutateLibrary(b, "add")}
-                notify={notify}
-                torboxConfigured={!!settings?.torboxConfigured}
-                onConnect={openConnections}
+                online={online}
+                hardcoverConnected={!!settings?.hardcoverConfigured}
+                settingsRead={!!settings}
+                onBook={openBook}
                 onSeries={(id) => address.navigate({ name: "series", id: String(id) })}
-                refresh={refresh}
+                onRecording={(words) => address.navigate({ name: "discover-get", query: words })}
+                onConnect={openConnections}
               />
             )}
             {page === "activity" && (

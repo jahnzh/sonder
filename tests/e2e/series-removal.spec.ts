@@ -3,7 +3,10 @@
 // administrator) the books stay; the administrator's "Remove the books it added" lists only the books the series
 // added, each with its line, and removes the chosen ones with the series. Cancel and Back send nothing. The measures
 // at phone size and on a desktop.
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+// Each test runs its own server (own-server.ts): on the suite's server the specs before it save The Crossing's series,
+// add their books and read 701 from Hardcover; "from series 701" failed in a full Firefox run only (#575).
+import { test, expect } from "./own-server";
 import { mkdirSync } from "node:fs";
 import { noOverflow } from "./overflow";
 

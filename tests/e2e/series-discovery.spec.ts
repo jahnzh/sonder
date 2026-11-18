@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { openSeriesResult, searchSeries, seriesResult } from "./discover-search";
 import { openSavedSeries, savedSeriesList, savedSeriesRow, showSavedSeries } from "./library-series";
 import { unsaveSeries } from "./series-save";
 
@@ -23,23 +24,21 @@ test("discover and save chosen works from the intended series, then reopen it", 
   await unsaveSeries(page, 701);
   await page.request.put("/api/hardcover/token", { data: { token: "" } });
   await page.goto("/#discover");
-  await page.getByRole("button", { name: "Series", exact: true }).click();
-  await expect(page.getByText(/Connect Hardcover to search for series/)).toBeVisible();
-  await page.getByRole("button", { name: "Connect Hardcover", exact: true }).click();
+  await page.getByRole("radio", { name: "Series", exact: true }).click();
+  // Guard 18 (spec #572): the series search says to connect Hardcover, and its link opens Connections.
+  await page.getByRole("button", { name: "Connect Hardcover to search for series.", exact: true }).click();
   await expect(page).toHaveURL(/#settings\/connections$/);
 
   await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
   const existing = await page.request.post("/api/hardcover/books", { data: { id: 501 } });
   expect(existing.ok()).toBeTruthy();
   await page.reload();
-  await page.goto("/#discover");
-  await page.getByRole("button", { name: "Series", exact: true }).click();
-  await page.getByRole("textbox", { name: "Search series" }).fill("Crossing");
-  await page.getByRole("button", { name: "Search series", exact: true }).click();
-  await expect(page.getByText("Hardcover #701", { exact: true })).toBeVisible();
-  await expect(page.getByText("Hardcover #702", { exact: true })).toBeVisible();
-  // View series opens the series as a page (#564): not saved, the same page with Save series; no dialog.
-  await page.getByRole("button", { name: "View The Crossing by Ada North" }).click();
+  // Guard 19: two series with the same name are both listed and told apart; the chosen one opens.
+  await searchSeries(page, "Crossing");
+  await expect(seriesResult(page, "The Crossing", "Ada North")).toHaveAccessibleName(/ · Hardcover #701$/);
+  await expect(seriesResult(page, "The Crossing", "Bea South")).toHaveAccessibleName(/ · Hardcover #702$/);
+  // The series opens as a page (#564): not saved, the same page with Save series; no dialog.
+  await seriesResult(page, "The Crossing", "Ada North").click();
   await expect(page).toHaveURL(/#series\/701$/);
   const notSaved = page.getByRole("region", { name: "Series", exact: true });
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(["The Crossing"]);
@@ -157,11 +156,7 @@ test("preferred series language changes defaults and preserves manual choices", 
     } });
   });
   await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
-  await page.goto("/#discover");
-  await page.getByRole("button", { name: "Series", exact: true }).click();
-  await page.getByRole("textbox", { name: "Search series" }).fill("Crossing");
-  await page.getByRole("button", { name: "Search series", exact: true }).click();
-  await page.getByRole("button", { name: "View The Crossing by Ada North" }).click();
+  await openSeriesResult(page, "Crossing", "The Crossing", "Ada North");
   await expect(page).toHaveURL(/#series\/701$/);
   // The page stands the English book at each number.
   const shown = page.getByRole("region", { name: "Series", exact: true });

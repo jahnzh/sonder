@@ -157,6 +157,8 @@ const desktopProjects = [
               /(^|\/)series-(not-saved|discovery|acquisition)\.spec\.ts$/,
               // A Hardcover book opens its Book page before it is a work on the server (#574).
               /(^|\/)hardcover-book-look\.spec\.ts$/,
+              // Discover finds books (#575).
+              /(^|\/)discover\.spec\.ts$/,
               // A stuck download says why and offers Cancel (#716).
               /(^|\/)activity-cancel\.spec\.ts$/,
             ]
