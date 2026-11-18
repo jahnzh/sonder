@@ -465,7 +465,7 @@ test.describe("with answers from the test", () => {
     await libraryOverDiscover(page);
     // A saved series is a page of its own (#562): an entry, whose removal confirmation goes with it.
     const series = page.getByRole("region", { name: "Series", exact: true });
-    const removal = page.getByRole("dialog", { name: "Remove The Crossing", exact: true });
+    const removal = page.getByRole("dialog", { name: "Remove The Crossing?", exact: true });
     await page.getByRole("button", { name: "Open The Crossing by Ada North", exact: true }).click();
     await expect(page).toHaveURL(/#series\/701$/);
     await series.getByRole("button", { name: "Remove series", exact: true }).click();
