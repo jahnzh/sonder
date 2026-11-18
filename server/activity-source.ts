@@ -34,6 +34,11 @@ export type ActivityDeps = {
    * (`POST /api/acquisitions/<id>/control`, #515). `userId` is the administrator who asked.
    */
   controlAcquisition: (id: string, action: "retry" | "resume", userId: number) => Promise<unknown>;
+  /**
+   * Put a failed series search back in its queue (`retrySeriesAcquisitionJob`, #717); answers at once, and the queue's
+   * own failure goes to `onQueueError`. Absent where a test does not need it.
+   */
+  retrySeriesSearch?: (jobId: string, onQueueError: (error: unknown) => void) => Record<string, unknown>;
   /** Resume or retry a reading sync, as the `resume` of `PATCH /api/alignments/<id>` does (#515); answers the job. */
   resumeAlignment: (id: string) => Promise<unknown>;
   /** Pause state per loop: the settings table plus the environment lock. */

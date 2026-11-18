@@ -283,6 +283,10 @@ export const seriesAcquisitionJobs = sqliteTable("series_acquisition_jobs", {
   status: text("status").notNull(),
   error: text("error"),
   updatedAt: integer("updated_at").notNull(),
+  /** Times a search that could not reach its source was put back in the queue by itself (#717). */
+  autoRetries: integer("auto_retries").notNull().default(0),
+  /** A search put back by itself waits until then; null for one that may run now. */
+  retryAt: integer("retry_at"),
 });
 export const userWorkCompletion = sqliteTable("user_work_completion", { userId: integer("user_id").notNull(), workId: text("work_id").notNull(), status: text("status").notNull() }, t => [primaryKey({ columns: [t.userId, t.workId] })]);
 export const userWorkLibraryOrigin = sqliteTable(

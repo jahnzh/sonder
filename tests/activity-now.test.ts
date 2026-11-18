@@ -178,8 +178,9 @@ test("every line of the table: finished and failed forms of each entry, with the
   assert.equal(done({ kind: "server-copy", status: "ready" }).line, "Audiobook on server");
   assert.equal(failed({ kind: "server-copy", status: "error" }).line, "Copy to server failed");
   assert.equal(done({ kind: "series-acquisition", status: "done", search: "ebook" }).line, "Ebook on server");
-  assert.equal(failed({ kind: "series-acquisition", status: "failed", search: "audiobook" }).line, "Series search failed");
-  assert.equal(failed({ kind: "series-acquisition", status: "failed", search: "ebook" }).line, "Series search failed");
+  // A failed series search names which search failed (#717); with a stored reason, it says why (its own test below).
+  assert.equal(failed({ kind: "series-acquisition", status: "failed", search: "audiobook" }).line, "Audiobook search failed");
+  assert.equal(failed({ kind: "series-acquisition", status: "failed", search: "ebook" }).line, "Ebook search failed");
   assert.equal(done({ kind: "ebook-set", status: "accepted", holdReason: null }).line, "Ebook matches the narration");
   assert.equal(done({ kind: "ebook-set", status: "rejected", holdReason: null }).line, "Ebook does not match the narration");
   assert.equal(failed({ kind: "ebook-set", status: "held", holdReason: "evaluation_failed" }).line, "Check failed");

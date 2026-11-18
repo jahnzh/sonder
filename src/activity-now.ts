@@ -173,7 +173,11 @@ function movingLine(item: ActivityItem): string | null {
     case "server-copy":
       return serverCopyLine({ status: facts.status as ServerCopyFacts["status"], progress: item.progress });
     case "series-acquisition":
-      return seriesSearchLine({ status: facts.status as SeriesSearchFacts["status"], search: facts.search });
+      // A waiting search says where it is in the queue, or that it waits to try its source again (#717).
+      return seriesSearchLine({
+        status: facts.status as SeriesSearchFacts["status"], search: facts.search, place: facts.place,
+        retrying: !!facts.retryAt, reason: item.error,
+      });
     case "ebook-set":
       return ebookCheckLine(
         (facts.status === "held" ? { status: "held", holdReason: facts.holdReason } : { status: facts.status }) as EbookCheckFacts,
@@ -230,6 +234,9 @@ function serverEntry(item: ActivityItem, now: number): Entry | null {
   let line: string | null;
   // A Hardcover queue is one user's: its line names whose it is, as Server's queue line does ("… · admin").
   if (notBook) line = withUser(item.error ?? item.stuck?.reason ?? item.detail ?? "", item.user);
+  // A failed series search names which search failed and why (#717).
+  else if (failed && item.facts.kind === "series-acquisition")
+    line = seriesSearchLine({ status: "failed", search: item.facts.search, reason: item.error });
   else if (failed) line = failedLine({ entry: entry as "download" });
   else if (item.state === "done") line = doneLine(item);
   else line = movingLine(item);

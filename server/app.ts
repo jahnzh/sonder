@@ -69,7 +69,7 @@ import {
   torrentDownloadDir,
 } from "./storage.ts";
 import { acquireReplacing, acquisitionsLoop, controlAcquisition } from "./acquisitions.ts";
-import { seriesAcquisitionLoop } from "./series-acquisition.ts";
+import { retrySeriesAcquisitionJob, seriesAcquisitionLoop } from "./series-acquisition.ts";
 import { transmission, transmissionConfigured } from "./transmission.ts";
 import { getTorrentHealth } from "./torrent-health.ts";
 import { searchEbooks, saveEbook, listEbooks, importEbook } from "./ebooks.ts";
@@ -362,6 +362,7 @@ export async function createApp(options?: {
     retryEbookSetMember,
     controlAcquisition: (id: string, action: "retry" | "resume", userId: number) => controlAcquisition(id, action, userId),
     resumeAlignment: resumeAlignmentJob,
+    retrySeriesSearch: retrySeriesAcquisitionJob,
     pauseState,
     setPaused,
     workerHosts: {
