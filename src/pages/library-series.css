@@ -142,23 +142,3 @@
 
 /* The Series chip in today's filter row (the other filters keep their look until the Library slice): the Chip part's
    own measures, not the row's tab rules (styles.css' `.filter-tabs > button`), and a row tall enough for its 44. */
-.library-section > .library-toolbar {
-  height: 52px;
-}
-.filter-tabs > .part-chip.library-series-chip {
-  height: var(--height-control);
-  padding: 0 var(--space-16);
-  align-self: center;
-  font-family: var(--font-body);
-  font-size: 14px;
-  line-height: 20px;
-  font-weight: 500;
-  color: var(--text);
-}
-.filter-tabs > .part-chip.library-series-chip[data-selected] {
-  color: var(--background);
-  font-weight: 600;
-}
-.filter-tabs > .part-chip.library-series-chip::after {
-  content: none;
-}
