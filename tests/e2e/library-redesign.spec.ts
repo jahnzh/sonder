@@ -220,6 +220,8 @@ test("the Library against its boards at 390 by 844 and on a desktop: one tile pe
   // A desktop (DesktopLibrary.dc.html): the search field beside the Title, Add a book with its words, a wider grid.
   await page.setViewportSize({ width: 1280, height: 800 });
   await expect(page.getByRole("searchbox", { name: "Search your library", exact: true })).toBeVisible();
+  // The field is one piece: the input takes the field's raised colour, not the ground every other text input has.
+  expect(await page.getByRole("searchbox", { name: "Search your library", exact: true }).evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
   await expect(page.getByRole("button", { name: "Search your library", exact: true })).toBeHidden();
   await expect(page.getByRole("button", { name: "Add a book", exact: true })).toHaveText("Add a book");
   const [first, second, third, fourth] = await Promise.all([0, 1, 2, 3].map(async (i) => box(page, tiles.nth(i))));

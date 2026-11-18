@@ -47,7 +47,8 @@
   border: 0;
   border-radius: 0;
   box-shadow: none;
-  background: transparent;
+  /* appearance.css paints every text input with the ground through a longer selector; the field is the label's. */
+  background: transparent !important;
   color: var(--text);
   outline-offset: 4px;
 }
