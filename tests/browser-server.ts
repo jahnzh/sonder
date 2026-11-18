@@ -48,10 +48,6 @@ const { installSeriesAcquisitionFixture } = await import(
   "./series-acquisition-fixture.ts"
 );
 installSeriesAcquisitionFixture();
-const { installSeriesReleaseBrowserFixture } = await import(
-  "./series-release-browser-fixture.ts"
-);
-installSeriesReleaseBrowserFixture();
 const { createApp } = await import("../server/app.ts");
 const app = await createApp();
 // The alignment fixture's hold (#542): a spec keeps a real job's worker requests waiting, then lets them go.
