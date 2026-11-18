@@ -86,7 +86,7 @@ function openingChoice(series: SeriesAddSeries, opening: SeriesAddOpening, saved
     return new Set(work ? [keyOf(work)] : []);
   }
   // Not saved: the books Sonder would choose (one released book per number, in the preferred language), as the
-  // series dialog chose them; saved: the new works the server's defaults chose.
+  // older series dialog chose them; saved: the new works the server's defaults chose.
   if (!saved) {
     const defaults = selectSeriesDefaults(series.works, language);
     return new Set(series.works.filter((work) => defaults.has(work.id)).map(keyOf));

@@ -1,11 +1,10 @@
 // The Series page (#562, spec #560 "The Series page"; boards Series.dc.html, SeriesMore.dc.html, DesktopSeries.dc.html
 // for the column): `#series/<id>` for a saved series. The Page header (the back button named after where it goes, the
 // series' name as its Title), the intro line, Books · N with the series rows, Related works · N, then Remove series.
-// It replaces the series dialog for a saved series; a series that is not saved still opens the dialog. A row's Add
+// It replaced the series dialog (#569) for a saved series and for one that is not saved (#564). A row's Add
 // opens the Add sheet (#563) at `#series/<id>/add`, over the page. The words and
 // rules are in series-model.ts; the books in the library come from the library by work on this device (#528).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { SERIES_SAVED_POLL_MS } from "../components/SeriesWorkStatus";
 import { api, userId } from "../lib";
 import { refreshLibraryWorks, useStoredWorksWithPlaces } from "../library-works-store";
 import { openSheet, useAddress } from "../navigation";
@@ -27,7 +26,7 @@ import type { SeriesAddSeries } from "./series-add-model";
 import { DISMISS_LABEL, NEW_CARD_LINE, NEW_MARK, seriesPageModel, withoutNew, type SeriesPageSeries, type SeriesRow } from "./series-model";
 import "./series-page.css";
 
-/** The preferred language of a series' books, as today's series dialog keeps it. */
+/** The preferred language of a series' books, under the key the series dialog of an older build keeps it. */
 export const SERIES_LANGUAGE_KEY = "sonder-series-language";
 export function seriesLanguage(): string {
   try {
@@ -38,6 +37,9 @@ export function seriesLanguage(): string {
 }
 
 type SavedSeries = SeriesAddSeries;
+
+/** While a book of the series is on its way (a search or a download), the page reads the series again this often. */
+export const SERIES_SAVED_POLL_MS = 2500;
 
 /** Without a connection the page asks for the series again this often, until it is answered (#568). */
 export const SERIES_OFFLINE_RETRY_MS = 5000;

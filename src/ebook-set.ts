@@ -18,15 +18,3 @@ export type EbookSetMember = {
 export function checkingNote(ebookSet: { status: EbookSetMember["status"] } | undefined) {
   return ebookSet?.status === "pending" ? " Checking it against the narration." : "";
 }
-
-/** A work's ebook-set counts in the series view; `pending` is absent from an older server. */
-export type SeriesEbookSetCounts = { held: number; accepted: number; rejected: number; pending?: number };
-
-/** The series view's ebook label from the set counts, or null when the set has no member. */
-export function seriesEbookSetLabel(ebookSet: SeriesEbookSetCounts | null | undefined) {
-  if (ebookSet?.pending) return ebookSet.accepted ? `${ebookSet.accepted} accepted · Checking` : "Checking";
-  if (ebookSet?.accepted) return `${ebookSet.accepted} accepted`;
-  if (ebookSet?.held) return `${ebookSet.held} held for review`;
-  if (ebookSet?.rejected) return "Candidates rejected";
-  return null;
-}
