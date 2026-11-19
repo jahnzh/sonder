@@ -102,6 +102,15 @@ test("dedupe by workId: a hit whose work is listed above, or listed twice, is sh
   assert.deepEqual(bookResults({ server: done([]), audiobookdb: done([abdb("x", "No id", { workId: "" })]), openlibrary: done([]), admin: false }).audiobookdb, []);
 });
 
+test("a work on the server not matched yet: the provider's book of its title and author is not listed again", () => {
+  const unmatched = abdb("bk-wasp", "The Wasp Factory", { authors: ["Iain Banks"] });
+  const results = bookResults({ server: done(server), audiobookdb: done([unmatched]), openlibrary: done([ol("OL7W", "The Wasp Factory")]), admin: true });
+  assert.deepEqual(results.audiobookdb, []);
+  assert.deepEqual(results.openlibrary, []);
+  // Another author's book of the same title is another book.
+  assert.equal(bookResults({ server: done(server), audiobookdb: done([abdb("x", "The Wasp Factory", { authors: ["Someone Else"] })]), openlibrary: done([]), admin: true }).audiobookdb?.length, 1);
+});
+
 test("the same book: the folded title and one author in common", () => {
   assert.equal(sameBook({ title: "Excession", authors: ["Iain M. Banks"] }, { title: "excession!", authors: ["Someone", "Iain M. Banks"] }), true);
   assert.equal(sameBook({ title: "Excession", authors: ["Iain M. Banks"] }, { title: "Excession", authors: ["Another Writer"] }), false);

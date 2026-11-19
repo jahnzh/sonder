@@ -103,8 +103,8 @@ export function libraryFirst(works: readonly WorkResult[]): WorkResult[] {
 }
 
 /**
- * The three groups of a book search. "From AudiobookDB" leaves out a book on the server and a work already listed
- * above it; "From Open Library" leaves those out too, and a book AudiobookDB listed (it has an audiobook): every book
+ * The three groups of a book search. "From AudiobookDB" leaves out a book on the server, a work already listed above
+ * it and a book with the title and author of a work the server listed (one not matched to the catalogue yet); "From Open Library" leaves those out too, and a book AudiobookDB listed (it has an audiobook): every book
  * is listed once. The recording row is the administrator's.
  */
 export function bookResults({
@@ -120,10 +120,12 @@ export function bookResults({
 }): BookResults {
   const serverRows = server.state === "done" ? libraryFirst(server.value).map(serverRow) : null;
   const listed = new Set(serverRows?.map((row) => row.workId) ?? []);
+  // A work on the server not matched to the catalogue yet: the provider's book of the same title and author is it.
+  const serverBooks = server.state === "done" ? server.value.map((work) => ({ title: work.title, authors: work.author.split(/\s*[,;&]\s*/) })) : [];
   const take = (hits: readonly CatalogueHit[], skip: (hit: CatalogueHit) => boolean = () => false) => {
     const rows: DiscoverRow[] = [];
     for (const hit of hits) {
-      if (!hit.workId || hit.onServer || listed.has(hit.workId) || skip(hit)) continue;
+      if (!hit.workId || hit.onServer || listed.has(hit.workId) || skip(hit) || serverBooks.some((book) => sameBook(book, hit))) continue;
       listed.add(hit.workId);
       rows.push(catalogueRow(hit));
     }
