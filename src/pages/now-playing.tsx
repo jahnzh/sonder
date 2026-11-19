@@ -27,7 +27,8 @@ import { userStorageKey } from "../lib";
 import { useBookSpeed, useHasOwnSpeed, usePlayer } from "../player";
 import { SPEED_MAX, SPEED_MIN, SPEED_STEP, formatSpeed } from "../playback-speed";
 import { SLEEP_CHOICES, formatSleep, sleepShown } from "../sleep-stepper";
-import { currentChapter } from "../chapters";
+import { chapterTimeLeft, currentChapter, listeningChapters, type ListeningChapter } from "../chapters";
+import { listenChapterLine, listenPlaces, useDesktop } from "../now-playing-desktop";
 import { isReaderPage, openedFromListen, useOpenerAny } from "../reader-pages";
 import { type Face, faceFacts, faceKeyName, faceToOpen, readFace } from "../now-playing-face";
 import { tip } from "../tooltip-texts";
@@ -182,9 +183,46 @@ function ChevronRightIcon() {
     </svg>
   );
 }
-function PlayIcon({ playing, loading }: { playing: boolean; loading: boolean }) {
-  if (loading) return <Loader2 size={28} className="spin" aria-hidden="true" />;
-  return playing ? <Pause size={28} fill="currentColor" aria-hidden="true" /> : <Play size={28} fill="currentColor" aria-hidden="true" />;
+function PlayIcon({ playing, loading, size }: { playing: boolean; loading: boolean; size: number }) {
+  if (loading) return <Loader2 size={size} className="spin" aria-hidden="true" />;
+  return playing ? <Pause size={size} fill="currentColor" aria-hidden="true" /> : <Play size={size} fill="currentColor" aria-hidden="true" />;
+}
+
+function HeadphonesIcon() {
+  return (
+    <svg role="img" aria-label="Narrating" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 14v-2a8 8 0 0 1 16 0v2" />
+      <path d="M4 14h3v6H6a2 2 0 0 1-2-2zM20 14h-3v6h1a2 2 0 0 0 2-2z" />
+    </svg>
+  );
+}
+
+/**
+ * Listen's Chapters beside on the left on a desktop (#595; board DesktopNowPlaying.dc.html): the recording's chapters
+ * with the current one marked; a row moves the narration there, as a row of the Chapters page does from Listen
+ * (today's chapter jump, recorded in Position history).
+ */
+function ListenChapterList({ book, current, onChoose }: { book: Book; current: ListeningChapter | undefined; onChoose: (chapter: ListeningChapter) => void }) {
+  return (
+    <nav className="now-playing-chapters" aria-label="Chapters">
+      <h2 className="type-caption">Chapters</h2>
+      {listeningChapters(book).map((chapter) => {
+        const now = !!current && current.track.id === chapter.track.id && current.start === chapter.start;
+        return (
+          <button
+            key={`${chapter.track.id}-${chapter.start}`}
+            type="button"
+            className="type-label"
+            aria-current={now ? "true" : undefined}
+            onClick={() => onChoose(chapter)}
+          >
+            {now && <HeadphonesIcon />}
+            <span>{chapter.title}</span>
+          </button>
+        );
+      })}
+    </nav>
+  );
 }
 
 function CloseButton({ onClick }: { onClick: () => void }) {
@@ -244,8 +282,117 @@ function ListenFace({
     [],
   );
   const sleepValue = sleep === 0 ? "off" : sleepOptions.some((option) => option.value === String(sleep)) ? String(sleep) : null;
+  const desktop = useDesktop();
+  // Where each control is (#595): on a desktop the transport and the timeline are the footer and Chapters the list
+  // beside, so no control is in two places.
+  const places = listenPlaces(desktop);
+  const chapterLine = desktop ? listenChapterLine(chapterTitle, chapter ? chapterTimeLeft(chapter, position, speed) : null) : chapterTitle;
+  const intro = (
+    <div className="now-playing-intro">
+      <img className="now-playing-cover" src={book.cover || work.cover} alt="" />
+      <div className="now-playing-names">
+        <h1 className={desktop ? "type-title" : "type-heading"}>{work.title || book.title}</h1>
+        <p className={desktop ? "type-body" : "type-label"}>{work.author || book.author}</p>
+        {chapterLine && <p className="type-label now-playing-chapter">{chapterLine}</p>}
+      </div>
+    </div>
+  );
+  const timeline = (
+    <div className="now-playing-timeline">
+      <PlaybackTimeline book={book} compact={desktop} scoped={desktop} />
+    </div>
+  );
+  const transport = (
+    <div className="now-playing-transport">
+      <button type="button" className="now-playing-skip type-label" aria-label="Rewind 30 seconds" disabled={!playsThis} onClick={() => p.skip(-30)}>
+        −30
+      </button>
+      <button type="button" className="now-playing-play" aria-label={playsThis && p.playing ? "Pause" : "Play"} onClick={toggle}>
+        <PlayIcon playing={playsThis && p.playing} loading={playsThis && p.loading} size={desktop ? 20 : 28} />
+      </button>
+      <button type="button" className="now-playing-skip type-label" aria-label="Forward 30 seconds" disabled={!playsThis} onClick={() => p.skip(30)}>
+        +30
+      </button>
+    </div>
+  );
+  const openChapter = (target: ListeningChapter) => void p.play(book, target.track, target.start, { kind: "chapter" });
+  const rows = (
+    <>
+      {p.error && playsThis && (
+        <p className="now-playing-error type-label" role="alert">
+          {p.error}
+        </p>
+      )}
+      <Group label="Playback">
+        <Row
+          label="Speed"
+          info={<InfoMark name="Speed" text={tip("speed")} />}
+          control={
+            <span className="now-playing-speed">
+              {own.recordingId && own.has && (
+                <Button kind="quiet" aria-label={`Use default · ${formatSpeed(p.defaultSpeed)}×`} onClick={() => p.resetSpeed(own.recordingId!)}>
+                  Use default
+                </Button>
+              )}
+              <Stepper
+                label="Playback speed"
+                value={speed}
+                min={SPEED_MIN}
+                max={SPEED_MAX}
+                step={SPEED_STEP}
+                format={(value) => `${formatSpeed(value)}×`}
+                decreaseLabel="Slower"
+                increaseLabel="Faster"
+                onChange={(value) => p.setSpeed(value, book.recordingId)}
+              />
+            </span>
+          }
+        />
+        <Row label="Sleep timer" value={formatSleep(sleep)} opens onClick={() => setSleepOpen(true)} />
+        {places.chapters === "rows" && (
+          <Row
+            label="Chapters"
+            value={chapterTitle}
+            opens
+            onClick={() => {
+              openedFromListen(work.workId);
+              address.navigate({ name: "book-page", workId: work.workId, page: "chapters" });
+            }}
+          />
+        )}
+      </Group>
+      <Group label="Source and device" note={keepError || undefined} noteFailed={!!keepError}>
+        <PlaysFromRow book={book} downloads={props.downloads} online={props.online} />
+        <Row
+          label="Earlier positions"
+          info={<InfoMark name="Earlier positions" text={tip("earlier")} />}
+          control={
+            <button ref={earlier} type="button" className="now-playing-opens type-label" aria-label="Earlier positions" onClick={() => setHistoryOpen(true)}>
+              Undo a jump
+              <ChevronRightIcon />
+            </button>
+          }
+        />
+        <KeepItems
+          workId={work.workId}
+          work={work}
+          chosenEpub={epub}
+          chosenBook={book}
+          online={props.online}
+          downloads={props.downloads}
+          downloadParts={props.downloadParts}
+          running={props.running}
+          records={props.records}
+          onSave={props.onSave}
+          onDevice={props.onDevice}
+          onError={setKeepError}
+          idPrefix="listen-keep"
+        />
+      </Group>
+    </>
+  );
   return (
-    <div className="now-playing-listen">
+    <div className="now-playing-listen" data-layout={desktop ? "desktop" : "phone"}>
       <header className="now-playing-head">
         <CloseButton onClick={onClose} />
         {faceControl}
@@ -257,99 +404,31 @@ function ListenFace({
           onClick={() => address.navigate({ name: "book", workId: work.workId })}
         />
       </header>
-      <div className="now-playing-body">
-        <div className="now-playing-intro">
-          <img className="now-playing-cover" src={book.cover || work.cover} alt="" />
-          <div className="now-playing-names">
-            <h1 className="type-heading">{work.title || book.title}</h1>
-            <p className="type-label">{work.author || book.author}</p>
-            {chapterTitle && <p className="type-label now-playing-chapter">{chapterTitle}</p>}
+      {desktop ? (
+        <>
+          <div className="now-playing-desktop">
+            <ListenChapterList book={book} current={chapter} onChoose={openChapter} />
+            <div className="now-playing-middle">
+              <div className="now-playing-body">
+                {intro}
+                {rows}
+              </div>
+            </div>
           </div>
+          {/* The footer: the transport and the timeline only, in the place of Read's footer. */}
+          <footer className="now-playing-footer">
+            {transport}
+            {timeline}
+          </footer>
+        </>
+      ) : (
+        <div className="now-playing-body">
+          {intro}
+          {timeline}
+          {transport}
+          {rows}
         </div>
-        <div className="now-playing-timeline">
-          <PlaybackTimeline book={book} />
-        </div>
-        <div className="now-playing-transport">
-          <button type="button" className="now-playing-skip type-label" aria-label="Rewind 30 seconds" disabled={!playsThis} onClick={() => p.skip(-30)}>
-            −30
-          </button>
-          <button type="button" className="now-playing-play" aria-label={playsThis && p.playing ? "Pause" : "Play"} onClick={toggle}>
-            <PlayIcon playing={playsThis && p.playing} loading={playsThis && p.loading} />
-          </button>
-          <button type="button" className="now-playing-skip type-label" aria-label="Forward 30 seconds" disabled={!playsThis} onClick={() => p.skip(30)}>
-            +30
-          </button>
-        </div>
-        {p.error && playsThis && (
-          <p className="now-playing-error type-label" role="alert">
-            {p.error}
-          </p>
-        )}
-        <Group label="Playback">
-          <Row
-            label="Speed"
-            info={<InfoMark name="Speed" text={tip("speed")} />}
-            control={
-              <span className="now-playing-speed">
-                {own.recordingId && own.has && (
-                  <Button kind="quiet" aria-label={`Use default · ${formatSpeed(p.defaultSpeed)}×`} onClick={() => p.resetSpeed(own.recordingId!)}>
-                    Use default
-                  </Button>
-                )}
-                <Stepper
-                  label="Playback speed"
-                  value={speed}
-                  min={SPEED_MIN}
-                  max={SPEED_MAX}
-                  step={SPEED_STEP}
-                  format={(value) => `${formatSpeed(value)}×`}
-                  decreaseLabel="Slower"
-                  increaseLabel="Faster"
-                  onChange={(value) => p.setSpeed(value, book.recordingId)}
-                />
-              </span>
-            }
-          />
-          <Row label="Sleep timer" value={formatSleep(sleep)} opens onClick={() => setSleepOpen(true)} />
-          <Row
-            label="Chapters"
-            value={chapterTitle}
-            opens
-            onClick={() => {
-              openedFromListen(work.workId);
-              address.navigate({ name: "book-page", workId: work.workId, page: "chapters" });
-            }}
-          />
-        </Group>
-        <Group label="Source and device" note={keepError || undefined} noteFailed={!!keepError}>
-          <PlaysFromRow book={book} downloads={props.downloads} online={props.online} />
-          <Row
-            label="Earlier positions"
-            info={<InfoMark name="Earlier positions" text={tip("earlier")} />}
-            control={
-              <button ref={earlier} type="button" className="now-playing-opens type-label" aria-label="Earlier positions" onClick={() => setHistoryOpen(true)}>
-                Undo a jump
-                <ChevronRightIcon />
-              </button>
-            }
-          />
-          <KeepItems
-            workId={work.workId}
-            work={work}
-            chosenEpub={epub}
-            chosenBook={book}
-            online={props.online}
-            downloads={props.downloads}
-            downloadParts={props.downloadParts}
-            running={props.running}
-            records={props.records}
-            onSave={props.onSave}
-            onDevice={props.onDevice}
-            onError={setKeepError}
-            idPrefix="listen-keep"
-          />
-        </Group>
-      </div>
+      )}
       <Picker
         open={sleepOpen}
         title="Sleep timer"

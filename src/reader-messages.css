@@ -27,7 +27,7 @@
 .reader-message .part-button[data-kind="quiet"].reader-message-play {
   color: var(--muted);
 }
-@media (max-width: 899.98px) {
+@media (max-width: 759.98px) {
   .reader-player > .reader-message {
     position: absolute;
     z-index: 1;
@@ -56,24 +56,27 @@
     visibility: hidden;
   }
 }
-/* A desktop keeps its footer until the desktop ticket: the message takes the chapter's place beside the transport,
-   whose Play or Pause stays in view. */
-@media (min-width: 900px) {
+/* On a desktop (#595) the message takes the footer's row as it takes the foot's: the row's controls give way, the
+   timeline stays beside it as the foot's timeline stays above it, the footer keeps its box, and Play or Pause stays
+   at the message's end. */
+@media (min-width: 760px) {
   .reader-player > .reader-message {
-    grid-column: 1;
-    grid-row: 1 / span 2;
-    justify-self: start;
-    align-self: center;
-    max-width: calc(100% - 52px);
+    grid-row: 1;
+    grid-column: 1 / 3;
     min-width: 0;
+    height: var(--height-control);
     display: flex;
     align-items: center;
     gap: var(--space-4);
   }
   .reader-player > .reader-message .reader-message-play {
-    display: none;
+    border-radius: var(--corner-round);
+    background: var(--accent);
+    color: var(--on-accent);
   }
-  .reader-player[data-message] .reader-player-info {
-    visibility: hidden;
+  .reader-room .reader-player[data-message] .reader-player-leading,
+  .reader-room .reader-player[data-message] .reader-transport,
+  .reader-room .reader-player[data-message] .reader-player-extras {
+    display: none;
   }
 }

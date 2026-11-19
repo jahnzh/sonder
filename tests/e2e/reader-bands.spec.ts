@@ -267,7 +267,7 @@ test("the reader inside Now playing gets the same bands with the insets", async 
   expect(await frameState(room)).toEqual(before);
 });
 
-test("the desktop keeps its layout: the top bar and the player bar beside the text", async ({ page }) => {
+test("the desktop's head of 60 and footer are beside the text, not over it (#595)", async ({ page }) => {
   skipOnMobile(true, "the desktop layout needs a desktop window, not a phone profile");
   await page.setViewportSize({ width: 1280, height: 800 });
   const { ebook } = await fixture(page, "Desktop bands");
@@ -275,8 +275,9 @@ test("the desktop keeps its layout: the top bar and the player bar beside the te
   const room = standalone(page);
   await expect(page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").getByText("Alice was beginning", { exact: false })).toBeVisible();
   const topbar = (await room.locator(".reader-topbar").boundingBox())!, player = (await room.locator(".reader-player").boundingBox())!;
-  expect(topbar.height).toBeCloseTo(64, 0);
-  expect(player.height).toBeCloseTo(88, 0);
+  expect(topbar.height).toBeCloseTo(60, 0);
+  // The footer (DesktopReader.dc.html): 12 above, a row of 44, 16 below, and its line on top.
+  expect(player.height).toBeCloseTo(73, 0);
   await expect(room.locator(".reader-head-rest")).toBeHidden();
   await expect(room.locator(".reader-foot-rest")).toBeHidden();
   await expect(room.getByRole("button", { name: "Hide contents", exact: true })).toBeVisible();
