@@ -142,16 +142,10 @@ function markIntroduced(userId: number, bookId: string, introduced: number) {
     .run(introduced, userId, SERIES, bookId);
 }
 
-/** The work linked to a Hardcover book on purpose: the case `ensureHardcoverSyncSuppressed` still covers. */
+/** The work linked to a Hardcover book on purpose: the case `keepRemovedWorkHidden` still covers. */
 async function linkToHardcover(workId: string, hardcoverBookId: number) {
+  // A link kept from before Hardcover's removal (#721 part d); no token is needed to read it.
   sqlite.prepare("INSERT OR IGNORE INTO hardcover_links(work_id,book_id) VALUES(?,?)").run(workId, hardcoverBookId);
-  const token = await app.inject({
-    method: "PUT",
-    url: "/api/hardcover/token",
-    cookies: { sonder_session: await adminCookie() },
-    payload: { token: "fixture-token" },
-  });
-  assert.equal(token.statusCode, 200, token.body);
 }
 
 after(async () => {
@@ -818,96 +812,6 @@ test("removed work does not resume series acquisition after ticker runs", async 
   }
 });
 
-test("removed audio-only work stays hidden from Hardcover import", async () => {
-  const { applyHardcoverCatalogBook, hardcoverBook } = await import("../server/hardcover.ts");
-  const { purgeEditionForTests } = await import("../server/series-removal.ts");
-  const cookie = await adminCookie();
-  await saveSeries(cookie, ["bk-rem-2"]);
-  const workId = (
-    sqlite
-      .prepare(
-        "SELECT work_id AS workId FROM user_saved_series_works WHERE user_id=1 AND series_id='sr-removal' AND book_id='bk-rem-2'",
-      )
-      .get() as { workId: string }
-  ).workId;
-  // Linked to Hardcover on purpose: its removal makes the `hc-<book id>` placeholder and hides it.
-  await linkToHardcover(workId, 302);
-  const placeholderId = "hc-302";
-  for (const edition of db
-    .select()
-    .from(schema.editions)
-    .where(eq(schema.editions.workId, workId))
-    .all()) {
-    purgeEditionForTests(edition.id);
-  }
-  assert.equal(
-    db.select().from(schema.editions).where(eq(schema.editions.workId, workId)).all().length,
-    0,
-  );
-  const audioPath = join(temp, "media", "hc-hide-audio.mp3");
-  writeFileSync(audioPath, "audio");
-  const editionId = "local-audio-only";
-  db.insert(schema.editions)
-    .values({
-      id: editionId,
-      workId,
-      cover: "",
-      narrator: "N",
-      language: null,
-      releaseTitle: "Volume two",
-      rating: 0,
-      sourceLabel: "Test",
-    })
-    .run();
-  db.insert(schema.recordings).values({ id: "rec-audio-only", editionId }).run();
-  db.insert(schema.tracks)
-    .values({
-      id: "track-audio-only",
-      recordingId: "rec-audio-only",
-      title: "Ch 1",
-      index: 0,
-      duration: 10,
-      chapters: [],
-      source: audioPath,
-      sourceType: "local",
-    })
-    .run();
-  db.insert(schema.userLibrary)
-    .values({ userId: 1, bookId: editionId, status: "unread", addedAt: Date.now() })
-    .run();
-  const removed = await app.inject({
-    method: "DELETE",
-    url: `/api/series/${SERIES}`,
-    cookies: { sonder_session: cookie },
-    payload: { bookIds: ["bk-rem-2"] },
-  });
-  assert.equal(removed.statusCode, 200, removed.body);
-  assert.ok(
-    sqlite
-      .prepare(
-        "SELECT 1 FROM user_hidden_library WHERE user_id=1 AND book_id=?",
-      )
-      .get(placeholderId),
-  );
-  assert.ok(
-    db.select().from(schema.editions).where(eq(schema.editions.id, placeholderId)).get(),
-  );
-  const book = await hardcoverBook(1, 302);
-  applyHardcoverCatalogBook(1, book);
-  assert.equal(
-    sqlite
-      .prepare("SELECT 1 FROM user_library WHERE user_id=1 AND book_id=?")
-      .get(editionId),
-    undefined,
-  );
-  assert.equal(
-    sqlite
-      .prepare("SELECT 1 FROM user_library WHERE user_id=1 AND book_id=?")
-      .get(placeholderId),
-    undefined,
-  );
-});
-
 test("legacy library row blocks edition deletion", async () => {
   const cookie = await adminCookie();
   await saveSeries(cookie, ["bk-rem-1"]);
@@ -957,74 +861,6 @@ test("legacy library row blocks edition deletion", async () => {
   assert.equal(removed.statusCode, 200, removed.body);
   assert.ok(existsSync(audioPath));
   assert.ok(db.select().from(schema.editions).where(eq(schema.editions.id, editionId)).get());
-});
-
-test("a removed work linked to Hardcover keeps its placeholder hidden after audio delete; a Hardcover import does not add it back", async () => {
-  const { importHardcoverBook } = await import("../server/hardcover.ts");
-  const { ensurePlaceholder } = await import("../server/placeholder-edition.ts");
-  const cookie = await adminCookie();
-  await saveSeries(cookie, ["bk-rem-1"]);
-  const workId = await seriesWorkId(cookie, "bk-rem-1");
-  // Linked to Hardcover on purpose; the work's own placeholder is the one a Hardcover import would add back.
-  await linkToHardcover(workId, 301);
-  const placeholderId = ensurePlaceholder(sqlite, workId);
-  const audioPath = join(temp, "media", "with-placeholder.mp3");
-  writeFileSync(audioPath, "audio");
-  const editionId = "local-with-placeholder";
-  db.insert(schema.editions)
-    .values({
-      id: editionId,
-      workId,
-      cover: "",
-      narrator: "N",
-      language: null,
-      releaseTitle: "Volume one",
-      rating: 0,
-      sourceLabel: "Test",
-    })
-    .run();
-  db.insert(schema.recordings).values({ id: "rec-ph", editionId }).run();
-  db.insert(schema.tracks)
-    .values({
-      id: "track-ph",
-      recordingId: "rec-ph",
-      title: "Ch 1",
-      index: 0,
-      duration: 10,
-      chapters: [],
-      source: audioPath,
-      sourceType: "local",
-    })
-    .run();
-  db.insert(schema.userLibrary)
-    .values({ userId: 1, bookId: editionId, status: "unread", addedAt: Date.now() })
-    .run();
-  const removed = await app.inject({
-    method: "DELETE",
-    url: `/api/series/${SERIES}`,
-    cookies: { sonder_session: cookie },
-    payload: { bookIds: ["bk-rem-1"] },
-  });
-  assert.equal(removed.statusCode, 200, removed.body);
-  assert.equal(existsSync(audioPath), false);
-  assert.ok(
-    sqlite
-      .prepare(
-        "SELECT 1 FROM user_hidden_library WHERE user_id=1 AND book_id=?",
-      )
-      .get(placeholderId),
-  );
-  await importHardcoverBook(1, 301);
-  assert.equal(
-    sqlite
-      .prepare("SELECT 1 FROM user_library WHERE user_id=1 AND book_id=?")
-      .get(editionId),
-    undefined,
-  );
-  assert.equal(
-    sqlite.prepare("SELECT 1 FROM user_library WHERE user_id=1 AND book_id=?").get(placeholderId),
-    undefined,
-  );
 });
 
 test("legacy progress blocks deleting an edition for any user", async () => {

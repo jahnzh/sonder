@@ -36,10 +36,6 @@ process.env.API_RATE_LIMIT = "6000";
 process.env.CSP_MODE ??= "enforce";
 if (process.env.PLAYWRIGHT_AUTH !== "1") delete process.env.APP_PASSWORD;
 delete process.env.TRANSMISSION_RPC_URL;
-const { installHardcoverFixture } = await import(
-  "./hardcover-browser-fixture.ts"
-);
-installHardcoverFixture();
 const { installAlignmentFixture, holdAlignment, heldAlignmentRequests } = await import("./alignment-browser-fixture.ts");
 await installAlignmentFixture();
 const { installProwlarrFixture } = await import("./prowlarr-browser-fixture.ts");
@@ -80,6 +76,8 @@ app.post("/api/__fixture/audiobookdb-series", async (request) => {
   }
   return { ok: true };
 });
+// A book in the library without Hardcover's import (#721): the series and Discover specs' Alice and Matter.
+(await import("./library-fixture-routes.ts")).registerLibraryFixtureRoutes(app);
 // The Get sheet without a book (#576): its add answered without TorBox or a torrent client.
 await (await import("./new-book-browser-fixture.ts")).installNewBookFixture(app);
 await app.listen({ port: Number(process.env.PLAYWRIGHT_PORT || 4173), host: "127.0.0.1" });

@@ -12,7 +12,7 @@ import {
 } from "./series-catalogue.ts";
 import { retrySeriesWorkAcquisition } from "./series-acquisition.ts";
 import { searchSeriesWorkReleases, selectSeriesWorkRelease } from "./series-release-search.ts";
-import { previewSeriesRemoval, removeSavedHardcoverSeries } from "./series-removal.ts";
+import { previewSeriesRemoval, removeSavedSeries } from "./series-removal.ts";
 import { currentUserId, requireAdmin } from "./users.ts";
 
 /** A series or book id: AudiobookDB's text, `openlibrary:<work>`, or a number from an older client. */
@@ -55,7 +55,7 @@ export function registerSeriesRoutes(app: FastifyInstance) {
     const body = z.object({ bookIds: z.array(catalogueId).max(1000).optional() }).parse(req.body ?? {});
     const bookIds = body.bookIds ?? [];
     if (bookIds.length) requireAdmin(req);
-    return await removeSavedHardcoverSeries(currentUserId(req), id, bookIds);
+    return await removeSavedSeries(currentUserId(req), id, bookIds);
   });
   app.post("/api/series/:id/works/:bookId/acquisition/retry", async (req) => {
     const { id, bookId } = workParams.parse(req.params);

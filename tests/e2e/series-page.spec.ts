@@ -35,7 +35,6 @@ const libraryTitles = async (page: Page) =>
  * afterwards, so a repeat on the same server (and the other series specs) starts from the same state.
  */
 async function saveCrossing(page: Page, bookIds: string[], options: { searchEbooks?: boolean } = {}) {
-  expect((await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } })).ok()).toBe(true);
   await connectAudiobookDb(page);
   const before = await libraryTitles(page);
   const savedBefore = ((await (await page.request.get("/api/series")).json()) as { id: string }[]).some((series) => series.id === "701");
@@ -43,7 +42,6 @@ async function saveCrossing(page: Page, bookIds: string[], options: { searchEboo
   const saved = await page.request.post("/api/series", { data: { id: "701", bookIds, ...options } });
   expect(saved.ok(), await saved.text()).toBe(true);
   return async () => {
-    await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
     await connectAudiobookDb(page);
     const added = (await crossing(page)).works.filter((work) => work.added && !addedBefore.includes(work.id) && !before.has(work.title));
     expect((await page.request.delete("/api/series/701", { data: { bookIds: added.map((work) => work.id) } })).ok()).toBe(true);

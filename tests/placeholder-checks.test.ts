@@ -43,29 +43,25 @@ const clock = { now: () => Date.now(), sleep: async () => {} };
 const { createApp } = await import("../server/app.ts");
 const { sqlite, db } = await import("../server/db.ts");
 const s = await import("../server/schema.ts");
-const hc = await import("../server/hardcover.ts");
+const { ensurePlaceholder } = await import("../server/placeholder-edition.ts");
 const { claimWorkAudio } = await import("../server/work-library.ts");
 const removal = await import("../server/series-removal.ts");
 const { deriveWorkMediaStates, playableWorks } = await import(
   "../server/work-media-derivation.ts"
 );
 const app = await createApp({ background: { manual: ["series-acquisition"] } });
-// The Hardcover token and book import the series and Discover code still needs (#721 part d; removed in part b/c2).
-(await import("./hardcover-fixture-routes.ts")).registerHardcoverFixtureRoutes(app);
 
-/** A Hardcover book as the Hardcover import reads it. */
-const catalogBook = (id: number, title = `Pinned volume ${id}`) => ({
-  id,
-  title,
-  slug: null,
-  description: null,
-  release_year: 2020,
-  release_date: "2020-01-01",
-  cached_image: null,
-  contributions: [{ contribution: "author", author: { name: author } }],
-  book_series: [],
-  editions: [],
-});
+/**
+ * A placeholder as the Hardcover import left one before its removal (#721 part d): the work `work-hc-<id>` linked to
+ * Hardcover book `id`, its placeholder `hc-<id>` in the user's library, and the book on that user's stored shelf.
+ */
+function storedHardcoverPlaceholder(userId: number, id: number, title: string) {
+  sqlite.prepare("INSERT INTO works(id,title,author,description,genre,year) VALUES(?,?,?,'','',2020)").run(`work-hc-${id}`, title, author);
+  sqlite.prepare("INSERT INTO hardcover_links(work_id,book_id,slug,series) VALUES(?,?,NULL,'[]')").run(`work-hc-${id}`, id);
+  const edition = ensurePlaceholder(sqlite, `work-hc-${id}`);
+  sqlite.prepare("INSERT INTO user_library(user_id,book_id,status,added_at) VALUES(?,?,'unread',?)").run(userId, edition, Date.now());
+  sqlite.prepare("INSERT INTO user_hardcover_links(user_id,book_id,status_id) VALUES(?,?,1)").run(userId, id);
+}
 
 after(async () => {
   globalThis.fetch = realFetch;
@@ -266,39 +262,29 @@ test("suppressing the Hardcover sync of an unlinked work hides its placeholder, 
   addWork("work-pin-hc");
   addEdition("work-pin-hc", "real-pin-hc", 1);
   addEdition("work-pin-hc", "hc-990001", 0);
-  removal.ensureHardcoverSyncSuppressed(1, "work-pin-hc");
+  removal.keepRemovedWorkHidden(1, "work-pin-hc");
   assert.deepEqual(hiddenOf(1, ["real-pin-hc", "hc-990001"]), ["hc-990001"]);
 
   // Without a Hardcover placeholder, an edition without audio stands in for the work.
   addWork("work-pin-empty");
   addEdition("work-pin-empty", "real-pin-empty", 1);
   addEdition("work-pin-empty", "empty-pin-empty", 0);
-  removal.ensureHardcoverSyncSuppressed(1, "work-pin-empty");
+  removal.keepRemovedWorkHidden(1, "work-pin-empty");
   assert.deepEqual(hiddenOf(1, ["real-pin-empty", "empty-pin-empty"]), ["empty-pin-empty"]);
 
   // A work with only audio hides nothing.
   addWork("work-pin-audio");
   addEdition("work-pin-audio", "real-pin-audio", 1);
-  removal.ensureHardcoverSyncSuppressed(1, "work-pin-audio");
+  removal.keepRemovedWorkHidden(1, "work-pin-audio");
   assert.deepEqual(hiddenOf(1, ["real-pin-audio"]), []);
 });
 
 // --- Hardcover import (server/hardcover.ts) ----------------------------------------------
 
-test("importing a Hardcover book whose work has audio replaces the placeholder on the shelf", () => {
-  const book = catalogBook(7101, "Shelf swap volume");
-  hc.applyHardcoverCatalogBook(1, book);
-  assert.deepEqual(shelvedIds(1, ["hc-7101"]), ["hc-7101"], "first import shelves a placeholder");
-  addEdition("work-hc-7101", "real-7101", 1);
-
-  hc.applyHardcoverCatalogBook(1, book);
-  assert.deepEqual(shelvedIds(1, ["hc-7101", "real-7101"]), ["real-7101"]);
-});
-
 test("one user's Hardcover placeholder is not listed for another user, while audio is", async () => {
   const owner = await listener("pin-owner");
   const other = await listener("pin-other");
-  hc.applyHardcoverCatalogBook(owner.id, catalogBook(7201, "Private shelf volume"));
+  storedHardcoverPlaceholder(owner.id, 7201, "Private shelf volume");
   assert.ok(editionExists("hc-7201"));
   addWork("work-7202");
   addEdition("work-7202", "real-7202", 1);

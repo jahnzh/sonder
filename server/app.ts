@@ -26,11 +26,8 @@ import { db, sqlite, dataDir } from "./db.ts";
 import * as s from "./schema.ts";
 import { seed } from "./seed.ts";
 import { removeUserLibraryRow, setLibraryOrigin } from "./library-origin.ts";
-import {
-  hardcoverForWork,
-  hardcoverWorkForMedia,
-  hiddenHardcoverPlaceholders,
-} from "./hardcover.ts";
+import { hardcoverForWork, hiddenHardcoverPlaceholders } from "./hardcover.ts";
+import { matchedWorkForMedia } from "./same-book.ts";
 import { registerHardcoverRoutes } from "./hardcover-routes.ts";
 import { switchFromHardcover } from "./hardcover-switch.ts";
 import { registerCatalogueRoutes } from "./catalogue-routes.ts";
@@ -499,7 +496,7 @@ export async function createApp(options?: {
     name: getSetting("name") || "My listening space",
     torboxConfigured: !!getSetting("torbox"),
     // Hardcover is removed (#721 part d): the switch deleted every token and nothing stores one again, so this is
-    // false. The field stays for the builds that read it, and for Discover's Hardcover search until part c2 replaces it.
+    // false. The field stays for the builds that read it.
     hardcoverConfigured: !!getUserSecret(currentUserId(req), "hardcover"),
     // AudiobookDB (#721): the server's AUDIOBOOKDB_API_KEY, else the key saved here; which one is in use.
     audiobookdbConfigured: !!audiobookDbKey().key,
@@ -1026,7 +1023,7 @@ export async function createApp(options?: {
       const id = randomUUID();
       // The book's author names the recording's narrator, as an upload's typed author does today.
       if (work) author = work.author;
-      const workId = work?.id || hardcoverWorkForMedia(title, author) || `work-${id}`;
+      const workId = work?.id || matchedWorkForMedia(title, author) || `work-${id}`;
       // A recording of a known book takes the cover its other editions show (the placeholder's, as a rule).
       const cover = work
         ? db.select({ cover: s.editions.cover }).from(s.editions).where(eq(s.editions.workId, work.id)).all().map((e) => e.cover).find(Boolean)

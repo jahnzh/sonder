@@ -489,7 +489,7 @@ test("a throwing logger does not stop the series audio flow from tracking the wo
 
 // --- Presence after removing a work with its saved series ---------------------------------
 
-const { removeSavedHardcoverSeries } = await import("../server/series-removal.ts");
+const { removeSavedSeries } = await import("../server/series-removal.ts");
 
 test("removing a work with its series leaves the work tracked as missing", async () => {
   addWork("w-removed");
@@ -510,7 +510,7 @@ test("removing a work with its series leaves the work tracked as missing", async
     )
     .run();
   assert.equal(getWorkMediaState(1, "w-removed"), null);
-  await removeSavedHardcoverSeries(1, "sr-gone", ["bk-gone-1"]);
+  await removeSavedSeries(1, "sr-gone", ["bk-gone-1"]);
   assert.deepEqual(pick(getWorkMediaState(1, "w-removed")), {
     state: "missing",
     holdReason: null,

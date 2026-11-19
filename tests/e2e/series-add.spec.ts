@@ -31,9 +31,9 @@ const libraryBooks = async (page: Page) =>
 const libraryTitles = async (page: Page) => new Set((await libraryBooks(page)).map((book) => book.title));
 const ALICE = "Alice’s Adventures in Wonderland";
 
-/** Alice (AudiobookDB 501, number 1 of The Crossing) is in the library, as the suite's Hardcover sync puts it there. */
+/** Alice (AudiobookDB 501, number 1 of The Crossing) is in the library, added by the fixture route. */
 async function aliceInLibrary(page: Page) {
-  if (!(await libraryTitles(page)).has(ALICE)) expect((await page.request.post("/api/__fixture/hardcover-books", { data: { id: 501 } })).ok()).toBe(true);
+  if (!(await libraryTitles(page)).has(ALICE)) expect((await page.request.post("/api/__fixture/library-book", { data: { title: "Alice’s Adventures in Wonderland", author: "Lewis Carroll" } })).ok()).toBe(true);
 }
 
 /**
@@ -41,7 +41,6 @@ async function aliceInLibrary(page: Page) {
  * series, the library and AudiobookDB's answer back as it found them afterwards.
  */
 async function saveCrossing(page: Page, bookIds: string[]) {
-  expect((await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } })).ok()).toBe(true);
   await connectAudiobookDb(page);
   await aliceInLibrary(page);
   const before = await libraryTitles(page);
@@ -51,7 +50,6 @@ async function saveCrossing(page: Page, bookIds: string[]) {
   const saved = await page.request.post("/api/series", { data: { id: "701", bookIds } });
   expect(saved.ok(), await saved.text()).toBe(true);
   return async () => {
-    await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
     await connectAudiobookDb(page);
     await aliceInLibrary(page);
     const added = (await crossing(page)).works.filter((work) => work.added && !addedBefore.includes(work.id) && !before.has(work.title));

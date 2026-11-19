@@ -223,7 +223,7 @@ export type DownloadPart = {
 };
 export type Settings = {
   torboxConfigured: boolean;
-  /** A Hardcover token is stored: never after the switch from Hardcover (#721 part d); read by Discover until part c2. */
+  /** A Hardcover token is stored: never after the switch from Hardcover (#721 part d); kept for older builds. */
   hardcoverConfigured?: boolean;
   abbUrl: string;
   name: string;

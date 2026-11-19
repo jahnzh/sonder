@@ -28,7 +28,6 @@ const libraryTitles = async (page: Page) =>
 
 /** Saves The Crossing by Ada North (701) and by Bea South (702); afterwards the series and the library are as they were. */
 async function saveBoth(page: Page) {
-  expect((await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } })).ok()).toBe(true);
   await connectAudiobookDb(page);
   const before = await libraryTitles(page);
   const savedBefore = new Set((await savedList(page)).map((series) => series.id));
@@ -42,7 +41,6 @@ async function saveBoth(page: Page) {
   expect((await page.request.post("/api/series", { data: { id: "701", bookIds: ["503", "504"] } })).ok()).toBe(true);
   expect((await page.request.post("/api/series", { data: { id: "702", bookIds: [] } })).ok()).toBe(true);
   return async () => {
-    await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
     await connectAudiobookDb(page);
     for (const id of ["701", "702"]) {
       const works = ((await (await page.request.get(`/api/series/${id}`)).json()).works as { id: string; title: string; added: boolean }[]);

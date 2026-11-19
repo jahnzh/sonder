@@ -8,8 +8,7 @@ import { connectAudiobookDb, listCrossingThree, saveSeriesOnPage, unsaveSeries, 
  * the ebook's "on device" per book (the Book page's This device says it) and the Completion select (the Book page's
  * Mark as finished); a completion set on the book is kept, and the series counts it.
  */
-test("a saved series keeps the provenance of a synced book and counts its completion", async ({ page }) => {
-  await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
+test("a saved series keeps the provenance of a book added before it and counts its completion", async ({ page }) => {
   await connectAudiobookDb(page);
   const initialBooks = await (await page.request.get("/api/books")).json();
   const seededAlice = initialBooks.find(
@@ -17,7 +16,7 @@ test("a saved series keeps the provenance of a synced book and counts its comple
       book.title === "Alice’s Adventures in Wonderland" && book.inLibrary,
   );
   if (seededAlice?.id) await page.request.delete(`/api/library/${seededAlice.id}`);
-  await page.request.post("/api/__fixture/hardcover-books", { data: { id: 501 } });
+  await page.request.post("/api/__fixture/library-book", { data: { title: "Alice’s Adventures in Wonderland", author: "Lewis Carroll" } });
   // Saved through its page and Save series with the defaults (#564).
   await unsaveSeries(page, "701");
   await listCrossingThree(page, false);
@@ -38,9 +37,10 @@ test("a saved series keeps the provenance of a synced book and counts its comple
   await expect(intro).toBeVisible();
   const seriesView = await (await page.request.get("/api/series/701")).json();
   const aliceRow = seriesView.works.find((work: { id: string }) => work.id === "501");
-  expect(aliceRow?.libraryOrigin?.source).toBe("hardcover_sync");
+  // Added by hand before the series (the Hardcover shelves that once added her are gone, #721 part d).
+  expect(aliceRow?.libraryOrigin?.source).toBe("manual");
   expect(aliceRow?.removalDefaultSelected).toBe(false);
-  // Remove series (#566): a book from Hardcover's shelves is not offered with the series; Cancel sends nothing.
+  // Remove series (#566): a book added before the series is not offered with it; Cancel sends nothing.
   await page.getByRole("region", { name: "Series", exact: true }).getByRole("button", { name: "Remove series", exact: true }).click();
   const removal = page.getByRole("dialog", { name: "Remove The Crossing?", exact: true });
   await removal.getByRole("switch", { name: "Remove the books it added", exact: true }).click();

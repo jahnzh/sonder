@@ -57,7 +57,6 @@ export function askDiscoverSearch(segment: DiscoverSegment) {
  */
 const LOAD = Math.random().toString(36).slice(2);
 
-export const HARDCOVER_FAILED_LINE = "Hardcover could not be searched.";
 export const AUDIOBOOKDB_FAILED_LINE = "AudiobookDB could not be searched.";
 export const OPENLIBRARY_FAILED_LINE = "Open Library could not be searched.";
 export const AUDIOBOOKDB_KEY_LINE = "Add the AudiobookDB API key in Settings to search audiobooks";
@@ -111,7 +110,6 @@ function initialState(): { state: State; rerun: boolean } {
 export function DiscoverPage({
   admin,
   online,
-  hardcoverConnected,
   settingsRead,
   onBook,
   onSeries,
@@ -121,8 +119,7 @@ export function DiscoverPage({
 }: {
   admin: boolean;
   online: boolean;
-  hardcoverConnected: boolean;
-  /** The settings are read: whether Hardcover is connected is known. */
+  /** The settings are read: whether the administrator has AudiobookDB's key is known. */
   settingsRead: boolean;
   onBook: (workId: string) => void;
   onSeries: (id: string) => void;
@@ -217,7 +214,7 @@ export function DiscoverPage({
     else searchSeries(words);
   };
 
-  // A reload runs the kept query again, once the settings say whether Hardcover's series are searched.
+  // A reload runs the kept query again, once the settings are read.
   const reran = useRef(!rerun);
   useEffect(() => {
     if (reran.current || !settingsRead || !online || !searched) return;

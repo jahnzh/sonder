@@ -53,7 +53,6 @@ type SeriesView = { works: { id: string; title: string; new?: boolean; added: bo
  * and the series is read from AudiobookDB again until it is there: that work is new.
  */
 async function saveThenAudiobookDbAdds(page: Page) {
-  expect((await page.request.put(`${base}/api/hardcover/token`, { data: { token: "series-browser-token" } })).ok()).toBe(true);
   await connectAudiobookDb(page, base);
   const saved = await page.request.post(`${base}/api/series`, { data: { id: "701", bookIds: [] } });
   expect(saved.ok(), await saved.text()).toBe(true);

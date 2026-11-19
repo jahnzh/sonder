@@ -26,7 +26,6 @@ test("discover and save chosen works from the intended series, then reopen it", 
   await listCrossingThree(page, false);
   // Guard 18, since #721: series come from AudiobookDB. Without its key a series search fails with the reason and
   // Retry (words no earlier search cached); with it, Retry searches. Hardcover is not needed for series.
-  await page.request.put("/api/hardcover/token", { data: { token: "" } });
   await disconnectAudiobookDb(page);
   const words = `Crossing ${Date.now().toString(36)}`;
   await searchSeries(page, words);
@@ -38,8 +37,7 @@ test("discover and save chosen works from the intended series, then reopen it", 
   await searchSeries(page, "Crossing");
   await expect(seriesResult(page, "The Crossing", "Ada North")).toBeVisible();
 
-  await page.request.put("/api/__fixture/hardcover-token", { data: { token: "series-browser-token" } });
-  const existing = await page.request.post("/api/__fixture/hardcover-books", { data: { id: 501 } });
+  const existing = await page.request.post("/api/__fixture/library-book", { data: { title: "Alice’s Adventures in Wonderland", author: "Lewis Carroll" } });
   expect(existing.ok()).toBeTruthy();
   await page.reload();
   // Guard 19: two series with the same name are both listed and told apart; the chosen one opens.
@@ -137,7 +135,6 @@ test("discover and save chosen works from the intended series, then reopen it", 
   const offlineLibrary = (await (await page.request.get("/api/books")).json()).filter((book: { inLibrary: boolean }) => book.inLibrary);
   expect(offlineLibrary.some((book: { title: string }) => book.title === "Crossing Three")).toBe(true);
 
-  await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
   await connectAudiobookDb(page);
   await page.goto("/#library");
   await openSavedSeries(page, "The Crossing", "Ada North");
@@ -171,7 +168,6 @@ test("preferred series language changes defaults and preserves manual choices", 
       ],
     } });
   });
-  await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
   await connectAudiobookDb(page);
   await openSeriesResult(page, "Crossing", "The Crossing", "Ada North");
   await expect(page).toHaveURL(/#series\/701$/);

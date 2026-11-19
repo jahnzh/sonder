@@ -1,4 +1,4 @@
-import { sameBook } from "./hardcover.ts";
+import { sameBook } from "./same-book.ts";
 
 function normalized(value: string) {
   return value

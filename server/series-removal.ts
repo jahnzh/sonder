@@ -468,12 +468,12 @@ function hardcoverBookIdForWork(workId: string) {
 }
 
 /**
- * Keeps a Hardcover sync from adding the work back for the user: their hidden entry for the work's
+ * Keeps the removed work out of the user's library listing: their hidden entry for the work's
  * placeholder. A work matched on Hardcover gets its placeholder made when it has none
  * (`ensurePlaceholder`, #555: `hc-<book id>`); a work that is not matched hides the placeholder it
  * has, if any, and never its audio.
  */
-export function ensureHardcoverSyncSuppressed(userId: number, workId: string) {
+export function keepRemovedWorkHidden(userId: number, workId: string) {
   let representativeId: string | null = null;
   if (hardcoverBookIdForWork(workId) != null) representativeId = ensurePlaceholder(sqlite, workId);
   else {
@@ -582,7 +582,7 @@ function removeUserWorkAudio(
       ),
     );
   }
-  ensureHardcoverSyncSuppressed(userId, workId);
+  keepRemovedWorkHidden(userId, workId);
   return results;
 }
 
@@ -662,7 +662,7 @@ export function purgeEditionForTests(editionId: string) {
   )();
 }
 
-export async function removeSavedHardcoverSeries(
+export async function removeSavedSeries(
   userId: number,
   seriesId: string,
   bookIds?: string[],

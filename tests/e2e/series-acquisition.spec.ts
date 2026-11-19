@@ -22,9 +22,6 @@ test("series save opt-ins, ebook failure, and retry show specific progress", asy
   );
   // Another spec on the server may have saved it already (series-followups does).
   const addedBefore = savedBefore ? (await crossing()).works.filter((work) => work.added).map((work) => work.id) : [];
-  await page.request.put("/api/__fixture/hardcover-token", {
-    data: { token: "series-browser-token" },
-  });
   // Saved through its page (#564): the administrator's sheet offers Get the audiobooks and Get the ebooks.
   await unsaveSeries(page, "701");
   // AudiobookDB lists The Crossing's four first works.

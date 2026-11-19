@@ -33,33 +33,26 @@ async function onlyRow(rows: ReturnType<typeof rowsOf>, name: string) {
 }
 const recordingRow = (page: Page) => discover(page).getByRole("button", { name: /^Search for a recording/ });
 
-async function setHardcover(page: Page, connected: boolean) {
-  const token = connected ? "browser-test-token" : "";
-  expect((await page.request.put("/api/__fixture/hardcover-token", { data: { token } })).ok()).toBe(true);
-}
 async function search(page: Page, words: string, name?: string) {
   await field(page, name).fill(words);
   await field(page, name).press("Enter");
 }
 /** The providers' cover addresses stay off the network: the browser gets an empty answer for them. */
 async function noCovers(page: Page) {
-  for (const host of ["https://assets.hardcover.app/**", "https://images.audiobookdb.org/**", "https://covers.openlibrary.org/**"])
+  for (const host of ["https://images.audiobookdb.org/**", "https://covers.openlibrary.org/**"])
     await page.route(host, (route) => route.fulfill({ status: 404, body: "" }));
 }
 const AUDIOBOOKDB_KEY_BEFORE = { configured: false };
 
-// Matter on the server, matched to Hardcover's book 1001 and in the administrator's library; The Wasp Factory on the
+// Matter on the server (a work with no catalogue link) and in the administrator's library; The Wasp Factory on the
 // server outside it. Both made once per suite server; Matter leaves the library again at the end.
 let matterWorkId = "";
-let connectedBefore = false;
 test.beforeAll(async ({ request }) => {
   const settings = await (await request.get("/api/settings")).json();
-  connectedBefore = !!settings.hardcoverConfigured;
   // AudiobookDB is searched with the server's key: one saved in Settings here (the fixture answers it).
   AUDIOBOOKDB_KEY_BEFORE.configured = !!settings.audiobookdbConfigured;
   if (!AUDIOBOOKDB_KEY_BEFORE.configured) expect((await request.patch("/api/settings", { data: { audiobookdb: "browser-key" } })).ok()).toBe(true);
-  expect((await request.put("/api/hardcover/token", { data: { token: "browser-test-token" } })).ok()).toBe(true);
-  expect((await request.post("/api/hardcover/books", { data: { id: 1001 } })).ok()).toBe(true);
+  expect((await request.post("/api/__fixture/library-book", { data: { title: "Matter", author: "Iain M. Banks" } })).ok()).toBe(true);
   const matter = ((await (await request.get("/api/works?q=matter%20banks")).json()) as { works: WorkResult[] }).works;
   matterWorkId = matter.find((work) => work.title === "Matter")!.workId;
   // A PUT of a work already in the library changes nothing; one left out by an earlier run joins it again.
@@ -77,7 +70,6 @@ test.beforeAll(async ({ request }) => {
 });
 test.afterAll(async ({ request }) => {
   await request.delete(`/api/works/${encodeURIComponent(matterWorkId)}/library`);
-  await request.put("/api/hardcover/token", { data: { token: connectedBefore ? "browser-test-token" : "" } });
   if (!AUDIOBOOKDB_KEY_BEFORE.configured) await request.patch("/api/settings", { data: { audiobookdb: "" } });
 });
 test.beforeEach(async ({ page }) => {
@@ -89,7 +81,6 @@ test.afterEach(async ({ page }) => {
 });
 
 test("before a search: the head and the server's books outside the library, at 390 by 844 and on a desktop", async ({ page }) => {
-  await setHardcover(page, true);
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   const start = ((await (await page.request.get("/api/works")).json()) as { works: WorkResult[] }).works;
@@ -127,7 +118,6 @@ test("before a search: the head and the server's books outside the library, at 3
 });
 
 test("banks: the server's group with the library first, AudiobookDB's and Open Library's after, The Wasp Factory once; a result opens its Book page and Back restores the search", async ({ page }) => {
-  await setHardcover(page, true);
   const asked: string[] = [];
   const writes: string[] = [];
   page.on("request", (request) => {
@@ -217,7 +207,6 @@ test("an Open Library book without an audiobook: its Book page, Add to library t
   expect((await page.request.delete("/api/works/work-ol-OL3000W/library")).ok()).toBe(true);
 });
 test("Search for a recording opens the recording search for the words over Discover; Close returns to the results", async ({ page }) => {
-  await setHardcover(page, true);
   const releases: string[] = [];
   await page.route("**/api/discover/abb/releases?*", (route) => {
     releases.push(new URL(route.request().url()).searchParams.get("q") ?? "");
@@ -240,7 +229,6 @@ test("Search for a recording opens the recording search for the words over Disco
 });
 
 test("nothing found: one card and the recording row", async ({ page }) => {
-  await setHardcover(page, true);
   await page.goto("/#discover");
   await search(page, "The Lamplighter’s Atlas");
   const nothing = discover(page).getByRole("status").filter({ hasText: "No books found" });
@@ -295,8 +283,7 @@ test("no AudiobookDB key on the server: no failure, the administrator's line to 
   await line.click();
   await expect(page).toHaveURL(/#settings\/connections$/);
 });
-test("Hardcover not connected: the book search is AudiobookDB's and Open Library's; the series search asks for no connection", async ({ page }) => {
-  await setHardcover(page, false);
+test("no Hardcover: the book search is AudiobookDB's and Open Library's; neither search asks for a Hardcover connection", async ({ page }) => {
   const hardcoverAsked: string[] = [];
   page.on("request", (request) => {
     const path = new URL(request.url()).pathname;
@@ -315,10 +302,8 @@ test("Hardcover not connected: the book search is AudiobookDB's and Open Library
   await discover(page).getByRole("radio", { name: "Series", exact: true }).click();
   await expect(discover(page).getByRole("radio", { name: "Series", exact: true })).toBeChecked();
   await expect(discover(page).getByText(/Connect Hardcover/)).toHaveCount(0);
-  await setHardcover(page, true);
 });
 test("someone who is not the administrator gets no recording row", async ({ page }) => {
-  await setHardcover(page, true);
   await page.route("**/api/auth/status", (route) =>
     route.fulfill({ json: { required: true, authenticated: true, user: { id: 1, username: "reader", role: "user" } } }),
   );
@@ -335,7 +320,6 @@ test("someone who is not the administrator gets no recording row", async ({ page
 });
 
 test("series search: two equal names told apart by AudiobookDB's id, the chosen one opening", async ({ page }) => {
-  await setHardcover(page, true);
   // Series come from AudiobookDB since #721 (recorded answers: tests/series-browser-fixture.ts), on its text ids.
   await connectAudiobookDb(page);
   // The chosen series, 702, is one this account has not saved: another spec on the server may have saved it, so it is
