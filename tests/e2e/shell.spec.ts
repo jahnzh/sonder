@@ -203,6 +203,11 @@ test("desktop: the offline line is the rail's last line", async ({ page, context
   const lastPlace = (await place(page, "Settings").boundingBox())!;
   expect(offline.y).toBeGreaterThan(lastPlace.y + lastPlace.height);
   await page.screenshot({ path: `${OUT}/shell-offline-desktop.png` });
+  // The Library without a connection at a desktop width, beside LibraryOffline.dc.html for the slice's final check (#583).
+  await place(page, "Library").click();
+  await expect(page).toHaveURL(/#library$/);
+  await expect(line(page)).toHaveText(OFFLINE);
+  await page.screenshot({ path: `${OUT}/shell-offline-library-desktop.png` });
   await context.setOffline(false);
   await expect(line(page)).toHaveCount(0);
 });

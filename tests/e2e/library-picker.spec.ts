@@ -167,6 +167,13 @@ test("the picker on a phone: Sort, View and Shelf; Want to read narrows the grid
   await expect(sortAndView(page)).toHaveText("Title · List");
   await expect(runRows).toHaveText([`Kindred ${run}`, `Piranesi ${run}`]);
   await expect(clearChip(page, "Clear the shelf: Want to read")).toBeVisible();
+  // The list with the shelf's chip at a desktop width, beside its boards for the slice's final check (#583).
+  if (test.info().project.name === "chromium") {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await expect(runRows).toHaveText([`Kindred ${run}`, `Piranesi ${run}`]);
+    await page.screenshot({ path: `${OUT}/library-list-shelf-desktop.png` });
+    await page.setViewportSize({ width: 390, height: 844 });
+  }
   await clearChip(page, "Clear the shelf: Want to read").click();
   await expect(runRows).toHaveText([`Kindred ${run}`, `Lent ${run}`, `Piranesi ${run}`]);
   // A row opens its Book page.

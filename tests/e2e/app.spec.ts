@@ -2,7 +2,7 @@
 import { test, expect, type Page } from "./device-store";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { skipOnMobile } from "./mobile";
+import { skipOnMobile, skipWithoutBlobStore } from "./mobile";
 import { listenFace, openListen } from "./now-playing";
 import { listenOnBookPage, playFromLibrary } from "./library-play";
 function wave() {
@@ -228,6 +228,7 @@ test("import, complete device download, service-worker ranges and offline relaun
   page,
   context,
 }) => {
+  skipWithoutBlobStore();
   // Unique per run: /api/import does not dedupe audio, so a repeat on one server would add a second row of the same title.
   const story = `A tiny offline story ${randomUUID().slice(0, 8)}`;
   await page.goto("/");

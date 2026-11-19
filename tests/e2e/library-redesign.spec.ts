@@ -11,6 +11,7 @@ import { createServer, type AddressInfo } from "node:net";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 import { chooseView, listRow } from "./library-view";
+import { skipWithoutBlobStore, cutOffByWebKit } from "./mobile";
 
 // Routed answers (`/api/library`) must reach the page: no service worker in between.
 test.use({ serviceWorkers: "block" });
@@ -129,7 +130,9 @@ async function openLibrary(page: Page) {
 
 test("the Library against its boards at 390 by 844 and on a desktop: one tile per work, the marks of each kind, the list rows", async ({ page }) => {
   const errors: string[] = [];
-  page.on("pageerror", (e) => errors.push(e.message));
+  page.on("pageerror", (e) => {
+    if (!cutOffByWebKit(e.message)) errors.push(e.message);
+  });
   const run = randomUUID().slice(0, 6);
   const left = await importRecording(page, `The Left Hand of Darkness ${run}`, "Ursula K. Le Guin");
   await secondRecording(page, left);
@@ -242,7 +245,9 @@ test("the Library against its boards at 390 by 844 and on a desktop: one tile pe
 
 test("each chip, the chip kept after a reload, Continue, Search, the plus and the empty states", async ({ page }) => {
   const errors: string[] = [];
-  page.on("pageerror", (e) => errors.push(e.message));
+  page.on("pageerror", (e) => {
+    if (!cutOffByWebKit(e.message)) errors.push(e.message);
+  });
   const run = `Shelf ${randomUUID().slice(0, 6)}`;
   // A title long enough to run past the Continue card's edge: it is cut, the page does not widen.
   const listening = await importRecording(page, `${run} Listening, a title long enough to run past the card's edge`);
@@ -386,6 +391,8 @@ test("Favorite on the Book page puts the work under Favorites, one tile for its 
 });
 
 test("the device database's upgrade keeps places, downloads, favourites and position history; earlier favourites are under Favorites", async ({ page }) => {
+  // The upgrade is seeded with a stored download (a Blob).
+  skipWithoutBlobStore();
   const run = randomUUID().slice(0, 6);
   const left = await importRecording(page, `Upgraded favourite ${run}`);
   const second = await secondRecording(page, left);

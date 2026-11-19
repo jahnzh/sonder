@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 import { listenFace, openAudiobookPage, openListen, openRead } from "./now-playing";
 import { playFromLibrary } from "./library-play";
+import { skipWithoutBlobStore } from "./mobile";
 
 // Books a test imports get a title unique to the run, so a repeat on the same server finds one
 // "Play <title>" button, and leave the library afterwards, so what a test played does not become
@@ -216,6 +217,7 @@ test.describe("with no service worker",()=>{
 });
 
 test("playback opens the reader and title page; downloaded sources can be switched, flagged and removed",async({page})=>{
+  skipWithoutBlobStore();
   test.setTimeout(90000);
   await instrument(page);
   const title=unique("Managed playback story");

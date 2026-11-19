@@ -267,6 +267,7 @@ test("Contents navigation during a follow jump wins and is saved", async ({page}
 });
 
 test("back to narration right after a Contents navigation keeps following", async ({page}) => {
+ skipOnMobile(true,"desktop layout (min-width: 900px) is not reachable on a phone profile");
  const {book,map}=await fixture(page,"Follow resumed","en-NZ");
  const interval=map.intervals.find((i:any)=>i.section===1&&i.start>104);
  expect((await page.request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position:interval.start+1,duration:book.tracks[0].duration,updatedAt:Date.now()}})).ok()).toBe(true);
