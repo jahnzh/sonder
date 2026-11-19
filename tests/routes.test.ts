@@ -316,3 +316,16 @@ test("#discover/get/<query> (#575): a sheet over Discover, the administrator's; 
   assert.equal(coversPage(readAddress("#discover/get/banks")), true);
   assert.equal(step(readAddress("#discover"), readAddress("#discover/get/banks")), "push");
 });
+
+test("#discover/get/<query> (#576): a query with a slash is one part of the address, read and written back the same", () => {
+  for (const query of ["AC/DC", "1/2 of a yellow sun", "a/b/c", "/"]) {
+    const route: Route = { name: "discover-get", query };
+    const address = writeAddress(route);
+    assert.equal(address.split("/").length, 3, address);
+    assert.deepEqual(readAddress(address), route, address);
+    assert.deepEqual(parentOf(route), { name: "discover" });
+  }
+  assert.equal(writeAddress({ name: "discover-get", query: "AC/DC" }), "#discover/get/AC%2FDC");
+  // An unencoded slash names nothing: Discover.
+  assert.equal(writeAddress(resolve(readAddress("#discover/get/AC/DC"), { admin: true })), "#discover");
+});
