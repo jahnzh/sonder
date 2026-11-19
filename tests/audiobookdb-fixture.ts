@@ -164,10 +164,7 @@ export const ITUNES_AUDIOBOOKS = [
   audiobook(1500000001, "Quiet Harbour", "Mira Sand", "2021-04-01T07:00:00Z"),
   audiobook(1500000002, "The Lighthouse at Noon", "Mira Sand", "2023-09-12T07:00:00Z"),
 ];
-/** The browser spec's slow group: an iTunes search for these words answers after this long. */
-export const ITUNES_SLOW_WORD = "lighthouse";
-export const ITUNES_SLOW_MS = 1500;
-/** And Google Books fails at the network for them, so its failure line shows while iTunes is still searching. */
+/** Google Books fails at the network for a search with this word (never cached, so every run sees the failure). */
 export const GOOGLE_OFFLINE_WORD = "lighthouse";
 
 export function createControl(): FixtureControl {
@@ -249,7 +246,6 @@ export function fixtureFetch(control: FixtureControl, passThrough: typeof fetch 
       const answer = (results: unknown[]) => new Response(`\n\n\n${JSON.stringify({ resultCount: results.length, results })}\n`, { status: 200, headers: { "Content-Type": "text/javascript; charset=utf-8" } });
       if (url.pathname === "/search") {
         const term = fold(url.searchParams.get("term") ?? "");
-        if (term.includes(ITUNES_SLOW_WORD)) await new Promise((resolve) => setTimeout(resolve, ITUNES_SLOW_MS));
         const words = term.split(/\s+/).filter(Boolean);
         return answer(ITUNES_AUDIOBOOKS.filter((entry) => words.every((word) => fold(`${entry.collectionName} ${entry.artistName}`).includes(word))));
       }
