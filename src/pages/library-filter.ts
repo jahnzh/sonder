@@ -1,10 +1,10 @@
 // The Library's shelf by work (#577, spec #572 "The Library"; boards Library.dc.html, LibraryList.dc.html,
-// DesktopLibrary.dc.html): which works a chip, a Hardcover filter and Search leave, in which order, which book the
+// DesktopLibrary.dc.html): which works a chip, a shelf (#721 part c1) and Search leave, in which order, which book the
 // Continue card shows, the list row's line and what an empty shelf says. Pure functions of the stored works (with
 // this device's newer places laid over them, `useStoredWorksWithPlaces`), so the unit tests read them as plain
 // data. A page module: the server imports none of it.
 import { coverMarks } from "../cover-marks";
-import { downloadLine } from "../status-lines";
+import { downloadLine, WANT_TO_READ } from "../status-lines";
 import type { LibraryWork } from "../types";
 import { workProgress } from "../work-progress";
 import { placeLine } from "./book-model";
@@ -54,61 +54,46 @@ export function controlLabel(sort: SortOrder, view: LibraryView): { text: string
   };
 }
 
-/** Hardcover's shelf and list filters, as the picker sets them: "all" or the shelf's or list's id. */
-export type ShelfFilter = { shelf: string; list: string };
-export const NO_HARDCOVER_FILTER: ShelfFilter = { shelf: "all", list: "all" };
-
 /**
- * The Hardcover filters remembered on this device, read back. Anything else than an object of two strings is no
- * filter; the earlier strip's "Linked to Hardcover" (the shelf "linked") is gone from the picker and reads as all.
+ * The Shelf filter, as the picker sets it (#721 part c1, replacing Hardcover's shelf and list): Want to read is the
+ * user's own list (`LibraryWork.wantToRead`); Reading and Finished come from their own progress (`workProgress`).
  */
-export function readHardcoverFilter(stored: string | null | undefined): ShelfFilter {
-  try {
-    const value = JSON.parse(stored ?? "null") as Partial<ShelfFilter> | null;
-    const id = (part: unknown) => (typeof part === "string" && /^\d+$/.test(part) ? part : "all");
-    return value && typeof value === "object" ? { shelf: id(value.shelf), list: id(value.list) } : NO_HARDCOVER_FILTER;
-  } catch {
-    return NO_HARDCOVER_FILTER;
-  }
-}
-
-/** Hardcover's shelves and lists as `GET /api/hardcover` names them. */
-export type HardcoverNames = {
-  shelves: readonly { id: number; name: string }[];
-  lists: readonly { id: number; name: string; count: number }[];
+export type ShelfFilter = "all" | "want-to-read" | "reading" | "finished";
+export const SHELVES: readonly Exclude<ShelfFilter, "all">[] = ["want-to-read", "reading", "finished"];
+export const NO_SHELF: ShelfFilter = "all";
+/** The shelves' names in the picker, on the chip that clears one and in an empty shelf's line. */
+export const SHELF_NAMES: Record<ShelfFilter, string> = {
+  all: "All shelves",
+  "want-to-read": WANT_TO_READ,
+  reading: "Reading",
+  finished: "Finished",
 };
 
 /**
- * The Hardcover filter in effect: the one chosen while Hardcover is connected, else none (a user who disconnects
- * keeps the choice on the device but sees every book, with no chip to clear).
+ * The shelf remembered on this device, read back. Without one, the Hardcover filter an earlier build stored is read
+ * as the shelf it stood for (Hardcover's Want to read, Currently reading and Read: 1, 2 and 3); a list, another
+ * Hardcover shelf or anything else is no shelf.
  */
-export function hardcoverInEffect(filter: ShelfFilter, connected: boolean): ShelfFilter {
-  return connected ? filter : NO_HARDCOVER_FILTER;
+export function readShelf(stored: string | null | undefined, legacyHardcover?: string | null): ShelfFilter {
+  if ((SHELVES as readonly string[]).includes(stored ?? "")) return stored as ShelfFilter;
+  if (stored != null) return NO_SHELF;
+  try {
+    const value = JSON.parse(legacyHardcover ?? "null") as { shelf?: unknown } | null;
+    const shelf = value && typeof value === "object" ? value.shelf : null;
+    return shelf === "1" ? "want-to-read" : shelf === "2" ? "reading" : shelf === "3" ? "finished" : NO_SHELF;
+  } catch {
+    return NO_SHELF;
+  }
 }
 
-/** The Shelf list in the picker: All shelves, then Hardcover's shelves. */
-export function shelfChoices(names: HardcoverNames): { value: string; label: string }[] {
-  return [{ value: "all", label: "All shelves" }, ...names.shelves.map((shelf) => ({ value: String(shelf.id), label: shelf.name }))];
-}
-/** The List list in the picker: All lists, then each list with its count. */
-export function listChoices(names: HardcoverNames): { value: string; label: string; detail?: string }[] {
-  return [{ value: "all", label: "All lists" }, ...names.lists.map((list) => ({ value: String(list.id), label: list.name, detail: String(list.count) }))];
-}
-/** A shelf's or list's name, or the generic one while Hardcover's names are not read (or it is gone). */
-export function shelfName(filter: ShelfFilter, names: HardcoverNames | null): { shelf: string | null; list: string | null } {
-  return {
-    shelf: filter.shelf === "all" ? null : names?.shelves.find((s) => String(s.id) === filter.shelf)?.name ?? "Hardcover shelf",
-    list: filter.list === "all" ? null : names?.lists.find((l) => String(l.id) === filter.list)?.name ?? "Hardcover list",
-  };
+/** The Shelf list in the picker: All shelves, then Want to read, Reading and Finished. */
+export function shelfChoices(): { value: ShelfFilter; label: string }[] {
+  return (["all", ...SHELVES] as ShelfFilter[]).map((value) => ({ value, label: SHELF_NAMES[value] }));
 }
 
-/** The chips under the heading for the Hardcover filters in use: each names its filter and clears it with a tap. */
-export function hardcoverChips(filter: ShelfFilter, names: HardcoverNames | null): { kind: "shelf" | "list"; text: string; name: string }[] {
-  const named = shelfName(filter, names);
-  const chips: { kind: "shelf" | "list"; text: string; name: string }[] = [];
-  if (named.shelf) chips.push({ kind: "shelf", text: named.shelf, name: `Clear the Hardcover shelf: ${named.shelf}` });
-  if (named.list) chips.push({ kind: "list", text: named.list, name: `Clear the Hardcover list: ${named.list}` });
-  return chips;
+/** The chip under the heading for the shelf in use: it names the shelf and clears it with a tap; none for All. */
+export function shelfChip(shelf: ShelfFilter): { text: string; name: string } | null {
+  return shelf === "all" ? null : { text: SHELF_NAMES[shelf], name: `Clear the shelf: ${SHELF_NAMES[shelf]}` };
 }
 
 export type ShelfInput = {
@@ -118,7 +103,7 @@ export type ShelfInput = {
   favorites: readonly string[];
   /** Works kept on this device and complete (Keep on this device, #552). */
   onDevice: ReadonlySet<string>;
-  hardcover: ShelfFilter;
+  shelf: ShelfFilter;
 };
 
 /** Lower case without accents, for Search. */
@@ -152,20 +137,27 @@ export function underChip(work: LibraryWork, chip: LibraryChip, favorites: reado
   }
 }
 
-/** Hardcover's shelf and list: both in use narrow together, and together with the chip. */
-export function underHardcover(work: LibraryWork, { shelf, list }: ShelfFilter): boolean {
-  const shelfOk = shelf === "all" || work.hardcover?.statusId === Number(shelf);
-  const listOk = list === "all" || !!work.hardcover?.listIds.includes(Number(list));
-  return shelfOk && listOk;
+/** The shelf: Want to read by the user's own list, Reading and Finished by their own progress; it narrows with the chip. */
+export function underShelf(work: LibraryWork, shelf: ShelfFilter): boolean {
+  switch (shelf) {
+    case "want-to-read":
+      return !!work.wantToRead;
+    case "reading":
+      return workProgress(work) === "in-progress";
+    case "finished":
+      return workProgress(work) === "finished";
+    default:
+      return true;
+  }
 }
 
-/** The works the chip, the Hardcover filters and Search leave, in the order given. */
+/** The works the chip, the shelf and Search leave, in the order given. */
 export function filterLibrary(works: readonly LibraryWork[], input: ShelfInput): LibraryWork[] {
   return works.filter(
     (work) =>
       matchesSearch(work, input.query) &&
       underChip(work, input.chip, input.favorites, input.onDevice) &&
-      underHardcover(work, input.hardcover),
+      underShelf(work, input.shelf),
   );
 }
 
@@ -220,9 +212,9 @@ export function continueWork(works: readonly LibraryWork[]): LibraryWork | null 
   return best;
 }
 
-/** Continue is shown only on All, with no Hardcover filter and no search. */
-export function continueShown(chip: LibraryChip, query: string, hardcover: ShelfFilter): boolean {
-  return chip === ALL_CHIP && !query.trim() && hardcover.shelf === "all" && hardcover.list === "all";
+/** Continue is shown only on All, with no shelf and no search. */
+export function continueShown(chip: LibraryChip, query: string, shelf: ShelfFilter): boolean {
+  return chip === ALL_CHIP && !query.trim() && shelf === "all";
 }
 
 /** The list row's line: the download's line while the first file is on its way, else the Book page's place line. */
@@ -244,20 +236,17 @@ export function shelfHeading(chip: LibraryChip): string {
 }
 
 /**
- * What an empty shelf says. A library with no book at all: "No books yet" with Find a book. A chip, a Hardcover
- * filter or Search that leaves none: "No books", what is in use (the chip, the search, the Hardcover shelf or list
- * by name), and Clear filters.
+ * What an empty shelf says. A library with no book at all: "No books yet" with Find a book. A chip, a shelf or Search
+ * that leaves none: "No books", what is in use (the chip, the shelf by name, the search), and Clear filters.
  */
 export function emptyShelf(
   total: number,
-  input: Pick<ShelfInput, "chip" | "query" | "hardcover">,
-  names: { shelf?: string | null; list?: string | null } = {},
+  input: Pick<ShelfInput, "chip" | "query" | "shelf">,
 ): { title: string; inUse: string[]; action: "clear" | "find" } {
   if (total === 0) return { title: "No books yet", inUse: [], action: "find" };
   const inUse: string[] = [];
   if (input.chip !== ALL_CHIP) inUse.push(input.chip);
-  if (input.hardcover.shelf !== "all") inUse.push(names.shelf || "Hardcover shelf");
-  if (input.hardcover.list !== "all") inUse.push(names.list || "Hardcover list");
+  if (input.shelf !== "all") inUse.push(SHELF_NAMES[input.shelf]);
   if (input.query.trim()) inUse.push(`“${input.query.trim()}”`);
   return { title: "No books", inUse, action: "clear" };
 }

@@ -42,24 +42,21 @@ test("mobile Hardcover connection, shelves, custom lists, edition selection and 
     .getByRole("navigation", { name: "Main", exact: true })
     .getByRole("button", { name: "Library", exact: true })
     .click();
-  // The Library half of guard 15 (spec #572) in its new form (#578): the shelf and list are in the sort-and-view
-  // picker, each its own list inside it, and each filter in use is a chip under the heading that clears it.
+  // The Library half of guard 15 (spec #572) in its form after #721 part c1: the picker's Hardcover shelf and list
+  // are gone; its Shelf group is Sonder's own (Want to read, Reading, Finished), with Hardcover connected or not.
   await inSortPicker(page, async (picker) => {
-    await picker.getByRole("button", { name: "List: All lists", exact: true }).click();
-    await picker.getByRole("radiogroup", { name: "List", exact: true }).getByRole("radio", { name: /^Weekend escapes · \d+$/ }).click();
-    await expect(picker.getByRole("button", { name: "List: Weekend escapes", exact: true })).toBeVisible();
+    await expect(picker.getByRole("button", { name: /^List:/ })).toHaveCount(0);
     await picker.getByRole("button", { name: "Shelf: All shelves", exact: true }).click();
-    await expect(picker.getByRole("radiogroup", { name: "Shelf", exact: true }).getByRole("radio")).toHaveText(["All shelves", "Want to read", "Currently reading", "Read", "Paused", "Did not finish"]);
-    await picker.getByRole("radio", { name: "Want to read", exact: true }).click();
-    await expect(picker.getByRole("button", { name: "Shelf: Want to read", exact: true })).toBeVisible();
+    await expect(picker.getByRole("radiogroup", { name: "Shelf", exact: true }).getByRole("radio")).toHaveText(["All shelves", "Want to read", "Reading", "Finished"]);
+    await picker.getByRole("radio", { name: "All shelves", exact: true }).click();
   });
-  await expect(page.getByRole("button", { name: "Clear the Hardcover shelf: Want to read", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Clear the Hardcover list: Weekend escapes", exact: true })).toBeVisible();
+  await expect(page.locator(".library-hardcover-chip")).toHaveCount(0);
   // The strip of old is gone: no account line, no Sync now in the Library.
   await expect(page.getByRole("button", { name: "Sync now", exact: true })).toHaveCount(0);
   // One tile (#577): the Hardcover book with nothing yet has no marks on its cover.
-  await expect(page.locator(".library-tile")).toHaveCount(1);
-  await expect(page.locator(".library-tile .library-marks")).toHaveCount(0);
+  const quietTile = page.locator(".library-tile").filter({ hasText: "The Quiet Shelf" });
+  await expect(quietTile).toHaveCount(1);
+  await expect(quietTile.locator(".library-marks")).toHaveCount(0);
   await page
     .getByRole("button", { name: "About The Quiet Shelf", exact: true })
     .click();
@@ -94,9 +91,6 @@ test("mobile Hardcover connection, shelves, custom lists, edition selection and 
   await expect(page).toHaveURL(/#book\/[^/]+$/);
   await page.getByRole("button", { name: "Back to Library", exact: true }).click();
   await expect(page).toHaveURL(/#library$/);
-  await page.getByRole("button", { name: "Clear the Hardcover shelf: Want to read", exact: true }).click();
-  await page.getByRole("button", { name: "Clear the Hardcover list: Weekend escapes", exact: true }).click();
-  await expect(page.locator(".library-hardcover-chip")).toHaveCount(0);
   await page
     .getByRole("button", {
       name: "About Alice’s Adventures in Wonderland",

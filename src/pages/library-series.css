@@ -140,5 +140,4 @@
   max-width: none;
 }
 
-/* The Series chip in today's filter row (the other filters keep their look until the Library slice): the Chip part's
-   own measures, not the row's tab rules (styles.css' `.filter-tabs > button`), and a row tall enough for its 44. */
+/* The Series chip in the Library's chip row: the Chip part's own measures, and a row tall enough for its 44. */

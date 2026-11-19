@@ -5,6 +5,7 @@ import { parseRange } from "../../server/range";
 import { readerFixture } from "../reader-fixture";
 import { openListen, openRead } from "./now-playing";
 import { playFromLibrary } from "./library-play";
+import { skipOnMobile } from "./mobile";
 test.use({ serviceWorkers: "block" });
 async function instrument(page: Page) {
   await page.addInitScript(() => {
@@ -116,9 +117,8 @@ test("onscreen, lock-screen and headphone commands seek 30 seconds and persist t
   await expect(
     page.getByRole("button", { name: "Next chapter", exact: true }),
   ).toHaveCount(0);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
-    390,
-  );
+  // No overflow: against the window, which is 393 wide with the iPhone profile (#596).
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(page.viewportSize()!.width);
 });
 test("headphone seeks cross audio files while paused and retain the 30-second offset", async ({
   page,
@@ -220,6 +220,7 @@ test("headphone seeks cross audio files while paused and retain the 30-second of
 test("Space toggles playback across views and arrows skip 30 seconds while ignoring inputs, buttons and dialogs", async ({
   page,
 }) => {
+  skipOnMobile(true, "needs a hardware keyboard (Space and the arrow keys)");
   await instrument(page);
   const paused = () =>
     page.evaluate(

@@ -411,11 +411,10 @@ test.describe("with answers from the test", () => {
     const answered = await connectedLibrary(page);
     await page.goto("/#library");
     await expect(page.getByRole("button", { name: `About ${prefix} 7`, exact: true })).toBeVisible();
-    // Hardcover's answer is read for the sort-and-view picker's Hardcover group (#578: the Library's Hardcover strip
-    // is gone); nothing of it stands above the list while no Hardcover filter is in use.
-    await expect.poll(() => answered.hardcover).toBeGreaterThan(0);
+    // The sort-and-view picker's Shelf group (#721 part c1, in place of Hardcover's); nothing of it stands above the
+    // list while no shelf is in use.
     await inSortPicker(page, async (picker) => {
-      await expect(picker.locator(".part-picker-caption", { hasText: "Hardcover" })).toBeVisible();
+      await expect(picker.locator(".part-picker-caption", { hasText: "Shelf" })).toBeVisible();
     });
     await expect(page.locator(".library-hardcover-chips")).toHaveCount(0);
     // The saved series are read for the Series chip (#567); under All books nothing of them stands above the list.
@@ -446,7 +445,8 @@ test.describe("with answers from the test", () => {
     // to grow).
     expect(await onScreen()).toEqual(seen);
     // The Library asks again for what sits above the list; when the answers land, the list must not move.
-    await expect.poll(() => answered.hardcover > before.hardcover && answered.series > before.series).toBe(true);
+    // (Hardcover's answer is no longer among them: the Shelf group is Sonder's own, #721 part c1.)
+    await expect.poll(() => answered.series > before.series).toBe(true);
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     expect(await page.evaluate(() => scrollY)).toBe(target);
     expect(await onScreen()).toEqual(seen);
@@ -806,13 +806,13 @@ test.describe("with a password", () => {
       }
     };
     await page.route("**/api/series", answer(SAVED_SERIES, []));
-    await page.route("**/api/hardcover", answer(CONNECTED, { ...CONNECTED, configured: false }));
+    // (The Library no longer reads Hardcover's answer: its Shelf group is Sonder's own, #721 part c1.)
     await page.goto(`${base}/#library`);
     await page.getByLabel("Password", { exact: true }).fill("admin-password");
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(shown(page)).toHaveText("Library");
     expect((await page.request.post(`${base}/api/users`, { data: { username: name, password: "reader-password" } })).ok()).toBe(true);
-    await expect.poll(() => asked.admin).toBeGreaterThanOrEqual(2);
+    await expect.poll(() => asked.admin).toBeGreaterThanOrEqual(1);
     // The administrator's session ends with those requests out, and the reader signs in on the same device.
     await page.evaluate(() => window.dispatchEvent(new Event("sonder:unauthorized")));
     await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
@@ -820,20 +820,20 @@ test.describe("with a password", () => {
     await page.getByLabel("Password", { exact: true }).fill("reader-password");
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(shown(page)).toHaveText("Library");
-    await expect.poll(() => asked.reader).toBeGreaterThanOrEqual(2);
+    await expect.poll(() => asked.reader).toBeGreaterThanOrEqual(1);
     // Now the administrator's answers arrive.
     const before = answered.admin;
     releaseAdmin();
-    await expect.poll(() => answered.admin).toBeGreaterThanOrEqual(before + 2);
+    await expect.poll(() => answered.admin).toBeGreaterThanOrEqual(before + 1);
     await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 300)));
     // The Library shown again starts from what was kept for the reader: nothing of the administrator's.
     await tab(page, "Discover").click();
     await expect(shown(page)).toHaveText("Discover");
     await tab(page, "Library").click();
     await expect(shown(page)).toHaveText("Library");
-    // Nothing of the administrator's Hardcover: the sort-and-view picker has no Hardcover group for the reader (#578).
+    // The sort-and-view picker: the same groups for every account, no Hardcover group (#578, #721 part c1).
     await inSortPicker(page, async (picker) => {
-      await expect(picker.locator(".part-picker-caption")).toHaveText(["Sort", "View"]);
+      await expect(picker.locator(".part-picker-caption")).toHaveText(["Sort", "View", "Shelf"]);
     });
     // The Series chip (#567): the reader's list is not read yet, and nothing of the administrator's stands in it.
     await showSavedSeries(page);

@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 import { test, expect, type Page } from "@playwright/test";
+import { skipWithoutBlobStore } from "./mobile";
 
 type Stored = { workId: string; recordings: { recordingId: string; progress: { position: number } | null }[]; probe?: string };
 
@@ -113,6 +114,7 @@ test("the works are kept on the device, read without a connection with a newer d
 });
 
 test("the Dexie upgrade to the works table keeps places, downloads, favourites and position history", async ({ page }) => {
+  skipWithoutBlobStore();
   await page.goto("/build.json");
   // Dexie opens IndexedDB at ten times its version: 40 is a device that last ran db.version(4), before the works table.
   const rows = {

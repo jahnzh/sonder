@@ -1,16 +1,16 @@
 // The Library's sort-and-view control (#578; spec #572 "The Library" and "The Picker part"; boards LibrarySort.dc.html,
 // LibraryShelf.dc.html, LibraryList.dc.html, DesktopLibrary.dc.html), at 390 by 844 and on a desktop, in Chromium and
 // Firefox: the control "<sort> · <view>" opens the Picker from the bottom edge on a phone and under its button on a
-// desktop; Sort, View and, with Hardcover connected, its Shelf and List; "Want to read" narrows the grid and is a chip
-// that clears it; shelf, list and the chips combine; the list view's rows; the choices kept after a reload; no
-// Hardcover group without Hardcover connected. Hardcover's state and the works' Hardcover blocks are routed answers:
-// a shelf and a list cannot be made on this server for a book without the Hardcover fixture's own books.
+// desktop; Sort, View and the Shelf (#721 part c1: Want to read, Reading, Finished, in place of Hardcover's shelf and
+// list); "Want to read" narrows the grid and is a chip that clears it; shelf and chips combine; the list view's rows;
+// the choices kept after a reload; an earlier build's Hardcover shelf read as the shelf it stood for. Want to read and
+// Finished are the user's own, made on this server (`PUT /api/works/<workId>/want-to-read`, the completion).
 import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { inSortPicker, listRow, sortAndView, sortPicker } from "./library-view";
 
-// Routed answers (`/api/library`, `/api/hardcover`) must reach the page: no service worker in between.
+// The library's answers must reach the page as the server wrote them: no service worker in between.
 test.use({ serviceWorkers: "block" });
 
 const OUT = "OUT";
@@ -35,43 +35,12 @@ async function importRecording(page: Page, title: string, author: string): Promi
   return book;
 }
 
-const LIST_ID = 9901;
-const shelves = [
-  { id: 1, name: "Want to read" },
-  { id: 2, name: "Currently reading" },
-  { id: 3, name: "Read" },
-  { id: 4, name: "Paused" },
-  { id: 5, name: "Did not finish" },
-];
-
-/** Hardcover connected (or not) for this page, with its five shelves and one list. */
-async function routeHardcover(page: Page, configured: boolean) {
-  await page.route("**/api/hardcover", async (route) => {
-    if (route.request().method() !== "GET") return route.continue();
-    const response = await route.fetch();
-    const real = await response.json();
-    await route.fulfill({
-      response,
-      json: configured
-        ? { ...real, configured: true, mode: "two-way", username: "picker-reader", shelves, lists: [{ id: LIST_ID, name: "Picker run list", count: 1, slug: null }] }
-        : { ...real, configured: false, mode: "off", shelves: [], lists: [] },
-    });
-  });
+/** The user's own Want to read (#721 part c1), and a book marked finished: the Shelf group's books, made on the server. */
+async function wantToRead(page: Page, workId: string) {
+  expect((await page.request.put(`/api/works/${encodeURIComponent(workId)}/want-to-read`)).ok()).toBe(true);
 }
-
-/** The works' Hardcover blocks: each listed work on its shelf and lists. */
-async function routeShelves(page: Page, run: string, blocks: Record<string, { statusId: number; listIds: number[] }>) {
-  await page.route("**/api/library", async (route) => {
-    const response = await route.fetch({ headers: { ...route.request().headers(), "if-none-match": "" } });
-    if (response.status() !== 200) return route.fulfill({ response });
-    const works = (await response.json()) as Record<string, any>[];
-    const shown = works.map((w) =>
-      blocks[w.workId]
-        ? { ...w, hardcover: { id: 1, slug: null, series: [], pending: false, progressFraction: null, progressPending: false, syncError: null, ...blocks[w.workId] } }
-        : w,
-    );
-    await route.fulfill({ response, json: shown, headers: { ...response.headers(), etag: `"picker-${run}"` } });
-  });
+async function markFinished(page: Page, workId: string) {
+  expect((await page.request.patch(`/api/works/${encodeURIComponent(workId)}/completion`, { data: { status: "finished" } })).ok()).toBe(true);
 }
 
 /** This run's tiles, in their order on the page. */
@@ -84,19 +53,16 @@ async function openLibrary(page: Page) {
   await expect(page.getByRole("heading", { name: "Library", exact: true, level: 1 })).toBeVisible();
 }
 
-test("the picker on a phone: Sort, View and Hardcover; Want to read narrows the grid with a clear chip; shelf, list and chips combine; the list view; kept after a reload", async ({ page }) => {
+test("the picker on a phone: Sort, View and Shelf; Want to read narrows the grid with a clear chip; shelf and chips combine; the list view; kept after a reload", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   const run = randomUUID().slice(0, 6);
   const kindred = await importRecording(page, `Kindred ${run}`, "Octavia E. Butler");
   const piranesi = await importRecording(page, `Piranesi ${run}`, "Susanna Clarke");
   const lent = await importRecording(page, `Lent ${run}`, "Jo Walton");
-  await routeHardcover(page, true);
-  await routeShelves(page, run, {
-    [kindred.workId]: { statusId: 1, listIds: [LIST_ID] },
-    [piranesi.workId]: { statusId: 1, listIds: [] },
-    [lent.workId]: { statusId: 3, listIds: [] },
-  });
+  await wantToRead(page, kindred.workId);
+  await wantToRead(page, piranesi.workId);
+  await markFinished(page, lent.workId);
   await openLibrary(page);
   await expect(runTiles(page, run)).toHaveText([`Lent ${run}`, `Piranesi ${run}`, `Kindred ${run}`]);
 
@@ -121,19 +87,20 @@ test("the picker on a phone: Sort, View and Hardcover; Want to read narrows the 
   const panel = (await picker.boundingBox())!;
   expect(Math.round(panel.y + panel.height)).toBe(844);
   expect(Math.round(panel.width)).toBe(390);
-  await expect(picker.locator(".part-picker-caption")).toHaveText(["Sort", "View", "Hardcover"]);
+  await expect(picker.locator(".part-picker-caption")).toHaveText(["Sort", "View", "Shelf"]);
   await expect(picker.getByRole("radiogroup", { name: "Sort", exact: true }).getByRole("radio")).toHaveText(["Recently added", "Title", "Author", "Progress"]);
   await expect(picker.getByRole("radio", { name: "Recently added", exact: true })).toHaveAttribute("aria-checked", "true");
   await expect(picker.getByRole("radiogroup", { name: "View", exact: true }).getByRole("radio")).toHaveText(["Grid", "List"]);
   await expect(picker.getByRole("button", { name: "Shelf: All shelves", exact: true })).toBeVisible();
-  await expect(picker.getByRole("button", { name: "List: All lists", exact: true })).toBeVisible();
+  // Hardcover's List is gone with its group.
+  await expect(picker.getByRole("button", { name: /^List:/ })).toHaveCount(0);
   for (const row of await picker.locator(".part-picker-choice, .part-picker-row").all()) expect((await row.boundingBox())!.height).toBe(52);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
   if (test.info().project.name === "chromium") await page.screenshot({ path: `${OUT}/library-picker-phone.png` });
 
   // Want to read, from the Shelf's own list inside the picker; it applies at once.
   await picker.getByRole("button", { name: "Shelf: All shelves", exact: true }).click();
-  await expect(picker.getByRole("radiogroup", { name: "Shelf", exact: true }).getByRole("radio")).toHaveText(["All shelves", ...shelves.map((s) => s.name)]);
+  await expect(picker.getByRole("radiogroup", { name: "Shelf", exact: true }).getByRole("radio")).toHaveText(["All shelves", "Want to read", "Reading", "Finished"]);
   await picker.getByRole("radio", { name: "Want to read", exact: true }).click();
   await expect(picker.getByRole("button", { name: "Shelf: Want to read", exact: true })).toBeVisible();
   await picker.getByRole("button", { name: "Done", exact: true }).click();
@@ -141,34 +108,35 @@ test("the picker on a phone: Sort, View and Hardcover; Want to read narrows the 
   await expect(sortAndView(page)).toBeFocused();
   // The grid narrowed, and the chip under the heading names the shelf (LibraryShelf.dc.html).
   await expect(runTiles(page, run)).toHaveText([`Piranesi ${run}`, `Kindred ${run}`]);
-  const shelfChip = clearChip(page, "Clear the Hardcover shelf: Want to read");
+  const shelfChip = clearChip(page, "Clear the shelf: Want to read");
   await expect(shelfChip).toHaveText("Want to read");
   expect((await shelfChip.boundingBox())!.height).toBe(44);
   // Measured again: a Continue card above the shelf (a book in progress on this server) is not shown while a
-  // Hardcover filter is in use, so the heading has moved up.
+  // shelf is in use, so the heading has moved up.
   const narrowedHeading = (await page.getByRole("heading", { level: 2, name: "All books", exact: true }).boundingBox())!;
   expect((await shelfChip.boundingBox())!.y).toBeGreaterThan(narrowedHeading.y + narrowedHeading.height);
   if (test.info().project.name === "chromium") await page.screenshot({ path: `${OUT}/library-shelf-phone.png` });
 
-  // The list too: shelf and list together, each with its chip.
-  await inSortPicker(page, async (p) => {
-    await p.getByRole("button", { name: "List: All lists", exact: true }).click();
-    await p.getByRole("radio", { name: "Picker run list · 1", exact: true }).click();
-  });
-  await expect(runTiles(page, run)).toHaveText([`Kindred ${run}`]);
-  await expect(clearChip(page, "Clear the Hardcover list: Picker run list")).toBeVisible();
   // With a chip: Finished leaves none of them, and says what is in use.
   await chip(page, "Finished").click();
   await expect(runTiles(page, run)).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "No books", exact: true })).toBeVisible();
-  await expect(page.locator(".library-empty")).toContainText("Finished · Want to read · Picker run list");
+  await expect(page.locator(".library-empty")).toContainText("Finished · Want to read");
   await chip(page, "Not started").click();
-  await expect(runTiles(page, run)).toHaveText([`Kindred ${run}`]);
-  await chip(page, "All").click();
-  // A tap on a chip clears its filter only.
-  await clearChip(page, "Clear the Hardcover list: Picker run list").click();
   await expect(runTiles(page, run)).toHaveText([`Piranesi ${run}`, `Kindred ${run}`]);
-  await expect(clearChip(page, "Clear the Hardcover list: Picker run list")).toHaveCount(0);
+  await chip(page, "All").click();
+  // The Finished shelf comes from the user's own progress: the book marked finished.
+  await inSortPicker(page, async (p) => {
+    await p.getByRole("button", { name: "Shelf: Want to read", exact: true }).click();
+    await p.getByRole("radio", { name: "Finished", exact: true }).click();
+  });
+  await expect(runTiles(page, run)).toHaveText([`Lent ${run}`]);
+  await expect(clearChip(page, "Clear the shelf: Finished")).toHaveText("Finished");
+  await inSortPicker(page, async (p) => {
+    await p.getByRole("button", { name: "Shelf: Finished", exact: true }).click();
+    await p.getByRole("radio", { name: "Want to read", exact: true }).click();
+  });
+  await expect(runTiles(page, run)).toHaveText([`Piranesi ${run}`, `Kindred ${run}`]);
   await expect(shelfChip).toBeVisible();
 
   // Sort by Title and the list view (LibraryList.dc.html): the control says so.
@@ -198,8 +166,15 @@ test("the picker on a phone: Sort, View and Hardcover; Want to read narrows the 
   await page.reload();
   await expect(sortAndView(page)).toHaveText("Title · List");
   await expect(runRows).toHaveText([`Kindred ${run}`, `Piranesi ${run}`]);
-  await expect(clearChip(page, "Clear the Hardcover shelf: Want to read")).toBeVisible();
-  await clearChip(page, "Clear the Hardcover shelf: Want to read").click();
+  await expect(clearChip(page, "Clear the shelf: Want to read")).toBeVisible();
+  // The list with the shelf's chip at a desktop width, beside its boards for the slice's final check (#583).
+  if (test.info().project.name === "chromium") {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await expect(runRows).toHaveText([`Kindred ${run}`, `Piranesi ${run}`]);
+    await page.screenshot({ path: `${OUT}/library-list-shelf-desktop.png` });
+    await page.setViewportSize({ width: 390, height: 844 });
+  }
+  await clearChip(page, "Clear the shelf: Want to read").click();
   await expect(runRows).toHaveText([`Kindred ${run}`, `Lent ${run}`, `Piranesi ${run}`]);
   // A row opens its Book page.
   await listRow(page, `Lent ${run}`).getByRole("button").click();
@@ -207,33 +182,36 @@ test("the picker on a phone: Sort, View and Hardcover; Want to read narrows the 
   expect(errors).toEqual([]);
 });
 
-test("without Hardcover connected the picker has no Hardcover group, and a kept shelf narrows nothing", async ({ page }) => {
+test("the Shelf group without Hardcover, and an earlier build's Hardcover Want to read read as Sonder's own", async ({ page }) => {
   const run = randomUUID().slice(0, 6);
   const kindred = await importRecording(page, `Kindred ${run}`, "Octavia E. Butler");
-  const lent = await importRecording(page, `Lent ${run}`, "Jo Walton");
-  await routeHardcover(page, false);
-  await routeShelves(page, run, { [kindred.workId]: { statusId: 1, listIds: [] }, [lent.workId]: { statusId: 3, listIds: [] } });
-  // A shelf chosen on this device while Hardcover was connected.
+  await importRecording(page, `Lent ${run}`, "Jo Walton");
+  await wantToRead(page, kindred.workId);
+  // A shelf chosen on this device by an earlier build, while Hardcover was connected: its Want to read.
   await page.goto("/#library");
-  await page.evaluate(() => localStorage.setItem("sonder-library-hardcover", JSON.stringify({ shelf: "1", list: "all" })));
+  await page.evaluate(() => {
+    localStorage.removeItem("sonder-library-shelf");
+    localStorage.setItem("sonder-library-hardcover", JSON.stringify({ shelf: "1", list: "all" }));
+  });
   await page.reload();
   await expect(page.getByRole("heading", { name: "Library", exact: true, level: 1 })).toBeVisible();
-  await expect(runTiles(page, run)).toHaveText([`Lent ${run}`, `Kindred ${run}`]);
-  await expect(page.locator(".library-hardcover-chip")).toHaveCount(0);
+  await expect(runTiles(page, run)).toHaveText([`Kindred ${run}`]);
+  await expect(clearChip(page, "Clear the shelf: Want to read")).toBeVisible();
   await sortAndView(page).click();
-  await expect(sortPicker(page).locator(".part-picker-caption")).toHaveText(["Sort", "View"]);
-  await expect(sortPicker(page).getByRole("button", { name: /^(Shelf|List):/ })).toHaveCount(0);
+  await expect(sortPicker(page).locator(".part-picker-caption")).toHaveText(["Sort", "View", "Shelf"]);
+  await expect(sortPicker(page).getByRole("button", { name: /^List:/ })).toHaveCount(0);
   // A tap outside closes it.
   await page.mouse.click(195, 30);
   await expect(sortPicker(page)).toHaveCount(0);
   await expect(sortAndView(page)).toBeFocused();
+  await clearChip(page, "Clear the shelf: Want to read").click();
+  await expect(runTiles(page, run)).toHaveText([`Lent ${run}`, `Kindred ${run}`]);
 });
 
 test("on a desktop the picker opens under its button, and Escape closes it", async ({ page }) => {
   const run = randomUUID().slice(0, 6);
   const kindred = await importRecording(page, `Kindred ${run}`, "Octavia E. Butler");
-  await routeHardcover(page, true);
-  await routeShelves(page, run, { [kindred.workId]: { statusId: 1, listIds: [] } });
+  await wantToRead(page, kindred.workId);
   await page.setViewportSize({ width: 1280, height: 800 });
   await openLibrary(page);
   await sortAndView(page).click();
@@ -257,7 +235,7 @@ test("on a desktop the picker opens under its button, and Escape closes it", asy
   await expect.poll(placed).toEqual({ top: 8, right: 0, width: 360 });
   await page.evaluate(() => document.getElementById("picker-spec-spacer")!.remove());
   await expect.poll(placed).toEqual({ top: 8, right: 0, width: 360 });
-  await expect(sortPicker(page).locator(".part-picker-caption")).toHaveText(["Sort", "View", "Hardcover"]);
+  await expect(sortPicker(page).locator(".part-picker-caption")).toHaveText(["Sort", "View", "Shelf"]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(1280);
   if (test.info().project.name === "chromium") await page.screenshot({ path: `${OUT}/library-picker-desktop.png` });
   await page.keyboard.press("Escape");

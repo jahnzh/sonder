@@ -7,6 +7,7 @@ import { test, expect, type Page, type Request, type Route } from "@playwright/t
 import { mkdirSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
+import { skipWithoutBlobStore } from "./mobile";
 
 test.use({ serviceWorkers: "block" });
 
@@ -87,6 +88,7 @@ const danger = (page: Page) =>
   });
 
 test("a save refused by the source: Not complete in the failed colour, the reason and Retry; the dot and Needs attention; Retry finishes it", async ({ page }) => {
+  skipWithoutBlobStore();
   test.setTimeout(90_000);
   const book = await importBook(page, unique("Refused"));
   const refuse = await refuseSaves(page, book.trackId);
@@ -145,6 +147,7 @@ test("a save refused by the source: Not complete in the failed colour, the reaso
 });
 
 test("a full device: This device is full on the book, and the note under Storage on This device", async ({ page }) => {
+  skipWithoutBlobStore();
   test.setTimeout(90_000);
   await quotaWhenAsked(page);
   const book = await importBook(page, unique("Full"));
@@ -187,6 +190,7 @@ test("a full device: This device is full on the book, and the note under Storage
 });
 
 test("a paused save waits with Resume after a reload and resumes on Resume; a book missing a file is not under On device", async ({ page }) => {
+  skipWithoutBlobStore();
   test.setTimeout(120_000);
   const book = await importBook(page, unique("Paused"));
   const done = await importBook(page, unique("Complete"));

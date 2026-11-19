@@ -103,6 +103,7 @@ test("a work with only a placeholder has no recordings and the placeholder's cov
     series: [],
     mediaState: { state: "missing", holdReason: "unreleased", acquisition: null },
     hardcover: null,
+    wantToRead: false,
   });
   assert.deepEqual(await work(OWNER_TOKEN, "w-only"), only);
 });
@@ -257,6 +258,7 @@ test("a work outside the library comes through the one-work read", async () => {
     series: [],
     mediaState: null,
     hardcover: null,
+    wantToRead: false,
   });
 });
 

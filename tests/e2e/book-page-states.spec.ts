@@ -107,11 +107,14 @@ test("a Discover result outside the library opens the Book page; Add to library 
   await expect(files(page).getByRole("button", { name: "Get an ebook", exact: true })).toHaveAttribute("data-kind", "secondary");
   await expect(files(page).getByRole("listitem").nth(2)).toHaveAccessibleName("Reading sync Needs an audiobook");
   await expect(shown.getByRole("heading", { level: 2 })).toHaveText(["Files", "About"]);
-  // Measures (board BookNotInLibrary): one full-width 44 button, file rows 64.
+  // Measures (board BookNotInLibrary, with Want to read beside it since #721 part c1, as Listen and Read stand): two
+  // 44 buttons that fill the column, Add to library first; file rows 64.
   const column = await box(shown);
   const addBox = await box(add);
+  const wantBox = await box(shown.getByRole("button", { name: "Want to read", exact: true }));
   expect(addBox.height).toBe(44);
-  expect(Math.abs(addBox.width - column.width)).toBeLessThanOrEqual(1);
+  expect(wantBox.height).toBe(44);
+  expect(Math.abs(wantBox.x + wantBox.width - addBox.x - column.width)).toBeLessThanOrEqual(1);
   for (const row of await files(page).locator(".part-file-row").all()) expect(await clientHeight(row)).toBe(64);
   await noOverflow(page);
   await settled(page);

@@ -191,9 +191,8 @@ test("player downloads retain verified sections after connection failure and res
       .join("");
   });
   expect(checksum).toBe(createHash("sha256").update(media).digest("hex"));
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
-    390,
-  );
+  // No overflow: against the window, which is 393 wide with the iPhone profile (#596).
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(page.viewportSize()!.width);
   await page.screenshot({
     path: "artifacts/player-device-download-mobile.png",
   });
