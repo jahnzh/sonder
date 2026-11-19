@@ -200,6 +200,9 @@ textarea.edit-description {
 .edit-chapter-shift,
 .edit-chapter-lookup {
   align-items: flex-end;
+  padding: var(--space-12) var(--space-16);
+  border-radius: var(--corner-group);
+  background: var(--surface);
 }
 .edit-chapter-shift > .part-button,
 .edit-chapter-lookup > .part-button {

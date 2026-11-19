@@ -150,7 +150,9 @@ function ChapterEditor({ answer, onSaved, onClose }: { answer: RecordingChapters
         setDraft(draftOfChapters(value.chapters));
         setFrom("audiobookdb");
         setLine({ text: `${value.chapters.length} chapters from AudiobookDB; Save chapters to keep them.`, failed: false });
-      } else setLine({ text: value.reason ?? "These chapters cannot be taken.", failed: true });
+      } else if (value.chapters.length) setLine(null);
+      // The found chapters' note names the reason; with none found, the line does.
+      else setLine({ text: value.reason ?? "These chapters cannot be taken.", failed: true });
     } catch (error) {
       setLine({ text: (error as Error).message, failed: true });
     } finally {
