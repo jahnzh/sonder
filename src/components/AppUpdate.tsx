@@ -19,11 +19,11 @@ export function AppUpdate() {
     const shell = element?.closest<HTMLElement>(".app-shell");
     if (!element || !shell) return;
     const keep = () => shell.style.setProperty("--shell-update", `calc(${element.offsetHeight}px + var(--space-16) + var(--space-8))`);
-    keep();
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(keep);
-    observer?.observe(element);
+    // The observer calls it once at the start, then at every change of height (a narrower window wraps the text).
+    const observer = new ResizeObserver(keep);
+    observer.observe(element);
     return () => {
-      observer?.disconnect();
+      observer.disconnect();
       shell.style.removeProperty("--shell-update");
     };
   }, [shown]);
