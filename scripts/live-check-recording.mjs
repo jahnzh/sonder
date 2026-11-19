@@ -146,16 +146,30 @@ function unfinishedReason(book, jobs) {
 
 /**
  * The work's shared default edition (ADR 0004) as GET /api/library lists it, when Read can open it: an EPUB of the
- * work whose file is on the server. Now playing's Read opens the chosen edition (`chosenEbook`, src/ebook-choice.ts):
- * the shared default before this device's choice, which is all the check sets (`reader-ebook:<work>`). With a shared
- * default, the reader follows that edition's map, so the check samples no other (#730 third round: it sampled another
- * edition's map, and the reader showed that edition's passage numbers, 12:4 for the sampled 11:3). Null without one.
+ * work whose file is on the server. Null without one (or without the work in the listing).
  */
 export function sharedEdition(works, workId) {
   const work = (works ?? []).find((w) => w?.workId === workId);
   const shared = work?.chosenEbookId;
   if (!shared) return null;
-  return (work.ebooks ?? []).some((e) => e.id === shared && e.format === "epub" && e.available) ? shared : null;
+  return (work.ebooks ?? []).some((e) => e.id === shared && readable(e)) ? shared : null;
+}
+
+// An edition the reader can open: an EPUB whose file is on the server (`readable`, src/ebook-choice.ts).
+const readable = (ebook) => ebook?.format === "epub" && !!ebook.available;
+
+/**
+ * The edition Read opens for a work, by Now playing's own rule (`chosenEbook`, src/ebook-choice.ts, which a .mjs
+ * script cannot import; tests/live-check-recording.test.mjs holds the two to the same answers): the shared default
+ * when Read can open it, then this device's choice, then the work's first readable EPUB, from the work as GET
+ * /api/library lists it. `deviceChoice` is what the check sets (`reader-ebook:<work>`): the sampled map's EPUB.
+ * Returns the edition's id, or null when the work has no EPUB to read (#742 second round: with no shared default the
+ * check sampled libgen-1dafeaa8 and Read opened libgen-201c3bd3).
+ */
+export function readEdition(work, deviceChoice) {
+  const epubs = (work?.ebooks ?? []).filter(readable);
+  const pick = (id) => (id ? epubs.find((ebook) => ebook.id === id) ?? null : null);
+  return (pick(work?.chosenEbookId) ?? pick(deviceChoice) ?? epubs[0] ?? null)?.id ?? null;
 }
 
 // deploy.sh's old order: a ready map before a partial one, then the most recently updated.
@@ -168,7 +182,8 @@ function jobOrder(a, b) {
  * preferred recording first, then a ready map before a partial one, then the most recently updated. A recording with
  * several maps gives one pair per map whose intervals support readerSequence.
  * listing: {books, ebooks, jobs, works} as GET /api/books, GET /api/ebooks, GET /api/alignments (its `jobs`) and
- * GET /api/library return them. A work with a shared default edition gives only that edition's maps (`sharedEdition`).
+ * GET /api/library return them. Only a map of the edition Read opens with the device's choice set to the map's EPUB
+ * counts (`readEdition`): with a shared default only that edition's, and none of a work missing from GET /api/library.
  * Returns {pairs: [{book, job, ebook}], rejected: [{recordingId, jobId?, reason}], aligned: Set<recordingId>}.
  */
 export function readerPairs({ books, ebooks, jobs, works = [] }, { preferred = null } = {}) {
@@ -189,10 +204,19 @@ export function readerPairs({ books, ebooks, jobs, works = [] }, { preferred = n
       continue;
     }
     aligned.add(book.recordingId);
-    const shared = sharedEdition(works, book.workId);
-    const mapped = shared ? finished.filter((j) => j.ebookId === shared) : finished;
+    // Only a map of the edition Read opens once the check has set this device's choice to the map's EPUB.
+    const work = (works ?? []).find((w) => w?.workId === book.workId);
+    if (!work) {
+      rejected.push({ recordingId: book.recordingId, reason: `its work ${book.workId} is not in GET /api/library, so the edition Read opens is unknown` });
+      continue;
+    }
+    const mapped = finished.filter((j) => readEdition(work, j.ebookId) === j.ebookId);
     if (!mapped.length) {
-      rejected.push({ recordingId: book.recordingId, reason: `Read opens the shared default EPUB ${shared}, which has no finished map of this recording` });
+      const shared = sharedEdition(works, book.workId);
+      const reason = shared
+        ? `Read opens the shared default EPUB ${shared}, which has no finished map of this recording`
+        : `Read opens ${readEdition(work, null) ?? "no EPUB"} of the work, not the EPUB of a finished map (${finished.map((j) => `map ${j.id} of EPUB ${j.ebookId}: not an EPUB on the server in GET /api/library`).join("; ")})`;
+      rejected.push({ recordingId: book.recordingId, reason });
       continue;
     }
     const reason = positionReason(savedStart(book));

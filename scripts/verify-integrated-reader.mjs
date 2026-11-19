@@ -69,14 +69,25 @@ try {
  // Media addresses name the track (/api/media/<track id>), so the played file is matched against the recording's tracks.
  if(!book.tracks.some(t=>decodeURIComponent(playing).includes(t.id)))throw Error(`Listen played ${playing}, not the selected recording ${pick.recordingId}: choose it on the book's Audiobook page or pass it as the recording id`);
  await page.evaluate(()=>window.__audio.find(a=>a.src)?.pause());
- await page.goto('/');
+ // Leave Now playing without reloading: after a reload the dock shows the most recently listened book of the saved
+ // progress (App.tsx `featured`), which this check never writes, so Read opened another work's EPUB (#742 second
+ // round: libgen-201c3bd3 for the sampled libgen-1dafeaa8). The player keeps the selected book; the dock opens it.
+ await page.evaluate(()=>{location.hash='#library';});
+ await expect(page.getByRole('dialog',{name:'Now playing',exact:true})).toBeHidden();
+ await expect(page.locator('.player-dock .dock-book'),`The dock does not show the selected book ${book.title}`).toContainText(book.title);
  await openRead();
+ const readWork=await page.evaluate(()=>decodeURIComponent(location.hash.slice('#read/'.length)));
+ if(readWork!==book.workId)throw Error(`Now playing opened work ${readWork}, not ${book.workId} of the selected recording`);
  await expect(page.locator('.inline-reader .reader-viewport iframe')).toBeVisible();
- // Read opens the work's chosen edition (a shared default before this device's choice): the samples come from the
- // map of the EPUB it shows, or every passage number below is another edition's (#730 third round).
+ // Read opens the work's chosen edition (chosenEbook: a shared default before this device's choice), which the
+ // selection computed (readEdition): the samples come from the map of the EPUB it shows, or every passage number
+ // below is another edition's (#730 third round).
  await expect(room).toHaveAttribute('data-ebook',/.+/);
  const opened=await room.getAttribute('data-ebook');
- if(opened!==ebook.id)throw Error(`Read opened EPUB ${opened}, not ${ebook.id} of the sampled map`);
+ if(opened!==ebook.id){
+  const choice=await page.evaluate(key=>localStorage.getItem(key),`reader-ebook:${book.workId}`);
+  throw Error(`Read opened EPUB ${opened}, not ${ebook.id} of the sampled map (this device's choice: ${choice})`);
+ }
  const full=page.getByRole('dialog',{name:'Now playing',exact:true});
  // The Read face is the reader's page with one player bar, its foot (#22, #593): none of Listen's face is drawn.
  await expect(full.locator('.now-playing-listen')).toHaveCount(0);

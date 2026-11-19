@@ -185,6 +185,8 @@ const desktopProjects = [
               /(^|\/)reader-second-track\.spec\.ts$/,
               // The live check's long-press on the narrated sentence of a partly mapped edition (#742).
               /(^|\/)reader-long-press-mapped\.spec\.ts$/,
+              // The live check opens the EPUB of the map it sampled, for a work with no shared default (#742 second round).
+              /(^|\/)reader-check-edition\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },
