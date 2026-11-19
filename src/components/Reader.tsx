@@ -253,7 +253,9 @@ function measureSentence(block: Element, fragment: { text: string; start: number
   const index = blockLookup(block),
     words = sentenceWords(fragment),
     scroll = block.ownerDocument.defaultView?.scrollX ?? 0;
+  let lookups = 0;
   const paged = pagedWords(words.map((word) => word.text), (word, character) => {
+    lookups++;
     const range = characterAt(index, words[word]!.offset + character);
     const box = range && Array.from(range.getClientRects()).find((rect) => rect.width > 0 || rect.height > 0);
     return box ? Math.floor((box.left + scroll) / step) : null;
@@ -261,6 +263,9 @@ function measureSentence(block: Element, fragment: { text: string; start: number
   // The time a measurement took, kept only where a browser test asks for it (#509's measurement).
   const timings = (window as { __sonderBreakTimings?: number[] }).__sonderBreakTimings;
   if (Array.isArray(timings)) timings.push(performance.now() - began);
+  // The box lookups it made and the sentence's words, the cost no other work on the host changes (#664).
+  const costs = (window as { __sonderBreakLookups?: { lookups: number; words: number }[] }).__sonderBreakLookups;
+  if (Array.isArray(costs)) costs.push({ lookups, words: words.length });
   return { index, offsets: words.map((word) => word.offset), words: paged };
 }
 // The layout's page step: what one turn moves, both pages with two side by side (spec #503). Null before epub.js laid out.
