@@ -245,6 +245,8 @@ const desktopProjects = [
               nowPlayingSpecs,
               // Sonder's own Want to read on the Book page, Discover's rows and the Library's Shelf (#721 part c1).
               /(^|\/)want-to-read\.spec\.ts$/,
+              // Read on a desktop: two pages side by side when the text area is wide enough (#762).
+              /(^|\/)reader-two-pages\.spec\.ts$/,
               // The Series slice's states beside their boards, opt-in with SONDER_SERIES_BOARDS=1 (#570).
               /(^|\/)series-boards\.spec\.ts$/,
             ]
