@@ -44,6 +44,11 @@ export function normaliseTitle(title: string): string {
 function mainTitle(title: string): string {
   return fold(title.replace(/\s*[([{][^)\]}]*[)\]}]\s*/g, " ").split(/\s[:–—-]\s|:\s/)[0]);
 }
+/** The words to search for: the title without a bracketed note ("(The Expanse, Book 1)") or its subtitle. */
+export function searchTitle(title: string): string {
+  const plain = title.replace(/\s*[([{][^)\]}]*[)\]}]\s*/g, " ").split(/\s[:–—-]\s|:\s/)[0].replace(/\s+/g, " ").trim();
+  return plain || title.trim();
+}
 /** Exact after normalising: the whole titles, or both without a subtitle or bracketed note. */
 export function titleMatches(workTitle: string, candidate: string): boolean {
   const a = normaliseTitle(workTitle);
@@ -279,9 +284,10 @@ export async function matchWork(workId: string, priority: Priority = "background
       return { outcome: "matched", reason: null, candidates: 1 };
     }
   }
-  let decision = decide(work, await searchAudiobookDbBooks(`${work.title} ${work.author}`, { priority }));
+  const title = searchTitle(work.title);
+  let decision = decide(work, await searchAudiobookDbBooks(`${title} ${work.author}`, { priority }));
   if (decision.outcome !== "matched") {
-    const byTitle = decide(work, await searchAudiobookDbBooks(work.title, { priority }));
+    const byTitle = decide(work, await searchAudiobookDbBooks(title, { priority }));
     if (byTitle.outcome === "matched" || decision.outcome === "missing") decision = byTitle;
   }
   if (decision.outcome === "matched") {
@@ -296,7 +302,7 @@ export async function matchWork(workId: string, priority: Priority = "background
   }
   // A book without an audiobook is not on AudiobookDB: Open Library gives it its link.
   if (!recordings.length) {
-    const open = decide(work, await searchOpenLibrary(`${work.title} ${work.author}`, { priority }));
+    const open = decide(work, await searchOpenLibrary(`${title} ${work.author}`, { priority }));
     if (open.outcome === "matched") {
       await linkWork(workId, { provider: "openlibrary", id: open.book.id, author: open.book.authors.join(", ") }, "title", priority);
       return { outcome: "matched", reason: null, candidates: 1 };
