@@ -293,15 +293,33 @@ function readingSyncByWork(recordings: Map<string, WorkRecording[]>, ebooks: Map
   return byWork;
 }
 
-/** The Hardcover series of a work, the ones in `saved` (the user's saved series) first, then in Hardcover's order. */
-function workSeries(hardcover: LibraryWork["hardcover"], saved: Set<number>): WorkSeries[] {
-  const series = (hardcover?.series ?? []).map((entry) => ({
-    id: entry.id ?? null,
-    name: entry.name,
-    position: entry.position ?? null,
-    saved: entry.id !== undefined && saved.has(entry.id),
-  }));
-  return [...series.filter((entry) => entry.saved), ...series.filter((entry) => !entry.saved)];
+/**
+ * The series of each work on AudiobookDB (#721 part b): the series whose stored catalogue lists the work (for anyone,
+ * or as this user added it) and the series its catalogue link names; the user's saved series first, then by name.
+ */
+function workSeriesByWork(userId: number, workIds: string[]): Map<string, WorkSeries[]> {
+  const rows = sqlite
+    .prepare(
+      `SELECT c.work_id AS workId,c.series_id AS id,s.name,c.position,c.position_label AS positionLabel FROM series_catalogue_works c JOIN series_catalogue s ON s.id=c.series_id
+         WHERE c.work_id IN (SELECT value FROM json_each(?))
+       UNION SELECT u.work_id,c.series_id,s.name,c.position,c.position_label FROM user_saved_series_works u
+         JOIN series_catalogue_works c ON c.series_id=u.series_id AND c.book_id=u.book_id JOIN series_catalogue s ON s.id=c.series_id
+         WHERE u.user_id=? AND u.work_id IN (SELECT value FROM json_each(?))
+       UNION SELECT work_id,series_id,series_name,series_sort,series_position FROM work_catalogue_links
+         WHERE provider='audiobookdb' AND series_name IS NOT NULL AND work_id IN (SELECT value FROM json_each(?))`,
+    )
+    .all(idList(workIds), userId, idList(workIds), idList(workIds)) as { workId: string; id: string | null; name: string; position: number | null; positionLabel: string | null }[];
+  const saved = savedSeries(userId);
+  const byWork = new Map<string, WorkSeries[]>();
+  for (const row of rows) {
+    const list = byWork.get(row.workId) ?? [];
+    if (list.some((entry) => (row.id ? entry.id === row.id : entry.name === row.name))) continue;
+    list.push({ id: row.id, name: row.name, position: row.position, positionLabel: row.positionLabel, saved: !!row.id && saved.has(row.id) });
+    byWork.set(row.workId, list);
+  }
+  for (const [workId, list] of byWork)
+    byWork.set(workId, list.sort((a, b) => Number(b.saved) - Number(a.saved) || a.name.localeCompare(b.name)));
+  return byWork;
 }
 
 /**
@@ -337,12 +355,7 @@ function mediaStates(userId: number, workIds: string[]) {
   return byWork;
 }
 
-const savedSeries = (userId: number) =>
-  new Set(
-    (sqlite.prepare("SELECT series_id AS id FROM user_saved_series WHERE user_id=?").all(userId) as { id: number }[]).map(
-      (row) => row.id,
-    ),
-  );
+const savedSeries = (userId: number) => new Set(sqlite.prepare("SELECT series_id FROM user_saved_series WHERE user_id=?").pluck().all(userId) as string[]);
 
 /** The user's earliest library row per work, for the works in their library. */
 function libraryRows(userId: number, workIds?: string[]) {
@@ -380,7 +393,7 @@ function buildWorks(userId: number, workIds: string[], hidden: Set<string>, file
   const ebooks = ebooksByWork(userId, workIds, files);
   const readingSync = readingSyncByWork(recordings, ebooks.byWork);
   const states = mediaStates(userId, workIds);
-  const saved = savedSeries(userId);
+  const series = workSeriesByWork(userId, workIds);
   const hardcoverBlocks = hardcoverForWorks(userId, workIds);
   return workIds.flatMap((workId) => {
     const work = works.get(workId);
@@ -407,7 +420,7 @@ function buildWorks(userId: number, workIds: string[], hidden: Set<string>, file
         chosenEbookId: ebooks.chosen.get(workId) ?? null,
         ebooks: ebooks.byWork.get(workId) ?? [],
         readingSync: readingSync.get(workId) ?? [],
-        series: workSeries(hardcover, saved),
+        series: series.get(workId) ?? [],
         mediaState: states.get(workId) ?? null,
         hardcover,
       },
@@ -474,7 +487,8 @@ async function hardcoverLook(userId: number, bookId: number): Promise<LibraryWor
     chosenEbookId: null,
     ebooks: [],
     readingSync: [],
-    series: workSeries(hardcover, savedSeries(userId)),
+    // Hardcover's series ids no longer open a series page (#721): a look at a Hardcover book lists none.
+    series: [],
     mediaState: { state: "missing", holdReason: null, acquisition: null },
     hardcover,
   };

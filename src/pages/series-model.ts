@@ -8,6 +8,7 @@ import { seriesBooks, type SeriesBookCandidate } from "../series-selection";
 import {
   downloadLine,
   NEEDS_ADMIN_LINE,
+  NO_AUDIOBOOK_LINE,
   NO_CONNECTION_LINE,
   NOT_IN_LIBRARY_LINE,
   NOT_RELEASED_LINE,
@@ -22,10 +23,10 @@ import { chosenRecording, NOT_STARTED_LINE, placeLine } from "./book-model";
 
 const DOT = " · ";
 
-/** The New mark in front of a row's line: Hardcover listed the book after the user last looked (GLOSSARY "New in a series"). */
+/** The New mark in front of a row's line: AudiobookDB listed the book after the user last looked (GLOSSARY "New in a series"). */
 export const NEW_MARK = "New";
 /** The New card's first line (board SeriesNew.dc.html). */
-export const NEW_CARD_LINE = "New from Hardcover";
+export const NEW_CARD_LINE = "New from AudiobookDB";
 /** The New card's button: sends `POST /api/series/<id>/ack` with every new work. */
 export const DISMISS_LABEL = "Dismiss";
 
@@ -37,6 +38,10 @@ export type SeriesPageWork = SeriesBookCandidate & {
   added?: boolean;
   new?: boolean;
   needsAdmin?: boolean;
+  /** Its place as AudiobookDB labels it ("1.5"); the number when absent. */
+  positionLabel?: string | null;
+  /** False for a book Open Library lists that has no audiobook yet (#721); absent from an older server. */
+  audiobook?: boolean;
   acquisition?: { audio: SeriesWorkAcquisition | null; ebook: SeriesWorkAcquisition | null } | null;
   /** The work's media state for a book added with the series (the page polls while one is queued). */
   mediaState?: { state: string } | null;
@@ -45,13 +50,13 @@ export type SeriesPageWork = SeriesBookCandidate & {
 /** The not-saved page's one main action, under the intro (board SeriesNotSaved.dc.html). */
 export const SAVE_SERIES_LABEL = "Save series";
 
-/** `GET /api/series/<id>` (a saved series) or `GET /api/hardcover/series/<id>` (one that is not saved), as far as the page reads it. */
+/** `GET /api/series/<id>` (a saved series) or `GET /api/discover/series/<id>` (one that is not saved), as far as the page reads it. */
 export type SeriesPageSeries = {
-  id: number;
+  id: string;
   name: string;
   author: string | null;
   works: SeriesPageWork[];
-  /** Hardcover could not be read: the page shows the last saved list with this message and Retry. */
+  /** AudiobookDB could not be read: the page shows the last saved list with this message and Retry. */
   refreshError?: string;
 };
 
@@ -66,10 +71,12 @@ export type SeriesRowAction =
   | { kind: "play" };
 
 export type SeriesRow = {
-  /** The Hardcover book id. */
-  bookId: number;
+  /** The AudiobookDB book id (`openlibrary:<work>` for a book with no audiobook yet). */
+  bookId: string;
   /** Its number in the series; null for a related work. */
   number: number | null;
+  /** The number as the row shows it: AudiobookDB's label ("1.5", "0.1"); null for a related work. */
+  label: string | null;
   title: string;
   cover: string | null;
   /** The status line, the New mark in front of it when the book is new. */
@@ -108,9 +115,9 @@ export type SeriesPageModel = {
   books: SeriesRow[];
   /** Works without a number, as Book rows: listed, not counted. */
   related: SeriesRow[];
-  /** The book to continue: its Hardcover book id and work; null when there is none. */
-  continueWith: { bookId: number; workId: string } | null;
-  /** The refresh error card's message; null when Hardcover was read, or without a connection (the card below stands there). */
+  /** The book to continue: its AudiobookDB book id and work; null when there is none. */
+  continueWith: { bookId: string; workId: string } | null;
+  /** The refresh error card's message; null when AudiobookDB was read, or without a connection (the card below stands there). */
   refreshError: string | null;
   /**
    * Without a connection (#568, spec #560 "Without a connection"): the "No connection" card, where the refresh error
@@ -124,7 +131,7 @@ export type SeriesPageModel = {
    * in reading order (the screen cuts them with an ellipsis), and every work the answer marks new for Dismiss to
    * acknowledge (a translation that stands at no row too). Null with no new row.
    */
-  newCard: { titles: string; bookIds: number[] } | null;
+  newCard: { titles: string; bookIds: string[] } | null;
   /** The New card's Dismiss is off: without a connection it cannot reach the server. */
   dismissOff: boolean;
 };
@@ -194,7 +201,8 @@ function libraryLine(work: SeriesPageWork, entry: LibraryWork): Line {
 function outsideLine(work: SeriesPageWork, admin: boolean, saved: boolean): Line {
   if (work.needsAdmin) return { line: admin ? SEVERAL_MATCHES_LINE : NEEDS_ADMIN_LINE, failed: false, action: null, progress: null };
   // A series that is not saved has no Add on its rows: Save series chooses the books (board SeriesNotSaved.dc.html).
-  return { line: work.unreleased ? NOT_RELEASED_LINE : NOT_IN_LIBRARY_LINE, failed: false, action: saved ? { kind: "add" } : null, progress: null };
+  const line = work.unreleased ? NOT_RELEASED_LINE : work.audiobook === false ? NO_AUDIOBOOK_LINE : NOT_IN_LIBRARY_LINE;
+  return { line, failed: false, action: saved ? { kind: "add" } : null, progress: null };
 }
 
 function rowOf(work: SeriesPageWork, number: number | null, library: ReadonlyMap<string, LibraryWork>, admin: boolean, saved: boolean): SeriesRow {
@@ -205,6 +213,7 @@ function rowOf(work: SeriesPageWork, number: number | null, library: ReadonlyMap
   return {
     bookId: work.id,
     number,
+    label: number === null ? null : work.positionLabel || String(number),
     title: work.title,
     cover: entry?.cover || work.cover || null,
     line: isNew ? `${NEW_MARK}${DOT}${line.line}` : line.line,
@@ -245,7 +254,7 @@ export function bookCount(count: number): string {
 
 /**
  * What the Series page shows: for a saved series (`GET /api/series/<id>`), or for one that is not saved
- * (`GET /api/hardcover/series/<id>`, `saved: false`): the same rows, with "<author> · M books" and Save series.
+ * (`GET /api/discover/series/<id>`, `saved: false`): the same rows, with "<author> · M books" and Save series.
  */
 export function seriesPageModel(
   series: SeriesPageSeries,
@@ -279,7 +288,7 @@ export function seriesPageModel(
   if (offline) for (const row of [...books, ...relatedRows]) row.actionOff = !!row.action && row.action.kind !== "play";
   // Saved: how many are finished; not saved: how many books it has, one per number (related works are not counted).
   const counts = saved ? `${finished} of ${total} finished` : bookCount(numbers.length);
-  // The New card and its marks are a saved series' (Hardcover listed the book after the user saved it).
+  // The New card and its marks are a saved series' (AudiobookDB listed the book after the user saved it).
   const newRows = saved ? [...books, ...relatedRows].filter((row) => row.isNew) : [];
   const newCard = newRows.length
     ? { titles: newRows.map((row) => row.title).join(", "), bookIds: series.works.filter((work) => work.new).map((work) => work.id) }

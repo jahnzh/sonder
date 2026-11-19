@@ -5,18 +5,18 @@
 
 /** One work of `GET /api/series/<id>/removal` (server/series-removal.ts, `SeriesRemovalWork`). */
 export type SeriesRemovalWork = {
-  bookId: number;
+  bookId: string;
   title: string;
   workId: string;
   /** Added with this series (glossary: Added with a series): only these are offered. */
   introduced: boolean;
   /** Chosen when the list opens: not when it is also in another saved series. */
   selectedByDefault: boolean;
-  otherSeries: { id: number; name: string }[];
+  otherSeries: { id: string; name: string }[];
   activeDownloads: { id: string; title: string; status: string }[];
   audioEditions: { editionId: string; releaseTitle: string | null; wouldDelete: boolean; retainReason: string | null }[];
 };
-export type SeriesRemovalPreview = { id: number; name: string; works: SeriesRemovalWork[] };
+export type SeriesRemovalPreview = { id: string; name: string; works: SeriesRemovalWork[] };
 
 /** The switch's name. */
 export const REMOVE_BOOKS_LABEL = "Remove the books it added";
@@ -29,7 +29,7 @@ export const OFFERED_CAPTION = "Added with this series";
 /** The app's toast once the series is removed: the page is gone. */
 export const REMOVED_TOAST = "Series removed";
 
-export type SeriesRemoveChoice = { bookId: number; title: string; detail: string; chosen: boolean };
+export type SeriesRemoveChoice = { bookId: string; title: string; detail: string; chosen: boolean };
 
 export type SeriesRemoveModel = {
   /** "Remove The Culture?" */
@@ -43,11 +43,11 @@ export type SeriesRemoveModel = {
   choices: SeriesRemoveChoice[];
   button: string;
   /** `DELETE /api/series/<id>`: `bookIds` only with the switch on and books chosen. */
-  body: { bookIds: number[] } | Record<string, never>;
+  body: { bookIds: string[] } | Record<string, never>;
 };
 
 /** What the user ticked or unticked, by Hardcover book id; the rest stand as `selectedByDefault`. */
-export type SeriesRemoveManual = Readonly<Record<number, boolean>>;
+export type SeriesRemoveManual = Readonly<Record<string, boolean>>;
 
 /** A work's one line: why it is not chosen, else what happens to its files. */
 export function removalLine(work: SeriesRemovalWork): string {

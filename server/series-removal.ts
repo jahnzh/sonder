@@ -32,18 +32,18 @@ export type SeriesRemovalAudioEdition = {
 };
 
 export type SeriesRemovalWork = {
-  bookId: number;
+  bookId: string;
   title: string;
   workId: string;
   introduced: boolean;
   selectedByDefault: boolean;
-  otherSeries: { id: number; name: string }[];
+  otherSeries: { id: string; name: string }[];
   activeDownloads: { id: string; title: string; status: string }[];
   audioEditions: SeriesRemovalAudioEdition[];
 };
 
 export type SeriesRemovalPreview = {
-  id: number;
+  id: string;
   name: string;
   works: SeriesRemovalWork[];
 };
@@ -58,19 +58,19 @@ type EditionDeletePlan = {
   recordings: RecordingDeletePlan[];
 };
 
-function assertSavedSeries(userId: number, seriesId: number) {
+function assertSavedSeries(userId: number, seriesId: string) {
   const row = sqlite
     .prepare(
       `SELECT c.id,c.name FROM series_catalogue c
        JOIN user_saved_series u ON u.series_id=c.id
        WHERE u.user_id=? AND c.id=?`,
     )
-    .get(userId, seriesId) as { id: number; name: string } | undefined;
+    .get(userId, seriesId) as { id: string; name: string } | undefined;
   if (!row) throw new Error("This saved series could not be found.");
   return row;
 }
 
-function savedWorks(userId: number, seriesId: number) {
+function savedWorks(userId: number, seriesId: string) {
   return sqlite
     .prepare(
       `SELECT c.book_id AS bookId,c.title,
@@ -81,7 +81,7 @@ function savedWorks(userId: number, seriesId: number) {
        WHERE c.series_id=?`,
     )
     .all(userId, seriesId) as {
-    bookId: number;
+    bookId: string;
     title: string;
     workId: string;
     introduced: number;
@@ -91,7 +91,7 @@ function savedWorks(userId: number, seriesId: number) {
 function otherSavedSeries(
   userId: number,
   workId: string,
-  exceptSeriesId: number,
+  exceptSeriesId: string,
 ) {
   return sqlite
     .prepare(
@@ -101,7 +101,7 @@ function otherSavedSeries(
          ON w.user_id=uss.user_id AND w.series_id=uss.series_id AND w.work_id=?
        WHERE uss.user_id=? AND uss.series_id<>?`,
     )
-    .all(workId, userId, exceptSeriesId) as { id: number; name: string }[];
+    .all(workId, userId, exceptSeriesId) as { id: string; name: string }[];
 }
 
 function blockReasonForEdition(editionId: string, exceptUserId: number) {
@@ -209,7 +209,7 @@ function audioEditionsForRemoval(userId: number, workId: string) {
 
 export function previewSeriesRemoval(
   userId: number,
-  seriesId: number,
+  seriesId: string,
 ): SeriesRemovalPreview {
   const series = assertSavedSeries(userId, seriesId);
   const works = savedWorks(userId, seriesId).map((work) => {
@@ -664,8 +664,8 @@ export function purgeEditionForTests(editionId: string) {
 
 export async function removeSavedHardcoverSeries(
   userId: number,
-  seriesId: number,
-  bookIds?: number[],
+  seriesId: string,
+  bookIds?: string[],
 ) {
   assertSavedSeries(userId, seriesId);
   const saved = savedWorks(userId, seriesId);

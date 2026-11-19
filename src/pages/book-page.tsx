@@ -63,7 +63,7 @@ type Props = {
   /** Today's ebook search for the book (Get ebook, until slice "Get"). */
   onFindEbook: (book: Book) => void;
   /** Opens the series' page, saved or not (#562, #564). */
-  onSeries: (id: number, saved: boolean) => void;
+  onSeries: (id: string, saved: boolean) => void;
   /** The library changed (an add, a removal, a mark): read the books again. */
   onChanged: () => Promise<void> | void;
   /** This device's files changed. */

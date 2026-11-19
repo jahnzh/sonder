@@ -10,7 +10,7 @@ export type StoredSeriesAnswer = { key: string; value: unknown; storedAt: number
 /** The key of `GET /api/series`, the saved series list. */
 export const SERIES_LIST_KEY = "list";
 /** The key of `GET /api/series/<id>`, one saved series. */
-export const seriesAnswerKey = (id: number) => `series:${id}`;
+export const seriesAnswerKey = (id: string | number) => `series:${id}`;
 
 type SeriesDatabase = Pick<SonderDB, "seriesAnswers">;
 let accountStorage: () => { owner: number; db: SeriesDatabase } = accountDatabase;

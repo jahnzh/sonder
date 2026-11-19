@@ -4,6 +4,7 @@
 // user ticked. No React, no `window`, no fetch. The server imports nothing from here.
 import { normalizeSeriesLanguage, selectSeriesDefaults, seriesBooks } from "../series-selection";
 import type { LibraryWork } from "../types";
+import { NO_AUDIOBOOK_LINE } from "../status-lines";
 import type { SeriesPageSeries, SeriesPageWork } from "./series-model";
 
 /** The sheet's caption (its head). */
@@ -21,7 +22,7 @@ export type SeriesAddSeries = Omit<SeriesPageSeries, "works"> & { works: SeriesA
  * How the sheet was opened: from a row's Add (that book is chosen), or by its address (Save series, a reload or a
  * link: the server's `selected` on a saved series, `selectSeriesDefaults` on one that is not saved).
  */
-export type SeriesAddOpening = { from: "row"; bookId: number } | { from: "address" };
+export type SeriesAddOpening = { from: "row"; bookId: string } | { from: "address" };
 
 /**
  * What the user ticked or unticked, by the place in the series (`n:<number>` for a number, `b:<book id>` for a
@@ -32,8 +33,8 @@ export type SeriesAddManual = Readonly<Record<string, boolean>>;
 export type SeriesAddChoice = {
   /** The place in the series: `n:<number>` or `b:<book id>` for a related work. */
   key: string;
-  /** The Hardcover book that stands there in the preferred language. */
-  bookId: number;
+  /** The AudiobookDB book that stands there in the preferred language. */
+  bookId: string;
   title: string;
   /** The second line: "Book 4"; "Related work" for a work without a number. */
   detail: string;
@@ -58,7 +59,7 @@ export type SeriesAddModel = {
   /** "What is found downloads to your server." while a Get switch is on. */
   note: string | null;
   /** `POST /api/series`. */
-  body: { id: number; bookIds: number[]; searchAudio: boolean; searchEbooks: boolean };
+  body: { id: string; bookIds: string[]; searchAudio: boolean; searchEbooks: boolean };
 };
 
 const keyOf = (work: Pick<SeriesAddWork, "id" | "position">) => (work.position === null ? `b:${work.id}` : `n:${work.position}`);
@@ -135,7 +136,7 @@ export function seriesAddModel(
       key,
       bookId: work.id,
       title: work.title,
-      detail: work.position === null ? "Related work" : `Book ${work.position}`,
+      detail: [work.position === null ? "Related work" : `Book ${work.positionLabel || work.position}`, work.audiobook === false ? NO_AUDIOBOOK_LINE : null].filter(Boolean).join(" · "),
       chosen: manual[key] ?? byDefault,
     };
   });

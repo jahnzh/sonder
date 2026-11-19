@@ -14,136 +14,19 @@ import {
   setHardcoverRecordingEdition,
   setHardcoverToken,
   hardcoverLinkedBook,
-  hardcoverSeriesSearch,
-  hardcoverSeriesPreview,
-  saveHardcoverSeries,
-  listSavedHardcoverSeries,
-  refreshSavedHardcoverSeries,
-  acknowledgeSeriesWorks,
   hardcoverBook,
   setWorkCompletionOverride,
 } from "./hardcover.ts";
 import { acquire } from "./acquisitions.ts";
 import { retryWorkMediaAcquisition } from "./series-membership.ts";
-import { retrySeriesWorkAcquisition } from "./series-acquisition.ts";
-import {
-  searchSeriesWorkReleases,
-  selectSeriesWorkRelease,
-} from "./series-release-search.ts";
-import {
-  previewSeriesRemoval,
-  removeSavedHardcoverSeries,
-} from "./series-removal.ts";
 import { currentUserId, requireAdmin } from "./users.ts";
-// Every route acts for the signed-in user's own Hardcover account (#15).
+// Every route acts for the signed-in user's own Hardcover account (#15). The series routes moved to
+// `series-routes.ts` with the series (#721).
 export function registerHardcoverRoutes(app: FastifyInstance) {
-  app.get("/api/discover/series", async (req) => {
-    const { q } = z.object({ q: z.string().trim().min(2).max(300) }).parse(req.query);
-    return hardcoverSeriesSearch(currentUserId(req), q);
-  });
-  app.get("/api/hardcover/series/:id", async (req) => {
-    const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(req.params);
-    const { language } = z.object({ language: z.string().trim().min(1).max(100).optional() }).parse(req.query ?? {});
-    return hardcoverSeriesPreview(currentUserId(req), id, language);
-  });
   app.get("/api/hardcover/books/:id/series", async (req) => {
     const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(req.params);
     const book = await hardcoverBook(currentUserId(req), id);
     return book.book_series.flatMap((entry) => entry.series?.id ? [{ id: entry.series.id, name: entry.series.name, position: entry.position }] : []);
-  });
-  app.get("/api/series", async (req) => listSavedHardcoverSeries(currentUserId(req)));
-  app.get("/api/series/:id/removal", async (req) => {
-    const { id } = z
-      .object({ id: z.coerce.number().int().positive() })
-      .parse(req.params);
-    return previewSeriesRemoval(currentUserId(req), id);
-  });
-  app.get("/api/series/:id", async (req) => {
-    const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(req.params);
-    const { refresh, language } = z.object({ refresh: z.coerce.boolean().optional(), language: z.string().trim().min(1).max(100).optional() }).parse(req.query ?? {});
-    // Revisiting a saved series refreshes the Hardcover catalogue by ID (#206).
-    return refreshSavedHardcoverSeries(currentUserId(req), id, { force: !!refresh, language });
-  });
-  app.post("/api/series", async (req) => {
-    const body = z
-      .object({
-        id: z.number().int().positive(),
-        bookIds: z.array(z.number().int().positive()).max(1000),
-        searchAudio: z.boolean().optional(),
-        searchEbooks: z.boolean().optional(),
-      })
-      .parse(req.body ?? {});
-    return saveHardcoverSeries(currentUserId(req), body.id, body.bookIds, {
-      searchAudio: body.searchAudio,
-      searchEbooks: body.searchEbooks,
-    });
-  });
-  app.delete("/api/series/:id", async (req) => {
-    const { id } = z
-      .object({ id: z.coerce.number().int().positive() })
-      .parse(req.params);
-    const body = z
-      .object({
-        bookIds: z.array(z.number().int().positive()).max(1000).optional(),
-      })
-      .parse(req.body ?? {});
-    const bookIds = body.bookIds ?? [];
-    if (bookIds.length) requireAdmin(req);
-    return await removeSavedHardcoverSeries(currentUserId(req), id, bookIds);
-  });
-  app.post("/api/series/:id/works/:bookId/acquisition/retry", async (req) => {
-    const { id, bookId } = z
-      .object({
-        id: z.coerce.number().int().positive(),
-        bookId: z.coerce.number().int().positive(),
-      })
-      .parse(req.params);
-    const { kind } = z.object({ kind: z.enum(["audio", "ebook"]) }).parse(req.body ?? {});
-    return retrySeriesWorkAcquisition(
-      currentUserId(req),
-      id,
-      bookId,
-      kind,
-    );
-  });
-  app.get("/api/series/:id/works/:bookId/releases/search", async (req) => {
-    requireAdmin(req);
-    const { id, bookId } = z
-      .object({
-        id: z.coerce.number().int().positive(),
-        bookId: z.coerce.number().int().positive(),
-      })
-      .parse(req.params);
-    const { q, page } = z
-      .object({
-        q: z.string().min(2).max(150),
-        page: z.coerce.number().int().min(1).max(100).default(1),
-      })
-      .parse(req.query);
-    return searchSeriesWorkReleases(currentUserId(req), id, bookId, q, page);
-  });
-  app.post("/api/series/:id/works/:bookId/releases/select", async (req) => {
-    requireAdmin(req);
-    const { id, bookId } = z
-      .object({
-        id: z.coerce.number().int().positive(),
-        bookId: z.coerce.number().int().positive(),
-      })
-      .parse(req.params);
-    const body = z
-      .object({
-        source: z.enum(["abb", "prowlarr"]),
-        id: z.string().min(1).max(300),
-        replaceActive: z.boolean().optional(),
-        confirmExistingAudio: z.boolean().optional(),
-      })
-      .parse(req.body ?? {});
-    return selectSeriesWorkRelease(currentUserId(req), id, bookId, body);
-  });
-  app.post("/api/series/:id/ack", async (req) => {
-    const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(req.params);
-    const { bookIds } = z.object({ bookIds: z.array(z.number().int().positive()).max(1000).default([]) }).parse(req.body ?? {});
-    return acknowledgeSeriesWorks(currentUserId(req), id, bookIds);
   });
   app.patch("/api/works/:workId/completion", async (req) => {
     const { workId } = z.object({ workId: z.string().min(1) }).parse(req.params);

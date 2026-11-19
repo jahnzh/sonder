@@ -94,7 +94,8 @@ export function SeriesPage({ id, admin, online, books, revision, onSaved, onRemo
   const p = usePlayer();
   const library = useStoredWorksWithPlaces();
   const key = `${userId()}:${id}`;
-  const seriesId = Number(id);
+  // AudiobookDB's id (#721): text; an address from before (a Hardcover number) finds no saved series.
+  const seriesId = id;
   const [series, setSeries] = useState<SavedSeries | null>(() => lastRead.get(key)?.series ?? null);
   // This account saved the series; a series that is not saved is Hardcover's, with Save series (#564).
   const [saved, setSaved] = useState(() => lastRead.get(key)?.saved ?? true);
@@ -130,7 +131,7 @@ export function SeriesPage({ id, admin, online, books, revision, onSaved, onRemo
 
   const load = useCallback(
     async (refresh = false) => {
-      if (!Number.isSafeInteger(seriesId) || seriesId <= 0) {
+      if (!/^[A-Za-z0-9_.:-]{1,200}$/.test(seriesId)) {
         address.navigate({ name: "library" }, { replace: true });
         return;
       }
@@ -148,10 +149,10 @@ export function SeriesPage({ id, admin, online, books, revision, onSaved, onRemo
       };
       try {
         // Whether this account saved the series (spec #560 "The Series page"): its saved series, or Hardcover's.
-        const list = await api<{ id: number }[]>("/series", fresh);
+        const list = await api<{ id: string }[]>("/series", fresh);
         if (gone.current) return;
         if (list.some((item) => item.id === seriesId)) {
-          const value = await api<SavedSeries>(`/series/${seriesId}?language=${language}${refresh ? "&refresh=1" : ""}`, fresh);
+          const value = await api<SavedSeries>(`/series/${encodeURIComponent(seriesId)}?language=${language}${refresh ? "&refresh=1" : ""}`, fresh);
           if (gone.current) return;
           show(value, true);
           // The last answer of a saved series opened on this device: shown without a connection (#568).
@@ -161,7 +162,7 @@ export function SeriesPage({ id, admin, online, books, revision, onSaved, onRemo
         // Not saved by this account: the page of Hardcover's series, with Save series. A copy this device kept from
         // when it was saved is not this series any more.
         void forgetSeriesAnswer(seriesAnswerKey(seriesId));
-        const value = await api<SavedSeries>(`/hardcover/series/${seriesId}?language=${language}`, fresh);
+        const value = await api<SavedSeries>(`/discover/series/${encodeURIComponent(seriesId)}?language=${language}`, fresh);
         if (gone.current) return;
         show(value, false);
       } catch (reason) {
@@ -232,11 +233,11 @@ export function SeriesPage({ id, admin, online, books, revision, onSaved, onRemo
   };
   const retryRefresh = () => run(() => load(true));
   // Dismiss: acknowledges every work the answer marks new; the card and the marks clear, then the series is read again.
-  const dismiss = async (bookIds: number[]) => {
+  const dismiss = async (bookIds: string[]) => {
     setDismissing(true);
     setDismissError("");
     try {
-      await api(`/series/${seriesId}/ack`, { method: "POST", body: JSON.stringify({ bookIds }) });
+      await api(`/series/${encodeURIComponent(seriesId)}/ack`, { method: "POST", body: JSON.stringify({ bookIds }) });
       setSeries((current) => {
         if (!current) return current;
         const cleared = withoutNew(current);
@@ -266,7 +267,7 @@ export function SeriesPage({ id, admin, online, books, revision, onSaved, onRemo
       const action = row.action;
       if (action?.kind === "retry-search") {
         for (const kind of action.kinds)
-          await api(`/series/${seriesId}/works/${row.bookId}/acquisition/retry`, { method: "POST", body: JSON.stringify({ kind }) });
+          await api(`/series/${encodeURIComponent(seriesId)}/works/${encodeURIComponent(row.bookId)}/acquisition/retry`, { method: "POST", body: JSON.stringify({ kind }) });
       } else if (action?.kind === "retry-download" && row.workId) {
         await api(`/works/${encodeURIComponent(row.workId)}/media/retry`, { method: "POST" });
         await refreshLibraryWorks().catch(() => {});
@@ -295,7 +296,7 @@ export function SeriesPage({ id, admin, online, books, revision, onSaved, onRemo
         status={row.status}
         lead={row.isNew ? NEW_MARK : null}
         cover={row.cover}
-        number={row.number}
+        number={row.label ?? row.number}
         marks={row.marks}
         progress={row.progress}
         failed={row.failed}

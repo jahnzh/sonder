@@ -46,6 +46,8 @@ export const SERVER_FAILED_LINE = "The server could not be searched.";
 export const OFFLINE_SEARCH_LINE = "Searching needs a connection.";
 export const CONNECT_HARDCOVER_LINE = "Connect Hardcover in Settings to search its books too";
 export const CONNECT_HARDCOVER_SERIES_LINE = "Connect Hardcover to search for series.";
+/** Series come from AudiobookDB (#721): its search failed; the server's reason follows. */
+export const SERIES_FAILED_LINE = "AudiobookDB could not be searched";
 
 const waiting = { state: "waiting" } as const;
 const answered = <T,>(value: T): Answer<T> => ({ state: "done", value });
@@ -57,6 +59,8 @@ type State = {
   works: Answer<WorkResult[]>;
   hits: Answer<HardcoverHit[]>;
   series: Answer<SeriesResult[]>;
+  /** The server's reason when the series search failed. */
+  seriesError?: string;
 };
 
 /** The entry's kept state, its answers only when they came in this load. */
@@ -93,7 +97,7 @@ export function DiscoverPage({
   /** The settings are read: whether Hardcover is connected is known. */
   settingsRead: boolean;
   onBook: (workId: string) => void;
-  onSeries: (id: number) => void;
+  onSeries: (id: string) => void;
   onRecording: (query: string) => void;
   onConnect: () => void;
 }) {
@@ -160,11 +164,11 @@ export function DiscoverPage({
     setState((s) => ({ ...s, searched: words, series: waiting }));
     api<SeriesResult[]>(`/discover/series?q=${encodeURIComponent(words)}`)
       .then((answer) => id === searchId.current && setState((s) => ({ ...s, series: answered(answer) })))
-      .catch(() => id === searchId.current && setState((s) => ({ ...s, series: { state: "failed" } })));
+      .catch((reason: Error) => id === searchId.current && setState((s) => ({ ...s, series: { state: "failed" }, seriesError: reason.message })));
   };
   const run = (seg: DiscoverSegment, words: string) => {
     if (seg === "books") searchBooks(words);
-    else if (hardcoverConnected) searchSeries(words);
+    else searchSeries(words);
   };
 
   // A reload runs the kept query again, once the settings say whether Hardcover is searched.
@@ -244,11 +248,11 @@ export function DiscoverPage({
         {recordingRow}
       </>
     );
-  } else if (hardcoverConnected) {
+  } else {
     const found = state.series;
     body =
       found.state === "failed" ? (
-        failed(HARDCOVER_FAILED_LINE, () => searchSeries(searched))
+        failed(state.seriesError ? `${SERIES_FAILED_LINE} · ${state.seriesError.replace(/\.$/, "")}` : SERIES_FAILED_LINE, () => searchSeries(searched))
       ) : found.state === "done" ? (
         found.value.length ? (
           <Group caption={`Series · ${found.value.length}`}>
@@ -308,10 +312,11 @@ export function DiscoverPage({
           </p>
         ) : (
           settingsRead &&
-          !hardcoverConnected && (
+          !hardcoverConnected &&
+          segment === "books" && (
             <p className="discover-line type-label">
               <button type="button" className="discover-link" onClick={onConnect}>
-                {segment === "books" ? CONNECT_HARDCOVER_LINE : CONNECT_HARDCOVER_SERIES_LINE}
+                {CONNECT_HARDCOVER_LINE}
               </button>
             </p>
           )

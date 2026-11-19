@@ -41,22 +41,22 @@ function store(key: string, on: boolean) {
  * The book a row's Add asked for, by series, until the sheet opens. Held in memory only: a reload (or a link) opens
  * the sheet with the server's `selected`.
  */
-const askedFor = new Map<number, number>();
+const askedFor = new Map<string, string>();
 
 /** A row's Add: the sheet opens with that book chosen. */
-export function openAddSheet(seriesId: number, bookId: number) {
+export function openAddSheet(seriesId: string, bookId: string) {
   askedFor.set(seriesId, bookId);
   navigate({ name: "series-add", id: String(seriesId) });
 }
 
 /** Save series, on a series that is not saved: the sheet opens with the defaults chosen. */
-export function openSaveSheet(seriesId: number) {
+export function openSaveSheet(seriesId: string) {
   askedFor.delete(seriesId);
   navigate({ name: "series-add", id: String(seriesId) });
 }
 
 /** How the sheet that opens now was opened (the sheet forgets the row's Add once it closes). */
-function openingOf(seriesId: number): SeriesAddOpening {
+function openingOf(seriesId: string): SeriesAddOpening {
   const bookId = askedFor.get(seriesId);
   return bookId === undefined ? { from: "address" } : { from: "row", bookId };
 }
@@ -98,7 +98,7 @@ function StackedCover({ covers }: { covers: (string | null)[] }) {
 }
 
 type Props = {
-  seriesId: number;
+  seriesId: string;
   series: SeriesAddSeries | null;
   /** The series is saved; false for the Save series sheet of a series that is not saved. */
   saved: boolean;

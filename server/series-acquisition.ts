@@ -193,8 +193,8 @@ export function restoreManualSeriesReleaseClaim(claim: ManualSeriesReleaseClaim)
 
 export function finalizeManualSeriesReleaseClaim(
   userId: number,
-  seriesId: number,
-  bookId: number,
+  seriesId: string,
+  bookId: string,
   workId: string,
 ) {
   setJobState(userId, seriesId, bookId, workId, "audio", "done", null);
@@ -235,8 +235,8 @@ export function workHasAppropriateEbook(workId: string) {
 
 function jobRow(
   userId: number,
-  seriesId: number,
-  bookId: number,
+  seriesId: string,
+  bookId: string,
   kind: SeriesAcquisitionKind,
 ) {
   return db
@@ -273,8 +273,8 @@ function jobRowForWork(
 
 function upsertJob(input: {
   userId: number;
-  seriesId: number;
-  bookId: number;
+  seriesId: string;
+  bookId: string;
   workId: string;
   kind: SeriesAcquisitionKind;
   status: SeriesAcquisitionJobStatus;
@@ -366,22 +366,36 @@ export function resetStrandedSeriesAcquisitionClaims(now = Date.now()) {
   reviveStrandedCancelledClaims(now);
 }
 
-function catalogueVolumes(seriesId: number) {
+function catalogueVolumes(seriesId: string) {
   return sqlite
     .prepare(
-      `SELECT book_id AS bookId, title, position, unreleased, cover
+      `SELECT book_id AS bookId, title, position, unreleased, cover, narrators, length_ms AS lengthMs
        FROM series_catalogue_works WHERE series_id=? ORDER BY position IS NULL, position, book_id`,
     )
     .all(seriesId) as {
-    bookId: number;
+    bookId: string;
     title: string;
     position: number | null;
     unreleased: number;
     cover: string | null;
+    /** The narrators and length of the book's English releases on AudiobookDB (#721), for the ranking. */
+    narrators: string;
+    lengthMs: number | null;
   }[];
 }
 
-function seriesMeta(seriesId: number) {
+function parseNarrators(value: string | null | undefined): string[] {
+  try {
+    const parsed = JSON.parse(value || "[]") as unknown;
+    return Array.isArray(parsed) ? parsed.filter((name): name is string => typeof name === "string") : [];
+  } catch (error) {
+    // A row written by hand without the list ranks as before.
+    void (error as Error).message;
+    return [];
+  }
+}
+
+function seriesMeta(seriesId: string) {
   return sqlite
     .prepare(
       "SELECT name, author FROM series_catalogue WHERE id=? LIMIT 1",
@@ -391,8 +405,8 @@ function seriesMeta(seriesId: number) {
 
 export function enqueueSeriesAcquisition(
   userId: number,
-  seriesId: number,
-  works: { bookId: number; workId: string; unreleased: boolean }[],
+  seriesId: string,
+  works: { bookId: string; workId: string; unreleased: boolean }[],
   options: { searchAudio?: boolean; searchEbooks?: boolean },
 ) {
   const audio = !!options.searchAudio;
@@ -550,8 +564,8 @@ function presentationForJob(
 
 export function seriesWorkAcquisitions(
   userId: number,
-  seriesId: number,
-  bookId: number,
+  seriesId: string,
+  bookId: string,
   workId: string | null,
   unreleased: boolean,
 ): { audio: SeriesWorkAcquisitionState | null; ebook: SeriesWorkAcquisitionState | null } {
@@ -762,6 +776,7 @@ async function runAudioJob(
       allVolumes: refs,
       title: volume.title,
       cover: volume.cover ?? edition?.cover,
+      expected: { narrators: parseNarrators(volume.narrators), lengthMs: volume.lengthMs },
     },
     wrappedAcquire,
     deps.seriesAudioDeps,
@@ -793,8 +808,8 @@ async function runEbookJob(
 
 export function setJobState(
   userId: number,
-  seriesId: number,
-  bookId: number,
+  seriesId: string,
+  bookId: string,
   workId: string,
   kind: SeriesAcquisitionKind,
   status: SeriesAcquisitionJobStatus,
@@ -805,8 +820,8 @@ export function setJobState(
 
 export async function retrySeriesWorkAcquisition(
   userId: number,
-  seriesId: number,
-  bookId: number,
+  seriesId: string,
+  bookId: string,
   kind: SeriesAcquisitionKind,
   acquire: typeof defaultAcquire = deps.acquire ?? defaultAcquire,
 ) {

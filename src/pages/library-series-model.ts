@@ -4,7 +4,7 @@
 
 /** One saved series as `GET /api/series` answers it. */
 export type SavedSeriesItem = {
-  id: number;
+  id: string;
   name: string;
   author: string | null;
   count: number | null;
@@ -17,7 +17,7 @@ export type SavedSeriesItem = {
 };
 
 export type SeriesListRow = {
-  id: number;
+  id: string;
   name: string;
   /** "<author> · N of M finished". */
   line: string;
@@ -44,7 +44,7 @@ export function seriesListLine(item: SavedSeriesItem): string {
  * The rows of the chip, in the server's order (by name). The Library's search narrows them by name and author, as
  * it narrows the shelf; `current` is the series shown beside the list.
  */
-export function seriesListRows(items: SavedSeriesItem[], { query = "", current = null }: { query?: string; current?: number | null } = {}): SeriesListRow[] {
+export function seriesListRows(items: SavedSeriesItem[], { query = "", current = null }: { query?: string; current?: string | null } = {}): SeriesListRow[] {
   const needle = query.trim().toLowerCase();
   return items
     .filter((item) => !needle || `${item.name} ${item.author ?? ""}`.toLowerCase().includes(needle))

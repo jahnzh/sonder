@@ -11,7 +11,7 @@
 import type { DeviceSaveEntry } from "./device-saves";
 import {
   downloadLine, ebookCheckLine, failedLine, finishedLine, readingSyncLine, serverCopyLine, seriesSearchLine, spareEditionsLine,
-  withFileCount, withReason, withUser, deviceSaveLine, ALREADY_HAS_COPY_LINE,
+  withFileCount, withReason, withUser, deviceSaveLine, ALREADY_HAS_COPY_LINE, searchReason, SERIES_NOT_SAVED_AGAIN_LINE, SERIES_SAVED_AGAIN_LINE,
   type DownloadFacts, type EbookCheckFacts, type ReadingSyncJobFacts, type SeriesSearchFacts, type ServerCopyFacts,
 } from "./status-lines";
 import type { ActivityItem, ActivityItemAction, ActivityProcess, ActivityResponse } from "./types";
@@ -268,6 +268,9 @@ function serverEntry(item: ActivityItem, now: number, spares: Map<string, { tota
   let line: string | null;
   // A Hardcover queue is one user's: its line names whose it is, as Server's queue line does ("… · admin").
   if (notBook) line = withUser(item.error ?? item.stuck?.reason ?? item.detail ?? "", item.user);
+  // A saved series moved to AudiobookDB (#721): not found or not saved yet, or saved without some books, and why.
+  else if (item.facts.kind === "series-acquisition" && item.facts.saveAgain)
+    line = withReason(failed ? SERIES_NOT_SAVED_AGAIN_LINE : SERIES_SAVED_AGAIN_LINE, searchReason(item.error));
   // A failed series search names which search failed and why (#717).
   else if (failed && item.facts.kind === "series-acquisition")
     line = seriesSearchLine({ status: "failed", search: item.facts.search, reason: item.error });
@@ -277,6 +280,7 @@ function serverEntry(item: ActivityItem, now: number, spares: Map<string, { tota
   else line = movingLine(item);
   // A finished series search for the audiobook has no line: the download it starts takes over the row.
   if (line === null && entry === "series-search" && item.state === "done") return null;
+  const saveAgain = item.facts.kind === "series-acquisition" && !!item.facts.saveAgain;
   // A cause the source named leads the line (#716: "No peers · Downloading to server · 0%"), so a row with a button
   // still shows it on a phone; "No change for …" and "Blocked by …" follow the line as before.
   if (!notBook && item.stuck)
@@ -294,7 +298,7 @@ function serverEntry(item: ActivityItem, now: number, spares: Map<string, { tota
     cover: notBook ? null : item.cover,
     entry,
     // A series search is about the file it looks for ("Ebook on server" has the Ebook icon, ActivityFailedSave.dc.html).
-    icon: notBook ? "server" : item.facts.kind === "series-acquisition" ? item.facts.search : ICON_OF[entry] ?? null,
+    icon: notBook || saveAgain ? "server" : item.facts.kind === "series-acquisition" ? item.facts.search : ICON_OF[entry] ?? null,
     line: line ?? item.detail ?? "",
     failed: failed || notBook,
     progress: group === "progress" && !item.stuck && !item.superseded ? item.progress : null,

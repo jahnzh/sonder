@@ -9,6 +9,49 @@ export const sqlite = new Database(resolve(dataDir, "sonder.db"));
 chmodSync(resolve(dataDir, "sonder.db"), 0o600);
 sqlite.pragma("journal_mode = WAL");
 sqlite.pragma("foreign_keys = ON");
+// #721 (part b): the series tables move from Hardcover's integer ids to AudiobookDB's text ids. A non-additive change
+// the owner allowed: once, at the first start that finds the Hardcover tables, they are renamed to `hardcover_<name>`
+// and left unused (dropped with the rest of Hardcover later), and new empty tables are made under the old names below.
+// Each user's saved series are noted in `series_resave` to be saved again by their names on AudiobookDB
+// (`server/series-resave.ts`); what cannot be found is listed in Activity. Works, files and progress are untouched.
+export const HARDCOVER_SERIES_TABLES = [
+  "series_catalogue",
+  "series_catalogue_works",
+  "user_saved_series",
+  "user_saved_series_works",
+  "user_series_seen_works",
+  "series_acquisition_jobs",
+] as const;
+const SERIES_RESAVE_TABLE =
+  "CREATE TABLE IF NOT EXISTS series_resave(user_id INTEGER NOT NULL,hardcover_series_id INTEGER NOT NULL,name TEXT NOT NULL,author TEXT,work_ids TEXT NOT NULL DEFAULT '[]',status TEXT NOT NULL CHECK(status IN ('pending','saved','missing','failed')),series_id TEXT,reason TEXT,attempts INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL,PRIMARY KEY(user_id,hardcover_series_id))";
+/** True while `series_catalogue` is the Hardcover table (an integer id): the reset has not run on this database. */
+export function seriesTablesAreHardcover(): boolean {
+  const id = (sqlite.prepare("PRAGMA table_info(series_catalogue)").all() as { name: string; type: string }[]).find((column) => column.name === "id");
+  return !!id && /INT/i.test(id.type);
+}
+export function resetSeriesTablesToCatalogue(now = Date.now()): boolean {
+  if (!seriesTablesAreHardcover()) return false;
+  sqlite.transaction(() => {
+    const exists = (name: string) => !!sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
+    // The old unique indexes keep their names on the renamed table; the new table makes its own under those names.
+    sqlite.exec("DROP INDEX IF EXISTS series_acquisition_jobs_user_series_book_kind; DROP INDEX IF EXISTS series_acquisition_jobs_user_work_kind;");
+    for (const table of HARDCOVER_SERIES_TABLES)
+      if (exists(table) && !exists(`hardcover_${table}`)) sqlite.exec(`ALTER TABLE ${table} RENAME TO hardcover_${table}`);
+    sqlite.exec(SERIES_RESAVE_TABLE);
+    if (exists("hardcover_user_saved_series"))
+      sqlite
+        .prepare(
+          `INSERT OR IGNORE INTO series_resave(user_id,hardcover_series_id,name,author,work_ids,status,updated_at)
+           SELECT u.user_id,u.series_id,c.name,c.author,
+             COALESCE((SELECT json_group_array(w.work_id) FROM hardcover_user_saved_series_works w WHERE w.user_id=u.user_id AND w.series_id=u.series_id),'[]'),
+             'pending',?
+           FROM hardcover_user_saved_series u JOIN hardcover_series_catalogue c ON c.id=u.series_id`,
+        )
+        .run(now);
+  })();
+  return true;
+}
+resetSeriesTablesToCatalogue();
 sqlite.exec(`
 CREATE TABLE IF NOT EXISTS acquisitions(id TEXT PRIMARY KEY,hash TEXT NOT NULL UNIQUE,magnet TEXT NOT NULL,backend TEXT NOT NULL,remote_id TEXT,title TEXT NOT NULL,author TEXT NOT NULL,cover TEXT NOT NULL,status TEXT NOT NULL,progress REAL NOT NULL DEFAULT 0,error TEXT,book_id TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS works(id TEXT PRIMARY KEY,title TEXT NOT NULL,author TEXT NOT NULL,description TEXT NOT NULL,genre TEXT NOT NULL,year INTEGER NOT NULL);
@@ -114,11 +157,11 @@ CREATE TABLE IF NOT EXISTS user_ebook_progress(user_id INTEGER NOT NULL REFERENC
 CREATE TABLE IF NOT EXISTS user_reader_checkpoints(user_id INTEGER NOT NULL REFERENCES users(id),edition_id TEXT NOT NULL REFERENCES ebook_editions(id),data TEXT NOT NULL,PRIMARY KEY(user_id,edition_id));
 CREATE TABLE IF NOT EXISTS user_reader_bookmarks(user_id INTEGER NOT NULL REFERENCES users(id),id TEXT NOT NULL,edition_id TEXT NOT NULL REFERENCES ebook_editions(id),label TEXT NOT NULL,locator TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(user_id,id));
 CREATE TABLE IF NOT EXISTS user_reader_events(user_id INTEGER NOT NULL REFERENCES users(id),event_id TEXT NOT NULL,edition_id TEXT NOT NULL REFERENCES ebook_editions(id),PRIMARY KEY(user_id,event_id));
-CREATE TABLE IF NOT EXISTS series_catalogue(id INTEGER PRIMARY KEY,name TEXT NOT NULL,author TEXT,book_count INTEGER);
-CREATE TABLE IF NOT EXISTS series_catalogue_works(series_id INTEGER NOT NULL REFERENCES series_catalogue(id),book_id INTEGER NOT NULL,work_id TEXT REFERENCES works(id),title TEXT NOT NULL,position REAL,cover TEXT,unreleased INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(series_id,book_id));
-CREATE TABLE IF NOT EXISTS user_saved_series(user_id INTEGER NOT NULL REFERENCES users(id),series_id INTEGER NOT NULL REFERENCES series_catalogue(id),saved_at INTEGER NOT NULL,PRIMARY KEY(user_id,series_id));
-CREATE TABLE IF NOT EXISTS user_saved_series_works(user_id INTEGER NOT NULL REFERENCES users(id),series_id INTEGER NOT NULL REFERENCES series_catalogue(id),book_id INTEGER NOT NULL,work_id TEXT NOT NULL REFERENCES works(id),introduced INTEGER NOT NULL,PRIMARY KEY(user_id,series_id,book_id));
-CREATE TABLE IF NOT EXISTS user_series_seen_works(user_id INTEGER NOT NULL REFERENCES users(id),series_id INTEGER NOT NULL REFERENCES series_catalogue(id),book_id INTEGER NOT NULL,acknowledged_at INTEGER NOT NULL,PRIMARY KEY(user_id,series_id,book_id));
+CREATE TABLE IF NOT EXISTS series_catalogue(id TEXT PRIMARY KEY,name TEXT NOT NULL,author TEXT,book_count INTEGER);
+CREATE TABLE IF NOT EXISTS series_catalogue_works(series_id TEXT NOT NULL REFERENCES series_catalogue(id),book_id TEXT NOT NULL,work_id TEXT REFERENCES works(id),title TEXT NOT NULL,position REAL,cover TEXT,unreleased INTEGER NOT NULL DEFAULT 0,position_label TEXT,author TEXT,provider TEXT NOT NULL DEFAULT 'audiobookdb' CHECK(provider IN ('audiobookdb','openlibrary')),language TEXT,narrators TEXT NOT NULL DEFAULT '[]',length_ms INTEGER,release_date TEXT,PRIMARY KEY(series_id,book_id));
+CREATE TABLE IF NOT EXISTS user_saved_series(user_id INTEGER NOT NULL REFERENCES users(id),series_id TEXT NOT NULL REFERENCES series_catalogue(id),saved_at INTEGER NOT NULL,refreshed_at INTEGER,PRIMARY KEY(user_id,series_id));
+CREATE TABLE IF NOT EXISTS user_saved_series_works(user_id INTEGER NOT NULL REFERENCES users(id),series_id TEXT NOT NULL REFERENCES series_catalogue(id),book_id TEXT NOT NULL,work_id TEXT NOT NULL REFERENCES works(id),introduced INTEGER NOT NULL,PRIMARY KEY(user_id,series_id,book_id));
+CREATE TABLE IF NOT EXISTS user_series_seen_works(user_id INTEGER NOT NULL REFERENCES users(id),series_id TEXT NOT NULL REFERENCES series_catalogue(id),book_id TEXT NOT NULL,acknowledged_at INTEGER NOT NULL,PRIMARY KEY(user_id,series_id,book_id));
 CREATE TABLE IF NOT EXISTS user_work_completion(user_id INTEGER NOT NULL REFERENCES users(id),work_id TEXT NOT NULL REFERENCES works(id),status TEXT NOT NULL CHECK(status IN ('finished','unread')),PRIMARY KEY(user_id,work_id));
 CREATE TABLE IF NOT EXISTS user_work_library_origin(user_id INTEGER NOT NULL REFERENCES users(id),work_id TEXT NOT NULL REFERENCES works(id),source TEXT NOT NULL CHECK(source IN ('unknown','manual','hardcover_sync','series')),series_id INTEGER,added_at INTEGER NOT NULL,PRIMARY KEY(user_id,work_id));
 CREATE TABLE IF NOT EXISTS account_requests(id INTEGER PRIMARY KEY,email TEXT NOT NULL,username TEXT NOT NULL,note TEXT,status TEXT NOT NULL DEFAULT 'pending',created_at INTEGER NOT NULL,reviewed_at INTEGER,invite_id INTEGER);
@@ -157,7 +200,7 @@ CREATE TABLE IF NOT EXISTS user_hardcover_recording_editions(user_id INTEGER NOT
 CREATE TABLE IF NOT EXISTS work_media_states(user_id INTEGER NOT NULL REFERENCES users(id),work_id TEXT NOT NULL REFERENCES works(id),state TEXT NOT NULL DEFAULT 'missing',hold_reason TEXT,acquisition_id TEXT,updated_at INTEGER NOT NULL,PRIMARY KEY(user_id,work_id));
 CREATE TABLE IF NOT EXISTS work_ebook_set(work_id TEXT PRIMARY KEY REFERENCES works(id),consensus_fingerprint TEXT,consensus_sentences TEXT NOT NULL DEFAULT '[]',projections TEXT NOT NULL DEFAULT '{}',recording_id TEXT,consensus_job_id TEXT,default_ebook_id TEXT,default_ebook_override TEXT,updated_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS work_ebook_set_members(work_id TEXT NOT NULL REFERENCES works(id),ebook_id TEXT NOT NULL REFERENCES ebook_editions(id),status TEXT NOT NULL,hold_reason TEXT,source_title TEXT,source_author TEXT,language TEXT,byte_size INTEGER,evidence TEXT NOT NULL DEFAULT '{}',updated_at INTEGER NOT NULL,PRIMARY KEY(work_id,ebook_id));
-CREATE TABLE IF NOT EXISTS series_acquisition_jobs(id TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),series_id INTEGER NOT NULL REFERENCES series_catalogue(id),book_id INTEGER NOT NULL,work_id TEXT NOT NULL REFERENCES works(id),kind TEXT NOT NULL CHECK(kind IN ('audio','ebook')),status TEXT NOT NULL CHECK(status IN ('pending','searching','done','failed')),error TEXT,updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS series_acquisition_jobs(id TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),series_id TEXT NOT NULL REFERENCES series_catalogue(id),book_id TEXT NOT NULL,work_id TEXT NOT NULL REFERENCES works(id),kind TEXT NOT NULL CHECK(kind IN ('audio','ebook')),status TEXT NOT NULL CHECK(status IN ('pending','searching','done','failed')),error TEXT,updated_at INTEGER NOT NULL,auto_retries INTEGER NOT NULL DEFAULT 0,retry_at INTEGER);
 CREATE UNIQUE INDEX IF NOT EXISTS series_acquisition_jobs_user_series_book_kind ON series_acquisition_jobs(user_id,series_id,book_id,kind);
 CREATE UNIQUE INDEX IF NOT EXISTS series_acquisition_jobs_user_work_kind ON series_acquisition_jobs(user_id,work_id,kind);
 `);
@@ -172,6 +215,11 @@ CREATE TABLE IF NOT EXISTS work_catalogue_links(work_id TEXT PRIMARY KEY,provide
 CREATE TABLE IF NOT EXISTS recording_release_links(recording_id TEXT PRIMARY KEY,book_id TEXT NOT NULL,release_id TEXT NOT NULL,narrator TEXT,length_ms INTEGER,asin TEXT,language TEXT,chapters TEXT NOT NULL DEFAULT '[]',matched_by TEXT NOT NULL CHECK(matched_by IN ('asin','length','manual')),linked_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS work_catalogue_match(work_id TEXT PRIMARY KEY,outcome TEXT NOT NULL CHECK(outcome IN ('matched','ambiguous','missing','failed')),reason TEXT,candidates INTEGER NOT NULL DEFAULT 0,checked_at INTEGER NOT NULL);
 `);
+sqlite.exec(SERIES_RESAVE_TABLE);
+// A work a series brought into the library names that series by its AudiobookDB id (#721); `series_id` keeps the
+// Hardcover id of older rows, unused.
+if (!(sqlite.prepare("PRAGMA table_info(user_work_library_origin)").all() as { name: string }[]).some((c) => c.name === "catalogue_series_id"))
+  sqlite.exec("ALTER TABLE user_work_library_origin ADD COLUMN catalogue_series_id TEXT");
 // A series search that could not reach its source is tried again by itself (#717): how often it was, and not before when.
 {
   const seriesJobColumns = new Set((sqlite.prepare("PRAGMA table_info(series_acquisition_jobs)").all() as { name: string }[]).map((c) => c.name));

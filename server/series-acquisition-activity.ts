@@ -44,6 +44,33 @@ export type SeriesJobRow = {
   /** When a job the queue put back by itself may run again (#717); null for one that may run now. */
   retry_at?: number | null;
   work?: ItemWork | null;
+  /**
+   * A series of the Hardcover tables saved again on AudiobookDB (#721 part b, `series_resave`): `status` is the
+   * row's own (`missing`, `failed`, `saved`), `title` the series name, `error` the reason.
+   */
+  resave?: { userId: number; hardcoverSeriesId: number };
+};
+
+/** The reset's rows Activity lists: a series not found or not saved yet, and one saved without some of its books. */
+const RESAVE_STATES: Record<string, ActivityState> = { missing: "failed", failed: "failed", saved: "done", pending: "queued" };
+function resaveRows(sqlite: Parameters<typeof worksWithFile>[0]): SeriesJobRow[] {
+  const table = sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='series_resave'").get();
+  if (!table) return [];
+  const rows = sqlite
+    .prepare(
+      `SELECT r.user_id AS userId,r.hardcover_series_id AS hardcoverSeriesId,u.username AS user,r.name,r.status,r.reason,r.updated_at
+         FROM series_resave r LEFT JOIN users u ON u.id=r.user_id
+        WHERE r.status IN ('missing','failed') OR (r.status='saved' AND r.reason IS NOT NULL) ORDER BY r.rowid`,
+    )
+    .all() as { userId: number; hardcoverSeriesId: number; user: string | null; name: string; status: string; reason: string | null; updated_at: number }[];
+  return rows.map((row) => ({
+    id: `resave:${row.userId}:${row.hardcoverSeriesId}`, user: row.user, kind: "series", title: row.name, status: row.status, error: row.reason,
+    updated_at: row.updated_at, retry_at: null, work: null, resave: { userId: row.userId, hardcoverSeriesId: row.hardcoverSeriesId },
+  }));
+}
+export const parseResaveId = (id: string) => {
+  const match = id.match(/^series-acquisition:resave:(\d+):(\d+)$/);
+  return match ? { userId: Number(match[1]), hardcoverSeriesId: Number(match[2]) } : null;
 };
 
 const expectedOutcome = (row: Pick<SeriesJobRow, "status" | "error">) =>
@@ -51,6 +78,14 @@ const expectedOutcome = (row: Pick<SeriesJobRow, "status" | "error">) =>
 
 /** The administrator's Retry on a failed search: the feature puts the job back in its queue (`retrySeriesAcquisitionJob`). */
 const retry: ActivityAction = async (id, { deps, log }) => {
+  const resave = parseResaveId(id);
+  if (resave) {
+    if (!deps.retrySeriesResave) throw activityFailure(400, "This item has no retry or discard yet.");
+    const result = deps.retrySeriesResave(resave.userId, resave.hardcoverSeriesId, (error) =>
+      log.warn({ action: "activity.retry", id, error }, "Saving a series again failed after a retry"));
+    log.info({ action: "activity.retry", id }, "Series saved again on request");
+    return { ok: true, result };
+  }
   const jobId = id.slice("series-acquisition:".length);
   if (!deps.retrySeriesSearch) throw activityFailure(400, "This item has no retry or discard yet.");
   const result = deps.retrySeriesSearch(jobId, (error) =>
@@ -73,7 +108,7 @@ export const seriesAcquisitionSource = defineSource<SeriesJobRow[]>({
           ORDER BY j.rowid`,
       ).all() as Array<Omit<SeriesJobRow, "work"> & { work_id: string | null }>,
       (row) => row.work_id,
-    ).filter((row) => !failedButHasFile(sqlite, row)),
+    ).filter((row) => !failedButHasFile(sqlite, row)).map((row): SeriesJobRow => row).concat(resaveRows(sqlite)),
   report(rows, _probe, context) {
     const now = context?.now ?? Date.now();
     // The search running now is first in line; the waiting jobs that may run follow in the queue's order.
@@ -82,6 +117,7 @@ export const seriesAcquisitionSource = defineSource<SeriesJobRow[]>({
     for (const row of rows)
       if (row.status === "pending" && !(row.retry_at && row.retry_at > now)) places.set(row.id, ++place);
     const drafts = rows.map((row) => {
+      if (row.resave) return resaveDraft(row);
       const mapped = stateFrom(SERIES_ACQUISITION_ACTIVITY_STATES, row.status);
       const expected = expectedOutcome(row);
       const state = expected ? "done" : mapped.state;
@@ -104,7 +140,28 @@ export const seriesAcquisitionSource = defineSource<SeriesJobRow[]>({
     return { drafts };
   },
   retry,
+  discard: async (id, { deps }) => {
+    const resave = parseResaveId(id);
+    if (!resave || !deps.discardSeriesResave) throw activityFailure(400, "This item has no retry or discard yet.");
+    if (!deps.discardSeriesResave(resave.userId, resave.hardcoverSeriesId)) throw activityFailure(409, "This series is still being saved again.");
+    return { ok: true };
+  },
 });
+
+/** A series of the reset: not found (Discard), not saved yet (Retry), or saved without some books (Discard). */
+function resaveDraft(row: SeriesJobRow) {
+  const state = RESAVE_STATES[row.status] ?? "failed";
+  return {
+    id: `series-acquisition:${row.id}`, kind: "series-acquisition" as const, processId: "series-acquisition",
+    title: row.title || "Series", detail: "Saved series moved to AudiobookDB",
+    user: row.user, state, progress: null, host: null, startedAt: null, updatedAt: row.updated_at,
+    ...itemWork(null),
+    facts: { kind: "series-acquisition" as const, status: state === "done" ? "done" : "failed", search: "audiobook" as const, place: null, retryAt: null, saveAgain: true as const },
+    error: row.error, changedAt: row.updated_at,
+    permanent: row.status === "missing",
+    actions: row.status === "failed" ? ["retry" as const] : ["discard" as const],
+  };
+}
 
 /**
  * A failed search whose work has the file it looked for by now, by any route (#717): Activity no longer lists it, as

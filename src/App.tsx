@@ -314,7 +314,7 @@ function LibraryApp({
   // column. Until the list is read the series is taken as saved: the page itself sends one that is not to the Library.
   const seriesBeside = seriesRouteId !== null && sideBySide && (savedSeries.items === undefined || isSavedSeries(savedSeries.items, seriesRouteId));
   // On a desktop choosing a series replaces the entry, as choosing a worker beside the Server list does (ADR 0020).
-  const openSeries = (id: number) => address.navigate({ name: "series", id: String(id) }, { replace: sideBySide });
+  const openSeries = (id: string) => address.navigate({ name: "series", id }, { replace: sideBySide });
   const findSeries = () => {
     askDiscoverSearch("series");
     navigate("discover");
@@ -882,7 +882,7 @@ function LibraryApp({
                 openSeries={openSeries}
                 findSeries={findSeries}
                 findBook={findBook}
-                beside={seriesBeside && seriesRouteId !== null ? { id: Number(seriesRouteId), page: seriesPage(seriesRouteId, true) } : null}
+                beside={seriesBeside && seriesRouteId !== null ? { id: seriesRouteId, page: seriesPage(seriesRouteId, true) } : null}
                 favorites={favorites}
                 onDevice={keptComplete}
                 openWork={openWork}

@@ -31,7 +31,23 @@ export type SeriesAudioCandidate = {
   kind: SeriesAudioKind;
   query: string;
   cached?: boolean;
+  /** The release's length where the source names one (milliseconds). */
+  lengthMs?: number | null;
 };
+
+/**
+ * What the book's English releases on AudiobookDB say (#721): their narrators and length. A candidate read by one of
+ * the narrators, or as long as a release, is more likely the book's audiobook than another.
+ */
+export type SeriesAudioExpectation = { narrators: string[]; lengthMs: number | null };
+const personKey = (name: string) =>
+  name.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim().split(" ").filter(Boolean).sort().join(" ");
+/** The candidate's narrator is one of the release's (names compared as sets of words, so "Mays, Jefferson" counts). */
+export function narratorMatches(candidate: string | null | undefined, expected: readonly string[]) {
+  if (!candidate || !expected.length) return false;
+  const wanted = new Set(expected.map(personKey).filter(Boolean));
+  return candidate.split(/\s*(?:,|;|&|\band\b)\s*/i).some((name) => wanted.has(personKey(name))) || wanted.has(personKey(candidate));
+}
 
 const APOSTROPHE = /[''`\u2019\u2018]/g;
 
@@ -147,21 +163,23 @@ export function buildVolumeSearchQueries(input: {
   return [...new Set(base.map((query) => query.trim()))];
 }
 
-export function rankSeriesAudioCandidate(candidate: SeriesAudioCandidate) {
+export function rankSeriesAudioCandidate(candidate: SeriesAudioCandidate, expected?: SeriesAudioExpectation | null) {
   let score = candidate.kind === "plain" ? 100 : candidate.kind === "episodic" ? 10 : -100;
   if (candidate.cached) score += 50;
-  if (/jeff hays/i.test(candidate.narrator || "")) score += 5;
+  if (expected && narratorMatches(candidate.narrator, expected.narrators)) score += 20;
+  if (expected?.lengthMs && candidate.lengthMs && Math.abs(candidate.lengthMs - expected.lengthMs) <= Math.max(120_000, expected.lengthMs * 0.03)) score += 10;
   if (/m4b|mp3/i.test(`${candidate.format || ""} ${candidate.title}`)) score += 2;
   return score;
 }
 
 export function pickAutoAcquireCandidate(
   candidates: SeriesAudioCandidate[],
+  expected?: SeriesAudioExpectation | null,
 ): SeriesAudioCandidate | null {
   const list = candidates
     .filter((candidate) => isAutoAcquireKind(candidate.kind) && candidate.hash)
     .sort(
-      (a, b) => rankSeriesAudioCandidate(b) - rankSeriesAudioCandidate(a),
+      (a, b) => rankSeriesAudioCandidate(b, expected) - rankSeriesAudioCandidate(a, expected),
     );
   return list[0] || null;
 }
@@ -368,6 +386,8 @@ export async function autoAcquireSeriesVolume(
     cover?: string;
     narrator?: string | null;
     language?: string | null;
+    /** The book's English releases on AudiobookDB, for the ranking (#721). */
+    expected?: SeriesAudioExpectation | null;
   },
   acquire: (
     magnet: string,
@@ -395,7 +415,7 @@ export async function autoAcquireSeriesVolume(
     input.allVolumes,
     deps,
   );
-  const chosen = pickAutoAcquireCandidate(candidates);
+  const chosen = pickAutoAcquireCandidate(candidates, input.expected);
   if (!chosen?.hash) {
     markWorkEmptySearch(userId, input.workId);
     return getWorkMediaState(userId, input.workId);

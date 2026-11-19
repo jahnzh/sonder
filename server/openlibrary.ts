@@ -110,6 +110,42 @@ export async function searchOpenLibrary(query: string, options: { priority?: Pri
     .filter((book) => !book.languages.length || book.languages.includes("eng"));
 }
 
+/** A book Open Library lists in a series: its work, and its place there as Open Library gives it. */
+export type OpenLibrarySeriesBook = { book: CatalogueBook; position: string; sort: number };
+const seriesKey = (name: string) => normaliseQuery(name).replace(/^the\s+/, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+/**
+ * The English books Open Library lists in the series called `name` (#721 part b: a book of a saved series with no
+ * audiobook yet). `search.json?q=series:"<name>"` matches loosely, so only a result whose own `series_name` is this
+ * name and whose `series_position` starts with a number is kept; cached a day like any search.
+ */
+export async function searchOpenLibrarySeries(name: string, options: { priority?: Priority; fresh?: boolean } = {}): Promise<OpenLibrarySeriesBook[]> {
+  const wanted = seriesKey(name);
+  if (wanted.length < 2) return [];
+  const q = `series:"${name.replace(/"/g, "").trim()}"`;
+  const { data } = await cached({
+    provider: "openlibrary",
+    kind: "search:series",
+    key: normaliseQuery(q),
+    ttlMs: SEARCH_TTL_MS,
+    now: config.clock.now(),
+    fresh: options.fresh,
+    live: () => request(`/search.json?${new URLSearchParams({ q, fields: `${SEARCH_FIELDS},series_name,series_position`, limit: "40" })}`, options.priority ?? "interactive"),
+  });
+  const docs = isObject(data) && Array.isArray(data.docs) ? data.docs : [];
+  return docs.flatMap((doc): OpenLibrarySeriesBook[] => {
+    const book = readOpenLibraryDoc(doc);
+    if (!book || !isObject(doc)) return [];
+    if (book.languages.length && !book.languages.includes("eng")) return [];
+    const names = Array.isArray(doc.series_name) ? doc.series_name : [];
+    const positions = Array.isArray(doc.series_position) ? doc.series_position : [];
+    const at = names.findIndex((entry) => typeof entry === "string" && seriesKey(entry) === wanted);
+    if (at < 0) return [];
+    const position = typeof positions[at] === "string" ? (positions[at] as string).trim() : typeof positions[at] === "number" ? String(positions[at]) : "";
+    const sort = Number(position.match(/^\d+(?:\.\d+)?/)?.[0] ?? NaN);
+    return Number.isFinite(sort) ? [{ book, position: String(sort), sort }] : [];
+  });
+}
+
 /** `/works/{id}.json`, cached a week; the description only on a live answer. */
 export async function openLibraryWork(id: string, options: { priority?: Priority; fresh?: boolean } = {}): Promise<{ id: string; title: string; description: string | null; cover: string | null }> {
   if (!/^OL\d+W$/.test(id)) throw fail("not_found", "Open Library has no work with this id.");

@@ -98,7 +98,7 @@ export type LibraryWork = {
    * (those stay on the alignment routes). A running rebuild's state is under `rebuild`.
    */
   readingSync: ReadingSyncSummary[];
-  /** Every series of the work (its Hardcover book's), the ones the user saved first, then in Hardcover's order. */
+  /** Every series of the work on AudiobookDB, the ones the user saved first, then by name. */
   series: WorkSeries[];
   /** The media state of ADR 0011, as `Book.mediaState`; null when the work has none for the user. */
   mediaState: WorkMediaState | null;
@@ -158,7 +158,8 @@ export type WorkResult = {
   /** The Hardcover book the work is matched to, if any. */
   hardcoverId: number | null;
 };
-export type WorkSeries = { id: number | null; name: string; position: number | null; saved: boolean };
+/** A series of a work on AudiobookDB (#721): its id, name, number and label ("1.5"), and whether the user saved it. */
+export type WorkSeries = { id: string | null; name: string; position: number | null; positionLabel?: string | null; saved: boolean };
 export type WorkMediaState = {
   state: "missing" | "queued" | "failed" | "available";
   holdReason: "unreleased" | "empty_search" | null;
@@ -433,6 +434,11 @@ export type ActivityFacts =
       place?: number | null;
       /** A search put back in the queue by itself after its source could not be reached waits until then; else null. */
       retryAt?: number | null;
+      /**
+       * Not a search: a saved series of the Hardcover tables saved again on AudiobookDB (#721 part b). The title is
+       * the series name and the error the reason; an older client reads it as a failed audiobook search.
+       */
+      saveAgain?: true;
     }
   | {
       kind: "alignment";
