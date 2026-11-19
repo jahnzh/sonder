@@ -6,7 +6,7 @@ import { currentUserId, requireAdmin } from "./users.ts";
 import { discoverAudiobookDb, discoverOpenLibrary } from "./discover-catalogue.ts";
 import { sqlite } from "./db.ts";
 import { CATALOGUE_PROVIDERS, CatalogueError, isExtraProvider, type CatalogueProviderName } from "./catalogue-provider.ts";
-import { audiobookDbKey, audiobookDbReleases, audiobookDbUnitsToday, searchAudiobookDbBooks, testAudiobookDb, type CatalogueBook } from "./audiobookdb.ts";
+import { audiobookDbKey, audiobookDbUnitsToday, searchAudiobookDbBooks, testAudiobookDb, type CatalogueBook } from "./audiobookdb.ts";
 import { searchOpenLibrary } from "./openlibrary.ts";
 import { searchGoogleBooks } from "./googlebooks.ts";
 import { searchItunes } from "./itunes.ts";
@@ -26,6 +26,7 @@ import {
   unmatchedWorks,
   workLink,
   workRecordings,
+  workReleases,
 } from "./catalogue-links.ts";
 
 const failed = (reply: FastifyReply, error: unknown) => {
@@ -61,7 +62,7 @@ async function settle(provider: CatalogueProviderName, q: string) {
   }
 }
 
-/** The match page's answer: the link, the batch's outcome, the recordings and (on AudiobookDB) the English releases. */
+/** The match page's answer: the link (with its duplicates), the batch's outcome, the recordings and (on AudiobookDB) the English releases of all the work's entries. */
 async function workCatalogue(workId: string) {
   const work = sqlite.prepare("SELECT id,title,author FROM works WHERE id=?").get(workId) as { id: string; title: string; author: string } | undefined;
   if (!work) return null;
@@ -73,12 +74,14 @@ async function workCatalogue(workId: string) {
     narrator: recording.narrator,
     release: releaseLink(recording.recordingId),
   }));
-  let releases: { id: string; narrators: string[]; lengthMs: number | null; asin: string | null; language: string | null; abridged: boolean | null; chapters: number }[] = [];
+  let releases: { id: string; bookId: string | null; narrators: string[]; lengthMs: number | null; asin: string | null; language: string | null; abridged: boolean | null; chapters: number }[] = [];
   let releasesError: string | null = null;
   if (link?.provider === "audiobookdb") {
     try {
-      releases = (await audiobookDbReleases(link.id)).filter(englishRelease).map((release) => ({
+      // The releases of every entry of the work: the main link's, then its duplicates' (#754).
+      releases = (await workReleases(workId)).filter(englishRelease).map((release) => ({
         id: release.id,
+        bookId: release.bookId,
         narrators: release.narrators,
         lengthMs: release.lengthMs,
         asin: release.asin,

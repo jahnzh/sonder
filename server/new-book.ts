@@ -71,6 +71,7 @@ export function removeMadeWork(workId: string) {
     sqlite.prepare("UPDATE acquisitions SET work_id=NULL WHERE work_id=?").run(workId);
     // Its catalogue link and match outcome (#721) go with it.
     sqlite.prepare("DELETE FROM work_catalogue_links WHERE work_id=?").run(workId);
+    sqlite.prepare("DELETE FROM work_catalogue_duplicates WHERE work_id=?").run(workId);
     sqlite.prepare("DELETE FROM work_catalogue_match WHERE work_id=?").run(workId);
     sqlite.prepare("DELETE FROM works WHERE id=?").run(workId);
   })();
