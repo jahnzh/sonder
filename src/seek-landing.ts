@@ -53,3 +53,16 @@ export function landingStep(landing: Landing | null, read: LandingRead): Landing
 export function heldPosition(landing: Landing | null, generation: number, currentTime: number): number {
   return landing && landing.generation === generation ? landing.target : currentTime;
 }
+
+/**
+ * The element is sent to `soughtTo` while a load's seek is held (#730). The landing's own reseeks go to its target
+ * and leave it as it is. Any other seek, the player's or one made on the element itself (the live checks seek it so),
+ * replaces the load's: the landing holds and confirms that place from now on, with its own tries. Kept on the old
+ * target, the held place stayed the place: a paused seek left the reader on the held passage, or the landing sought
+ * back to it.
+ */
+export function landingSought(landing: Landing | null, generation: number, soughtTo: number, now: number): Landing | null {
+  if (!landing || landing.generation !== generation || !Number.isFinite(soughtTo)) return landing;
+  if (Math.abs(soughtTo - landing.target) <= LANDING_TOLERANCE) return landing;
+  return { generation, target: soughtTo, tries: 0, since: now };
+}
