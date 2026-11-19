@@ -39,6 +39,9 @@ import {
   syncHardcover,
 } from "./hardcover.ts";
 import { registerHardcoverRoutes } from "./hardcover-routes.ts";
+import { registerCatalogueRoutes } from "./catalogue-routes.ts";
+import { catalogueRefreshLoop } from "./catalogue-links.ts";
+import { audiobookDbKey } from "./audiobookdb.ts";
 import { claimWorkAudio, joinLibraryWithEbook, joinShelfEbooksOnce } from "./work-library.ts";
 import { registerEbookSetRoutes } from "./ebook-set-routes.ts";
 import { CSP_REPORT_PATH, cspMode, registerCsp } from "./csp.ts";
@@ -349,6 +352,7 @@ export async function createApp(options?: {
   registerAccountRequests(app);
   registerInvites(app);
   registerHardcoverRoutes(app);
+  registerCatalogueRoutes(app);
   registerEbookSetRoutes(app);
   registerAppearance(app);
   registerReader(app);
@@ -516,6 +520,9 @@ export async function createApp(options?: {
     name: getSetting("name") || "My listening space",
     torboxConfigured: !!getSetting("torbox"),
     hardcoverConfigured: !!getUserSecret(currentUserId(req), "hardcover"),
+    // AudiobookDB (#721): the server's AUDIOBOOKDB_API_KEY, else the key saved here; which one is in use.
+    audiobookdbConfigured: !!audiobookDbKey().key,
+    audiobookdbSource: audiobookDbKey().source,
     abbUrl: getSetting("abbUrl") || "https://audiobookbay.lu",
     libgenUrl: getSetting("libgenUrl") || "https://libgen.li",
     prowlarrUrl: getSetting("prowlarrUrl") || "",
@@ -536,6 +543,7 @@ export async function createApp(options?: {
       .object({
         name: z.string().min(1).max(60).optional(),
         torbox: z.string().max(300).optional(),
+        audiobookdb: z.string().max(300).optional(),
         hardcover: z.string().max(2000).optional(),
         abbUrl: z.url().optional(),
         libgenUrl: z.url().optional(),
@@ -581,7 +589,7 @@ export async function createApp(options?: {
         db.delete(s.settings).where(eq(s.settings.key, key)).run();
         continue;
       }
-      const v = ["torbox", "prowlarr"].includes(key)
+      const v = ["torbox", "prowlarr", "audiobookdb"].includes(key)
         ? encrypt(value)
         : value;
       db.insert(s.settings)
@@ -946,6 +954,8 @@ export async function createApp(options?: {
     databaseBackupLoop(app.log),
   ])
     background.add(loop);
+  // The catalogue cache keeps to its licence (#721): expired searches go, a week's details are fetched again.
+  background.add(catalogueRefreshLoop((message) => app.log.warn(message)));
   app.get("/api/discover/hardcover", async (req) => {
     const { q } = z.object({ q: z.string().min(2).max(150) }).parse(req.query);
     const userId = currentUserId(req);
