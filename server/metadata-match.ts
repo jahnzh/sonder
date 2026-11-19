@@ -6,8 +6,9 @@
 //   default are the fields the work has no value for and the provider has ('Fill only what's missing').
 // - Applying writes the ticked fields as part a's overrides with the provider named as their source; a field not ticked
 //   stays as it is. The work's catalogue link is not changed (the match page links).
-// - 'Match automatically' takes a sure match only (#721's rule: the work's own link, or `matchWork`'s exact title and
-//   author or the file's ASIN) and fills missing fields only. A series runs it over its works in the background, one row
+// - 'Match automatically' takes a sure match only (the work's own link, or `matchWork`'s: the file's ASIN, or #754's
+//   `decide`, where entries of the same title and author are one work's duplicates and only different works leave it
+//   unsure) and fills missing fields only. A series runs it over its works in the background, one row
 //   each in `metadata_match_jobs`, which Activity lists with the reason and Retry.
 // - Covers are a provider's address, shown by URL and never downloaded; a description is read from a live answer only
 //   (the cache never holds one) and kept a few minutes in memory between the comparison and Apply.

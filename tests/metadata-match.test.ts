@@ -61,6 +61,8 @@ audio("w-lev", "Leviathan Wakes (Unabridged)", "James S. A. Corey", 72_030);
 audio("w-quiet", "Quiet Harbour", "Mira Sand", 40_000, { year: 2021, description: "Our own words.", narrator: "Rowan Hale", cover: "https://example.org/own.jpg" });
 audio("w-home", "A Long Way Home", "Ida Vale", 36_000);
 audio("w-dune", "Dune", "Frank Herbert", 75_000);
+// Another author's book of the same title: AudiobookDB's two Dune entries are Frank Herbert's, another work (#754).
+audio("w-dune-other", "Dune", "Ada Herbert", 30_000);
 run("INSERT INTO user_library(user_id,book_id,status,added_at) VALUES(2,'ed-w-lev','unread',?)", T0);
 sqlite.prepare("INSERT INTO settings(key,value) VALUES('migration:hardcover-removed','0')").run();
 
@@ -191,18 +193,28 @@ test("Match automatically: a sure match fills the missing fields only; an unsure
   // The sure match linked the work on AudiobookDB (#721's rule): a second run uses the link and finds nothing missing it can fill.
   const again = await ok<MetadataApplied>(OWNER, "/api/works/w-home/metadata/auto", "POST", {});
   assert.equal(again.outcome, "nothing");
-  // Two AudiobookDB books are called Dune by Frank Herbert: not sure, nothing written.
+  // Two AudiobookDB entries are called Dune by Frank Herbert: one work and its duplicate (#754's rule), a sure match.
   const dune = await ok<MetadataApplied>(OWNER, "/api/works/w-dune/metadata/auto", "POST", {});
-  assert.equal(dune.outcome, "unsure");
-  assert.match(String(dune.reason), /Several books fit/);
-  assert.equal(sqlite.prepare("SELECT COUNT(*) FROM work_metadata_overrides WHERE work_id='w-dune'").pluck().get(), 0);
+  assert.equal(dune.outcome, "applied");
+  assert.equal(dune.provider, "audiobookdb");
+  const link = sqlite.prepare("SELECT external_id FROM work_catalogue_links WHERE work_id='w-dune'").pluck().get() as string;
+  const duplicates = sqlite.prepare("SELECT external_id FROM work_catalogue_duplicates WHERE work_id='w-dune'").pluck().all() as string[];
+  assert.deepEqual([link, ...duplicates].sort(), ["bk-dune-a", "bk-dune-b"]);
+  // Dune by another author: AudiobookDB's Dune entries are another work, so not sure, and nothing is written.
+  const other = await ok<MetadataApplied>(OWNER, "/api/works/w-dune-other/metadata/auto", "POST", {});
+  assert.equal(other.outcome, "unsure");
+  assert.equal(other.provider, null);
+  assert.deepEqual(other.fields, []);
+  assert.match(String(other.reason), /Several books fit · 2/);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) FROM work_metadata_overrides WHERE work_id='w-dune-other'").pluck().get(), 0);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) FROM work_catalogue_links WHERE work_id='w-dune-other'").pluck().get(), 0);
 });
 
 test("a series' Match automatically runs over its books in the background, listed in Activity with Retry", async () => {
   // A local series of two books (part a).
   await ok<WorkMetadata>(OWNER, "/api/works/w-quiet/metadata", "PATCH", { values: { series: [{ id: null, name: "Harbour Tales", position: 1, local: true }] } });
-  const dune = await ok<WorkMetadata>(OWNER, "/api/works/w-dune/metadata", "PATCH", { values: { series: [{ id: null, name: "Harbour Tales", position: 2, local: true }] } });
-  const seriesId = dune.values.series[0].id!;
+  const other = await ok<WorkMetadata>(OWNER, "/api/works/w-dune-other/metadata", "PATCH", { values: { series: [{ id: null, name: "Harbour Tales", position: 2, local: true }] } });
+  const seriesId = other.values.series[0].id!;
   assert.match(seriesId, /^local-/);
   // The second account may not start it.
   assert.equal((await request(KIM, `/api/series/${seriesId}/metadata/auto`, "POST", {})).statusCode, 403);
