@@ -269,12 +269,13 @@ test("candidates re-evaluated together share one staging, one host lease and one
   assert.equal(getAlignmentPoolCoordinator().activeOnHost("wsl"), 0, "the host is free again");
 });
 
-test("a top-k run downloads first then probes every candidate on one staging (MEDIUM-1)", async () => {
+test("a top-k run fetches one edition, the next only after a failed narration check, with no lease held while downloading (#718, MEDIUM-1)", async () => {
   const { workId } = seedWork();
   db.update(schema.works).set({ title: "Probe Book", author: "Ada Author" }).where(eq(schema.works.id, workId)).run();
-  handler = ctcWorker({ Right: "forward", Wrong: "none" });
+  handler = ctcWorker({ Right: "forward", Wrong: "none", Spare: "forward" });
   const heldWhileDownloading: number[] = [];
-  const names = ["Right", "Wrong"];
+  const saved: string[] = [];
+  const names = ["Wrong", "Right", "Spare"];
   setEbookSetDeps({
     search: async () => ({
       website: "https://example.test",
@@ -285,16 +286,19 @@ test("a top-k run downloads first then probes every candidate on one staging (ME
     }),
     save: async (file) => {
       heldWhileDownloading.push(getAlignmentPoolCoordinator().activeOnHost("wsl"));
+      const name = file.title.split(" ").at(-1)!;
+      saved.push(name);
       const id = `${file.source}-${file.md5}`;
-      await seedEpub(workId, file.title.split(" ").at(-1)!, "en", id);
+      await seedEpub(workId, name, "en", id);
       return { id, alreadySaved: false };
     },
   });
   const result = await fetchTopKIntoEbookSet(workId);
-  assert.deepEqual(result.downloaded.map((d) => d.status), ["accepted", "rejected"]);
+  assert.deepEqual(result.downloaded.map((d) => d.status), ["rejected", "accepted"]);
+  assert.deepEqual(saved, ["Wrong", "Right"], "the edition after the accepted one is never fetched");
   assert.ok(heldWhileDownloading.every((n) => n === 0), "no lease is held while candidates download");
-  assert.equal(probeUploads().length, 1, "k candidates share one staging of the recording");
-  assert.equal(commands.filter((c) => c.command.startsWith("rm -rf")).length, 1);
+  assert.equal(probeUploads().length, 2, "each check stages the recording; the lease is released before the next download");
+  assert.equal(commands.filter((c) => c.command.startsWith("rm -rf")).length, 2);
   assert.equal(getAlignmentPoolCoordinator().activeOnHost("wsl"), 0);
 });
 

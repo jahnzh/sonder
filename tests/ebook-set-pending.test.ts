@@ -356,6 +356,11 @@ const backfillJobs = (ebookId: string) =>
     .map((row) => JSON.parse(row.data) as { origin?: string })
     .filter((job) => job.origin === "backfill");
 
+/** Someone has a place in the edition, so it is read and not a spare edition (#718): its whole-book sync is queued. */
+const markRead = (ebookId: string) =>
+  sqlite.prepare("INSERT OR REPLACE INTO ebook_progress(edition_id,cfi,chapter,updated_at) VALUES(?,?,?,?)")
+    .run(ebookId, "epubcfi(/6/2!/4/2)", 0, Date.now());
+
 async function uploadEpub(workId: string, prefix: string, language = "en") {
   const boundary = "sonder-ebook-set-pending";
   const epub = await readerFixture({ language, title: prefix, bodies: [paragraphs(prefix), paragraphs(prefix)] });
@@ -415,9 +420,11 @@ test("HIGH 1: a check that ends rejected or held queues the alignment once, as m
     await ebookSetEvaluationsSettled();
     assert.equal(member(workId, rejected)?.status, "rejected");
     assert.equal(backfillJobs(rejected).length, 1, "rejected: queued");
-    const french = await uploadEpub(workId, "Francais", "fr");
+    // The first EPUB of its own work: a second EPUB of the first work would be a spare edition and is never queued (#718).
+    const frenchWork = seedWork();
+    const french = await uploadEpub(frenchWork, "Francais", "fr");
     await ebookSetEvaluationsSettled();
-    assert.equal(member(workId, french)?.holdReason, "language_not_supported");
+    assert.equal(member(frenchWork, french)?.holdReason, "language_not_supported");
     assert.equal(backfillJobs(french).length, 1, "held: queued");
     await backgroundRunner(app).tick("ebook-set");
     assert.equal(backfillJobs(rejected).length + backfillJobs(french).length, 2, "once");
@@ -752,6 +759,8 @@ heldTest(`R2 HIGH 3: a member's alignment is queued right after its result (${re
   const later = (await seedLibgenEpub(workId, "Later")).ebookId;
   seedMember(workId, later, "pending", null);
   // Members are checked in the listing order; the one checked second waits at the gate.
+  markRead(right);
+  markRead(later);
   const [first, second] = listEbookSetMembers(workId).map((m) => m.ebookId);
   const [firstKey, secondKey] = first === right ? ["Right", "Later"] : ["Later", "Right"];
   behaviours = { [firstKey]: behaviour, [secondKey]: "forward" };
@@ -820,6 +829,7 @@ heldTest("R2 HIGH 3: reevaluate queues the alignment of a member it moves from p
   seedMember(workId, rejected, "pending", null);
   const held = (await seedLibgenEpub(workId, "Right")).ebookId;
   seedMember(workId, held, "held", "awaiting_worker");
+  for (const ebookId of [accepted, rejected, held]) markRead(ebookId);
   behaviours = { Right: "forward", Wrong: "none" };
   const res = await app.inject({ method: "POST", url: `/api/works/${workId}/ebook-set/reevaluate` });
   assert.equal(res.statusCode, 200, res.body);

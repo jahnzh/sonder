@@ -811,25 +811,23 @@ export async function fetchTopKIntoEbookSet(
       f.extension === "epub" &&
       cheapTitleAuthorMatch(work, { title: f.title, authors: f.authors }),
   );
-  // Download first so the pool lease is not held across LibGen transfers (MEDIUM-1).
-  const pending: {
-    id: string;
-    sourceTitle: string;
-    sourceAuthor: string | null;
-    language: string | null;
-  }[] = [];
+  // One edition at a time (#718): the next is fetched only when this one fails the narration check (rejected), or
+  // its download or check fails. One accepted or held (no audio or no worker yet: not failed) ends the fetch. Each
+  // check has its own probe session, released before the next download, so the pool lease is never held across a
+  // LibGen transfer (MEDIUM-1).
   const failures: string[] = [];
-  for (const file of filtered) {
-    if (pending.length >= remaining) break;
-    const already = db
-      .select()
-      .from(s.workEbookSetMembers)
-      .where(eq(s.workEbookSetMembers.workId, workId))
-      .all()
-      .some((m) => m.ebookId === `${file.source}-${file.md5}`);
-    if (already) continue;
-    const ebookId = `${file.source}-${file.md5}`;
-    try {
+  const downloaded: { id: string; status: EbookSetMemberStatus }[] = [];
+  try {
+    for (const file of filtered) {
+      if (downloaded.length >= remaining) break;
+      const ebookId = `${file.source}-${file.md5}`;
+      const already = db
+        .select()
+        .from(s.workEbookSetMembers)
+        .where(eq(s.workEbookSetMembers.workId, workId))
+        .all()
+        .some((m) => m.ebookId === ebookId);
+      if (already) continue;
       let saved: { id: string };
       try {
         saved = await save({ ...file, workId });
@@ -846,38 +844,30 @@ export async function fetchTopKIntoEbookSet(
         }
         saved = { id: ebookId };
       }
-      pending.push({
-        id: saved.id,
-        sourceTitle: file.title,
-        sourceAuthor: file.authors.join(", ") || null,
-        language: file.language,
-      });
-    } catch (error) {
-      failures.push((error as Error).message);
-    }
-  }
-  const downloaded: { id: string; status: EbookSetMemberStatus }[] = [];
-  try {
-    await withProbeSession(workId, async (probe) => {
-      for (const candidate of pending) {
-        try {
-          const result = await evaluateEbookSetMember(
-            workId,
-            candidate.id,
-            {
-              sourceTitle: candidate.sourceTitle,
-              sourceAuthor: candidate.sourceAuthor,
-              language: candidate.language,
-            },
-            probe,
-          );
-          downloaded.push({ id: candidate.id, status: result.status });
-        } catch (evaluateError) {
-          failures.push((evaluateError as Error).message);
-          dropOrphanEbookEdition(candidate.id, workId);
-        }
+      let status: EbookSetMemberStatus;
+      try {
+        status = await withProbeSession(workId, async (probe) =>
+          (
+            await evaluateEbookSetMember(
+              workId,
+              saved.id,
+              {
+                sourceTitle: file.title,
+                sourceAuthor: file.authors.join(", ") || null,
+                language: file.language,
+              },
+              probe,
+            )
+          ).status,
+        );
+      } catch (evaluateError) {
+        failures.push((evaluateError as Error).message);
+        dropOrphanEbookEdition(saved.id, workId);
+        continue;
       }
-    });
+      downloaded.push({ id: saved.id, status });
+      if (status !== "rejected") break;
+    }
   } finally {
     const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
     await syncEbookSetConsensus(workId);

@@ -426,6 +426,17 @@ test("an in-flight job of an older engine is planned again under the current eng
   assert.equal(alignmentJob(paused.id).engine, engine);
 });
 
+test("a map the backfill made for a spare edition is not rebuilt; one the administrator prepared is (#718)", async () => {
+  await reset();
+  // ebook-a2 is work a's second EPUB and nobody reads it: a spare edition.
+  const backfilled = await oldMap("a", aeneas, "ready", "ebook-a2", { origin: "backfill" });
+  assert.deepEqual(await queueEngineRebuilds(), { queued: 0, replanned: 0, projections: 0, skipped: 1, failed: 0 });
+  assert.equal(alignmentJob(backfilled.id).engine, aeneas, "left as it is");
+  const prepared = await oldMap("a", aeneas, "ready", "ebook-a2", { origin: undefined });
+  assert.deepEqual(await queueEngineRebuilds(), { queued: 1, replanned: 0, projections: 0, skipped: 0, failed: 0 });
+  assert.equal(alignmentJob(prepared.id).rebuildOf?.engine, aeneas);
+});
+
 test("an ebook-set consensus is rebuilt once and regenerates its projections; an explicit map keeps precedence", async () => {
   await reset();
   const workId = "work-set";
