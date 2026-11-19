@@ -235,6 +235,32 @@ test("Media Session play on paused device A on the same track lands on B's place
   await expect.poll(async () => (await serverPlace(page, release))!.position).toBeGreaterThanOrEqual(400);
 });
 
+test("the dock's Play and the keyboard's Space check before resuming, without the app coming into view first", async ({ page, browser }) => {
+  await instrument(page);
+  const release = await importRelease(page);
+  await listenAndPause(page, release, 100);
+  await expect.poll(async () => (await serverPlace(page, release))?.position ?? -1).toBeCloseTo(100, 0);
+  const b = await deviceB(browser);
+  await b.goto("/");
+  const saveOnB = async (position: number) =>
+    expect((await (await b.request.post("/api/progress", {
+      data: { recordingId: release.recordingId, trackId: release.tracks[0], position, duration: 640, updatedAt: Date.now() },
+    })).json()).conflict).toBe(false);
+  await saveOnB(300);
+  await dock(page).getByRole("button", { name: "Play", exact: true }).click();
+  await expect.poll(async () => (await audioState(page)).paused).toBe(false);
+  expect((await page.evaluate(() => (window as any).__plays as { position: number }[])).at(-1)!.position).toBeCloseTo(300, 0);
+  await dock(page).getByRole("button", { name: "Pause", exact: true }).click();
+  await expect.poll(async () => (await audioState(page)).paused).toBe(true);
+  await expect.poll(async () => (await serverPlace(page, release))!.position).toBeGreaterThanOrEqual(300);
+
+  await saveOnB(500);
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press(" ");
+  await expect.poll(async () => (await audioState(page)).paused).toBe(false);
+  expect((await page.evaluate(() => (window as any).__plays as { position: number }[])).at(-1)!.position).toBeCloseTo(500, 0);
+});
+
 test("a playing player is never moved", async ({ page, browser }) => {
   await instrument(page);
   const release = await importRelease(page);
