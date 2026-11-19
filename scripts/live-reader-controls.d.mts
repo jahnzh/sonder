@@ -8,3 +8,7 @@ export function createReaderControls(options: { page: Page; room: Locator; timeo
   topbar: Locator;
 };
 export function narratedOnPage(room: Locator): Promise<boolean>;
+type Point = { x: number; y: number };
+type Edges = { left: number; top: number; right: number; bottom: number };
+export function narratedPressPoints(rects: Edges[], bounds: Edges, options?: { minWidth?: number; minHeight?: number }): Point[];
+export function narratedPressPoint(room: Locator): Promise<Point | null>;
