@@ -10,13 +10,14 @@ import { type Page } from "@playwright/test";
 import { test, expect } from "./own-server";
 import { mkdirSync } from "node:fs";
 import { savedSeriesList, savedSeriesRow, seriesChip, showSavedSeries } from "./library-series";
+import { connectAudiobookDb } from "./series-save";
 
 test.use({ serviceWorkers: "block" });
 
 const OUT = "OUT";
 mkdirSync(OUT, { recursive: true });
 
-type Saved = { id: number; name: string; author: string | null; count: number | null; finished: number; total: number; covers: (string | null)[] };
+type Saved = { id: string; name: string; author: string | null; count: number | null; finished: number; total: number; covers: (string | null)[] };
 const savedList = async (page: Page) => (await (await page.request.get("/api/series")).json()) as Saved[];
 const libraryTitles = async (page: Page) =>
   new Set(
@@ -28,21 +29,23 @@ const libraryTitles = async (page: Page) =>
 /** Saves The Crossing by Ada North (701) and by Bea South (702); afterwards the series and the library are as they were. */
 async function saveBoth(page: Page) {
   expect((await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } })).ok()).toBe(true);
+  await connectAudiobookDb(page);
   const before = await libraryTitles(page);
   const savedBefore = new Set((await savedList(page)).map((series) => series.id));
-  const added: Record<number, number[]> = {};
-  for (const id of [701, 702]) {
+  const added: Record<string, string[]> = {};
+  for (const id of ["701", "702"]) {
     const prior = savedBefore.has(id)
-      ? ((await (await page.request.get(`/api/series/${id}`)).json()).works as { id: number; added: boolean }[]).filter((w) => w.added).map((w) => w.id)
+      ? ((await (await page.request.get(`/api/series/${id}`)).json()).works as { id: string; added: boolean }[]).filter((w) => w.added).map((w) => w.id)
       : [];
     added[id] = prior;
   }
-  expect((await page.request.post("/api/series", { data: { id: 701, bookIds: [503, 504] } })).ok()).toBe(true);
-  expect((await page.request.post("/api/series", { data: { id: 702, bookIds: [] } })).ok()).toBe(true);
+  expect((await page.request.post("/api/series", { data: { id: "701", bookIds: ["503", "504"] } })).ok()).toBe(true);
+  expect((await page.request.post("/api/series", { data: { id: "702", bookIds: [] } })).ok()).toBe(true);
   return async () => {
     await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
-    for (const id of [701, 702]) {
-      const works = ((await (await page.request.get(`/api/series/${id}`)).json()).works as { id: number; title: string; added: boolean }[]);
+    await connectAudiobookDb(page);
+    for (const id of ["701", "702"]) {
+      const works = ((await (await page.request.get(`/api/series/${id}`)).json()).works as { id: string; title: string; added: boolean }[]);
       const mine = works.filter((work) => work.added && !added[id].includes(work.id) && !before.has(work.title)).map((work) => work.id);
       expect((await page.request.delete(`/api/series/${id}`, { data: { bookIds: mine } })).ok()).toBe(true);
       if (savedBefore.has(id)) expect((await page.request.post("/api/series", { data: { id, bookIds: added[id] } })).ok()).toBe(true);
@@ -58,7 +61,7 @@ test.afterEach(async ({ page }) => {
   restore = null;
 });
 
-/** Three covers drawn on the client: the fixture's Hardcover books have none. */
+/** Three covers drawn on the client: the fixture's AudiobookDB covers are on a name that never resolves. */
 const cover = (fill: string) =>
   `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="${fill}"/></svg>`)}`;
 const COVERS = [cover("#6b4a3a"), cover("#3a4f5d"), cover("#4f5d3a")];
@@ -94,20 +97,21 @@ const seriesRegion = (page: Page) => page.getByRole("region", { name: "Series", 
 test("the Series chip lists the saved series with counts and stacked covers; a row opens it and Back returns to the chip where it was", async ({ page }) => {
   restore = await saveBoth(page);
   const server = await savedList(page);
-  const ada = server.find((series) => series.id === 701)!;
-  const bea = server.find((series) => series.id === 702)!;
+  const ada = server.find((series) => series.id === "701")!;
+  const bea = server.find((series) => series.id === "702")!;
   // The counts come from the server's shared rule (#561): Crossing Two at 2 is in the library, Future Crossing is not released.
   expect(ada.total).toBeGreaterThan(0);
   await routeList(page, (list) =>
-    list.map((series) => (series.id === 701 ? { ...series, covers: COVERS } : series.id === 702 ? { ...series, covers: [COVERS[0]] } : series)),
+    list.map((series) => (series.id === "701" ? { ...series, covers: COVERS } : series.id === "702" ? { ...series, covers: [COVERS[0]] } : series)),
   );
 
   await page.goto("/#library");
-  // The old section above the shelf is gone: no list of series until the chip is chosen, no "Hardcover #701", no "Open …".
+  // The old section above the shelf is gone: no list of series until the chip is chosen, no "Hardcover #701" or "AudiobookDB 701", no "Open …".
   const allChip = page.getByRole("group", { name: "Filter your library" }).getByRole("button", { name: "All", exact: true });
   await expect(allChip).toHaveAttribute("aria-pressed", "true");
   await expect(savedSeriesList(page)).toHaveCount(0);
   await expect(page.getByText(/Hardcover #70\d/)).toHaveCount(0);
+  await expect(page.getByText(/AudiobookDB 70\d/)).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^Open The Crossing/ })).toHaveCount(0);
   await expect(page.getByText("No saved series yet.", { exact: false })).toHaveCount(0);
 
@@ -187,7 +191,7 @@ test("Back from a series returns to the chip at its scroll position", async ({ p
   restore = await saveBoth(page);
   // Twenty series before the saved ones, so the list scrolls: their rows are never opened.
   const filler = Array.from({ length: 20 }, (_, index) => ({
-    id: 990100 + index, name: `Aardvark ${String(index).padStart(2, "0")}`, author: "Filler", count: 3, finished: 0, total: 3, covers: [],
+    id: String(990100 + index), name: `Aardvark ${String(index).padStart(2, "0")}`, author: "Filler", count: 3, finished: 0, total: 3, covers: [],
   }));
   await routeList(page, (list) => [...filler, ...list]);
   await page.goto("/#library");
@@ -234,9 +238,9 @@ test.describe("on a desktop", () => {
   test("the list and the series side by side; another series replaces the entry; Back leaves the Library", async ({ page }) => {
     restore = await saveBoth(page);
     const server = await savedList(page);
-    const ada = server.find((series) => series.id === 701)!;
-    const bea = server.find((series) => series.id === 702)!;
-    await routeList(page, (list) => list.map((series) => (series.id === 701 ? { ...series, covers: COVERS } : series)));
+    const ada = server.find((series) => series.id === "701")!;
+    const bea = server.find((series) => series.id === "702")!;
+    await routeList(page, (list) => list.map((series) => (series.id === "701" ? { ...series, covers: COVERS } : series)));
 
     // Something of the app behind the Library: Back from the series lands there.
     await page.goto("/#discover");
@@ -290,7 +294,7 @@ test.describe("on a desktop", () => {
   test("a series the list does not hold as saved stays one centred column", async ({ page }) => {
     restore = await saveBoth(page);
     // The list without 701: the page is shown alone, as the phone shows it.
-    await routeList(page, (list) => list.filter((series) => series.id !== 701));
+    await routeList(page, (list) => list.filter((series) => series.id !== "701"));
     await page.goto("/#series/701");
     const series = seriesRegion(page);
     await expect(series.getByRole("list", { name: /^Books · \d+$/ })).toBeVisible();

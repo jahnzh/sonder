@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { openSeriesResult, searchSeries, seriesResult } from "./discover-search";
 import { openSavedSeries, savedSeriesList, savedSeriesRow, showSavedSeries } from "./library-series";
-import { unsaveSeries } from "./series-save";
+import { ageSeries, connectAudiobookDb, disconnectAudiobookDb, listCrossingThree, unsaveSeries } from "./series-save";
 
 test("discover and save chosen works from the intended series, then reopen it", async ({ page }) => {
   // The test saves The Crossing (#701) and adds works of it to the library. At the end it puts the series and the
@@ -13,21 +13,30 @@ test("discover and save chosen works from the intended series, then reopen it", 
         .map((book) => book.title),
     );
   const before = await libraryTitles();
-  type SeriesView = { works: { id: number; title: string; added: boolean }[] };
+  type SeriesView = { works: { id: string; title: string; added: boolean }[] };
   const crossing = async () => (await (await page.request.get("/api/series/701")).json()) as SeriesView;
-  const savedBefore = ((await (await page.request.get("/api/series")).json()) as { id: number }[]).some(
-    (series) => series.id === 701,
+  await connectAudiobookDb(page);
+  const savedBefore = ((await (await page.request.get("/api/series")).json()) as { id: string }[]).some(
+    (series) => series.id === "701",
   );
   // Another spec on the server may have saved it already (series-acquisition does).
   const addedBefore = savedBefore ? (await crossing()).works.filter((work) => work.added).map((work) => work.id) : [];
   // The series is saved through its page (#564): not saved when the test starts; it is saved back at the end.
-  await unsaveSeries(page, 701);
+  await unsaveSeries(page, "701");
+  await listCrossingThree(page, false);
+  // Guard 18, since #721: series come from AudiobookDB. Without its key a series search fails with the reason and
+  // Retry (words no earlier search cached); with it, Retry searches. Hardcover is not needed for series.
   await page.request.put("/api/hardcover/token", { data: { token: "" } });
-  await page.goto("/#discover");
-  await page.getByRole("radio", { name: "Series", exact: true }).click();
-  // Guard 18 (spec #572): the series search says to connect Hardcover, and its link opens Connections.
-  await page.getByRole("button", { name: "Connect Hardcover to search for series.", exact: true }).click();
-  await expect(page).toHaveURL(/#settings\/connections$/);
+  await disconnectAudiobookDb(page);
+  const words = `Crossing ${Date.now().toString(36)}`;
+  await searchSeries(page, words);
+  const failure = page.getByRole("region", { name: "Discover", exact: true }).getByRole("alert");
+  await expect(failure.getByText("AudiobookDB could not be searched · Add the AudiobookDB API key first", { exact: true })).toBeVisible();
+  await connectAudiobookDb(page);
+  await failure.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.getByText("No series found.", { exact: true })).toBeVisible();
+  await searchSeries(page, "Crossing");
+  await expect(seriesResult(page, "The Crossing", "Ada North")).toBeVisible();
 
   await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
   const existing = await page.request.post("/api/hardcover/books", { data: { id: 501 } });
@@ -35,8 +44,8 @@ test("discover and save chosen works from the intended series, then reopen it", 
   await page.reload();
   // Guard 19: two series with the same name are both listed and told apart; the chosen one opens.
   await searchSeries(page, "Crossing");
-  await expect(seriesResult(page, "The Crossing", "Ada North")).toHaveAccessibleName(/ · Hardcover #701$/);
-  await expect(seriesResult(page, "The Crossing", "Bea South")).toHaveAccessibleName(/ · Hardcover #702$/);
+  await expect(seriesResult(page, "The Crossing", "Ada North")).toHaveAccessibleName(/ · AudiobookDB 701$/);
+  await expect(seriesResult(page, "The Crossing", "Bea South")).toHaveAccessibleName(/ · AudiobookDB 702$/);
   // The series opens as a page (#564): not saved, the same page with Save series; no dialog.
   await seriesResult(page, "The Crossing", "Ada North").click();
   await expect(page).toHaveURL(/#series\/701$/);
@@ -73,9 +82,9 @@ test("discover and save chosen works from the intended series, then reopen it", 
   const posted = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/series");
   await saveSheet.getByRole("button", { name: "Save series and add 1 book", exact: true }).click();
   // The chosen book, plus the book already in the library (linked, not added again).
-  const body = (await posted).postDataJSON() as { id: number; bookIds: number[] };
-  expect(body.id).toBe(701);
-  expect([...body.bookIds].sort()).toEqual([501, 504]);
+  const body = (await posted).postDataJSON() as { id: string; bookIds: string[] };
+  expect(body.id).toBe("701");
+  expect([...body.bookIds].sort()).toEqual(["501", "504"]);
   // Then the page shows the saved series.
   await expect(saveSheet).toHaveCount(0);
   await expect(page).toHaveURL(/#series\/701$/);
@@ -83,6 +92,8 @@ test("discover and save chosen works from the intended series, then reopen it", 
   await expect(notSaved.getByRole("button", { name: "Save series", exact: true })).toHaveCount(0);
   await expect(notSaved.getByRole("button", { name: "Remove series", exact: true })).toBeVisible();
   await expect(notSaved.getByRole("list", { name: "Related works · 1" }).getByRole("button", { name: /^Crossing Companion / })).toBeVisible();
+  // AudiobookDB lists Crossing Three after the save, and the series is read again.
+  await listCrossingThree(page, true);
   await page.goto("/#library");
   // The saved series is listed under the Library's Series chip (#567), not in a section above the shelf.
   await showSavedSeries(page);
@@ -94,7 +105,7 @@ test("discover and save chosen works from the intended series, then reopen it", 
   const bookRow = (title: string) => series.getByRole("listitem").filter({ hasText: title });
   await expect(series.getByText(/^Ada North · \d+ of \d+ finished$/)).toBeVisible();
   await expect(series.getByRole("list", { name: "Related works · 1" }).getByText("Crossing Companion", { exact: true })).toBeVisible();
-  // The work Hardcover listed later is new and not in the library: it has Add.
+  // The work AudiobookDB listed later is new and not in the library: it has Add.
   await expect(bookRow("Crossing Three")).toHaveAccessibleName(/Crossing Three (New · )?Not in your library$/);
   const library = (await (await page.request.get("/api/books")).json()).filter((book: { inLibrary: boolean }) => book.inLibrary);
   expect(library.filter((book: { title: string }) => book.title === "Alice’s Adventures in Wonderland")).toHaveLength(1);
@@ -115,10 +126,11 @@ test("discover and save chosen works from the intended series, then reopen it", 
   await expect(bookRow("Crossing Three").getByRole("button", { name: /^\d+ Crossing Three / })).toBeVisible();
   await expect(bookRow("Crossing Three").getByRole("button", { name: "Add Crossing Three", exact: true })).toHaveCount(0);
 
-  // Without a token the refresh fails: its message with Retry, over the last saved list.
-  await page.request.put("/api/hardcover/token", { data: { token: "" } });
+  // A week later without AudiobookDB's key the refresh fails: its message with Retry, over the last saved list.
+  await disconnectAudiobookDb(page);
+  await ageSeries(page, "701");
   await page.reload();
-  await expect(series.getByRole("alert").filter({ hasText: "Add your Hardcover API token in Settings, then retry." })).toBeVisible();
+  await expect(series.getByRole("alert").filter({ hasText: "Add the AudiobookDB API key in Settings, then retry." })).toBeVisible();
   await expect(series.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
   await expect(bookRow("Crossing Companion")).toBeVisible();
   await expect(bookRow("Crossing Three")).toBeVisible();
@@ -126,6 +138,7 @@ test("discover and save chosen works from the intended series, then reopen it", 
   expect(offlineLibrary.some((book: { title: string }) => book.title === "Crossing Three")).toBe(true);
 
   await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
+  await connectAudiobookDb(page);
   await page.goto("/#library");
   await openSavedSeries(page, "The Crossing", "Ada North");
   await expect(page.getByRole("heading", { level: 1, name: "The Crossing" })).toBeVisible();
@@ -138,24 +151,28 @@ test("discover and save chosen works from the intended series, then reopen it", 
   const removed = await page.request.delete("/api/series/701", { data: { bookIds: added.map((work) => work.id) } });
   expect(removed.ok()).toBe(true);
   if (savedBefore)
-    expect((await page.request.post("/api/series", { data: { id: 701, bookIds: addedBefore } })).ok()).toBe(true);
+    expect((await page.request.post("/api/series", { data: { id: "701", bookIds: addedBefore } })).ok()).toBe(true);
+  // AudiobookDB lists the four first works again, and the series' catalogue drops Crossing Three.
+  await listCrossingThree(page, false);
   expect(await libraryTitles()).toEqual(before);
 });
 
 test("preferred series language changes defaults and preserves manual choices", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("sonder-series-language", "en"));
-  await page.route(/\/api\/hardcover\/series\/701(?:\?.*)?$/, async (route) => {
+  // The page of a series that is not saved reads `GET /api/discover/series/<id>` (#721).
+  await page.route(/\/api\/discover\/series\/701(?:\?.*)?$/, async (route) => {
     await route.fulfill({ json: {
-      id: 701, name: "The Crossing", author: "Ada North", count: 4,
+      id: "701", name: "The Crossing", author: "Ada North", count: 4,
       works: [
-        { id: 1, title: "English first", position: 1, language: "en", popularity: 10, unreleased: false, workId: null },
-        { id: 2, title: "French first", position: 1, language: "fr", popularity: 10, unreleased: false, workId: null },
-        { id: 3, title: "English second", position: 2, language: "en", popularity: 10, unreleased: false, workId: null },
-        { id: 4, title: "French second", position: 2, language: "fr", popularity: 10, unreleased: false, workId: null },
+        { id: "1", title: "English first", position: 1, language: "en", popularity: 10, unreleased: false, workId: null },
+        { id: "2", title: "French first", position: 1, language: "fr", popularity: 10, unreleased: false, workId: null },
+        { id: "3", title: "English second", position: 2, language: "en", popularity: 10, unreleased: false, workId: null },
+        { id: "4", title: "French second", position: 2, language: "fr", popularity: 10, unreleased: false, workId: null },
       ],
     } });
   });
   await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
+  await connectAudiobookDb(page);
   await openSeriesResult(page, "Crossing", "The Crossing", "Ada North");
   await expect(page).toHaveURL(/#series\/701$/);
   // The page stands the English book at each number.

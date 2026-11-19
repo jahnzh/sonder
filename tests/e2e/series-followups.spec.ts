@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { openSavedSeries } from "./library-series";
-import { saveSeriesOnPage, unsaveSeries, viewSeriesFromDiscover } from "./series-save";
+import { connectAudiobookDb, listCrossingThree, saveSeriesOnPage, unsaveSeries, viewSeriesFromDiscover } from "./series-save";
 
 /**
  * A saved series opens its Series page (#562), and its Add opens the Add sheet (#563): the series dialog's saved mode,
@@ -10,6 +10,7 @@ import { saveSeriesOnPage, unsaveSeries, viewSeriesFromDiscover } from "./series
  */
 test("a saved series keeps the provenance of a synced book and counts its completion", async ({ page }) => {
   await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
+  await connectAudiobookDb(page);
   const initialBooks = await (await page.request.get("/api/books")).json();
   const seededAlice = initialBooks.find(
     (book: { title: string; inLibrary: boolean }) =>
@@ -18,7 +19,8 @@ test("a saved series keeps the provenance of a synced book and counts its comple
   if (seededAlice?.id) await page.request.delete(`/api/library/${seededAlice.id}`);
   await page.request.post("/api/hardcover/books", { data: { id: 501 } });
   // Saved through its page and Save series with the defaults (#564).
-  await unsaveSeries(page, 701);
+  await unsaveSeries(page, "701");
+  await listCrossingThree(page, false);
   await viewSeriesFromDiscover(page, "Crossing", "The Crossing", "Ada North");
   await saveSeriesOnPage(page);
   const books = await (await page.request.get("/api/books")).json();
@@ -26,7 +28,7 @@ test("a saved series keeps the provenance of a synced book and counts its comple
     book.title === "Alice’s Adventures in Wonderland" && book.inLibrary);
   expect(alice?.workId).toBeTruthy();
   const seriesBefore = await (await page.request.get("/api/series/701")).json();
-  const aliceWork = seriesBefore.works.find((work: { id: number }) => work.id === 501);
+  const aliceWork = seriesBefore.works.find((work: { id: string }) => work.id === "501");
   expect(aliceWork?.removalDefaultSelected).toBe(false);
 
   await page.goto("/#library");
@@ -35,7 +37,7 @@ test("a saved series keeps the provenance of a synced book and counts its comple
   const intro = page.getByRole("region", { name: "Series", exact: true }).getByText(/^Ada North · \d+ of \d+ finished$/);
   await expect(intro).toBeVisible();
   const seriesView = await (await page.request.get("/api/series/701")).json();
-  const aliceRow = seriesView.works.find((work: { id: number }) => work.id === 501);
+  const aliceRow = seriesView.works.find((work: { id: string }) => work.id === "501");
   expect(aliceRow?.libraryOrigin?.source).toBe("hardcover_sync");
   expect(aliceRow?.removalDefaultSelected).toBe(false);
   // Remove series (#566): a book from Hardcover's shelves is not offered with the series; Cancel sends nothing.
@@ -57,7 +59,7 @@ test("a saved series keeps the provenance of a synced book and counts its comple
   expect((await complete("unread")).ok()).toBe(true);
   await expect.poll(async () => {
     const work = (await (await page.request.get("/api/series/701")).json()).works
-      .find((entry: { id: number }) => entry.id === 501);
+      .find((entry: { id: string }) => entry.id === "501");
     return work?.completionOverride;
   }).toBe("unread");
   await page.reload();

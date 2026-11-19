@@ -3,7 +3,8 @@
 // lines; a library book opens its Book page and Back returns to the series where it was scrolled; the play button plays
 // the book to continue; Related works are listed and not counted; a failed ebook search shows "Series search failed"
 // with Retry, which runs it again to done; the refresh error with Retry over the last saved list; the address on a
-// reload and from a link, its back button to the Library; the measures at phone size and on a desktop.
+// reload and from a link, its back button to the Library; the measures at phone size and on a desktop; a series from
+// AudiobookDB with its labels ("1.5") and a book with no audiobook yet, saved with text ids (#721).
 import { type Page } from "@playwright/test";
 // Each test runs its own server (own-server.ts): on the suite's server the specs before it leave The Crossing's
 // fixture showing Crossing Three, and the page counted 3 books where the list counted 2 (#564's second fix round).
@@ -12,13 +13,15 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { noOverflow } from "./overflow";
 import { openSavedSeries, showSavedSeries, savedSeriesRow } from "./library-series";
+import { openSeriesResult, seriesResult, searchSeries } from "./discover-search";
+import { ageSeries, connectAudiobookDb, disconnectAudiobookDb, saveSheet } from "./series-save";
 
 test.use({ serviceWorkers: "block" });
 
 const OUT = "OUT";
 mkdirSync(OUT, { recursive: true });
 
-type SeriesView = { works: { id: number; title: string; added: boolean; workId: string | null; acquisition?: { ebook?: { status: string } | null } | null }[] };
+type SeriesView = { works: { id: string; title: string; added: boolean; workId: string | null; acquisition?: { ebook?: { status: string } | null } | null }[] };
 const crossing = async (page: Page) => (await (await page.request.get("/api/series/701")).json()) as SeriesView;
 const libraryTitles = async (page: Page) =>
   new Set(
@@ -31,18 +34,20 @@ const libraryTitles = async (page: Page) =>
  * Saves The Crossing (#701) with `bookIds` for the test and puts the series and the library back as it found them
  * afterwards, so a repeat on the same server (and the other series specs) starts from the same state.
  */
-async function saveCrossing(page: Page, bookIds: number[], options: { searchEbooks?: boolean } = {}) {
+async function saveCrossing(page: Page, bookIds: string[], options: { searchEbooks?: boolean } = {}) {
   expect((await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } })).ok()).toBe(true);
+  await connectAudiobookDb(page);
   const before = await libraryTitles(page);
-  const savedBefore = ((await (await page.request.get("/api/series")).json()) as { id: number }[]).some((series) => series.id === 701);
+  const savedBefore = ((await (await page.request.get("/api/series")).json()) as { id: string }[]).some((series) => series.id === "701");
   const addedBefore = savedBefore ? (await crossing(page)).works.filter((work) => work.added).map((work) => work.id) : [];
-  const saved = await page.request.post("/api/series", { data: { id: 701, bookIds, ...options } });
+  const saved = await page.request.post("/api/series", { data: { id: "701", bookIds, ...options } });
   expect(saved.ok(), await saved.text()).toBe(true);
   return async () => {
     await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
+    await connectAudiobookDb(page);
     const added = (await crossing(page)).works.filter((work) => work.added && !addedBefore.includes(work.id) && !before.has(work.title));
     expect((await page.request.delete("/api/series/701", { data: { bookIds: added.map((work) => work.id) } })).ok()).toBe(true);
-    if (savedBefore) expect((await page.request.post("/api/series", { data: { id: 701, bookIds: addedBefore } })).ok()).toBe(true);
+    if (savedBefore) expect((await page.request.post("/api/series", { data: { id: "701", bookIds: addedBefore } })).ok()).toBe(true);
     expect(await libraryTitles(page)).toEqual(before);
   };
 }
@@ -75,7 +80,7 @@ async function routeSeriesWith(page: Page, workId: string, title: string) {
     if (route.request().method() !== "GET") return route.continue();
     const response = await route.fetch();
     const series = await response.json();
-    series.works.push({ id: 990001, title, position: 9, cover: null, workId, added: true, unreleased: false, new: false, needsAdmin: false, acquisition: null, mediaState: null });
+    series.works.push({ id: "990001", title, position: 9, cover: null, workId, added: true, unreleased: false, new: false, needsAdmin: false, acquisition: null, mediaState: null });
     await route.fulfill({ response, json: series }).catch(() => {});
   });
 }
@@ -109,7 +114,7 @@ const box = async (locator: ReturnType<Page["locator"]>) => (await locator.bound
 const settled = (page: Page) => page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
 
 test("the saved series opens from the Library; its rows; a book opens its Book page and Back returns to where it was; Add; the play button", async ({ page }) => {
-  restore = await saveCrossing(page, [503, 504]);
+  restore = await saveCrossing(page, ["503", "504"]);
   const title = `Crossing Audio ${randomUUID().slice(0, 8)}`;
   const audio = await importBook(page, title);
   // A place in the recording: the book in progress is the one to continue.
@@ -189,15 +194,15 @@ test("the saved series opens from the Library; its rows; a book opens its Book p
 });
 
 test("a book's series line opens the saved series; the address on a reload and from a link, its back button to the Library", async ({ page }) => {
-  restore = await saveCrossing(page, [503]);
-  const two = (await crossing(page)).works.find((work) => work.id === 503)!;
-  // The suite's Hardcover fixture lists no series for Crossing Two's own book: the work says it is book 2 of the saved series.
+  restore = await saveCrossing(page, ["503"]);
+  const two = (await crossing(page)).works.find((work) => work.id === "503")!;
+  // The work says it is book 2 of the saved series, whatever the server links it to.
   await page.route("**/api/library", async (route) => {
     const headers = { ...route.request().headers() };
     delete headers["if-none-match"];
     const works = await (await route.fetch({ headers })).json();
     const next = works.map((work: any) =>
-      work.workId === two.workId ? { ...work, series: [{ id: 701, name: "The Crossing", position: 2, saved: true }] } : work,
+      work.workId === two.workId ? { ...work, series: [{ id: "701", name: "The Crossing", position: 2, saved: true }] } : work,
     );
     await route.fulfill({ status: 200, contentType: "application/json", json: next }).catch(() => {});
   });
@@ -224,7 +229,7 @@ test("a book's series line opens the saved series; the address on a reload and f
 });
 
 test("a failed ebook search shows Series search failed with Retry, which runs it again to done", async ({ page }) => {
-  restore = await saveCrossing(page, [504], { searchEbooks: true });
+  restore = await saveCrossing(page, ["504"], { searchEbooks: true });
   const companion = async () => (await crossing(page)).works.find((work) => work.title === "Crossing Companion");
   await expect.poll(async () => (await companion())?.acquisition?.ebook?.status).toBe("failed");
   await page.goto("/#series/701");
@@ -243,16 +248,19 @@ test("a failed ebook search shows Series search failed with Retry, which runs it
 });
 
 test("the refresh error: its message with Retry over the last saved list", async ({ page }) => {
-  restore = await saveCrossing(page, [503, 504]);
-  expect((await page.request.put("/api/hardcover/token", { data: { token: "" } })).ok()).toBe(true);
+  restore = await saveCrossing(page, ["503", "504"]);
+  // A week later, without AudiobookDB's key: the page reads the series again and cannot. (The card's name is still
+  // the app's "Hardcover could not be read", src/pages/series-page.tsx.)
+  await disconnectAudiobookDb(page);
+  await ageSeries(page, "701");
   await page.goto("/#series/701");
   const card = region(page).getByRole("group", { name: "Hardcover could not be read", exact: true });
-  await expect(card.getByRole("alert")).toHaveText("Add your Hardcover API token in Settings, then retry.");
+  await expect(card.getByRole("alert")).toHaveText("Add the AudiobookDB API key in Settings, then retry.");
   // The last saved list is shown.
   await expect(row(books(page), "Crossing Two")).toBeVisible();
   await expect(row(related(page), "Crossing Companion")).toBeVisible();
-  // Retry reads Hardcover again (`refresh=1`); with a token the error is gone.
-  expect((await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } })).ok()).toBe(true);
+  // Retry reads AudiobookDB again (`refresh=1`); with the key the error is gone.
+  await connectAudiobookDb(page);
   const refreshed = page.waitForRequest((request) => /\/api\/series\/701\?.*refresh=1/.test(request.url()));
   await card.getByRole("button", { name: "Retry", exact: true }).click();
   await refreshed;
@@ -261,7 +269,7 @@ test("the refresh error: its message with Retry over the last saved list", async
 });
 
 test("measured against the boards at phone size and on a desktop: rows 56 high, the groups' order, one Title, no overflow", async ({ page }) => {
-  restore = await saveCrossing(page, [503, 504]);
+  restore = await saveCrossing(page, ["503", "504"]);
   // At phone size the series is the page and its name the one Title. On a desktop a saved series stands beside the
   // Library's list of saved series (#567, DesktopSeries.dc.html): the Library's Title is the one h1 and the series'
   // name the first heading of the series.
@@ -294,4 +302,129 @@ test("measured against the boards at phone size and on a desktop: rows 56 high, 
   expect(Math.abs(column.y - list.y)).toBeLessThanOrEqual(1);
   await settled(page);
   await page.screenshot({ path: `${OUT}/series-desktop.png` });
+});
+
+// Series on AudiobookDB (#721 part b): Discover's series search finds The Ferry Road (AudiobookDB "703", recorded in
+// tests/series-browser-fixture.ts) without Hardcover; its page lists AudiobookDB's members at their own labels (a
+// novella at "1.5") and, from Open Library, the third book, which has no audiobook yet ("No audiobook yet"). Save
+// series sends AudiobookDB's text ids, the saved page keeps the labels and the line, and Add on the book with no
+// audiobook yet sends its `openlibrary:<work>` id. The page at phone size and on a desktop (Chromium):
+// OUT/series-page-phone.png and OUT/series-page-desktop.png.
+const pageRow = (page: Page, title: string) => region(page).getByRole("listitem").filter({ hasText: title });
+type AudiobookDbWork = { id: string; title: string; position: number | null; positionLabel: string | null; audiobook?: boolean; added?: boolean; workId: string | null };
+
+/** The fixture's covers are on a name that never resolves: drawn here, a colour per book, so the screenshots show them. */
+async function drawCovers(page: Page) {
+  const colours = ["#6b4a3a", "#3a4f5d", "#4f5d3a", "#5d3a4f"];
+  await page.route("https://covers.audiobookdb.test/**", (route) => {
+    const id = Number(new URL(route.request().url()).pathname.replace(/\D/g, "")) || 0;
+    const fill = colours[id % colours.length];
+    return route.fulfill({
+      contentType: "image/svg+xml",
+      body: `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="120"><rect width="80" height="120" fill="${fill}"/></svg>`,
+    });
+  });
+}
+
+test("a series from AudiobookDB: its labels, the book with no audiobook yet, and Save series with text ids", async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await drawCovers(page);
+  // Hardcover is not connected: series come from AudiobookDB alone.
+  await connectAudiobookDb(page);
+  await searchSeries(page, "Ferry Road");
+  await expect(seriesResult(page, "The Ferry Road", "Wren Hollis")).toHaveAccessibleName(/^The Ferry Road Wren Hollis · 3 books$/);
+  await openSeriesResult(page, "Ferry Road", "The Ferry Road", "Wren Hollis");
+  await expect(page).toHaveURL(/#series\/703$/);
+
+  // Not saved: AudiobookDB's members at their labels, then Open Library's third book, which has no audiobook yet.
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(["The Ferry Road"]);
+  await expect(books(page)).toHaveAccessibleName("Books · 4");
+  await expect(books(page).getByRole("listitem")).toHaveText([
+    /^\s*1\s*The Ferry Road\s*Not in your library\s*$/,
+    /^\s*1\.5\s*A Night at the Landing\s*Not in your library\s*$/,
+    /^\s*2\s*Low Water\s*Not in your library\s*$/,
+    /^\s*3\s*The Far Bank\s*No audiobook yet\s*$/,
+  ]);
+  await expect(pageRow(page, "The Far Bank")).toHaveAccessibleName(/The Far Bank No audiobook yet$/);
+  const preview = (await (await page.request.get("/api/discover/series/703")).json()) as { id: string; works: AudiobookDbWork[] };
+  expect(preview.id).toBe("703");
+  expect(preview.works.map((work) => [work.id, work.positionLabel, work.audiobook])).toEqual([
+    ["711", "1", true],
+    ["712", "1.5", true],
+    ["713", "2", true],
+    ["openlibrary:OL9100003W", "3", false],
+  ]);
+
+  // Save series: each book by its label; the book with no audiobook says so. Saving sends the text ids.
+  await region(page).getByRole("button", { name: "Save series", exact: true }).click();
+  await expect(page).toHaveURL(/#series\/703\/add$/);
+  const sheet = saveSheet(page);
+  const choice = (name: string) => sheet.getByRole("checkbox", { name, exact: true });
+  await expect(choice("The Ferry Road Book 1")).toBeVisible();
+  await expect(choice("A Night at the Landing Book 1.5")).toBeVisible();
+  await expect(choice("Low Water Book 2")).toBeVisible();
+  await expect(choice("The Far Bank Book 3 · No audiobook yet")).toBeVisible();
+  // The three audiobooks, the novella too; the book with no audiobook yet stays out for now.
+  const wanted = ["The Ferry Road Book 1", "A Night at the Landing Book 1.5", "Low Water Book 2"];
+  for (const name of [...wanted, "The Far Bank Book 3 · No audiobook yet"]) {
+    const on = (await choice(name).getAttribute("aria-checked")) === "true";
+    if (on !== wanted.includes(name)) await choice(name).click();
+  }
+  const posted = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/series");
+  const saved = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/series");
+  await sheet.getByRole("button", { name: "Save series and add 3 books", exact: true }).click();
+  const body = (await posted).postDataJSON() as { id: string; bookIds: string[] };
+  expect(body.id).toBe("703");
+  expect([...body.bookIds].sort()).toEqual(["711", "712", "713"]);
+  expect((await saved).ok()).toBe(true);
+  await expect(sheet).toHaveCount(0);
+  await expect(page).toHaveURL(/#series\/703$/);
+
+  // The saved page: the labels stay; the books added are in the library; the one with no audiobook yet says so, with Add.
+  await expect(region(page).getByText(/^Wren Hollis · 0 of \d+ finished$/)).toBeVisible();
+  await expect(region(page).getByRole("button", { name: "Remove series", exact: true })).toBeVisible();
+  await expect(pageRow(page, "A Night at the Landing").getByRole("button", { name: /^1\.5 A Night at the Landing .*Not started$/ })).toBeVisible();
+  await expect(pageRow(page, "The Far Bank")).toHaveAccessibleName(/The Far Bank No audiobook yet$/);
+  await expect(pageRow(page, "The Far Bank").getByRole("button", { name: "Add The Far Bank", exact: true })).toBeVisible();
+  const series = async () => (await (await page.request.get("/api/series/703")).json()) as { id: string; works: AudiobookDbWork[] };
+  expect((await series()).id).toBe("703");
+  expect((await series()).works.map((work) => [work.id, work.positionLabel, work.audiobook, work.added])).toEqual([
+    ["711", "1", true, true],
+    ["712", "1.5", true, true],
+    ["713", "2", true, true],
+    ["openlibrary:OL9100003W", "3", false, false],
+  ]);
+  // The saved series under the Library's Series chip, by its text id.
+  expect(((await (await page.request.get("/api/series")).json()) as { id: string }[]).map((entry) => entry.id)).toContain("703");
+
+  // The page at phone size and on a desktop.
+  expect(page.viewportSize()).toEqual({ width: 390, height: 844 });
+  await page.reload();
+  await expect(pageRow(page, "The Far Bank")).toHaveAccessibleName(/The Far Bank No audiobook yet$/);
+  await noOverflow(page);
+  await page.mouse.move(0, 0);
+  await settled(page);
+  if (info.project.name === "chromium") await page.screenshot({ path: `${OUT}/series-page-phone.png`, fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(pageRow(page, "The Far Bank")).toHaveAccessibleName(/The Far Bank No audiobook yet$/);
+  await expect(pageRow(page, "A Night at the Landing").getByRole("button", { name: /^1\.5 A Night at the Landing / })).toBeVisible();
+  await noOverflow(page);
+  await settled(page);
+  if (info.project.name === "chromium") await page.screenshot({ path: `${OUT}/series-page-desktop.png`, fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  // Add on the book with no audiobook yet: the Add sheet with it chosen; adding sends its `openlibrary:` id.
+  await pageRow(page, "The Far Bank").getByRole("button", { name: "Add The Far Bank", exact: true }).click();
+  const add = page.getByRole("dialog", { name: "Add to library", exact: true });
+  await expect(add.getByRole("checkbox", { name: "The Far Bank Book 3 · No audiobook yet", exact: true })).toBeChecked();
+  const addPosted = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/series");
+  await add.getByRole("button", { name: "Add 1 book", exact: true }).click();
+  expect(((await addPosted).postDataJSON() as { id: string; bookIds: string[] })).toMatchObject({ id: "703", bookIds: ["openlibrary:OL9100003W"] });
+  await expect(add).toHaveCount(0);
+  await expect(pageRow(page, "The Far Bank").getByRole("button", { name: /^3 The Far Bank / })).toBeVisible();
+  await expect.poll(async () => (await series()).works.find((work) => work.id === "openlibrary:OL9100003W")?.added).toBe(true);
+  const library = ((await (await page.request.get("/api/books")).json()) as { title: string; inLibrary: boolean }[]).filter((book) => book.inLibrary);
+  for (const title of ["The Ferry Road", "A Night at the Landing", "Low Water", "The Far Bank"]) expect(library.filter((book) => book.title === title)).toHaveLength(1);
+  expect(errors).toEqual([]);
 });
