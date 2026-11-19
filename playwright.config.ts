@@ -58,7 +58,7 @@ const slice13Specs =
 // once it controls the page, WebKit's requests no longer pass page.route. The specs that test the service worker run
 // with it on their own project. The Activity specs among them run on webkit-iphone-activity already. The names start
 // with mobile- so that skipOnMobile (tests/e2e/mobile.ts) skips a test that needs a keyboard or the desktop layout.
-const slice13WorkerSpecs = /(^|\/)(app|device-reset|offline-restart|reader-theme|works-gallery)\.spec\.ts$/;
+const slice13WorkerSpecs = /(^|\/)(app|device-reset|offline-restart|playback-workflow|reader-theme|works-gallery)\.spec\.ts$/;
 const slice13Phone = { ...devices["iPhone 15"], viewport: { width: 390, height: 844 }, launchOptions: {} };
 const slice13Iphone = existsSync(webkit.executablePath())
   ? [

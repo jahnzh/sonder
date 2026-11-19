@@ -15,3 +15,8 @@ export const NO_BLOB_STORE = "Playwright's WebKit context is ephemeral: IndexedD
 export function skipWithoutBlobStore() {
   test.skip(test.info().project.use.browserName === "webkit" || test.info().project.use.defaultBrowserType === "webkit", NO_BLOB_STORE);
 }
+
+// WebKit reports a request that a reload or a navigation cuts off as a page error ("Fetch API cannot load <url> due to
+// access control checks."), even when the app catches the rejection (#583: GET /api/device/keep, caught in
+// keep-saver.ts). A spec that asserts no page error leaves out only that message; every other error still counts.
+export const cutOffByWebKit = (message: string) => / due to access control checks\.$/.test(message);
