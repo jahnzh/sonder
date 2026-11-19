@@ -90,18 +90,13 @@ export function playbackKeyAction({
     return canSeek ? { type: "skip", seconds: 30 } : null;
   return null;
 }
-/** An open panel that is not a dialog: the More panel of the reader on Now playing's Read face (#593), which took the
- * place of Playback options above the reader. */
-export const OPEN_SHEET_SELECTOR = '.inline-reader .reader-panel';
 const TEXT_ENTRY_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
 /** The key goes to a field the reader is typing in: it must reach the field, not a shortcut. */
 export function typingInField({ targetTag = null, contentEditable = false }: Pick<PlaybackKeyInput, "targetTag" | "contentEditable">) {
   return contentEditable || (!!targetTag && TEXT_ENTRY_TAGS.has(targetTag.toUpperCase()));
 }
 export type ReaderKeyInput = PlaybackKeyInput & {
-  /** A sheet above the reader is open (see OPEN_SHEET_SELECTOR). */
-  sheetOpen?: boolean;
-  /** One of the reader's own panels (contents, search, appearance, More…) is open. */
+  /** Appearance is docked under the text. */
   panelOpen?: boolean;
   /** The reader is mounted but not shown: Now Playing's dialog is closed. */
   readerHidden?: boolean;
@@ -120,10 +115,10 @@ export type ReaderKeyAction =
  * does not take `F`, so `F` still works right after a page button or the player's controls were used.
  */
 export function readerKeyAction(input: ReaderKeyInput): ReaderKeyAction {
-  const { key, sheetOpen = false, panelOpen = false, readerHidden = false, narration = false, playerHasBook = false } = input;
+  const { key, panelOpen = false, readerHidden = false, narration = false, playerHasBook = false } = input;
   if (
     input.defaultPrevented || input.ctrlKey || input.metaKey || input.altKey ||
-    input.dialogOpen || sheetOpen || panelOpen || readerHidden || typingInField(input)
+    input.dialogOpen || panelOpen || readerHidden || typingInField(input)
   )
     return null;
   if (key.toLowerCase() === "f") return narration ? { type: "back-to-narration" } : null;
