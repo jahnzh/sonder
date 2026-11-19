@@ -159,7 +159,7 @@ async function openLibraryGaps(name: string, author: string | null, members: Ser
       releaseDate: entry.book.year === null ? null : String(entry.book.year),
     });
   }
-  return [...gaps.values()];
+  return [...gaps.values()].sort((a, b) => a.position! - b.position!);
 }
 
 // ---- Discover ----

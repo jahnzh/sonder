@@ -14,7 +14,14 @@ export type FixtureControl = {
   remaining: number;
   /** Ids AudiobookDB no longer has (404). */
   gone: Set<string>;
+  /** Series AudiobookDB lists (`GET /series/{id}`, `POST /search` type series), by id; a test may add or change one. */
+  series: Map<string, FixtureSeries>;
+  /** Open Library's answer to `series:"<name>"`, by the lower-case name. */
+  openLibrarySeries: Map<string, OpenLibrarySeriesDoc[]>;
 };
+export type FixtureMember = { position: { label: string; sortKey: number }; book: Record<string, unknown> };
+export type FixtureSeries = { id: string; name: string; people?: { name: string; role: { name: string } }[]; bookCount?: number; books: FixtureMember[] };
+export type OpenLibrarySeriesDoc = { key: string; title: string; author_name: string[]; first_publish_year?: number; cover_i?: number; language?: string[]; series_name?: string[]; series_position?: string[] };
 
 const person = (name: string, role: string) => ({ name, role: { name: role } });
 const release = (id: string, bookId: string, narrator: string, ms: number, language: string, asin: string | null, chapters: number) => ({
@@ -42,6 +49,58 @@ const book = (id: string, title: string, author: string, extra: Record<string, u
   description: `The description of ${title}.`,
   ...extra,
 });
+
+/** A member of a series answer: the book with its language, runtime and narrators, at its structured position. */
+export function seriesMember(id: string, title: string, author: string, label: string, sortKey: number, extra: Record<string, unknown> = {}): FixtureMember {
+  return {
+    position: { label, sortKey },
+    book: {
+      id,
+      title,
+      people: [person(author, "Author"), person((extra.narrator as string) ?? "Jefferson Mays", "Narrator")],
+      cover: { url: `https://images.audiobookdb.org/${id}.jpg` },
+      releaseDate: (extra.releaseDate as string) ?? "2012-06-01",
+      language: { code: (extra.language as string) ?? "en" },
+      runtimeLengthMs: (extra.runtimeLengthMs as number) ?? 60_000_000,
+      description: "Never cached.",
+    },
+  };
+}
+const corey = "James S. A. Corey";
+/**
+ * The Expanse as `GET /series/{id}` answers it (the ticket, 18 Nov: structured positions with sortKey 0.1, 1, 1.5, 2, …;
+ * novellas included), shortened: a German translation listed as a member, and a book not out yet.
+ */
+export const EXPANSE_SERIES = (): FixtureSeries => ({
+  id: "sr-expanse",
+  name: "The Expanse",
+  people: [person(corey, "Author")],
+  bookCount: 7,
+  books: [
+    seriesMember("bk-drive", "Drive", corey, "0.1", 0.1, { runtimeLengthMs: 3_600_000 }),
+    seriesMember("bk-leviathan", "Leviathan Wakes", corey, "1", 1, { runtimeLengthMs: 72_060_000 }),
+    seriesMember("bk-butcher", "The Butcher of Anderson Station", corey, "1.5", 1.5, { runtimeLengthMs: 5_400_000 }),
+    seriesMember("bk-calibans-war", "Caliban's War", corey, "2", 2),
+    seriesMember("bk-leviathan-de", "Leviathan erwacht", corey, "1", 1, { language: "de", narrator: "Jürgen Holdorf" }),
+    seriesMember("bk-abaddons-gate", "Abaddon's Gate", corey, "3", 3),
+    seriesMember("bk-future", "The Last Expanse", corey, "10", 10, { releaseDate: "2999-01-01" }),
+  ],
+});
+/**
+ * Open Library's answer to `search.json?q=series:"The Expanse"` (recorded 19 Nov 2026, the six Expanse works and two
+ * of the other results, fields as asked): Cibola Burn (4), Nemesis Games (5) and Persepolis Rising (7) have no
+ * AudiobookDB member in the fixture, so they are the series' books with no audiobook yet.
+ */
+export const EXPANSE_OPEN_LIBRARY: OpenLibrarySeriesDoc[] = [
+  { key: "/works/OL16117275W", title: "Caliban's war", author_name: [corey], first_publish_year: 2012, language: ["ita", "fre", "ger", "eng"], series_name: ["The Expanse"], series_position: ["2"] },
+  { key: "/works/OL17857348W", title: "Persepolis rising", author_name: [corey], first_publish_year: 2017, language: ["eng"], series_name: ["The Expanse"], series_position: ["7"] },
+  { key: "/works/OL16114008W", title: "Leviathan Wakes", author_name: [corey], first_publish_year: 2009, language: ["ita", "fre", "ger", "eng"], series_name: ["The Expanse"], series_position: ["1"] },
+  { key: "/works/OL17074648W", title: "Abaddon’s Gate", author_name: [corey], first_publish_year: 2013, language: ["ita", "fre", "eng"], series_name: ["The Expanse"], series_position: ["3"] },
+  { key: "/works/OL17793655W", title: "Nemesis Games", author_name: [corey], first_publish_year: 2015, language: ["eng", "ita"], series_name: ["The Expanse"], series_position: ["5"] },
+  { key: "/works/OL17793652W", title: "Cibola burn", author_name: [corey], first_publish_year: 2014, language: ["eng", "ita"], series_name: ["The Expanse"], series_position: ["4"] },
+  { key: "/works/OL8505461W", title: "The expanse of heaven", author_name: ["Richard A. Proctor"], language: ["eng"] },
+  { key: "/works/OL20012345W", title: "The Expanse", author_name: ["Andy Diggle"], language: ["eng"] },
+];
 
 export const FIXTURE = {
   // Leviathan Wakes: an English release of 20 h 1 min (with an ASIN), an abridged English one of 8 h, a German one.
@@ -93,7 +152,15 @@ const OPEN_LIBRARY_DOCS = [
 ];
 
 export function createControl(): FixtureControl {
-  return { calls: [], failNext: [], offline: false, remaining: 39, gone: new Set() };
+  return {
+    calls: [],
+    failNext: [],
+    offline: false,
+    remaining: 39,
+    gone: new Set(),
+    series: new Map([["sr-expanse", EXPANSE_SERIES()]]),
+    openLibrarySeries: new Map([["the expanse", EXPANSE_OPEN_LIBRARY]]),
+  };
 }
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...headers } });
@@ -114,18 +181,34 @@ export function fixtureFetch(control: FixtureControl, passThrough: typeof fetch 
       if (!headers["x-api-key"]) return json({ error: "API key required" }, 401, limits);
       const path = url.pathname.replace(/^\/api/, "");
       if (method === "POST" && path === "/search") {
-        if (body?.type === "series") return json({ results: { series: [{ id: "sr-expanse", name: "The Expanse", bookCount: 18 }] } }, 200, limits);
+        if (body?.type === "series") {
+          const words = fold(String(body?.q ?? "")).split(/\s+/).filter(Boolean);
+          const found = [...control.series.values()]
+            .filter((entry) => words.every((word) => fold(entry.name).includes(word)))
+            .slice(0, 10)
+            .map(({ books, ...head }) => ({ ...head, bookCount: head.bookCount ?? books.length, cover: books[0]?.book.cover ?? null }));
+          return json({ results: { series: found } }, 200, limits);
+        }
         return json({ results: { books: searchBooks(String(body?.q ?? "")) } }, 200, limits);
       }
       const bookMatch = path.match(/^\/books\/([^/]+)$/);
       if (bookMatch) {
         const id = decodeURIComponent(bookMatch[1]);
-        return BOOKS[id] && !control.gone.has(id) ? json(BOOKS[id], 200, limits) : json({ error: "Not found" }, 404, limits);
+        // A series member is a book too.
+        const member = [...control.series.values()].flatMap((entry) => entry.books).find((entry) => entry.book.id === id)?.book;
+        const found = BOOKS[id] ?? member;
+        return found && !control.gone.has(id) ? json(found, 200, limits) : json({ error: "Not found" }, 404, limits);
       }
       const releaseMatch = path.match(/^\/releases\/([^/]+)$/);
       if (releaseMatch) {
         const id = decodeURIComponent(releaseMatch[1]);
         return RELEASES[id] && !control.gone.has(id) ? json(RELEASES[id], 200, limits) : json({ error: "Not found" }, 404, limits);
+      }
+      const seriesMatch = path.match(/^\/series\/([^/]+)$/);
+      if (seriesMatch) {
+        const id = decodeURIComponent(seriesMatch[1]);
+        const entry = control.series.get(id);
+        return entry && !control.gone.has(id) ? json(entry, 200, limits) : json({ error: "Not found" }, 404, limits);
       }
       const asinMatch = path.match(/^\/audiobooks\/external\/audible\/([^/]+)$/);
       if (asinMatch) {
@@ -136,6 +219,11 @@ export function fixtureFetch(control: FixtureControl, passThrough: typeof fetch 
     }
     if (url.hostname === "openlibrary.org") {
       control.calls.push({ url: url.href, method, headers, body: null });
+      const seriesQuery = url.pathname === "/search.json" ? (url.searchParams.get("q") ?? "").match(/^series:"(.*)"$/) : null;
+      if (seriesQuery) {
+        const docs = control.openLibrarySeries.get(seriesQuery[1].toLowerCase()) ?? [];
+        return json({ numFound: docs.length, start: 0, docs });
+      }
       if (url.pathname === "/search.json") {
         const words = fold(url.searchParams.get("q") ?? "").split(/\s+/).filter(Boolean);
         const docs = OPEN_LIBRARY_DOCS.filter((doc) => words.every((word) => fold(`${doc.title} ${doc.author_name.join(" ")}`).includes(word)));
