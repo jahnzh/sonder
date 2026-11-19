@@ -88,8 +88,10 @@ export function workInLibrary(userId: number, workId: string) {
  * When the work joins the library (the user had no row of it before), its library origin becomes
  * "manual" and Hardcover is told "add", once for the work. Adding a work that is already in the
  * library keeps its origin and its shelf status, so a repeated request changes nothing.
+ * `tellHardcover: false` leaves Hardcover's queue alone (the one-time copy of its Want to read
+ * shelf, `want-to-read.ts`, whose books are on that shelf already).
  */
-export function addWorkToLibrary(userId: number, workId: string) {
+export function addWorkToLibrary(userId: number, workId: string, options: { tellHardcover?: boolean } = {}) {
   sqlite.transaction(() => {
     if (!workEditions(workId).length) ensurePlaceholder(sqlite, workId);
     const editions = workEditions(workId);
@@ -111,7 +113,7 @@ export function addWorkToLibrary(userId: number, workId: string) {
         if (edition.placeholder && hasLibraryRow(userId, edition.id)) removeUserLibraryRow(userId, edition.id);
     if (joins) {
       setLibraryOrigin(userId, workId, "manual", { addedAt });
-      queueHardcoverStatus(userId, workId, "unread", "add");
+      if (options.tellHardcover !== false) queueHardcoverStatus(userId, workId, "unread", "add");
     }
   })();
 }

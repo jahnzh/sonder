@@ -104,6 +104,8 @@ export type LibraryWork = {
   mediaState: WorkMediaState | null;
   /** As `Book.hardcover` in `GET /api/books`; null when the work has no Hardcover book. */
   hardcover: NonNullable<Book["hardcover"]> | null;
+  /** On the user's own Want to read (#721 part c1); absent from a server before it and from works stored by an older build. */
+  wantToRead?: boolean;
 };
 export type WorkEbook = {
   id: string;
@@ -157,6 +159,8 @@ export type WorkResult = {
   hasEbook: boolean;
   /** The Hardcover book the work is matched to, if any. */
   hardcoverId: number | null;
+  /** On the user's own Want to read (#721 part c1); absent from a server before it. */
+  wantToRead?: boolean;
 };
 export type WorkSeries = { id: number | null; name: string; position: number | null; saved: boolean };
 export type WorkMediaState = {
@@ -222,6 +226,9 @@ export type Settings = {
   storageLabel: string;
   prowlarrUrl?: string;
   prowlarrConfigured?: boolean;
+  /** AudiobookDB (#721), for the administrator: a key is set, and whether it is the server's file or Settings. */
+  audiobookdbConfigured?: boolean;
+  audiobookdbSource?: "env" | "settings" | null;
   /** The media drive, for the administrator (spec #572, "Server storage"); absent from servers that predate it. */
   storage?: { connected: boolean; usedBytes: number | null; totalBytes: number | null } | null;
 };

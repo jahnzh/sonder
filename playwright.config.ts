@@ -129,6 +129,8 @@ const desktopProjects = [
               /(^|\/)keep-reading\.spec\.ts$/,
               // The Get audiobook sheet, and the specs that used today's release picker for a book (#601).
               /(^|\/)(get-audiobook|releases|prowlarr|reliability)\.spec\.ts$/,
+              // A book's catalogue match page and AudiobookDB in Connections (#721).
+              /(^|\/)catalogue-match\.spec\.ts$/,
               // The Series page of a saved series (#562).
               /(^|\/)series-page\.spec\.ts$/,
               // The Reading sync page's buttons (#541).
@@ -197,6 +199,8 @@ const desktopProjects = [
               /(^|\/)reader-check-edition\.spec\.ts$/,
               // Every spec of Now playing and the reader's page, the slice's final check (#596).
               nowPlayingSpecs,
+              // Sonder's own Want to read on the Book page, Discover's rows and the Library's Shelf (#721 part c1).
+              /(^|\/)want-to-read\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },
