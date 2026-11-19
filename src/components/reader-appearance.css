@@ -65,33 +65,3 @@
   display: block;
   width: 216px;
 }
-.reader-appearance-swatches {
-  display: flex;
-}
-.reader-appearance-swatch {
-  box-sizing: border-box;
-  width: var(--height-control);
-  height: var(--height-control);
-  padding: 6px; /* tokens: ReaderAppearance.dc.html, the swatch's ring inside its 44 target */
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-}
-.reader-appearance-swatch > span {
-  display: block;
-  box-sizing: border-box;
-  width: 32px;
-  height: 32px;
-  border: 2px solid var(--border);
-  border-radius: var(--corner-round);
-}
-.reader-appearance-swatch[data-chosen] > span {
-  border-color: var(--accent);
-}
-.reader-appearance-swatch:focus-visible {
-  outline: none;
-}
-.reader-appearance-swatch:focus-visible > span {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}

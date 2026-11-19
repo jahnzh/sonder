@@ -6,6 +6,7 @@ import {skipOnMobile} from "./mobile";
 import {highlightShown} from "./reader-view";
 import {openRead,nowPlaying} from "./now-playing";
 import { playFromLibrary } from "./library-play";
+import { gotoRead } from "./read-face";
 test.afterEach(async({page})=>{await page.unrouteAll({behavior:"wait"});});
 // The tests route the reader's answers (a refused map, a restarting server): once a service worker controls the page,
 // WebKit's requests no longer pass page.route (#523), so it is blocked, as in the other reader specs (#596).
@@ -195,15 +196,16 @@ test("an ebook without a map remains readable and offers sync setup", async ({pa
  const uploaded=await page.request.post("/api/ebooks/import",{multipart:{file:{name:"Unmapped.epub",mimeType:"application/epub+zip",buffer:await readerFixture()}}});
  expect(uploaded.ok()).toBe(true);
  const {id}=await uploaded.json();
- await page.goto(`/#reader/${id}`);
+ await gotoRead(page, id);
  // The closed Now Playing reader stays mounted, so scope to the standalone reader.
- const reader=page.getByRole("dialog",{name:"Reader"});
+ const reader=page.getByRole("dialog", { name: "Now playing", exact: true });
  await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
- await expect(page.frameLocator(".reader-dialog .reader-viewport iframe").locator("p").first()).toBeVisible();
- // No map shown, and no narration to go back to.
- await showControls(page,".reader-dialog");
+ await expect(page.frameLocator(".now-playing-screen .reader-viewport iframe").locator("p").first()).toBeVisible();
+ // No map shown, and no narration to go back to: a book with only this ebook reads in Now playing's Read face with no
+ // narration in its foot (#594, #613 part 2).
+ await showControls(page,".now-playing-screen");
  await expect(reader.locator(".reader-room")).not.toHaveAttribute("data-current-passage",/.+/);
- await expect(reader.getByRole("button",{name:"Back to narration",exact:true})).toBeDisabled();
+ await expect(reader.getByRole("button",{name:"Back to narration",exact:true})).toHaveCount(0);
  // Sync setup is the Book page's Reading sync row (#592), which names what is missing.
  const {workId}=await(await page.request.get(`/api/reader/${id}`)).json();
  await page.goto(`/#book/${encodeURIComponent(workId)}`);
@@ -216,11 +218,14 @@ test("reader keys in a gap and with modifiers leave playback and the page alone"
  // 97 s falls between the two mapped chapters (0–95 s and 100–195 s).
  expect((await page.request.post("/api/progress",{data:{recordingId:book.recordingId,trackId:book.tracks[0].id,position:97,duration:book.tracks[0].duration,updatedAt:Date.now()}})).ok()).toBe(true);
  await page.setViewportSize({width:1440,height:900});
- await page.goto(`/#reader/${ebook}`);
- const reader=page.getByRole("dialog",{name:"Reader"});
+ await gotoRead(page, ebook);
+ const reader=page.getByRole("dialog", { name: "Now playing", exact: true });
  const pages=reader.locator(".reader-viewport iframe");
  await expect(pages).toBeVisible();
- await expect(reader.locator(".reader-room")).not.toHaveAttribute("data-current-passage",/.+/);
+ // The Read face makes the book ready at 97 s without playing it (#593); the sentence before the gap stays narrated.
+ const room=reader.locator(".reader-room");
+ await expect(reader.getByRole("button",{name:"Play narration"}).first()).toBeAttached();
+ const passage=await room.getAttribute("data-current-passage");
  const writes:string[]=[];
  page.on("request",request=>{if(request.method()==="PUT"&&request.url().endsWith("/api/appearance"))writes.push(request.url());});
  // Browser shortcuts (print, Alt+key, find) are not reader keys, and P is no key at all.
@@ -231,7 +236,7 @@ test("reader keys in a gap and with modifiers leave playback and the page alone"
  await page.keyboard.press("ArrowDown");
  await page.waitForTimeout(800);
  await expect(pages).toBeVisible();
- await expect(reader.locator(".reader-room")).not.toHaveAttribute("data-current-passage",/.+/);
+ expect(await room.getAttribute("data-current-passage")).toBe(passage);
  await expect(page.getByRole("button",{name:/^Pause/})).toHaveCount(0);
  expect(writes).toEqual([]);
 });
