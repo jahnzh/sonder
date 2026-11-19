@@ -104,6 +104,11 @@ export type LibraryWork = {
   mediaState: WorkMediaState | null;
   /** As `Book.hardcover` in `GET /api/books`; null when the work has no Hardcover book. */
   hardcover: NonNullable<Book["hardcover"]> | null;
+  /**
+   * A catalogue book not on the server yet (#721, `work-abdb-<id>` / `work-ol-<id>`): the provider whose answer this
+   * is. Absent on a work on the server.
+   */
+  catalogue?: { provider: "audiobookdb" | "openlibrary"; id: string };
   /** On the user's own Want to read (#721 part c1); absent from a server before it and from works stored by an older build. */
   wantToRead?: boolean;
 };

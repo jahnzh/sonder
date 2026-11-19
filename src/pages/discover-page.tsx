@@ -1,7 +1,8 @@
 // Discover (#575, spec #572 "Discover"; boards Discover.dc.html, DiscoverResults.dc.html, DiscoverNothing.dc.html,
 // DiscoverSeries.dc.html): one search field with Books or Series under it. Before a search it lists the works on the
-// server outside the user's library; a book search asks the server and Hardcover at once and shows each group when
-// its answer arrives; every row opens its Book page, a series its Series page. For the administrator the last row is
+// server outside the user's library; a book search asks the server, AudiobookDB (English audiobooks) and Open Library
+// (books without an audiobook) at once (#721 part c2) and shows each group when its answer arrives, a failed one with
+// its reason and Retry; every row opens its Book page, a series its Series page. For the administrator the last row is
 // "Search for a recording". The query, the segment and the answers are kept in the history entry, so Back from a
 // book shows them; a reload runs the kept query again. What it shows for which answers is discover-model.ts.
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -10,7 +11,7 @@ import { Button } from "../parts/Button";
 import { Group } from "../parts/Group";
 import { PageHeader } from "../parts/PageHeader";
 import { Segmented } from "../parts/Segmented";
-import { api } from "../lib";
+import { api, ApiError } from "../lib";
 import { refreshLibraryWorks } from "../library-works-store";
 import { wantToReadNote } from "../status-lines";
 import type { Notify } from "./shared";
@@ -24,11 +25,12 @@ import {
   seriesLine,
   startRows,
   wantToReadActionName,
+  wantToReadTarget,
   withWantToRead,
   type Answer,
   type DiscoverRow,
+  type CatalogueHit,
   type DiscoverSegment,
-  type HardcoverHit,
   type SeriesResult,
 } from "./discover-model";
 import { SeriesListItem } from "./library-series";
@@ -56,9 +58,12 @@ export function askDiscoverSearch(segment: DiscoverSegment) {
 const LOAD = Math.random().toString(36).slice(2);
 
 export const HARDCOVER_FAILED_LINE = "Hardcover could not be searched.";
+export const AUDIOBOOKDB_FAILED_LINE = "AudiobookDB could not be searched.";
+export const OPENLIBRARY_FAILED_LINE = "Open Library could not be searched.";
+export const AUDIOBOOKDB_KEY_LINE = "Add the AudiobookDB API key in Settings to search audiobooks";
+export const AUDIOBOOKDB_CREDIT = "Data from AudiobookDB";
 export const SERVER_FAILED_LINE = "The server could not be searched.";
 export const OFFLINE_SEARCH_LINE = "Searching needs a connection.";
-export const CONNECT_HARDCOVER_LINE = "Connect Hardcover in Settings to search its books too";
 /** Series come from AudiobookDB (#721): its search failed; the server's reason follows. */
 export const SERIES_FAILED_LINE = "AudiobookDB could not be searched";
 
@@ -70,7 +75,8 @@ type State = {
   text: string;
   searched: string | null;
   works: Answer<WorkResult[]>;
-  hits: Answer<HardcoverHit[]>;
+  audiobookdb: Answer<CatalogueHit[]>;
+  openlibrary: Answer<CatalogueHit[]>;
   series: Answer<SeriesResult[]>;
   /** The server's reason when the series search failed. */
   seriesError?: string;
@@ -84,12 +90,20 @@ function initialState(): { state: State; rerun: boolean } {
   const asked = searchAsked;
   if (!kept || asked)
     return {
-      state: { segment: asked ?? "books", text: "", searched: null, works: waiting, hits: waiting, series: waiting },
+      state: { segment: asked ?? "books", text: "", searched: null, works: waiting, audiobookdb: waiting, openlibrary: waiting, series: waiting },
       rerun: false,
     };
   const keep = <T,>(value: T[] | undefined): Answer<T[]> => (sameLoad && value ? answered(value) : waiting);
   return {
-    state: { segment: kept.segment, text: kept.text, searched: kept.searched, works: keep(kept.works), hits: keep(kept.hits), series: keep(kept.series) },
+    state: {
+      segment: kept.segment,
+      text: kept.text,
+      searched: kept.searched,
+      works: keep(kept.works),
+      audiobookdb: keep(kept.audiobookdb),
+      openlibrary: keep(kept.openlibrary),
+      series: keep(kept.series),
+    },
     rerun: !!kept.searched && !sameLoad,
   };
 }
@@ -138,10 +152,18 @@ export function DiscoverPage({
     if (location.hash !== writeAddress({ name: "discover" })) return;
     const done = <T,>(answer: Answer<T>) => (answer.state === "done" ? answer.value : undefined);
     setPageData({
-      discover: { segment, text, searched, works: done(state.works), hits: done(state.hits), series: done(state.series) },
+      discover: {
+        segment,
+        text,
+        searched,
+        works: done(state.works),
+        audiobookdb: done(state.audiobookdb),
+        openlibrary: done(state.openlibrary),
+        series: done(state.series),
+      },
       discoverLoad: LOAD,
     });
-  }, [segment, text, searched, state.works, state.hits, state.series]);
+  }, [segment, text, searched, state.works, state.audiobookdb, state.openlibrary, state.series]);
 
   // Before a search: the works on the server that are not in the user's library.
   useEffect(() => {
@@ -155,25 +177,33 @@ export function DiscoverPage({
     };
   }, [online]);
 
-  const searchBooks = (words: string, groups: { server: boolean; hardcover: boolean } = { server: true, hardcover: true }) => {
+  type Group = "server" | "audiobookdb" | "openlibrary";
+  const searchBooks = (words: string, groups: readonly Group[] = ["server", "audiobookdb", "openlibrary"]) => {
     const id = ++searchId.current;
     const current = () => id === searchId.current;
     const q = encodeURIComponent(words);
     setState((s) => ({
       ...s,
       searched: words,
-      works: groups.server ? waiting : s.works,
-      hits: groups.hardcover ? waiting : s.hits,
+      works: groups.includes("server") ? waiting : s.works,
+      audiobookdb: groups.includes("audiobookdb") ? waiting : s.audiobookdb,
+      openlibrary: groups.includes("openlibrary") ? waiting : s.openlibrary,
     }));
-    // Both requests go at once; each group shows when its own answer arrives.
-    if (groups.server)
+    // The requests go at once; each group shows when its own answer arrives.
+    if (groups.includes("server"))
       api<{ works: WorkResult[] }>(`/works?q=${q}`)
         .then((answer) => current() && setState((s) => ({ ...s, works: answered(answer.works) })))
         .catch(() => current() && setState((s) => ({ ...s, works: { state: "failed" } })));
-    if (groups.hardcover && hardcoverConnected)
-      api<{ hits?: HardcoverHit[] }>(`/discover/hardcover?q=${q}`)
-        .then((answer) => current() && setState((s) => ({ ...s, hits: answered(answer.hits ?? []) })))
-        .catch(() => current() && setState((s) => ({ ...s, hits: { state: "failed" } })));
+    // A provider's failure keeps its reason (#716/#717); without a key (409) AudiobookDB is not set up.
+    const failure = (error: unknown): Answer<CatalogueHit[]> =>
+      error instanceof ApiError
+        ? { state: "failed", reason: error.status >= 500 || error.status === 409 ? error.message : null, missingKey: error.status === 409 }
+        : { state: "failed", reason: null };
+    for (const provider of ["audiobookdb", "openlibrary"] as const)
+      if (groups.includes(provider))
+        api<{ books?: CatalogueHit[] }>(`/discover/${provider}?q=${q}`)
+          .then((answer) => current() && setState((s) => ({ ...s, [provider]: answered(answer.books ?? []) })))
+          .catch((error: unknown) => current() && setState((s) => ({ ...s, [provider]: failure(error) })));
   };
   const searchSeries = (words: string) => {
     const id = ++searchId.current;
@@ -187,7 +217,7 @@ export function DiscoverPage({
     else searchSeries(words);
   };
 
-  // A reload runs the kept query again, once the settings say whether Hardcover is searched.
+  // A reload runs the kept query again, once the settings say whether Hardcover's series are searched.
   const reran = useRef(!rerun);
   useEffect(() => {
     if (reran.current || !settingsRead || !online || !searched) return;
@@ -205,23 +235,30 @@ export function DiscoverPage({
   const choose = (next: DiscoverSegment) => {
     searchId.current++;
     const words = searchWords(text);
-    setState((s) => ({ ...s, segment: next, searched: null, works: waiting, hits: waiting, series: waiting }));
+    setState((s) => ({ ...s, segment: next, searched: null, works: waiting, audiobookdb: waiting, openlibrary: waiting, series: waiting }));
     // The words in the field are searched again in the other segment.
     if (words && online) run(next, words);
   };
   const changeText = (value: string) => {
-    setState((s) => (value.trim() ? { ...s, text: value } : { ...s, text: value, searched: null, works: waiting, hits: waiting, series: waiting }));
+    setState((s) =>
+      value.trim() ? { ...s, text: value } : { ...s, text: value, searched: null, works: waiting, audiobookdb: waiting, openlibrary: waiting, series: waiting },
+    );
     if (!value.trim()) searchId.current++;
   };
 
   // Want to read on a row (#721 part c1): the row's own action, by work id, until the answers are read again.
   const [tapped, setTapped] = useState<Record<string, boolean>>({});
   const [wanting, setWanting] = useState<string | null>(null);
+  // A catalogue row's work (`work-abdb-<id>`, `work-ol-<id>`, #721 part c2) is made by its first PUT: the answered work
+  // id is the one a second tap takes off Want to read.
+  const [made, setMade] = useState<Record<string, string>>({});
   const toggleWantToRead = async (row: DiscoverRow) => {
     const on = !row.wantToRead;
+    const target = wantToReadTarget(row.workId, made);
     setWanting(row.workId);
     try {
-      await api(`/works/${encodeURIComponent(row.workId)}/want-to-read`, { method: on ? "PUT" : "DELETE" });
+      const answer = await api<{ workId?: string }>(`/works/${encodeURIComponent(target)}/want-to-read`, { method: on ? "PUT" : "DELETE" });
+      if (on && answer?.workId && answer.workId !== row.workId) setMade((m) => ({ ...m, [row.workId]: answer.workId! }));
       setTapped((t) => ({ ...t, [row.workId]: on }));
       notify?.(wantToReadNote(on));
       window.dispatchEvent(new Event("sonder:library-changed"));
@@ -255,9 +292,12 @@ export function DiscoverPage({
         />
       );
     });
-  const failed = (line: string, retry: () => void) => (
+  const failed = (line: string, retry: () => void, reason: string | null = null) => (
     <div className="discover-failed" role="alert">
-      <p className="type-label">{line}</p>
+      <p className="discover-failed-text type-label">
+        <span>{line}</span>
+        {reason && <span className="discover-failed-reason">{reason}</span>}
+      </p>
       <Button kind="secondary" disabled={!online} onClick={retry}>
         Retry
       </Button>
@@ -284,21 +324,39 @@ export function DiscoverPage({
     const list = start.state === "done" ? startRows(start.value) : [];
     body = list.length ? <Group caption="On the server, not in your library">{rows(list)}</Group> : null;
   } else if (segment === "books") {
-    const results = bookResults({ server: state.works, hardcover: state.hits, hardcoverConnected, admin });
+    const results = bookResults({ server: state.works, audiobookdb: state.audiobookdb, openlibrary: state.openlibrary, admin });
     body = (
       <>
         {results.nothing ? (
           <div className="discover-nothing" role="status">
             <p className="discover-nothing-title type-body">No books found</p>
-            <p className="type-label">Nothing on the server or on Hardcover matches “{searched}”.</p>
+            <p className="type-label">Nothing on the server, on AudiobookDB or on Open Library matches “{searched}”.</p>
           </div>
         ) : (
           <>
-            {results.serverFailed && failed(SERVER_FAILED_LINE, () => searchBooks(searched, { server: true, hardcover: false }))}
+            {results.serverFailed && failed(SERVER_FAILED_LINE, () => searchBooks(searched, ["server"]))}
             {!!results.server?.length && <Group caption="On the server">{rows(results.server)}</Group>}
-            {results.hardcoverFailed && failed(HARDCOVER_FAILED_LINE, () => searchBooks(searched, { server: false, hardcover: true }))}
-            {!!results.hardcover?.length && <Group caption="From Hardcover">{rows(results.hardcover)}</Group>}
+            {results.audiobookdbFailed && failed(AUDIOBOOKDB_FAILED_LINE, () => searchBooks(searched, ["audiobookdb"]), results.audiobookdbFailed.reason)}
+            {!!results.audiobookdb?.length && (
+              <>
+                <Group caption="From AudiobookDB">{rows(results.audiobookdb)}</Group>
+                <p className="discover-credit type-label">
+                  <a href="https://audiobookdb.org" target="_blank" rel="noreferrer">
+                    {AUDIOBOOKDB_CREDIT}
+                  </a>
+                </p>
+              </>
+            )}
+            {results.openlibraryFailed && failed(OPENLIBRARY_FAILED_LINE, () => searchBooks(searched, ["openlibrary"]), results.openlibraryFailed.reason)}
+            {!!results.openlibrary?.length && <Group caption="From Open Library">{rows(results.openlibrary)}</Group>}
           </>
+        )}
+        {results.audiobookdbMissingKey && admin && (
+          <p className="discover-line type-label">
+            <button type="button" className="discover-link" onClick={onConnect}>
+              {AUDIOBOOKDB_KEY_LINE}
+            </button>
+          </p>
         )}
         {recordingRow}
       </>
@@ -327,7 +385,11 @@ export function DiscoverPage({
         )
       ) : null;
   }
-  const busy = !!searched && (segment === "books" ? state.works.state === "waiting" || (hardcoverConnected && state.hits.state === "waiting") : state.series.state === "waiting");
+  const busy =
+    !!searched &&
+    (segment === "books"
+      ? [state.works, state.audiobookdb, state.openlibrary].some((answer) => answer.state === "waiting")
+      : state.series.state === "waiting");
 
   return (
     <section className="discover-page" aria-label="Discover">
@@ -365,17 +427,7 @@ export function DiscoverPage({
           <p className="discover-line type-label" role="status">
             {OFFLINE_SEARCH_LINE}
           </p>
-        ) : (
-          settingsRead &&
-          !hardcoverConnected &&
-          segment === "books" && (
-            <p className="discover-line type-label">
-              <button type="button" className="discover-link" onClick={onConnect}>
-                {CONNECT_HARDCOVER_LINE}
-              </button>
-            </p>
-          )
-        )}
+        ) : null}
       </div>
       <div className="discover-results" aria-busy={busy || undefined}>
         {body}

@@ -290,6 +290,13 @@ function CatalogueConnections({ settings, onSaved, notify, save }: Omit<Props, "
       <Group caption="Open Library">
         <Row label="API key" value={KEY_NOT_NEEDED} />
       </Group>
+      {/* Searched by the match page only (#721 part e); neither takes a key. */}
+      <Group caption="Google Books">
+        <Row label="API key" value={KEY_NOT_NEEDED} />
+      </Group>
+      <Group caption="iTunes">
+        <Row label="API key" value={KEY_NOT_NEEDED} />
+      </Group>
       {batch && batch.unmatched.length > 0 && (
         <Group caption="Not matched">
           {batch.unmatched.map((entry) => (

@@ -1,10 +1,12 @@
 // Discover finds books (#575, spec #572 "Discover"; boards Discover.dc.html, DiscoverResults.dc.html,
-// DiscoverNothing.dc.html, DiscoverSeries.dc.html), at 390 by 844 and at desktop width: the start list; "banks" with
-// both groups and a Hardcover book on the server listed once; a result opening its Book page and Back restoring the
-// query and the results; nothing found; a failed Hardcover search beside the server's group (a routed answer);
-// Hardcover not connected; no recording row for someone who is not the administrator; the series search with two
-// equal names, the chosen one opening; the plus focusing the field. Hardcover answers "banks" from its recorded answer
-// (tests/fixtures/hardcover-search-banks.json, through tests/hardcover-browser-fixture.ts).
+// DiscoverNothing.dc.html, DiscoverSeries.dc.html), at 390 by 844 and at desktop width: the start list; "banks" with the
+// server's group, then AudiobookDB's and Open Library's (#721 part c2), a book on the server listed once and the
+// credit; a result opening its Book page and Back restoring the query and the results; Add to library on an Open
+// Library book; nothing found; a failed AudiobookDB search with its reason beside the other groups (a routed answer);
+// no AudiobookDB key; Hardcover not connected (neither search needs it); no recording row for someone who is
+// not the administrator; the series search with two equal names, the chosen one opening; the plus focusing the field.
+// AudiobookDB and Open Library answer from their recorded answers (tests/audiobookdb-fixture.ts), AudiobookDB's series
+// from tests/series-browser-fixture.ts.
 import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { noOverflow } from "./overflow";
@@ -24,6 +26,11 @@ const field = (page: Page, name = "Search for a book") => discover(page).getByRo
 const group = (page: Page, caption: string) => discover(page).getByRole("list", { name: caption, exact: true });
 /** A group's rows: each is one button, named by its title and its line (beside it its Want to read action, #721 part c1). */
 const rowsOf = (page: Page, caption: string) => group(page, caption).locator("li > button");
+/** The group has this one row. */
+async function onlyRow(rows: ReturnType<typeof rowsOf>, name: string) {
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toHaveAccessibleName(name);
+}
 const recordingRow = (page: Page) => discover(page).getByRole("button", { name: /^Search for a recording/ });
 
 async function setHardcover(page: Page, connected: boolean) {
@@ -34,17 +41,23 @@ async function search(page: Page, words: string, name?: string) {
   await field(page, name).fill(words);
   await field(page, name).press("Enter");
 }
-/** Hardcover's cover addresses stay off the network: the browser gets an empty answer for them. */
+/** The providers' cover addresses stay off the network: the browser gets an empty answer for them. */
 async function noCovers(page: Page) {
-  await page.route("https://assets.hardcover.app/**", (route) => route.fulfill({ status: 404, body: "" }));
+  for (const host of ["https://assets.hardcover.app/**", "https://images.audiobookdb.org/**", "https://covers.openlibrary.org/**"])
+    await page.route(host, (route) => route.fulfill({ status: 404, body: "" }));
 }
+const AUDIOBOOKDB_KEY_BEFORE = { configured: false };
 
 // Matter on the server, matched to Hardcover's book 1001 and in the administrator's library; The Wasp Factory on the
 // server outside it. Both made once per suite server; Matter leaves the library again at the end.
 let matterWorkId = "";
 let connectedBefore = false;
 test.beforeAll(async ({ request }) => {
-  connectedBefore = !!(await (await request.get("/api/settings")).json()).hardcoverConfigured;
+  const settings = await (await request.get("/api/settings")).json();
+  connectedBefore = !!settings.hardcoverConfigured;
+  // AudiobookDB is searched with the server's key: one saved in Settings here (the fixture answers it).
+  AUDIOBOOKDB_KEY_BEFORE.configured = !!settings.audiobookdbConfigured;
+  if (!AUDIOBOOKDB_KEY_BEFORE.configured) expect((await request.patch("/api/settings", { data: { audiobookdb: "browser-key" } })).ok()).toBe(true);
   expect((await request.put("/api/hardcover/token", { data: { token: "browser-test-token" } })).ok()).toBe(true);
   expect((await request.post("/api/hardcover/books", { data: { id: 1001 } })).ok()).toBe(true);
   const matter = ((await (await request.get("/api/works?q=matter%20banks")).json()) as { works: WorkResult[] }).works;
@@ -65,6 +78,7 @@ test.beforeAll(async ({ request }) => {
 test.afterAll(async ({ request }) => {
   await request.delete(`/api/works/${encodeURIComponent(matterWorkId)}/library`);
   await request.put("/api/hardcover/token", { data: { token: connectedBefore ? "browser-test-token" : "" } });
+  if (!AUDIOBOOKDB_KEY_BEFORE.configured) await request.patch("/api/settings", { data: { audiobookdb: "" } });
 });
 test.beforeEach(async ({ page }) => {
   await page.setViewportSize(PHONE);
@@ -112,63 +126,96 @@ test("before a search: the head and the server's books outside the library, at 3
   expect(errors).toEqual([]);
 });
 
-test("banks: the server's group with the library first, Hardcover's after, Matter once; a result opens its Book page and Back restores the search", async ({ page }) => {
+test("banks: the server's group with the library first, AudiobookDB's and Open Library's after, The Wasp Factory once; a result opens its Book page and Back restores the search", async ({ page }) => {
   await setHardcover(page, true);
   const asked: string[] = [];
   const writes: string[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (url.pathname === "/api/works" || url.pathname === "/api/discover/hardcover") asked.push(`${url.pathname}?${url.searchParams}`);
+    if (url.pathname === "/api/works" || url.pathname.startsWith("/api/discover/")) asked.push(`${url.pathname}?${url.searchParams}`);
     if (request.method() !== "GET" && url.pathname.startsWith("/api/") && !url.pathname.startsWith("/api/progress")) writes.push(`${request.method()} ${url.pathname}`);
   });
   await page.goto("/#discover");
   await expect(field(page)).toBeVisible();
   await search(page, "banks");
-  // Both requests go at once.
-  await expect.poll(() => asked).toEqual(expect.arrayContaining(["/api/works?q=banks", "/api/discover/hardcover?q=banks"]));
+  // The three requests go at once; Hardcover's book search is gone.
+  await expect.poll(() => asked).toEqual(expect.arrayContaining(["/api/works?q=banks", "/api/discover/audiobookdb?q=banks", "/api/discover/openlibrary?q=banks"]));
   const server = rowsOf(page, "On the server");
   await expect(server.first()).toHaveAccessibleName("Matter Iain M. Banks · In your library");
   await expect(server.filter({ hasText: "The Wasp Factory" }).first()).toHaveAccessibleName("The Wasp Factory Iain Banks · Audiobook");
-  const hardcover = rowsOf(page, "From Hardcover");
-  await expect(hardcover.nth(0)).toHaveAccessibleName("Excession Iain M. Banks · 1996");
-  // Consider Phlebas is Hardcover's until discovery.spec adds it; then the server lists it. Either way once.
-  await expect(discover(page).getByRole("button", { name: /^Consider Phlebas Iain M\. Banks\b/ })).toHaveCount(1);
-  // Matter is a Hardcover book on the server: listed once, under the server.
-  await expect(discover(page).getByRole("button", { name: /^Matter / })).toHaveCount(1);
-  const fromHardcover = await hardcover.count();
+  // AudiobookDB: English audiobooks (its German Die Wespenfabrik is left out), with its credit.
+  const audiobooks = rowsOf(page, "From AudiobookDB");
+  await onlyRow(audiobooks, "Excession Iain M. Banks · 1996");
+  await expect(discover(page).getByRole("link", { name: "Data from AudiobookDB", exact: true })).toHaveAttribute("href", "https://audiobookdb.org");
+  await expect(discover(page).getByText("Die Wespenfabrik")).toHaveCount(0);
+  // Open Library: the book without an audiobook (The Bridge, unless an earlier run added it: then the server lists it);
+  // its Excession is AudiobookDB's, listed once.
+  await expect(discover(page).getByRole("button", { name: /^The Bridge Iain Banks\b/ })).toHaveCount(1);
+  await expect(discover(page).getByRole("button", { name: /^Excession / })).toHaveCount(1);
+  // The Wasp Factory is on the server, and AudiobookDB's: listed once, under the server.
+  await expect(discover(page).getByRole("button", { name: /^The Wasp Factory / })).toHaveCount(1);
+  expect(asked.some((url) => url.startsWith("/api/discover/hardcover"))).toBe(false);
   // The administrator's last row.
   await expect(recordingRow(page)).toHaveAccessibleName("Search for a recording of “banks”");
   const lists = discover(page).getByRole("list");
   await expect(lists.last()).toHaveAccessibleName("Search for a recording");
   await noOverflow(page);
-  await page.screenshot({ path: `${OUT}/discover-results-phone.png` });
+  await page.screenshot({ path: `${OUT}/discover-results-phone.png`, fullPage: true });
   await page.setViewportSize(DESKTOP);
   await noOverflow(page);
-  await page.screenshot({ path: `${OUT}/discover-results-desktop.png` });
+  await page.screenshot({ path: `${OUT}/discover-results-desktop.png`, fullPage: true });
   await page.setViewportSize(PHONE);
 
-  // Excession opens as a Hardcover book not on the server (#574); looking writes nothing.
+  // Excession opens as an AudiobookDB book not on the server; looking writes nothing.
   asked.length = 0;
-  await hardcover.nth(0).click();
-  await expect(page).toHaveURL(/#book\/work-hc-1002$/);
+  await audiobooks.nth(0).click();
+  await expect(page).toHaveURL(/#book\/work-abdb-bk-excession$/);
   const book = page.getByRole("region", { name: "Book", exact: true });
   await expect(book.getByRole("heading", { level: 1 })).toHaveText("Excession");
+  await expect(book.getByText("The description of Excession.")).toBeVisible();
+  await expect(book.getByRole("link", { name: "Data from AudiobookDB", exact: true })).toHaveAttribute("href", "https://audiobookdb.org");
   await expect(book.getByRole("button", { name: "Back to Discover", exact: true })).toBeVisible();
+  await noOverflow(page);
+  await page.screenshot({ path: `${OUT}/discover-audiobookdb-book-phone.png`, fullPage: true });
   await book.getByRole("button", { name: "Back to Discover", exact: true }).click();
   await expect(page).toHaveURL(/#discover$/);
   // The query and the results as they were left, without asking again.
   await expect(field(page)).toHaveValue("banks");
-  await expect(rowsOf(page, "From Hardcover")).toHaveCount(fromHardcover);
+  await onlyRow(rowsOf(page, "From AudiobookDB"), "Excession Iain M. Banks · 1996");
   await expect(rowsOf(page, "On the server").first()).toHaveAccessibleName("Matter Iain M. Banks · In your library");
   expect(asked.filter((url) => url.includes("q="))).toEqual([]);
   expect(writes).toEqual([]);
   // A reload runs the kept query again.
   await page.reload();
   await expect(field(page)).toHaveValue("banks");
-  await expect(rowsOf(page, "From Hardcover")).toHaveCount(fromHardcover);
-  await expect.poll(() => asked).toEqual(expect.arrayContaining(["/api/works?q=banks", "/api/discover/hardcover?q=banks"]));
+  await onlyRow(rowsOf(page, "From AudiobookDB"), "Excession Iain M. Banks · 1996");
+  await expect.poll(() => asked).toEqual(expect.arrayContaining(["/api/works?q=banks", "/api/discover/audiobookdb?q=banks", "/api/discover/openlibrary?q=banks"]));
 });
 
+test("an Open Library book without an audiobook: its Book page, Add to library through its placeholder, listed under the server after", async ({ page }) => {
+  await page.goto("/#discover");
+  await search(page, "the bridge");
+  const row = discover(page).getByRole("button", { name: /^The Bridge Iain Banks\b/ });
+  await expect(row).toHaveCount(1);
+  await row.click();
+  await expect(page).toHaveURL(/#book\/work-ol-OL3000W$/);
+  const book = page.getByRole("region", { name: "Book", exact: true });
+  await expect(book.getByRole("heading", { level: 1 })).toHaveText("The Bridge");
+  await expect(book.getByText("About The Bridge.")).toBeVisible();
+  const added = page.waitForResponse((response) => response.request().method() === "PUT" && new URL(response.url()).pathname === "/api/works/work-ol-OL3000W/library");
+  await book.getByRole("button", { name: "Add to library", exact: true }).click();
+  expect(await (await added).json()).toEqual({ ok: true, workId: "work-ol-OL3000W" });
+  await expect(book.getByRole("button", { name: "Add to library", exact: true })).toHaveCount(0);
+  await expect(page).toHaveURL(/#book\/work-ol-OL3000W$/);
+  const work = await (await page.request.get("/api/works/work-ol-OL3000W")).json();
+  expect([work.inLibrary, work.catalogue, work.recordings]).toEqual([true, undefined, []]);
+  // Back in Discover the book is the server's now, in the library.
+  await page.goto("/#discover");
+  await search(page, "the bridge");
+  await onlyRow(rowsOf(page, "On the server"), "The Bridge Iain Banks · In your library");
+  await expect(group(page, "From Open Library")).toHaveCount(0);
+  expect((await page.request.delete("/api/works/work-ol-OL3000W/library")).ok()).toBe(true);
+});
 test("Search for a recording opens the recording search for the words over Discover; Close returns to the results", async ({ page }) => {
   await setHardcover(page, true);
   const releases: string[] = [];
@@ -189,7 +236,7 @@ test("Search for a recording opens the recording search for the words over Disco
   await sheet.getByRole("button", { name: "Close", exact: true }).click();
   await expect(page).toHaveURL(/#discover$/);
   await expect(field(page)).toHaveValue("banks");
-  await expect(rowsOf(page, "From Hardcover").first()).toHaveAccessibleName("Excession Iain M. Banks · 1996");
+  await expect(rowsOf(page, "From AudiobookDB").first()).toHaveAccessibleName("Excession Iain M. Banks · 1996");
 });
 
 test("nothing found: one card and the recording row", async ({ page }) => {
@@ -197,9 +244,8 @@ test("nothing found: one card and the recording row", async ({ page }) => {
   await page.goto("/#discover");
   await search(page, "The Lamplighter’s Atlas");
   const nothing = discover(page).getByRole("status").filter({ hasText: "No books found" });
-  await expect(nothing).toHaveText("No books foundNothing on the server or on Hardcover matches “The Lamplighter’s Atlas”.");
-  await expect(group(page, "On the server")).toHaveCount(0);
-  await expect(group(page, "From Hardcover")).toHaveCount(0);
+  await expect(nothing).toHaveText("No books foundNothing on the server, on AudiobookDB or on Open Library matches “The Lamplighter’s Atlas”.");
+  for (const caption of ["On the server", "From AudiobookDB", "From Open Library"]) await expect(group(page, caption)).toHaveCount(0);
   await expect(recordingRow(page)).toHaveAccessibleName("Search for a recording of “The Lamplighter’s Atlas”");
   await noOverflow(page);
   await page.screenshot({ path: `${OUT}/discover-nothing-phone.png` });
@@ -208,42 +254,61 @@ test("nothing found: one card and the recording row", async ({ page }) => {
   await page.screenshot({ path: `${OUT}/discover-nothing-desktop.png` });
 });
 
-test("a failed Hardcover search says so with Retry beside the server's group", async ({ page }) => {
-  await setHardcover(page, true);
+test("a failed AudiobookDB search says so with its reason and Retry beside the other groups", async ({ page }) => {
   let fail = true;
-  await page.route("**/api/discover/hardcover?*", (route) =>
-    fail ? route.fulfill({ status: 502, json: { error: "Hardcover did not answer." } }) : route.continue(),
+  await page.route("**/api/discover/audiobookdb?*", (route) =>
+    fail ? route.fulfill({ status: 502, json: { error: "AudiobookDB is not answering (503).", kind: "unreachable", provider: "audiobookdb" } }) : route.continue(),
   );
   await page.goto("/#discover");
   await search(page, "banks");
   await expect(rowsOf(page, "On the server").first()).toHaveAccessibleName("Matter Iain M. Banks · In your library");
-  const failed = discover(page).getByRole("alert").filter({ hasText: "Hardcover could not be searched." });
-  await expect(failed).toBeVisible();
-  await expect(group(page, "From Hardcover")).toHaveCount(0);
-  await page.screenshot({ path: `${OUT}/discover-hardcover-failed-phone.png` });
+  const failed = discover(page).getByRole("alert").filter({ hasText: "AudiobookDB could not be searched." });
+  await expect(failed).toHaveText(/^AudiobookDB could not be searched\.AudiobookDB is not answering \(503\)\.Retry$/);
+  await expect(group(page, "From AudiobookDB")).toHaveCount(0);
+  // Open Library answers beside it: without AudiobookDB's answer its Excession is listed there.
+  await expect(group(page, "From Open Library")).toBeVisible();
+  await noOverflow(page);
+  await page.screenshot({ path: `${OUT}/discover-audiobookdb-failed-phone.png`, fullPage: true });
+  await page.setViewportSize(DESKTOP);
+  await noOverflow(page);
+  await page.screenshot({ path: `${OUT}/discover-audiobookdb-failed-desktop.png`, fullPage: true });
+  await page.setViewportSize(PHONE);
   fail = false;
   await failed.getByRole("button", { name: "Retry", exact: true }).click();
-  await expect(rowsOf(page, "From Hardcover").first()).toHaveAccessibleName("Excession Iain M. Banks · 1996");
+  await onlyRow(rowsOf(page, "From AudiobookDB"), "Excession Iain M. Banks · 1996");
   await expect(failed).toHaveCount(0);
   await expect(rowsOf(page, "On the server").first()).toHaveAccessibleName("Matter Iain M. Banks · In your library");
+  await expect(discover(page).getByRole("button", { name: /^Excession / })).toHaveCount(1);
 });
 
-test("Hardcover not connected: only the server is searched, and the line links to Connections; so does the series search", async ({ page }) => {
+test("no AudiobookDB key on the server: no failure, the administrator's line to Connections, and the other groups", async ({ page }) => {
+  await page.route("**/api/discover/audiobookdb?*", (route) =>
+    route.fulfill({ status: 409, json: { error: "Add the AudiobookDB API key first.", kind: "missing_key", provider: "audiobookdb" } }),
+  );
+  await page.goto("/#discover");
+  await search(page, "banks");
+  await expect(rowsOf(page, "On the server").first()).toHaveAccessibleName("Matter Iain M. Banks · In your library");
+  await expect(group(page, "From Open Library")).toBeVisible();
+  await expect(discover(page).getByRole("alert")).toHaveCount(0);
+  const line = discover(page).getByRole("button", { name: "Add the AudiobookDB API key in Settings to search audiobooks", exact: true });
+  await expect(line).toBeVisible();
+  await line.click();
+  await expect(page).toHaveURL(/#settings\/connections$/);
+});
+test("Hardcover not connected: the book search is AudiobookDB's and Open Library's; the series search asks for no connection", async ({ page }) => {
   await setHardcover(page, false);
   const hardcoverAsked: string[] = [];
   page.on("request", (request) => {
-    if (new URL(request.url()).pathname.startsWith("/api/discover/")) hardcoverAsked.push(request.url());
+    const path = new URL(request.url()).pathname;
+    if (path.startsWith("/api/discover/hardcover") || path.startsWith("/api/discover/series")) hardcoverAsked.push(request.url());
   });
   await page.goto("/#discover");
-  const line = discover(page).getByRole("button", { name: "Connect Hardcover in Settings to search its books too", exact: true });
-  await expect(line).toBeVisible();
+  await expect(discover(page).getByRole("button", { name: /Connect Hardcover/ })).toHaveCount(0);
   await search(page, "banks");
   await expect(rowsOf(page, "On the server").first()).toHaveAccessibleName("Matter Iain M. Banks · In your library");
-  await expect(group(page, "From Hardcover")).toHaveCount(0);
+  await onlyRow(rowsOf(page, "From AudiobookDB"), "Excession Iain M. Banks · 1996");
   expect(hardcoverAsked).toEqual([]);
   await page.screenshot({ path: `${OUT}/discover-not-connected-phone.png` });
-  await line.click();
-  await expect(page).toHaveURL(/#settings\/connections$/);
   // The series search (guard 18): series come from AudiobookDB since #721, so without Hardcover the Series segment
   // asks for no connection (its failure without AudiobookDB's key: series-discovery.spec.ts).
   await page.goto("/#discover");
@@ -252,7 +317,6 @@ test("Hardcover not connected: only the server is searched, and the line links t
   await expect(discover(page).getByText(/Connect Hardcover/)).toHaveCount(0);
   await setHardcover(page, true);
 });
-
 test("someone who is not the administrator gets no recording row", async ({ page }) => {
   await setHardcover(page, true);
   await page.route("**/api/auth/status", (route) =>
@@ -260,7 +324,8 @@ test("someone who is not the administrator gets no recording row", async ({ page
   );
   await page.goto("/#discover");
   await search(page, "banks");
-  await expect(rowsOf(page, "From Hardcover").first()).toHaveAccessibleName("Excession Iain M. Banks · 1996");
+  await expect(rowsOf(page, "From AudiobookDB").first()).toHaveAccessibleName("Excession Iain M. Banks · 1996");
+  await expect(discover(page).getByRole("link", { name: "Data from AudiobookDB", exact: true })).toBeVisible();
   await expect(rowsOf(page, "On the server").first()).toBeVisible();
   await expect(recordingRow(page)).toHaveCount(0);
   // Nor at the recording search's address: Discover.
@@ -337,3 +402,57 @@ test("without a connection: Searching needs a connection.", async ({ page, conte
   await context.setOffline(false);
   await expect(discover(page).getByText("Searching needs a connection.", { exact: true })).toHaveCount(0);
 });
+
+// Want to read on a catalogue row (#721 parts c1 and c2): the row's own action makes the provider book's work through
+// its placeholder and puts it on Want to read; a second tap takes it off the work the first one made. The row is found
+// in whichever group lists it: an earlier run (the other browser, or a Hardcover spec's import of the same title) leaves
+// the book on the server, and then it is the server's row; the action is the same.
+for (const [words, title, author, groupName] of [
+  ["leviathan wakes", "Leviathan Wakes", "James S. A. Corey", "From AudiobookDB"],
+  ["quiet shelf", "The Quiet Shelf", "Nora Reader", "From Open Library"],
+] as const)
+  test(`${groupName}: a row's Want to read action makes the book's work, puts it on Want to read and takes it off`, async ({ page }) => {
+    const shot = groupName === "From AudiobookDB" ? "audiobookdb" : "openlibrary";
+    await page.goto("/#discover");
+    await search(page, words);
+    // A Book row of the title (the administrator's recording row repeats the words).
+    const bookRow = (within: ReturnType<typeof discover>) => within.getByRole("listitem").filter({ hasText: title, has: page.locator(".part-book-row-status") });
+    const row = bookRow(discover(page));
+    await expect(row).toHaveCount(1);
+    const status = row.locator(".part-book-row-status");
+    const wasInLibrary = (await status.textContent())!.endsWith("In your library");
+    const fromProvider = (await bookRow(group(page, groupName)).count()) === 1;
+    const add = row.getByRole("button", { name: `Add ${title} to Want to read`, exact: true });
+    await expect(add).toHaveAttribute("aria-pressed", "false");
+    const put = page.waitForResponse((response) => response.request().method() === "PUT" && /\/want-to-read$/.test(new URL(response.url()).pathname));
+    await add.click();
+    const answer = (await (await put).json()) as { ok: boolean; workId: string };
+    expect(answer.ok).toBe(true);
+    await expect(page.getByText("Added to Want to read", { exact: true })).toBeVisible();
+    const remove = row.getByRole("button", { name: `Remove ${title} from Want to read`, exact: true });
+    await expect(remove).toHaveAttribute("aria-pressed", "true");
+    await expect(status).toHaveText(`${author} · Want to read`);
+    const made = await (await page.request.get(`/api/works/${encodeURIComponent(answer.workId)}`)).json();
+    expect([made.title, made.author, made.inLibrary, made.wantToRead, made.catalogue]).toEqual([title, author, true, true, undefined]);
+    await noOverflow(page);
+    if (fromProvider && test.info().project.name === "chromium") await page.screenshot({ path: `${OUT}/discover-want-to-read-${shot}-phone.png` });
+    await page.setViewportSize(DESKTOP);
+    await noOverflow(page);
+    if (fromProvider && test.info().project.name === "chromium") await page.screenshot({ path: `${OUT}/discover-want-to-read-${shot}-desktop.png` });
+
+    const deleted = page.waitForResponse((response) => response.request().method() === "DELETE" && /\/want-to-read$/.test(new URL(response.url()).pathname));
+    await remove.click();
+    const off = await deleted;
+    expect(off.status()).toBe(200);
+    expect(new URL(off.url()).pathname).toBe(`/api/works/${encodeURIComponent(answer.workId)}/want-to-read`);
+    await expect(page.getByText("Removed from Want to read", { exact: true })).toBeVisible();
+    await expect(add).toHaveAttribute("aria-pressed", "false");
+    await expect(status).toHaveText(`${author} · In your library`);
+    const after = await (await page.request.get(`/api/works/${encodeURIComponent(answer.workId)}`)).json();
+    expect([after.inLibrary, after.wantToRead]).toEqual([true, false]);
+    // Read again, the book is the server's, in the library, and not the provider's row as well.
+    await search(page, words);
+    await expect(rowsOf(page, "On the server").filter({ hasText: title })).toHaveAccessibleName(`${title} ${author} · In your library`);
+    await expect(bookRow(discover(page))).toHaveCount(1);
+    if (!wasInLibrary) expect((await page.request.delete(`/api/works/${encodeURIComponent(answer.workId)}/library`)).ok()).toBe(true);
+  });

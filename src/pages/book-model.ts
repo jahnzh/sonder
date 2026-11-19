@@ -95,11 +95,12 @@ export function addedElsewhere(pageWorkId: string, answer: { workId?: unknown } 
 
 /**
  * Get on this page adds the book first (ADR 0022): a Hardcover book outside the library under the id its import gives
- * it (`work-hc-<n>`), which may not be a work on the server yet, so Get has no work to get a file for until it is added.
+ * it (`work-hc-<n>`), or a catalogue book under the id its add gives it (`work-abdb-<id>`, `work-ol-<id>`, #721), which
+ * may not be a work on the server yet, so Get has no work to get a file for until it is added.
  * Another book outside the library is added by the Get sheet itself when a file is chosen (#601).
  */
 export function addsBeforeGet(work: Pick<LibraryWork, "workId" | "inLibrary">): boolean {
-  return !work.inLibrary && /^work-hc-[1-9][0-9]*$/.test(work.workId);
+  return !work.inLibrary && /^(work-hc-[1-9][0-9]*|work-abdb-[A-Za-z0-9][A-Za-z0-9_.:-]*|work-ol-OL[1-9][0-9]*W)$/.test(work.workId);
 }
 
 /** The reading sync of the chosen pair, in the facts of the status-line module; null when none was ever queued. */

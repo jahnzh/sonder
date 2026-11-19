@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { wantToReadAction } from "../src/pages/book-model.ts";
-import { hardcoverRow, serverRow, wantToReadActionName, withWantToRead } from "../src/pages/discover-model.ts";
+import { catalogueRow, serverRow, wantToReadActionName, wantToReadTarget, withWantToRead } from "../src/pages/discover-model.ts";
 import { WANT_TO_READ, wantToReadNote } from "../src/status-lines.ts";
 import type { WorkResult } from "../src/types.ts";
 
@@ -28,6 +28,17 @@ test("the Book page: a second button beside Add to library outside it, a row tha
   assert.deepEqual(wantToReadAction({ inLibrary: true, wantToRead: true }), { label: "Remove from Want to read", on: false });
 });
 
+const lent = {
+  provider: "audiobookdb" as const,
+  id: "B05",
+  title: "Lent",
+  authors: ["Jo Walton"],
+  year: 2019,
+  cover: null,
+  workId: "work-abdb-B05",
+  onServer: false,
+};
+
 test("a Discover row of the server says Want to read for a book on it, in place of In your library", () => {
   assert.equal(WANT_TO_READ, "Want to read");
   assert.deepEqual(serverRow(result({ inLibrary: true, wantToRead: true })), {
@@ -45,8 +56,9 @@ test("a Discover row of the server says Want to read for a book on it, in place 
   // A server before this part sends no `wantToRead`.
   assert.equal(serverRow(result({ inLibrary: true })).wantToRead, false);
   assert.equal(serverRow(result()).status, "Susanna Clarke · Audiobook");
-  // Hardcover's books are never on it before a tap.
-  assert.equal(hardcoverRow({ document: { id: 5, title: "Lent", author_names: ["Jo Walton"], release_year: 2019 }, workId: "work-hc-5" }).wantToRead, false);
+  // AudiobookDB's and Open Library's books (#721 part c2) are never on it before a tap.
+  assert.equal(catalogueRow(lent).wantToRead, false);
+  assert.equal(catalogueRow({ ...lent, provider: "openlibrary", id: "OL1W", workId: "work-ol-OL1W" }).wantToRead, false);
 });
 
 test("a row after a tap on its action, until the answers are read again", () => {
@@ -64,7 +76,8 @@ test("a row after a tap on its action, until the answers are read again", () => 
   assert.equal(outside.status, "Susanna Clarke · Audiobook");
   assert.equal(withWantToRead(withWantToRead(outside, true), false).status, "Susanna Clarke · In your library");
   assert.equal(withWantToRead(outside, false).status, "Susanna Clarke · In your library");
-  const hit = hardcoverRow({ document: { id: 5, title: "Lent", author_names: ["Jo Walton"], release_year: 2019 }, workId: "work-hc-5" });
+  const hit = catalogueRow(lent);
+  assert.equal(hit.status, "Jo Walton · 2019");
   assert.equal(withWantToRead(hit, true).status, "Jo Walton · Want to read");
 });
 
@@ -73,4 +86,10 @@ test("the row's action is named by what it does and the book's title; each tap l
   assert.equal(wantToReadActionName({ title: "Piranesi", wantToRead: true }), "Remove Piranesi from Want to read");
   assert.equal(wantToReadNote(true), "Added to Want to read");
   assert.equal(wantToReadNote(false), "Removed from Want to read");
+});
+
+test("a catalogue row's action names its own id until its first PUT made a work, then that work (#721 part c2)", () => {
+  assert.equal(wantToReadTarget("work-abdb-B05", {}), "work-abdb-B05");
+  assert.equal(wantToReadTarget("work-abdb-B05", { "work-abdb-B05": "w-made" }), "w-made");
+  assert.equal(wantToReadTarget("w-1", { "work-abdb-B05": "w-made" }), "w-1");
 });

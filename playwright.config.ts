@@ -151,6 +151,8 @@ const desktopProjects = [
               /(^|\/)(get-audiobook|releases|prowlarr|reliability)\.spec\.ts$/,
               // A book's catalogue match page and AudiobookDB in Connections (#721).
               /(^|\/)catalogue-match\.spec\.ts$/,
+              // The match page searches AudiobookDB, Open Library, Google Books and iTunes, a group each (#721 part e).
+              /(^|\/)catalogue-providers\.spec\.ts$/,
               // The Series page of a saved series (#562).
               /(^|\/)series-page\.spec\.ts$/,
               // The Reading sync page's buttons (#541).

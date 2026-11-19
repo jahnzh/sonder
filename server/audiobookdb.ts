@@ -19,6 +19,8 @@ import {
   normaliseQuery,
   realClock,
   unitsUsed,
+  type CatalogueBook,
+  type CatalogueSeriesRef,
   type LimiterClock,
   type Priority,
 } from "./catalogue-provider.ts";
@@ -30,25 +32,9 @@ export const AUDIOBOOKDB_SEARCH_RESERVE = 100;
 export const UNITS = { detail: 1, list: 2, search: 3 } as const;
 export const DAILY_LIMIT_LINE = "AudiobookDB's daily limit is reached; try again later.";
 
-export type CatalogueSeriesRef = { id: string | null; name: string; position: string | null; sort: number | null };
-export type CatalogueBook = {
-  provider: "audiobookdb" | "openlibrary";
-  id: string;
-  title: string;
-  subtitle: string | null;
-  authors: string[];
-  narrators: string[];
-  /** Shown from the provider by its address; never stored as an image. */
-  cover: string | null;
-  year: number | null;
-  /** Languages the provider names for the book or its releases (lower case, as given). */
-  languages: string[];
-  series: CatalogueSeriesRef[];
-  /** The book's releases where the answer lists them (AudiobookDB details). */
-  releaseIds: string[];
-  /** Only on a live detail answer: never cached, never sent on unless a match fills an empty description. */
-  description: string | null;
-};
+// The shared result shape and English check live in catalogue-provider.ts (one for every provider).
+export type { CatalogueBook, CatalogueSeriesRef } from "./catalogue-provider.ts";
+export { isEnglish } from "./catalogue-provider.ts";
 export type CatalogueChapter = { title: string; startMs: number; lengthMs: number };
 export type CatalogueRelease = {
   id: string;
@@ -363,11 +349,6 @@ export function readSeries(value: unknown): CatalogueSeries | null {
     .sort((a, b) => (a.sort ?? Infinity) - (b.sort ?? Infinity));
   const author = summary.author ?? members[0]?.book.authors[0] ?? null;
   return { ...summary, author, count: summary.count ?? members.length, members };
-}
-
-/** English as a provider writes it: a name or a code. An unknown language is not English. */
-export function isEnglish(language: string | null | undefined): boolean {
-  return !!language && /^(en|eng|english|en[-_][a-z]+)$/i.test(language.trim());
 }
 
 // ---- The calls ----
