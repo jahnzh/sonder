@@ -60,7 +60,8 @@ const slice13Specs =
 // with mobile- so that skipOnMobile (tests/e2e/mobile.ts) skips a test that needs a keyboard or the desktop layout.
 const slice13WorkerSpecs = /(^|\/)(app|device-reset|offline-restart|playback-workflow|reader-theme|works-gallery)\.spec\.ts$/;
 const slice13Phone = { ...devices["iPhone 15"], viewport: { width: 390, height: 844 }, launchOptions: {} };
-const slice13Iphone = existsSync(webkit.executablePath())
+// Opt-in (SONDER_SLICE_WEBKIT=1): a slice's final check runs it; the committed check on every push does not.
+const slice13Iphone = process.env.SONDER_SLICE_WEBKIT === "1" && existsSync(webkit.executablePath())
   ? [
       { name: "mobile-iphone-slice13", testMatch: slice13Specs, testIgnore: [slice13WorkerSpecs, activitySpecs], use: { ...slice13Phone, serviceWorkers: "block" as const } },
       { name: "mobile-iphone-slice13-sw", testMatch: slice13WorkerSpecs, use: slice13Phone },
