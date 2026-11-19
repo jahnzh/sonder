@@ -8,8 +8,11 @@ import { test, expect, type Page } from "./device-store";
 import { mkdirSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
+import { throttleCpu } from "./cpu-throttle";
 
 test.use({ serviceWorkers: "block" });
+// SONDER_CPU_THROTTLE=4 runs it on a slow processor in Chromium (#702, #707).
+test.beforeEach(({ page }) => throttleCpu(page));
 
 const OUT = "OUT";
 mkdirSync(OUT, { recursive: true });
@@ -264,6 +267,47 @@ test("with nothing on the device, Off turns off without asking", async ({ page }
   // Its failed save record goes with it.
   await expect.poll(() => held(page, [book.recordingId], null).then((h) => h.records)).toBe(0);
 });
+
+// #707: under load, a run that had read the Keep records before Off (here a library read that changed, which tries a
+// failed save again) went on after it: it saved the book again and wrote its save record back. The run is held at the
+// server's Keep records while Off is tapped.
+test("Off while a run waits for the server: the run saves nothing, writes no record and does not undo Off", async ({ page }) => {
+  const book = await fixture(page, unique("Off during a run"));
+  let refused = 0;
+  await page.route(new RegExp(`/api/media/${book.trackId}(\\?|$)`), (route) => {
+    refused++;
+    return route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ error: "Refused." }) });
+  });
+  await page.goto(address(book.workId));
+  await keep(page).click();
+  await expect(line(page)).toHaveText("Not complete · 0 of 1 files", { timeout: 20_000 });
+  const before = refused;
+  // The next run reads the device (Keep on, the failed save) and waits for GET /api/device/keep.
+  let release = () => {};
+  const released = new Promise<void>((resolve) => (release = resolve));
+  let waiting = () => {};
+  const held = new Promise<void>((resolve) => (waiting = resolve));
+  await page.route("**/api/device/keep", async (route) => {
+    waiting();
+    await released;
+    await route.continue().catch(() => {});
+  });
+  await page.evaluate(() => window.dispatchEvent(new Event("sonder:library-works-stored")));
+  await held;
+  await keep(page).click();
+  await expect(keep(page)).toHaveAttribute("aria-checked", "false");
+  await expect(offQuestion(page)).toHaveCount(0);
+  await expect.poll(() => heldBook(page, book.recordingId)).toBe(0);
+  release();
+  // The run's next pass sends Off: the saver's run has ended once the server holds it.
+  await expect
+    .poll(async () => ((await (await page.request.get("/api/device/keep")).json()).records as { workId: string; on: boolean }[]).find((r) => r.workId === book.workId)?.on)
+    .toBe(false);
+  expect(refused).toBe(before);
+  expect(await heldBook(page, book.recordingId)).toBe(0);
+  await expect(keep(page)).toHaveAttribute("aria-checked", "false");
+});
+const heldBook = (page: Page, recordingId: string) => held(page, [recordingId], null).then((h) => h.records + h.downloads + h.parts);
 
 test("a book with two recordings switched on the Audiobook page saves the new one and lists the earlier copy; choosing it again keeps it; Remove frees it", async ({ page }) => {
   test.setTimeout(120_000);
