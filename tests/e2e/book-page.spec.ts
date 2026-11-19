@@ -141,7 +141,7 @@ test("a book with both files and a ready reading sync, as the boards draw it, at
   const about = shown.getByRole("button", { name: "Show the whole description", exact: true });
   await expect(about).toHaveAttribute("aria-expanded", "false");
   const more = shown.getByRole("list", { name: "Book", exact: true });
-  await expect(more.getByRole("button")).toHaveText(["Mark as finished", "Remove from library"]);
+  await expect(more.getByRole("button")).toHaveText(["Add to Want to read", "Mark as finished", "Remove from library"]);
   // Measures: file rows 64, rows 52, the head's buttons and Listen/Read 44.
   for (const row of await files(page).locator(".part-file-row").all()) expect(await clientHeight(row)).toBe(64);
   expect(await clientHeight(shown.locator(".book-page-keep"))).toBe(64);
