@@ -1,6 +1,7 @@
 import {test,expect} from "@playwright/test";
 import {readFileSync} from "node:fs";
 import {readerFixture} from "../reader-fixture";
+import { gotoRead } from "./read-face";
 test("a single audio file without chapter markers gets reading sync prepared automatically from narration samples",async({page})=>{
  const audio=await page.request.post("/api/import",{multipart:{title:"Chapterless narration",author:"Lewis Carroll",files:{name:"Complete book.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
  expect(audio.ok()).toBe(true);
@@ -11,9 +12,9 @@ test("a single audio file without chapter markers gets reading sync prepared aut
  const upload=await page.request.post(`/api/ebooks/import?workId=${book.workId}`,{multipart:{file:{name:"Chapterless companion.epub",mimeType:"application/epub+zip",buffer:await readerFixture()}}});
  expect(upload.ok()).toBe(true);
  const id=(await upload.json()).id;
- await page.goto(`/#reader/${id}`);
- await expect(page.getByRole("dialog",{name:"Reader"})).toBeVisible();
- const reader=page.locator(".reader-dialog");
+ await gotoRead(page, id);
+ await expect(page.getByRole("dialog", { name: "Now playing", exact: true })).toBeVisible();
+ const reader=page.locator(".now-playing-screen");
  await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
  // Importing with a workId queues the backfill job; the alignment stub finishes it almost at once.
  await expect.poll(async()=>{

@@ -2,6 +2,7 @@ import { test, expect, type FrameLocator, type Locator, type Page } from "@playw
 import { readFileSync, mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { CALIBRE_CONTENTS, CALIBRE_FIRST, CALIBRE_WRAPPED, CALIBRE_LINK_COLOUR, CALIBRE_SECOND, calibreLinkFixture } from "../calibre-link-fixture";
+import { gotoRead } from "./read-face";
 // A calibre EPUB whose text sits inside anchors without a target (#727): the text keeps its colour, a tap in the
 // middle of it shows and hides the reader's controls, and the book's real links (a note, a contents entry) still work.
 
@@ -27,9 +28,9 @@ async function openBook(page: Page) {
   const uploaded = await page.request.post(`/api/ebooks/import?workId=${book.workId}`, { multipart: { file: { name: "Calibre.epub", mimeType: "application/epub+zip", buffer: await calibreLinkFixture({ title }) } } });
   expect(uploaded.ok()).toBe(true);
   const ebook = (await uploaded.json()).id as string;
-  await page.goto(`/#reader/${ebook}`);
-  const room = page.locator(".reader-room:not(.inline-reader)");
-  const frame = page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe");
+  await gotoRead(page, ebook);
+  const room = page.locator(".reader-room");
+  const frame = page.frameLocator(".reader-room .reader-viewport iframe");
   await expect(frame.getByText("A calibre book jacket.")).toBeVisible();
   // Past the book jacket with a tap on the right edge.
   const viewport = (await room.locator(".reader-viewport").boundingBox())!;
