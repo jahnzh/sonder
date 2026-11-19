@@ -7,6 +7,9 @@ import { test, expect, type Page, type Request, type Route } from "@playwright/t
 import { mkdirSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
+import { NO_BLOB_STORE } from "./mobile";
+// Every test here saves a device copy, which Playwright's WebKit cannot store (tests/e2e/mobile.ts).
+test.skip(({ browserName }) => browserName === "webkit", NO_BLOB_STORE);
 
 test.use({ serviceWorkers: "block" });
 

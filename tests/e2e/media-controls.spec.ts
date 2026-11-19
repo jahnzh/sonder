@@ -5,6 +5,7 @@ import { parseRange } from "../../server/range";
 import { readerFixture } from "../reader-fixture";
 import { openListen, openRead } from "./now-playing";
 import { playFromLibrary } from "./library-play";
+import { skipOnMobile } from "./mobile";
 test.use({ serviceWorkers: "block" });
 async function instrument(page: Page) {
   await page.addInitScript(() => {
@@ -220,6 +221,7 @@ test("headphone seeks cross audio files while paused and retain the 30-second of
 test("Space toggles playback across views and arrows skip 30 seconds while ignoring inputs, buttons and dialogs", async ({
   page,
 }) => {
+  skipOnMobile(true, "needs a hardware keyboard (Space and the arrow keys)");
   await instrument(page);
   const paused = () =>
     page.evaluate(

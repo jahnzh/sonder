@@ -11,6 +11,7 @@ import { createServer, type AddressInfo } from "node:net";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 import { chooseView, listRow } from "./library-view";
+import { skipWithoutBlobStore } from "./mobile";
 
 // Routed answers (`/api/library`) must reach the page: no service worker in between.
 test.use({ serviceWorkers: "block" });
@@ -386,6 +387,8 @@ test("Favorite on the Book page puts the work under Favorites, one tile for its 
 });
 
 test("the device database's upgrade keeps places, downloads, favourites and position history; earlier favourites are under Favorites", async ({ page }) => {
+  // The upgrade is seeded with a stored download (a Blob).
+  skipWithoutBlobStore();
   const run = randomUUID().slice(0, 6);
   const left = await importRecording(page, `Upgraded favourite ${run}`);
   const second = await secondRecording(page, left);

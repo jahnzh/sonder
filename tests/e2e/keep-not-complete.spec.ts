@@ -190,6 +190,7 @@ test("a full device: This device is full on the book, and the note under Storage
 });
 
 test("a paused save waits with Resume after a reload and resumes on Resume; a book missing a file is not under On device", async ({ page }) => {
+  skipWithoutBlobStore();
   test.setTimeout(120_000);
   const book = await importBook(page, unique("Paused"));
   const done = await importBook(page, unique("Complete"));
