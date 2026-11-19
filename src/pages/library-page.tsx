@@ -47,6 +47,7 @@ import {
 import { SeriesList } from "./library-series";
 import { SERIES_CHIP, type SavedSeriesItem } from "./library-series-model";
 import type { Page } from "./shared";
+import { Cover } from "../parts/Cover";
 import "./library-page.css";
 
 export type LibraryAction = "add" | "remove" | "finished" | "unread";
@@ -296,7 +297,8 @@ function WorkTile({ work, onOpen }: { work: LibraryWork; onOpen: () => void }) {
     <li className="library-tile" data-work={work.workId}>
       <button type="button" className="library-tile-open" onClick={onOpen} aria-label={`About ${work.title}`}>
         <span className="library-cover">
-          {work.cover ? <img src={work.cover} alt="" loading="lazy" decoding="async" /> : <span className="library-cover-title">{work.title}</span>}
+          {/* The work's cover by the one cover choice (#763), else the generated cover. */}
+          <Cover src={work.cover} title={work.title} author={work.author} workId={work.workId} lazy />
           <MarksPill marks={marks} />
         </span>
         <span className="library-tile-title type-label">{work.title}</span>
@@ -384,7 +386,7 @@ function ContinueCard({ work, books, onOpen }: { work: LibraryWork; books: Book[
     <section className="library-continue" aria-label="Continue">
       <button type="button" className="library-continue-open" onClick={onOpen} aria-label={`Continue ${work.title}`}>
         <span className="library-continue-cover" aria-hidden="true">
-          {work.cover ? <img src={work.cover} alt="" /> : <span className="library-cover-title">{work.title}</span>}
+          <Cover src={work.cover} title={work.title} workId={work.workId} />
         </span>
         <span className="library-continue-text">
           <span className="type-caption library-continue-label">Continue</span>

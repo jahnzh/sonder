@@ -49,6 +49,7 @@ button.part-book-row:focus-visible {
   overflow: hidden;
   display: block;
 }
+.part-book-row-cover > .part-cover,
 .part-book-row-cover > img {
   display: block;
   width: 100%;

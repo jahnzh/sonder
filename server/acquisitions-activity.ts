@@ -3,7 +3,7 @@
  * `server/schema.ts`: the table has no CHECK constraint, and the statuses are the ones `server/acquisitions.ts`,
  * `server/app.ts` (pause, resume, retry) and `server/series-removal.ts` write.
  */
-import type { ActivityHealth, ActivityItemAction, ActivityState, TorrentHealth } from "../src/types.ts";
+import { ownCover, type ActivityHealth, type ActivityItemAction, type ActivityState, type TorrentHealth } from "../src/types.ts";
 import type { AcquisitionJobStatus } from "./schema.ts";
 import type { TorrentState } from "./transmission.ts";
 import {
@@ -239,11 +239,13 @@ export const acquisitionSource = defineSource<AcquisitionRow[], AcquisitionProbe
     const drafts = rows.map((row) => {
       const { state, unknown } = stateFrom(ACQUISITION_ACTIVITY_STATES, row.status);
       const id = `acquisition:${row.id}`;
-      const book = itemWork(row.work, row.cover ?? "");
+      // A download stored by an older build may hold a sample book's cover: no cover of its own (#763).
+      const cover = ownCover(row.cover, row.id);
+      const book = itemWork(row.work, cover);
       return {
         id, kind: "acquisition" as const, processId: "acquisitions", title: row.title, detail: row.author || null, user: null,
         state, progress: clamp01(row.progress), host: row.backend || null, startedAt: row.created_at, updatedAt: row.updated_at,
-        ...book, cover: book.cover || row.cover || "",
+        ...book, cover: book.cover || cover,
         facts: { kind: "acquisition" as const, status: row.status, backend: row.backend || null },
         error: unknown ?? (row.error || null),
         changedAt: state === "running" ? tracker.observe(id, `${row.status}|${row.progress}`, now) : row.updated_at,
