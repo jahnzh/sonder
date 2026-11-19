@@ -6,9 +6,11 @@ import {
   isSettingsPage,
   SETTINGS_PAGES,
   isFirstPage,
+  OLD_NAMES,
   parentOf,
   placeOf,
   readAddress,
+  readLink,
   resolve,
   step,
   writeAddress,
@@ -94,6 +96,46 @@ test("the old names keep working: #downloads opens Activity's Now, #reader/<eboo
   for (const admin of [true, false]) {
     assert.deepEqual(resolve(readAddress("#downloads"), { admin }), { name: "activity", part: "now" });
     assert.deepEqual(resolve(readAddress("#reader/e1"), { admin }), { name: "reader", ebookId: "e1" });
+  }
+});
+
+test("old names (spec #608): one table; each reads as its new route, marked a redirect", () => {
+  // The table names each old address once, with the address of the page that took its place.
+  assert.deepEqual(OLD_NAMES.map((entry) => [entry.head, entry.becomes]), [["downloads", "#activity"]]);
+  for (const entry of OLD_NAMES) {
+    const read = readLink(`#${entry.head}`);
+    assert.equal(read.redirect, true, entry.head);
+    assert.equal(writeAddress(read.route), entry.becomes, entry.head);
+    // Without the "#" too, and readAddress gives the same route.
+    assert.deepEqual(readLink(entry.head), read, entry.head);
+    assert.deepEqual(readAddress(`#${entry.head}`), read.route, entry.head);
+    // Extra parts after an old name name nothing in the place of its new page; still a redirect.
+    const extra = readLink(`#${entry.head}/x`);
+    assert.deepEqual(extra, { route: { name: "unknown", place: entry.place }, redirect: true }, entry.head);
+  }
+  assert.deepEqual(readLink("#downloads"), { route: { name: "activity", part: "now" }, redirect: true });
+  // Every address of #480's table is not a redirect and reads as before.
+  for (const row of table) assert.deepEqual(readLink(row.address), { route: row.route, redirect: false }, row.address);
+  for (const address of ["", "#", "#nowhere", "#Downloads", "#activity", "#reader/e1"])
+    assert.equal(readLink(address).redirect, false, address);
+});
+
+test("no route or place named downloads is read, written or returned", () => {
+  const addresses = [
+    "#downloads", "#downloads/", "#downloads/x", "#downloads/a/b",
+    ...table.map((row) => row.address),
+    ...OLD_NAMES.map((entry) => `#${entry.head}`),
+  ];
+  for (const address of addresses) {
+    for (const admin of [true, false]) {
+      const route = resolve(readAddress(address), { admin });
+      assert.notEqual(route.name, "downloads", address);
+      assert.notEqual(placeOf(route), "downloads", address);
+      assert.ok(!writeAddress(route).startsWith("#downloads"), address);
+      const parent = parentOf(route);
+      if (parent) assert.ok(!writeAddress(parent).startsWith("#downloads"), address);
+      assert.ok(!writeAddress(firstPage(placeOf(route))).startsWith("#downloads"), address);
+    }
   }
 });
 
