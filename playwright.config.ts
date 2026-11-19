@@ -75,6 +75,8 @@ const desktopProjects = [
               /(^|\/)reader-page-turn\.spec\.ts$/,
               // Activity › Server (#519).
               /(^|\/)activity-server\.spec\.ts$/,
+              // The Get sheet without a book (#576).
+              /(^|\/)get-recording\.spec\.ts$/,
               // The attention dot from Now's builder (#521).
               /(^|\/)activity-dot\.spec\.ts$/,
               // Settings as a list with pages (#579).

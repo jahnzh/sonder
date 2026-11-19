@@ -79,3 +79,17 @@ test("only English rows, and indexer rows that name no language; the book's titl
     ["cached", "many", "few", "other"],
   );
 });
+
+test("without a book (#576): each row's own title first, the narrator first on the second line", () => {
+  const row = recordingRow(release({ title: "The Lamplighter’s Atlas" }), "Lamplighter", undefined, true);
+  assert.equal(row.first, "The Lamplighter’s Atlas");
+  assert.equal(row.second, "Dan Stevens · M4B · 64 kbps · 602 MB");
+  // No narrator: the facts alone; with All languages the language first.
+  assert.equal(recordingRow(release({ narrator: null }), "x", undefined, true).second, "M4B · 64 kbps · 602 MB");
+  assert.equal(recordingRow(release({ language: "German" }), "x", "all", true).second, "German · Dan Stevens · M4B · 64 kbps · 602 MB");
+  // recordingRows passes it on.
+  assert.deepEqual(
+    recordingRows([release({ id: "a" }), release({ id: "b", title: "Other", narrator: "Ann" })], "Frankenstein", "English", true).map((r) => r.first),
+    ["Frankenstein", "Other"],
+  );
+});
