@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   heldPosition,
+  landingSought,
   landingStep,
   LANDING_TOLERANCE,
   LANDING_TRIES,
@@ -59,4 +60,33 @@ test("the held place is the target only for the current load's landing", () => {
   assert.equal(heldPosition(landing(), 4, 4.08), 160);
   assert.equal(heldPosition(landing(), 5, 4.08), 4.08);
   assert.equal(heldPosition(null, 4, 4.08), 4.08);
+});
+
+// #730: a seek made while a load's seek is held, backwards or forwards, paused, is the place from then on.
+test("a seek away from a held target replaces it, with tries and the wait of its own", () => {
+  const held = landing({ tries: 2 });
+  // Backwards (11:3 before 12:4 on the live check) and forwards.
+  assert.deepEqual(landingSought(held, 4, 95, 9_000), { generation: 4, target: 95, tries: 0, since: 9_000 });
+  assert.deepEqual(landingSought(held, 4, 240, 9_000), { generation: 4, target: 240, tries: 0, since: 9_000 });
+  // The held place follows it, and once the element is there the landing is done.
+  const sought = landingSought(held, 4, 95, 9_000);
+  assert.equal(heldPosition(sought, 4, 41.448), 95);
+  assert.deepEqual(landingStep(sought, read({ currentTime: 95 })), { action: "done" });
+  // It is never sought back to the old target.
+  assert.deepEqual(landingStep(sought, read({ currentTime: 95.4, now: 9_100 })), { action: "done" });
+});
+
+test("the landing's own reseek, or a seek within the tolerance, keeps the landing as it is", () => {
+  const held = landing({ tries: 2 });
+  assert.equal(landingSought(held, 4, 160, 9_000), held);
+  assert.equal(landingSought(held, 4, 160 + LANDING_TOLERANCE, 9_000), held);
+  assert.equal(landingSought(held, 4, 160 - LANDING_TOLERANCE, 9_000), held);
+});
+
+test("a seek with no landing held, an older load's landing, or no number holds nothing new", () => {
+  assert.equal(landingSought(null, 4, 95, 9_000), null);
+  const older = landing({ generation: 3 });
+  assert.equal(landingSought(older, 4, 95, 9_000), older);
+  const held = landing();
+  assert.equal(landingSought(held, 4, Number.NaN, 9_000), held);
 });
