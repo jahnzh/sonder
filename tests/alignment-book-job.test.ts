@@ -26,7 +26,7 @@ const schema = await import("../server/schema.ts");
 const { extractBook } = await import("../server/reader.ts");
 const alignment = await import("../server/alignment.ts");
 const { createAlignment, alignmentJob, putAlignmentJob, processAlignments, stopAlignments, resetAlignmentRunnerForTests,
-  alignmentSchedulerForTests, queueEngineRebuilds } = alignment;
+  alignmentSchedulerForTests, queueEngineRebuilds, autoQueueAlignmentForPair, autoQueueAlignmentsForWork } = alignment;
 const transition = await import("../server/alignment-transitions.ts");
 const pool = await import("../server/alignment-pool.ts");
 const { getAlignmentPoolCoordinator, resetAlignmentPoolCoordinator, setAlignmentPoolDepsForTests } = pool;
@@ -287,6 +287,68 @@ test("cancel cancels the worker's job and releases the lease", async () => {
   await until(() => calls("wsl").includes(`DELETE /book-jobs/${workerJobId}`) && !fake.hosts.wsl.jobs.size, "worker job cancelled");
   assert.equal(slotsHeld(), 0);
   assert.ok(!calls("wsl").some((call) => call.endsWith("/result")), "nothing was fetched or published");
+});
+
+test("a cancel of a job processing on lisa stops it there and is final: no result is fetched, nothing automatic queues it again (#744)", async () => {
+  fake.hosts.wsl.down = true;
+  const created = await heldJob("aligning", "lisa");
+  const workerJobId = bookWorkerJobId(created);
+  // What PATCH /api/alignments/<id> {action:'cancel'} does.
+  transition.cancel(alignmentJob(created.id));
+  await settled(created.id, ["cancelled"]);
+  await until(() => calls("lisa").includes(`DELETE /book-jobs/${workerJobId}`) && !fake.hosts.lisa.jobs.size, "lisa's job cancelled");
+  // The worker would now finish; the automatic queues of the pair (the work's auto-queue after an import or an
+  // ebook-set check) leave the cancel standing, and nothing runs. Prepare for all books takes every pair of this
+  // file's other recordings too: its skip of a cancelled pair is in tests/alignment-backfill.test.ts.
+  fake.hosts.lisa.holdAt = null;
+  fake.hosts.wsl.down = false;
+  assert.equal(await autoQueueAlignmentForPair("book-ebook", created.recordingId), false);
+  await autoQueueAlignmentsForWork("book-work", { ebookId: "book-ebook", recordingId: created.recordingId });
+  await processAlignments();
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  const job = alignmentJob(created.id);
+  assert.equal(job.status, "cancelled");
+  assert.equal(job.generation, created.generation, "no new plan of the pair");
+  assert.deepEqual(job.intervals, []);
+  assert.equal(job.outcome, undefined);
+  assert.deepEqual(calls("lisa"), ["POST /book-jobs", `DELETE /book-jobs/${workerJobId}`], "nothing was fetched from lisa");
+  assert.deepEqual(calls("wsl"), [], "and nothing started on WSL");
+  assert.equal(slotsHeld(), 0);
+  // The owner's Resume still runs it again, as a new worker job.
+  const resumed = transition.resume(alignmentJob(created.id));
+  void processAlignments();
+  const again = await settled(created.id);
+  assert.equal(again.status, "partial", again.error ?? undefined);
+  assert.equal(again.bookJob?.id, bookWorkerJobId(resumed));
+});
+
+test("a cancel at any request of a whole-book run is final: the cancelled generation's result is never published (#744)", async () => {
+  // A full run's whole-book requests (start, polls, result) on WSL, counted once.
+  const full = await settled((await anchoredJob()).id);
+  assert.equal(full.status, "partial", full.error ?? undefined);
+  const requests = fake.hosts.wsl.book.length;
+  assert.ok(requests >= 3, `a full run sent ${requests} requests`);
+  for (let k = 1; k <= requests; k++) {
+    await install();
+    let jobId = "";
+    let seen = 0;
+    let at = "";
+    // The cancel lands while the k-th request is with the worker: after a start, during a poll, during the result fetch.
+    fake.hosts.wsl.onBook = (method, path) => {
+      if (++seen === k && jobId) {
+        at = `${method} ${path}`;
+        transition.cancel(alignmentJob(jobId));
+      }
+    };
+    const created = await createAlignment("book-ebook", recording().recordingId, undefined, "anchored");
+    jobId = created.id;
+    const job = await settled(created.id);
+    if (!at) continue;
+    assert.equal(job.status, "cancelled", `cancelled at ${at}`);
+    assert.deepEqual(job.intervals, [], `nothing published after a cancel at ${at}`);
+    assert.equal(job.generation, created.generation, at);
+    assert.equal(slotsHeld(), 0, at);
+  }
 });
 
 /** Stops the server as a clean shutdown does and starts a new one (a new claim owner) on the same database. */

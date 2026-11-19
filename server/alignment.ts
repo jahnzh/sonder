@@ -443,6 +443,7 @@ type BackfillDecision =
   | "ready"
   | "inProgress"
   | "paused"
+  | "cancelled"
   | "notEligible"
   | "spare";
 async function backfillDecision(
@@ -459,6 +460,9 @@ async function backfillDecision(
     if (alignmentJobActive(runStatus)) return "inProgress";
     if (runStatus === "paused") return "paused";
     if (alignmentMapUsable(existing)) return "ready";
+    // A cancel is final (#744): nothing automatic (the upload, link and audio-import auto-queue, the queueing after an
+    // ebook-set check, Prepare for all books) plans the pair again. Prepare and Resume of this book still do.
+    if (runStatus === "cancelled") return "cancelled";
   }
   if (ebookSetCheckPending(ebookId)) return "notEligible";
   // A spare edition (nobody reads it) is never synced whole by itself (#718, ADR 0024): its check against the
@@ -473,7 +477,7 @@ export async function runAlignmentBackfill() {
   const result = {
     queued: 0,
     failed: 0,
-    skipped: { ready: 0, inProgress: 0, paused: 0, notEligible: 0, spare: 0 },
+    skipped: { ready: 0, inProgress: 0, paused: 0, cancelled: 0, notEligible: 0, spare: 0 },
   };
   const pairs = db
     .select({ ebookId: s.ebookEditions.id, recordingId: s.recordings.id })
