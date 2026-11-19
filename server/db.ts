@@ -218,6 +218,15 @@ CREATE TABLE IF NOT EXISTS work_catalogue_match(work_id TEXT PRIMARY KEY,outcome
 -- Part e: a work's links to Google Books and iTunes, beside its main link (one per provider), picked on the match page.
 CREATE TABLE IF NOT EXISTS work_provider_links(work_id TEXT NOT NULL,provider TEXT NOT NULL CHECK(provider IN ('googlebooks','itunes')),external_id TEXT NOT NULL,title TEXT NOT NULL,author TEXT NOT NULL,matched_by TEXT NOT NULL DEFAULT 'manual' CHECK(matched_by IN ('manual')),linked_at INTEGER NOT NULL,PRIMARY KEY(work_id,provider));
 `);
+// The book's Edit page (#719 part a): a field the administrator edited by hand, per work or per recording, as JSON. It
+// wins over the stored value and over the catalogue's, whatever a refresh writes; deleting the row (Revert) gives the
+// source's value back. A local series (made by hand, not from a provider) has its name here; a work's series list is
+// its `series` field. No foreign keys, as the catalogue tables: a removed work leaves rows nothing reads.
+sqlite.exec(`
+CREATE TABLE IF NOT EXISTS work_metadata_overrides(work_id TEXT NOT NULL,field TEXT NOT NULL,value TEXT NOT NULL,edited_at INTEGER NOT NULL,PRIMARY KEY(work_id,field));
+CREATE TABLE IF NOT EXISTS recording_metadata_overrides(recording_id TEXT NOT NULL,field TEXT NOT NULL,value TEXT NOT NULL,edited_at INTEGER NOT NULL,PRIMARY KEY(recording_id,field));
+CREATE TABLE IF NOT EXISTS local_series(id TEXT PRIMARY KEY,name TEXT NOT NULL,created_at INTEGER NOT NULL);
+`);
 sqlite.exec(SERIES_RESAVE_TABLE);
 // A work a series brought into the library names that series by its AudiobookDB id (#721); `series_id` keeps the
 // Hardcover id of older rows, unused.

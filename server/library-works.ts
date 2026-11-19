@@ -27,6 +27,7 @@ import { hardcoverForWorks, hiddenHardcoverPlaceholders } from "./hardcover.ts";
 import { deliveredTracks } from "./media-library.ts";
 import { choiceKey, chosenRecordingId, fallbackCovers, idList, listedRecordings, storedChoices, workCovers } from "./work-cover.ts";
 import { readerPlaces, workCompletions } from "./work-completion.ts";
+import { applyTitleEdits, applyWorkEdits, metadataOf, registerWorkMetadataRoutes } from "./work-metadata.ts";
 import { ebookFile } from "./ebooks.ts";
 import { listEbookSetMembers } from "./ebook-set.ts";
 import { CONSENSUS_EBOOK_PREFIX, consensusEbookId, defaultEbookIds } from "./ebook-set-consensus.ts";
@@ -367,8 +368,15 @@ function libraryRows(userId: number, workIds?: string[]) {
  * `workIds` in the `LibraryWork` shape for `userId`, in the order given; unknown ids are left out.
  * Each file check made is added to `files`.
  */
-function buildWorks(userId: number, workIds: string[], hidden: Set<string>, files: FileCheck[] = []): LibraryWork[] {
+function buildWorks(userId: number, workIds: string[], hidden: Set<string>, files: FileCheck[] = [], { edits = true } = {}): LibraryWork[] {
   if (!workIds.length) return [];
+  const built = buildStoredWorks(userId, workIds, hidden, files);
+  // The fields the administrator edited by hand (#719) win over the stored and catalogue values, for every reader.
+  return edits ? applyWorkEdits(built, savedSeries(userId)) : built;
+}
+
+/** `workIds` from the stored values only, before the edits made by hand. */
+function buildStoredWorks(userId: number, workIds: string[], hidden: Set<string>, files: FileCheck[]): LibraryWork[] {
   const works = new Map(
     db
       .select()
@@ -546,7 +554,7 @@ const titleOrder = new Intl.Collator("en", { sensitivity: "base", numeric: true 
  */
 export function serverWorks(userId: number, query: string | null): WorkResult[] {
   const hidden = hiddenHardcoverPlaceholders(userId);
-  const visible = catalogue(userId).filter((row) =>
+  const visible = applyTitleEdits(catalogue(userId)).filter((row) =>
     workVisibleByRule(JSON.parse(row.editions) as string[], hidden, row.hasEbook === 1),
   );
   let chosen: CatalogueRow[];
@@ -630,7 +638,19 @@ function matchesTag(header: string | string[] | undefined, tag: string) {
     .some((part) => part === "*" || names.includes(part.replace(/^W\//, "").replace(/^"|"$/g, "")));
 }
 
+/**
+ * The Edit page's answer (#719) for the administrator: each field's value, the source's and the edited ones; null when
+ * the work does not exist or they may not see it.
+ */
+function workMetadata(userId: number, workId: string) {
+  const hidden = hiddenHardcoverPlaceholders(userId);
+  if (!workVisibleTo(userId, workId, hidden)) return null;
+  const raw = buildWorks(userId, [workId], hidden, [], { edits: false })[0];
+  return raw ? metadataOf(raw, savedSeries(userId)) : null;
+}
+
 export function registerLibraryWorks(app: FastifyInstance) {
+  registerWorkMetadataRoutes(app, workMetadata);
   /**
    * Discover's works (#573, `serverWorks`): `{ works: WorkResult[] }`. `q` is 2 to 150 characters
    * once trimmed; an empty or absent `q` answers the works before a search.
