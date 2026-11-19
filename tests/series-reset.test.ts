@@ -117,6 +117,8 @@ test("without the AudiobookDB key nothing is saved yet: Activity says why and of
 
 test("with the key, the series found by name is saved again with its books; the one not found is listed in Activity", async () => {
   process.env.AUDIOBOOKDB_API_KEY = "env-key";
+  // AudiobookDB's search finds a series whose name holds the words but is not the saved one's: not taken for it.
+  control.series.set("sr-lost-saga-tales", { id: "sr-lost-saga-tales", name: "The Lost Saga Tales", people: [{ name: "Nobody Known", role: { name: "Author" } }], bookCount: 0, books: [] });
   const outcome = await resave.resavePending();
   assert.deepEqual(outcome, { saved: 1, missing: 1, failed: 0 });
   const saved = (await call("GET", "/api/series/sr-expanse")).json() as { works: { id: string; workId: string | null; added: boolean; introduced: boolean; new: boolean; libraryOriginLabel?: string }[] };

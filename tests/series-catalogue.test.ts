@@ -199,6 +199,21 @@ test("the saved series: the list, the page, and nothing of it for another accoun
   assert.deepEqual(works.series, [{ id: "sr-expanse", name: "The Expanse", position: 1.5, positionLabel: "1.5", saved: true }]);
   const guestWorks = (await call(guest, "GET", "/api/works/w-lw")).json() as { series: { id: string; saved: boolean }[] };
   assert.deepEqual(guestWorks.series.map((entry) => [entry.id, entry.saved]), [["sr-expanse", false]]);
+  // A series that names a work only through the reader's own saved books (the shared catalogue does not link it):
+  // the reader's work lists it, the guest's look at the same work does not.
+  sqlite.prepare("INSERT INTO series_catalogue(id,name,author,book_count) VALUES('sr-private','Private Shelf','James S. A. Corey',1)").run();
+  sqlite.prepare("INSERT INTO series_catalogue_works(series_id,book_id,work_id,title,position,position_label) VALUES('sr-private','bk-private',NULL,'Leviathan Wakes',3,'3')").run();
+  sqlite.prepare("INSERT INTO user_saved_series(user_id,series_id,saved_at,refreshed_at) VALUES(2,'sr-private',1,1)").run();
+  sqlite.prepare("INSERT INTO user_saved_series_works(user_id,series_id,book_id,work_id,introduced) VALUES(2,'sr-private','bk-private','w-lw',0)").run();
+  try {
+    const readerLook = (await call(reader, "GET", "/api/works/w-lw")).json() as { series: { id: string; saved: boolean }[] };
+    assert.deepEqual(readerLook.series.map((entry) => [entry.id, entry.saved]), [["sr-private", true], ["sr-expanse", true]]);
+    const guestLook = (await call(guest, "GET", "/api/works/w-lw")).json() as { series: { id: string }[] };
+    assert.deepEqual(guestLook.series.map((entry) => entry.id), ["sr-expanse"]);
+  } finally {
+    for (const table of ["user_saved_series_works", "user_saved_series", "series_catalogue_works"]) sqlite.prepare(`DELETE FROM ${table} WHERE series_id='sr-private'`).run();
+    sqlite.prepare("DELETE FROM series_catalogue WHERE id='sr-private'").run();
+  }
 });
 
 test("refresh: a book AudiobookDB lists later is new for each account until it is acknowledged", async () => {
