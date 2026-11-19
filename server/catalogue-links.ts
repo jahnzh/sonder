@@ -39,6 +39,11 @@ import {
 import type { BackgroundProcess } from "./background-runner.ts";
 
 // ---- The matcher (pure) ----
+// One work may be several AudiobookDB entries (#754, owner 19 Nov): the same main title once a series prefix
+// ("Dungeon Crawler Carl, Book 2: …"), an omnibus label ("Star Wars Omnibus: …"), an author's name ("Marcus
+// Aurelius – Meditations"), a subtitle or a bracketed note are taken off, and a matching author. Those entries are
+// duplicates of the one work, never rival candidates; only entries that are different works (another title, another
+// author, another place in the series) leave a work ambiguous.
 const fold = (value: string) =>
   value
     .normalize("NFKD")
@@ -53,31 +58,110 @@ const fold = (value: string) =>
 export function normaliseTitle(title: string): string {
   return fold(title);
 }
+const BRACKETED = /\s*[([{][^)\]}]*[)\]}]\s*/g;
+const SUBTITLE = /\s[:–—-]\s|:\s/;
+/** A title's separator before what follows a prefix: a colon, or a dash with spaces around it. */
+const SEPARATOR = String.raw`\s*(?::|\s[–—-])\s*`;
+const NUMBER = String.raw`(\d+(?:\.\d+)?)`;
+/** "<Series>, Book <N>: <Title>", "<Series> <N>: <Title>", "<Series> #<N>: <Title>" (also Vol., Volume, Part, No.). */
+const SERIES_PREFIX = new RegExp(String.raw`^(.+?)(?:,?\s+(?:book|bk\.?|volume|vol\.?|part|no\.?)\s*#?${NUMBER}|,?\s+#\s*${NUMBER}|\s+${NUMBER})${SEPARATOR}(\S.*)$`, "i");
+/** "<Series> Omnibus: <Title>" (also "Omnibus Edition", "Omnibus Collection"). */
+const OMNIBUS_PREFIX = new RegExp(String.raw`^(.+?\bomnibus(?:\s+(?:edition|collection))?)${SEPARATOR}(\S.*)$`, "i");
+/** "<Name> – <Title>": the head is taken off only when it is one of the book's authors. */
+const HEAD = new RegExp(String.raw`^(.+?)${SEPARATOR}(\S.*)$`);
+const unbracketed = (title: string) => title.replace(BRACKETED, " ").replace(/\s+/g, " ").trim();
 /** The title without its subtitle or a bracketed note ("(Unabridged)", "[Book 1]"). */
 function mainTitle(title: string): string {
-  return fold(title.replace(/\s*[([{][^)\]}]*[)\]}]\s*/g, " ").split(/\s[:–—-]\s|:\s/)[0]);
-}
-/** The words to search for: the title without a bracketed note ("(The Expanse, Book 1)") or its subtitle. */
-export function searchTitle(title: string): string {
-  const plain = title.replace(/\s*[([{][^)\]}]*[)\]}]\s*/g, " ").split(/\s[:–—-]\s|:\s/)[0].replace(/\s+/g, " ").trim();
-  return plain || title.trim();
-}
-/** Exact after normalising: the whole titles, or both without a subtitle or bracketed note. */
-export function titleMatches(workTitle: string, candidate: string): boolean {
-  const a = normaliseTitle(workTitle);
-  const b = normaliseTitle(candidate);
-  if (!a || !b) return false;
-  return a === b || (mainTitle(workTitle) !== "" && mainTitle(workTitle) === mainTitle(candidate));
+  return fold(unbracketed(title).split(SUBTITLE)[0]);
 }
 /** An author name as a set of words, so "Corey, James S. A." is "James S. A. Corey". */
 const nameKey = (name: string) => fold(name).split(" ").filter(Boolean).sort().join(" ");
+/** One stored author field as names: "A & B", "A and B", "A; B", "Last, First" kept whole. */
+const authorKeys = (author: string) => {
+  const parts = author.split(/\s*(?:;|&|\band\b|,(?=\s*[A-Z][^,]*\s[A-Z]))\s*/).map(nameKey).filter(Boolean);
+  return [nameKey(author), ...parts].filter(Boolean);
+};
+/**
+ * The title as it is meant, beside the title as written: without an author's name in front, an omnibus label or a
+ * series prefix. `keepMain` is false for a written title whose head is such a label (its main title is not the book's).
+ */
+function titleCores(title: string, authors: string[]): { text: string; keepMain: boolean }[] {
+  let rest = unbracketed(title) || title.trim();
+  const cores = [{ text: rest, keepMain: true }];
+  const names = new Set(authors.flatMap(authorKeys));
+  const byAuthor = rest.match(HEAD);
+  if (byAuthor && names.has(nameKey(byAuthor[1]))) {
+    cores[0].keepMain = false;
+    rest = byAuthor[2];
+    cores.push({ text: rest, keepMain: true });
+  }
+  const omnibus = rest.match(OMNIBUS_PREFIX);
+  if (omnibus) {
+    cores.at(-1)!.keepMain = false;
+    rest = omnibus[2];
+    cores.push({ text: rest, keepMain: true });
+  }
+  // A numbered head keeps its main title: "Fahrenheit 451: A Novel" is "Fahrenheit 451".
+  const series = rest.match(SERIES_PREFIX);
+  if (series) cores.push({ text: series[5], keepMain: true });
+  return cores;
+}
+function titleKeys(title: string, authors: string[]) {
+  const whole = new Set<string>();
+  const main = new Set<string>();
+  for (const core of titleCores(title, authors)) {
+    whole.add(fold(core.text));
+    if (core.keepMain) main.add(mainTitle(core.text));
+  }
+  whole.delete("");
+  main.delete("");
+  return { whole, main };
+}
+const meets = (a: Set<string>, b: Set<string>) => [...a].some((key) => b.has(key));
+/**
+ * How surely two titles are the same book: "whole" when one's whole title (prefixes off) is the other's whole or main
+ * title; "main" when only both main titles agree (both have a subtitle, and the subtitles differ).
+ */
+export function titleMatch(workTitle: string, candidate: string, authors: string[] = []): "whole" | "main" | null {
+  const a = titleKeys(workTitle, authors);
+  const b = titleKeys(candidate, authors);
+  if (meets(a.whole, b.whole) || meets(a.whole, b.main) || meets(a.main, b.whole)) return "whole";
+  return meets(a.main, b.main) ? "main" : null;
+}
+/** The words to search for: the title without an author's name, omnibus label or series prefix, subtitle or note. */
+export function searchTitle(title: string, authors: string[] = []): string {
+  const plain = titleCores(title, authors).at(-1)!.text.split(SUBTITLE)[0].replace(/\s+/g, " ").trim();
+  return plain || title.trim();
+}
+/** The search words as before #754 (only the subtitle and note off), tried when the prefix-free title finds nothing sure. */
+function writtenSearchTitle(title: string): string {
+  return unbracketed(title).split(SUBTITLE)[0].replace(/\s+/g, " ").trim() || title.trim();
+}
+/** Exact after normalising: the whole titles, or both without a subtitle, bracketed note or prefix. */
+export function titleMatches(workTitle: string, candidate: string, authors: string[] = []): boolean {
+  return titleMatch(workTitle, candidate, authors) !== null;
+}
 /** The work's author (one or several, as stored) and one of the candidate's authors are the same person. */
 export function authorMatches(workAuthor: string, candidates: string[]): boolean {
-  const whole = nameKey(workAuthor);
-  const parts = workAuthor.split(/\s*(?:;|&|\band\b|,(?=\s*[A-Z][^,]*\s[A-Z]))\s*/).map(nameKey).filter(Boolean);
-  const keys = new Set([whole, ...parts].filter(Boolean));
+  const keys = new Set(authorKeys(workAuthor));
   return candidates.some((name) => keys.has(nameKey(name)));
 }
+/**
+ * A place in a series written in the title: the number of a series prefix ("…, Book 2:", "… #2:"), of a bracketed note
+ * ("(The Expanse, Book 1)") or of a subtitle ("…: Dungeon Crawler Carl, Book 2"). Null when the title names none.
+ */
+export function titlePosition(title: string): number | null {
+  const plain = title.replace(/\s+/g, " ").trim();
+  const prefix = unbracketed(plain).match(SERIES_PREFIX);
+  const found =
+    // A bare number ("Fahrenheit 451: A Novel") is part of a title as often as a place: only "Book N" and "#N" count.
+    (prefix && (prefix[2] ?? prefix[3])) ??
+    plain.match(/[([{][^)\]}]*?(?:\bbook|\bbk\.?|\bvol(?:ume)?\.?|\bpart|#)\s*#?(\d+(?:\.\d+)?)\s*[)\]}]/i)?.[1] ??
+    unbracketed(plain).match(new RegExp(String.raw`(?:\s[:–—-]\s|:\s).*?(?:\bbook|\bbk\.?|\bvol(?:ume)?\.?|#)\s*#?${NUMBER}\s*$`, "i"))?.[1];
+  return found === undefined || found === null ? null : Number(found);
+}
+/** A provider book's place in its (first) series: the structured position, else the one its title names. */
+export const bookPosition = (book: Pick<CatalogueBook, "title" | "series">): number | null => book.series[0]?.sort ?? titlePosition(book.title);
 /** An Audible ASIN (B0 and eight more) in the file names, the release title or the torrent name. */
 export function findAsin(texts: string[]): string | null {
   for (const value of texts) {
@@ -87,16 +171,36 @@ export function findAsin(texts: string[]): string | null {
   return null;
 }
 export type Decision =
-  | { outcome: "matched"; book: CatalogueBook }
+  /** `book` is the first of `books`, every entry that is this work (one or several duplicates). */
+  | { outcome: "matched"; book: CatalogueBook; books: CatalogueBook[] }
   | { outcome: "ambiguous"; candidates: number }
   | { outcome: "missing" };
-/** Sure: exactly one result with this exact title and author. Results that are not sure leave the work ambiguous. */
-export function decide(work: { title: string; author: string }, results: CatalogueBook[]): Decision {
-  const exact = results.filter((book) => titleMatches(work.title, book.title) && authorMatches(work.author, book.authors));
-  const ids = [...new Set(exact.map((book) => book.id))];
-  if (ids.length === 1) return { outcome: "matched", book: exact[0] };
-  if (ids.length > 1) return { outcome: "ambiguous", candidates: ids.length };
-  return results.length ? { outcome: "ambiguous", candidates: results.length } : { outcome: "missing" };
+/**
+ * Sure: the results whose title and author are this work's are one work (its duplicates), gathered. Results whose
+ * whole title fits are preferred to those whose main title alone does; the work's place in its series (`position`)
+ * leaves out entries at another place. Entries left at two places of a series are different books: ambiguous.
+ */
+export function decide(work: { title: string; author: string; position?: number | null }, results: CatalogueBook[]): Decision {
+  const unique = [...new Map(results.map((book) => [book.id, book])).values()];
+  const fitting = unique.flatMap((book) => {
+    if (!authorMatches(work.author, book.authors)) return [];
+    const strength = titleMatch(work.title, book.title, [work.author, ...book.authors]);
+    return strength ? [{ book, strength }] : [];
+  });
+  if (!fitting.length) return results.length ? { outcome: "ambiguous", candidates: results.length } : { outcome: "missing" };
+  const whole = fitting.filter((entry) => entry.strength === "whole");
+  let same = (whole.length ? whole : fitting).map((entry) => entry.book);
+  const position = work.position ?? null;
+  if (position !== null) {
+    const placed = same.filter((book) => {
+      const place = bookPosition(book);
+      return place === null || place === position;
+    });
+    if (!placed.length) return { outcome: "ambiguous", candidates: same.length };
+    same = placed;
+  }
+  if (new Set(same.map(bookPosition).filter((place) => place !== null)).size > 1) return { outcome: "ambiguous", candidates: same.length };
+  return { outcome: "matched", book: same[0], books: same };
 }
 /** English or unknown: only a release the provider marks as another language is left out. */
 export const englishRelease = (release: CatalogueRelease) => !release.language || isEnglish(release.language);
@@ -141,6 +245,24 @@ export function workRecordings(workId: string): RecordingFacts[] {
     narrator: row.narrator,
   }));
 }
+/**
+ * The work's own place in its series, for choosing among entries of the same title (#754): the one its title names,
+ * else the one stored with it (a saved series' member row, or Hardcover's series kept on its old link). Null if none.
+ */
+export function workSeriesPosition(workId: string, title: string): number | null {
+  const written = titlePosition(title);
+  if (written !== null) return written;
+  const member = sqlite.prepare("SELECT position FROM series_catalogue_works WHERE work_id=? AND position IS NOT NULL ORDER BY rowid LIMIT 1").pluck().get(workId);
+  if (typeof member === "number") return member;
+  const hardcover = sqlite
+    .prepare(
+      `SELECT json_extract(s.value,'$.position') FROM hardcover_links l, json_each(CASE WHEN json_valid(l.series) THEN l.series ELSE '[]' END) s
+       WHERE l.work_id=? AND json_type(s.value,'$.position') IN ('integer','real') LIMIT 1`,
+    )
+    .pluck()
+    .get(workId);
+  return typeof hardcover === "number" ? hardcover : null;
+}
 const missingNarrator = (value: string | null | undefined) => !value || !value.trim() || /^unknown( narrator)?$/i.test(value.trim());
 
 // ---- Links ----
@@ -152,7 +274,10 @@ export type WorkLink = {
   series: { id: string | null; name: string; position: string | null; sort: number | null } | null;
   matchedBy: "title" | "asin" | "manual";
   url: string;
+  /** The other AudiobookDB entries of the same work (#754), each with its number of releases. */
+  duplicates: WorkDuplicate[];
 };
+export type WorkDuplicate = { id: string; title: string; releases: number };
 type LinkRow = { provider: MainCatalogueProvider; externalId: string; title: string; author: string; seriesId: string | null; seriesName: string | null; seriesPosition: string | null; seriesSort: number | null; matchedBy: WorkLink["matchedBy"] };
 export function workLink(workId: string): WorkLink | null {
   const row = sqlite
@@ -170,7 +295,24 @@ export function workLink(workId: string): WorkLink | null {
     series: row.seriesName ? { id: row.seriesId, name: row.seriesName, position: row.seriesPosition, sort: row.seriesSort } : null,
     matchedBy: row.matchedBy,
     url: row.provider === "openlibrary" ? openLibraryWorkUrl(row.externalId) : "https://audiobookdb.org",
+    duplicates: row.provider === "audiobookdb" ? workDuplicates(workId) : [],
   };
+}
+export function workDuplicates(workId: string): WorkDuplicate[] {
+  return sqlite
+    .prepare("SELECT external_id AS id,title,releases FROM work_catalogue_duplicates WHERE work_id=? AND provider='audiobookdb' ORDER BY releases DESC,linked_at,external_id")
+    .all(workId) as WorkDuplicate[];
+}
+/** Every AudiobookDB entry the work is: its main link first, then its duplicates. Empty without an AudiobookDB link. */
+export function workEntryIds(workId: string): string[] {
+  const link = workLink(workId);
+  return link?.provider === "audiobookdb" ? [link.id, ...link.duplicates.map((entry) => entry.id)] : [];
+}
+/** The English-or-unknown and other releases of all the work's entries, main entry first; one id once. */
+export async function workReleases(workId: string, priority: Priority = "interactive"): Promise<CatalogueRelease[]> {
+  const seen = new Map<string, CatalogueRelease>();
+  for (const id of workEntryIds(workId)) for (const release of await audiobookDbReleases(id, { priority })) if (!seen.has(release.id)) seen.set(release.id, { ...release, bookId: release.bookId ?? id });
+  return [...seen.values()];
 }
 /** A work's Google Books or iTunes link (part e), beside its main link. */
 export type ProviderLink = { provider: ExtraCatalogueProvider; id: string; title: string; author: string; matchedBy: "manual"; url: string };
@@ -180,6 +322,9 @@ export function providerLinks(workId: string): ProviderLink[] {
     .all(workId) as Omit<ProviderLink, "url">[];
   return rows.map((row) => ({ ...row, url: row.provider === "googlebooks" ? googleBooksUrl(row.id) : itunesUrl(row.id) }));
 }
+/** Each work's main link and its duplicates (#754) as (work_id, provider, external_id): a provider book opens the work it is any entry of. */
+export const LINKED_ENTRIES =
+  "SELECT work_id,provider,external_id FROM work_catalogue_links UNION ALL SELECT work_id,provider,external_id FROM work_catalogue_duplicates";
 /** The works with any link: the batch skips them and the list of works not matched leaves them out. */
 const LINKED_WORKS = "SELECT work_id FROM work_catalogue_links UNION SELECT work_id FROM work_provider_links";
 
@@ -204,8 +349,10 @@ export async function linkRecording(recordingId: string, releaseId: string, matc
   if (!recording) throw new Error("This recording is not on the server.");
   const link = workLink(recording.workId);
   if (link?.provider !== "audiobookdb") throw new Error("Match the book on AudiobookDB first.");
+  // A release of the main entry or of one of its duplicates (#754): all are this work's.
+  const entries = workEntryIds(recording.workId);
   const release = await audiobookDbRelease(releaseId, { priority, bookId: link.id });
-  if (release.bookId && release.bookId !== link.id) throw new Error("This release belongs to another book.");
+  if (release.bookId && !entries.includes(release.bookId)) throw new Error("This release belongs to another book.");
   const narrator = release.narrators.join(", ") || null;
   sqlite.transaction(() => {
     sqlite
@@ -215,7 +362,7 @@ export async function linkRecording(recordingId: string, releaseId: string, matc
          ON CONFLICT(recording_id) DO UPDATE SET book_id=excluded.book_id,release_id=excluded.release_id,narrator=excluded.narrator,length_ms=excluded.length_ms,
            asin=excluded.asin,language=excluded.language,chapters=excluded.chapters,matched_by=excluded.matched_by,linked_at=excluded.linked_at`,
       )
-      .run(recordingId, link.id, release.id, narrator, release.lengthMs, release.asin, release.language, JSON.stringify(release.chapters), matchedBy, Date.now());
+      .run(recordingId, release.bookId ?? link.id, release.id, narrator, release.lengthMs, release.asin, release.language, JSON.stringify(release.chapters), matchedBy, Date.now());
     if (narrator && missingNarrator(recording.narrator)) sqlite.prepare("UPDATE audio_editions SET narrator=? WHERE id=?").run(narrator, recording.editionId);
   })();
 }
@@ -224,14 +371,33 @@ export function unlinkRecording(recordingId: string) {
 }
 
 /**
- * Links a work to a provider book (AudiobookDB) or work (Open Library) and fills what is missing. On AudiobookDB
- * each recording without a release picked by hand is linked to the release it surely is.
+ * The other AudiobookDB entries that are the same work as `book` (#754): one search by its own title and author, the
+ * matcher's rule applied to the book itself. A search refused or failing leaves the link alone, without duplicates.
+ */
+async function sameWorkEntries(book: CatalogueBook, priority: Priority): Promise<string[]> {
+  if (!book.authors.length) return [];
+  try {
+    const results = await searchAudiobookDbBooks(`${searchTitle(book.title, book.authors)} ${book.authors[0]}`, { priority });
+    const found = decide({ title: book.title, author: book.authors.join("; "), position: bookPosition(book) }, [book, ...results]);
+    return found.outcome === "matched" ? found.books.map((entry) => entry.id).filter((id) => id !== book.id) : [];
+  } catch (error) {
+    if (!(error instanceof CatalogueError)) throw error;
+    return [];
+  }
+}
+
+/**
+ * Links a work to a provider book (AudiobookDB) or work (Open Library) and fills what is missing. On AudiobookDB the
+ * other entries of the same work are kept beside it as duplicates (#754): `duplicates` when the matcher has found
+ * them, else gathered by one search. Each recording without a release picked by hand is linked to the release, of any
+ * of these entries, it surely is.
  */
 export async function linkWork(
   workId: string,
   target: { provider: CatalogueProviderName; id: string; author?: string },
   matchedBy: WorkLink["matchedBy"],
   priority: Priority = "interactive",
+  options: { duplicates?: string[] } = {},
 ): Promise<void> {
   const work = workRow(workId);
   if (!work) throw new Error("This book is not on the server.");
@@ -239,16 +405,25 @@ export async function linkWork(
   if (isExtraProvider(target.provider)) return linkProvider(workId, target.provider, target.id, wantsDescription, priority);
   let stored: { title: string; author: string; series: CatalogueBook["series"][number] | null; description: string | null };
   let releases: CatalogueRelease[] = [];
+  const duplicates: { book: CatalogueBook; releases: number }[] = [];
   if (target.provider === "audiobookdb") {
     // A live answer only when the description is to be filled: the cache never holds one.
     const book = await audiobookDbBook(target.id, { priority, fresh: wantsDescription });
     stored = { title: book.title, author: book.authors.join(", "), series: book.series[0] ?? null, description: book.description };
-    releases = await audiobookDbReleases(book.id, { priority });
+    releases = (await audiobookDbReleases(book.id, { priority })).map((release) => ({ ...release, bookId: release.bookId ?? book.id }));
+    const others = options.duplicates ?? (await sameWorkEntries(book, priority));
+    for (const id of new Set(others.filter((other) => other !== book.id))) {
+      const duplicate = await audiobookDbBook(id, { priority });
+      const own = (await audiobookDbReleases(id, { priority })).map((release) => ({ ...release, bookId: release.bookId ?? id }));
+      duplicates.push({ book: duplicate, releases: own.length });
+      releases.push(...own.filter((release) => !releases.some((known) => known.id === release.id)));
+    }
   } else {
     const found = await openLibraryWork(target.id, { priority, fresh: wantsDescription });
     stored = { title: found.title, author: (target.author ?? "").slice(0, 300), series: null, description: found.description };
   }
-  const previous = workLink(workId);
+  const entries = target.provider === "audiobookdb" ? [target.id, ...duplicates.map((entry) => entry.book.id)] : [];
+  const now = Date.now();
   sqlite.transaction(() => {
     sqlite
       .prepare(
@@ -258,14 +433,21 @@ export async function linkWork(
            series_id=excluded.series_id,series_name=excluded.series_name,series_position=excluded.series_position,series_sort=excluded.series_sort,
            matched_by=excluded.matched_by,linked_at=excluded.linked_at`,
       )
-      .run(workId, target.provider, target.id, stored.title, stored.author, stored.series?.id ?? null, stored.series?.name ?? null, stored.series?.position ?? null, stored.series?.sort ?? null, matchedBy, Date.now());
+      .run(workId, target.provider, target.id, stored.title, stored.author, stored.series?.id ?? null, stored.series?.name ?? null, stored.series?.position ?? null, stored.series?.sort ?? null, matchedBy, now);
+    sqlite.prepare("DELETE FROM work_catalogue_duplicates WHERE work_id=?").run(workId);
+    const keep = sqlite.prepare("INSERT OR REPLACE INTO work_catalogue_duplicates(work_id,provider,external_id,title,author,releases,linked_at) VALUES(?,'audiobookdb',?,?,?,?,?)");
+    for (const entry of duplicates) keep.run(workId, entry.book.id, entry.book.title, entry.book.authors.join(", ").slice(0, 300), entry.releases, now);
     if (wantsDescription && stored.description) sqlite.prepare("UPDATE works SET description=? WHERE id=? AND trim(description)=''").run(stored.description, workId);
     sqlite
       .prepare("INSERT INTO work_catalogue_match(work_id,outcome,reason,candidates,checked_at) VALUES(?,?,NULL,1,?) ON CONFLICT(work_id) DO UPDATE SET outcome=excluded.outcome,reason=NULL,candidates=1,checked_at=excluded.checked_at")
-      .run(workId, "matched", Date.now());
-    // Another book: its release links no longer hold.
-    if (!previous || previous.provider !== target.provider || previous.id !== target.id)
-      sqlite.prepare("DELETE FROM recording_release_links WHERE recording_id IN (SELECT r.id FROM recordings r JOIN audio_editions e ON e.id=r.edition_id WHERE e.work_id=?)").run(workId);
+      .run(workId, "matched", now);
+    // A release of an entry the work no longer is: its link no longer holds.
+    sqlite
+      .prepare(
+        `DELETE FROM recording_release_links WHERE recording_id IN (SELECT r.id FROM recordings r JOIN audio_editions e ON e.id=r.edition_id WHERE e.work_id=?)
+         AND book_id NOT IN (SELECT value FROM json_each(?))`,
+      )
+      .run(workId, JSON.stringify(entries));
   })();
   if (target.provider !== "audiobookdb") return;
   for (const recording of workRecordings(workId)) {
@@ -299,10 +481,11 @@ async function linkProvider(workId: string, provider: ExtraCatalogueProvider, id
 export function unlinkProvider(workId: string, provider: ExtraCatalogueProvider) {
   sqlite.prepare("DELETE FROM work_provider_links WHERE work_id=? AND provider=?").run(workId, provider);
 }
-/** Removes the main link (AudiobookDB or Open Library) and its recordings' release links; Google Books and iTunes stay. */
+/** Removes the main link (AudiobookDB or Open Library), its duplicates and its recordings' release links; Google Books and iTunes stay. */
 export function unlinkWork(workId: string) {
   sqlite.transaction(() => {
     sqlite.prepare("DELETE FROM work_catalogue_links WHERE work_id=?").run(workId);
+    sqlite.prepare("DELETE FROM work_catalogue_duplicates WHERE work_id=?").run(workId);
     sqlite.prepare("DELETE FROM work_catalogue_match WHERE work_id=?").run(workId);
     sqlite.prepare("DELETE FROM recording_release_links WHERE recording_id IN (SELECT r.id FROM recordings r JOIN audio_editions e ON e.id=r.edition_id WHERE e.work_id=?)").run(workId);
   })();
@@ -335,26 +518,38 @@ export async function matchWork(workId: string, priority: Priority = "background
       return { outcome: "matched", reason: null, candidates: 1 };
     }
   }
-  const title = searchTitle(work.title);
-  let decision = decide(work, await searchAudiobookDbBooks(`${title} ${work.author}`, { priority }));
+  // The title without a series prefix, omnibus label or author's name first; as written (before #754) if that is not sure.
+  const title = searchTitle(work.title, [work.author]);
+  const written = writtenSearchTitle(work.title);
+  const facts = { title: work.title, author: work.author, position: workSeriesPosition(workId, work.title) };
+  let decision = decide(facts, await searchAudiobookDbBooks(`${title} ${work.author}`, { priority }));
+  if (decision.outcome !== "matched" && written !== title) {
+    const asWritten = decide(facts, await searchAudiobookDbBooks(`${written} ${work.author}`, { priority }));
+    if (asWritten.outcome === "matched" || decision.outcome === "missing") decision = asWritten;
+  }
   if (decision.outcome !== "matched") {
-    const byTitle = decide(work, await searchAudiobookDbBooks(title, { priority }));
+    const byTitle = decide(facts, await searchAudiobookDbBooks(title, { priority }));
     if (byTitle.outcome === "matched" || decision.outcome === "missing") decision = byTitle;
   }
   if (decision.outcome === "matched") {
-    const releases = await audiobookDbReleases(decision.book.id, { priority });
-    if (releases.length && !releases.some(englishRelease)) {
+    // Every entry of the work, with its releases: the one with the most is the link, the others its duplicates.
+    const entries: { id: string; releases: CatalogueRelease[] }[] = [];
+    for (const book of decision.books) entries.push({ id: book.id, releases: await audiobookDbReleases(book.id, { priority }) });
+    const all = entries.flatMap((entry) => entry.releases);
+    if (all.length && !all.some(englishRelease)) {
       const outcome: MatchOutcome = { outcome: "missing", reason: "No English release on AudiobookDB.", candidates: 0 };
       recordOutcome(workId, outcome);
       return outcome;
     }
-    await linkWork(workId, { provider: "audiobookdb", id: decision.book.id }, "title", priority);
+    const main = entries.reduce((best, entry) => (entry.releases.length > best.releases.length ? entry : best));
+    await linkWork(workId, { provider: "audiobookdb", id: main.id }, "title", priority, { duplicates: entries.filter((entry) => entry !== main).map((entry) => entry.id) });
     return { outcome: "matched", reason: null, candidates: 1 };
   }
   // A book without an audiobook is not on AudiobookDB: Open Library gives it its link.
   if (!recordings.length) {
-    const open = decide(work, await searchOpenLibrary(`${title} ${work.author}`, { priority }));
-    if (open.outcome === "matched") {
+    const open = decide(facts, await searchOpenLibrary(`${title} ${work.author}`, { priority }));
+    // Duplicates are kept for AudiobookDB entries only: several Open Library works of this title stay for the administrator.
+    if (open.outcome === "matched" && open.books.length === 1) {
       await linkWork(workId, { provider: "openlibrary", id: open.book.id, author: open.book.authors.join(", ") }, "title", priority);
       return { outcome: "matched", reason: null, candidates: 1 };
     }

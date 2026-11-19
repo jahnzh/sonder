@@ -15,7 +15,7 @@ import { sqlite } from "./db.ts";
 import { audiobookDbBook, isEnglish, searchAudiobookDbBooks, type CatalogueBook } from "./audiobookdb.ts";
 import { openLibraryAuthor, openLibraryWork, searchOpenLibrary } from "./openlibrary.ts";
 import { CatalogueError, type CatalogueProviderName } from "./catalogue-provider.ts";
-import { authorMatches, linkWork, titleMatches } from "./catalogue-links.ts";
+import { LINKED_ENTRIES, authorMatches, linkWork, titleMatches } from "./catalogue-links.ts";
 import { ensurePlaceholder } from "./placeholder-edition.ts";
 import { workVisibleTo } from "./work-library.ts";
 import { userIsAdmin } from "./users.ts";
@@ -52,7 +52,7 @@ export function catalogueBookWorks(userId: number, provider: CatalogueProviderNa
   const unique = [...new Set(ids)];
   const links = sqlite
     .prepare(
-      `SELECT l.external_id AS id,l.work_id AS workId FROM work_catalogue_links l JOIN works w ON w.id=l.work_id
+      `SELECT l.external_id AS id,l.work_id AS workId FROM (${LINKED_ENTRIES}) l JOIN works w ON w.id=l.work_id
        WHERE l.provider=? AND l.external_id IN (SELECT value FROM json_each(?))
        ORDER BY EXISTS(SELECT 1 FROM audio_editions e JOIN user_library u ON u.book_id=e.id WHERE e.work_id=l.work_id AND u.user_id=?) DESC,w.rowid`,
     )
