@@ -34,12 +34,14 @@ export type WorkCatalogue = {
     series: { name: string; position: string | null } | null;
     matchedBy: "title" | "asin" | "manual";
     url: string;
+    /** The other AudiobookDB entries of the same work (#754); absent from servers that predate them. */
+    duplicates?: { id: string; title: string; releases: number }[];
   } | null;
   /** Google Books and iTunes (part e); absent from servers that predate them. */
   links?: ProviderLink[];
   outcome: { outcome: "matched" | "ambiguous" | "missing" | "failed"; reason: string | null; candidates: number } | null;
   recordings: { recordingId: string; label: string; durationMs: number; narrator: string; release: ReleaseLink | null }[];
-  releases: { id: string; narrators: string[]; lengthMs: number | null; asin: string | null; language: string | null; abridged: boolean | null; chapters: number }[];
+  releases: { id: string; bookId?: string | null; narrators: string[]; lengthMs: number | null; asin: string | null; language: string | null; abridged: boolean | null; chapters: number }[];
   releasesError: string | null;
 };
 export type BatchAnswer = {
