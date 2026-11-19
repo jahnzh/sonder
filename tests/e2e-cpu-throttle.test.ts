@@ -6,7 +6,7 @@ import { cpuThrottleRate, throttleCpu } from "./e2e/cpu-throttle.ts";
 test("the rate is the variable's number above 1, otherwise 1 (no throttling)", () => {
   assert.equal(cpuThrottleRate({ SONDER_E2E_CPU_THROTTLE: "4" }), 4);
   assert.equal(cpuThrottleRate({ SONDER_E2E_CPU_THROTTLE: "2.5" }), 2.5);
-  for (const value of [undefined, "", "1", "0", "-3", "fast", "Infinity"])
+  for (const value of [undefined, "", "1", "0.5", "0", "-3", "fast", "Infinity"])
     assert.equal(cpuThrottleRate({ SONDER_E2E_CPU_THROTTLE: value }), 1, String(value));
 });
 
