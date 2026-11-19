@@ -25,7 +25,8 @@ import { hardcoverRowValue } from "../hardcover-page-model";
 import { bytes } from "../size-format";
 import { tip } from "../tooltip-texts";
 import type { Book, Download, DownloadPart, LibraryWork } from "../types";
-import { addedElsewhere, addsBeforeGet, bookModel, chosenRecording } from "./book-model";
+import { addedElsewhere, addsBeforeGet, bookModel, chosenRecording, wantToReadAction } from "./book-model";
+import { wantToReadNote } from "../status-lines";
 import type { Notify } from "./shared";
 import { KeepItems } from "./keep-item";
 import "./book-page.css";
@@ -244,6 +245,24 @@ export function BookPage(props: Props) {
     run(async () => {
       await addToLibrary();
     });
+  /**
+   * Want to read (#721 part c1): on puts the work on the user's own list, adding it to the library first when it is
+   * not there (a Hardcover book not on the server through the work Add to library makes, ADR 0022); off takes it off
+   * and leaves it in the library.
+   */
+  const wantToRead = wantToReadAction(work);
+  const toggleWantToRead = () =>
+    run(async () => {
+      const on = wantToRead.on;
+      const answer = await api<{ ok: true; workId?: string }>(`/works/${encodeURIComponent(workId)}/want-to-read`, { method: on ? "PUT" : "DELETE" });
+      await reload();
+      await refreshLibraryWorks().catch(() => {});
+      await props.onChanged();
+      window.dispatchEvent(new Event("sonder:library-changed"));
+      notify(wantToReadNote(on));
+      const elsewhere = on ? addedElsewhere(workId, answer) : null;
+      if (elsewhere) address.navigate({ name: "book", workId: elsewhere }, { replace: true });
+    });
   const markFinished = () =>
     run(async () => {
       await api(`/works/${encodeURIComponent(workId)}/completion`, {
@@ -330,9 +349,12 @@ export function BookPage(props: Props) {
           </Button>
         </div>
       ) : (
-        <div className="book-page-actions" data-one="">
+        <div className="book-page-actions">
           <Button kind="primary" icon={<AddIcon />} disabled={busy || !online} onClick={() => void add()}>
             Add to library
+          </Button>
+          <Button kind="secondary" disabled={busy || !online} onClick={() => void toggleWantToRead()}>
+            {wantToRead.label}
           </Button>
         </div>
       )}
@@ -418,6 +440,7 @@ export function BookPage(props: Props) {
           {hardcoverValue !== null && (
             <Row label="Hardcover" value={hardcoverValue} opens onClick={() => address.navigate({ name: "book-page", workId, page: "hardcover" })} />
           )}
+          <Row label={wantToRead.label} disabled={busy || !online} onClick={() => void toggleWantToRead()} />
           <Row label={model.finished ? "Mark as not finished" : "Mark as finished"} disabled={busy || !online} onClick={() => void markFinished()} />
           <Row label="Remove from library" disabled={busy || confirmRemove} onClick={() => setConfirmRemove(true)} />
         </Group>

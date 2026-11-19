@@ -905,6 +905,7 @@ function LibraryApp({
                 onSeries={(id) => address.navigate({ name: "series", id: String(id) })}
                 onRecording={(words) => address.navigate({ name: "discover-get", query: words })}
                 onConnect={openConnections}
+                notify={notify}
               />
             )}
             {page === "activity" && (
