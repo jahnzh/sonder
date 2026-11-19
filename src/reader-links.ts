@@ -32,7 +32,8 @@ export function followedLink<T extends Anchor>(target: Tapped): T | null {
   const link = target?.closest?.("a[href]") ?? null;
   if (!link) return null;
   const href = (link.getAttribute("href") || "").trim();
-  if (!href || href === "#") return null;
+  if (!href) return null;
+  // "#" and a fragment naming no element of this page go nowhere.
   if (href.startsWith("#") && !fragmentTarget(link)) return null;
   if (link.querySelector(BLOCKS_IN_LINK)) return null;
   return link as T;

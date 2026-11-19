@@ -42,7 +42,7 @@ import { chapterTimeLeft, currentChapter, playbackTimeline } from "../chapters";
 import { ebookOnlyFootLine, footControls, footRestLine, headRestLine } from "../reader-bands";
 import { ReaderAppearance } from "./ReaderAppearance";
 import { Button } from "../parts/Button";
-import { BLOCKS_INSIDE_LINK_SELECTOR, LINK_SELECTOR, followedLink, fragmentTarget } from "../reader-links";
+import { BLOCKS_IN_LINK, BLOCKS_INSIDE_LINK_SELECTOR, LINK_SELECTOR, followedLink, fragmentTarget } from "../reader-links";
 import { ReaderFootMessage, tappedControl, useReaderMessages, useReaderUpdate } from "./ReaderFootMessage";
 import { messageToShow, type ReaderError, type ReaderNotice } from "../reader-messages";
 import { dismissUpdate, reloadForUpdate } from "../app-update";
@@ -786,6 +786,11 @@ export function ReaderView({
           cleanChapterFonts?.();
           let active = true;
           const doc = content.document;
+          // A link around whole paragraphs is drawn as the text (#727): the theme gives its paragraphs the text's
+          // colour, and its underline, which no rule on a descendant can remove, goes here. An attribute, so CFIs hold.
+          doc?.querySelectorAll?.("a[href]").forEach((link) => {
+            if (link.querySelector(BLOCKS_IN_LINK)) (link as HTMLElement).style?.setProperty("text-decoration", "none", "important");
+          });
           const onFonts = () => {
             if (!disposed && active) redrawHighlight();
           };

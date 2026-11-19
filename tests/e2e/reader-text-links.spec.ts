@@ -74,10 +74,15 @@ test("a calibre page whose text sits inside anchors keeps the text colour and a 
       note: colour(body.querySelector('a[href="#filepos9000"]')),
       contents: colour(body.querySelector('a[href^="index_split_001.html#"]')),
       wrapped: colour(body.querySelector('a[href="index_split_001.html"] p')),
+      // The underline a link draws under its paragraphs, and that a note keeps.
+      wrappedLine: getComputedStyle(body.querySelector('a[href="index_split_001.html"]')!).textDecorationLine,
+      noteLine: getComputedStyle(body.querySelector('a[href="#filepos9000"]')!).textDecorationLine,
     };
   });
   expect(colours.anchors).toEqual([colours.body]);
   expect(colours.wrapped).toBe(colours.body);
+  expect(colours.wrappedLine).toBe("none");
+  expect(colours.noteLine).toBe("underline");
   expect(colours.body).not.toBe(CALIBRE_LINK_COLOUR);
   // Real links keep the link colour, and it differs from the text's.
   expect(colours.note).not.toBe(colours.body);
