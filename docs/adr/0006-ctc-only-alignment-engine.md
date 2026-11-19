@@ -1,5 +1,7 @@
 # One CTC acoustic model for all alignment work
 
+**Status (2026-11-19).** The Reading sync card in the reader's More sheet is gone: a rejected rebuild's reason shows on the book's Reading sync page (`#book/<workId>/sync`, #537) and in Activity, which replaced the Activity page. The decision stands.
+
 Sonder generates every alignment map, and scores ebook candidates against the audio, with a single resident Wav2Vec2 Base CTC model (`WAV2VEC2_ASR_BASE_960H`), replacing both Whisper and aeneas. One acoustic pass per recording is cached and reused for locating passages, timing sentences and checking candidates; there is no hidden Whisper fallback. On the labelled sample Base met the 250 ms sentence and transition thresholds, and a chapter took 6.93 s on the WSL GPU against 38.43 s for the full current job. Keeping Whisper only for passage discovery kept almost all of that cost (39.40 s).
 
 ## Consequences
