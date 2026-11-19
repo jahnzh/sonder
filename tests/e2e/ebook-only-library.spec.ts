@@ -57,12 +57,17 @@ async function filterBy(page: Page, name: string) {
   await expect(chip).toHaveAttribute("aria-pressed", "true");
 }
 
-/** The list row's place line (LibraryList.dc.html): the list view, the row's line, then the grid again. */
-async function placeLine(page: Page, title: string) {
+/**
+ * The list row's place line (LibraryList.dc.html): the list view, the row's line, then the grid again. The line is
+ * awaited as shown, not read once (#662): a single read could come before the row showed the work's place.
+ */
+async function expectPlaceLine(page: Page, title: string, line: RegExp, { not = false } = {}) {
   await chooseView(page, "List");
-  const line = await listRow(page, title).locator(".part-book-row-status").textContent();
+  const status = listRow(page, title).locator(".part-book-row-status");
+  await expect(status).toBeVisible();
+  if (not) await expect(status).not.toHaveText(line);
+  else await expect(status).toHaveText(line);
   await chooseView(page, "Grid");
-  return line;
 }
 
 test("an ebook-only book read past its start is In progress after a reload; one read to the end shows Finished", async ({ page }) => {
@@ -82,13 +87,13 @@ test("an ebook-only book read past its start is In progress after a reload; one 
   await page.reload();
   await filterBy(page, "In progress");
   await expect(card(page, reading)).toBeVisible();
-  expect(await placeLine(page, reading)).toMatch(/38% of the ebook$/);
+  await expectPlaceLine(page, reading, /38% of the ebook$/);
   await expect(card(page, done)).toHaveCount(0);
   await expect(card(page, untouched)).toHaveCount(0);
 
   await filterBy(page, "Finished");
   await expect(card(page, done)).toBeVisible();
-  expect(await placeLine(page, done)).toMatch(/Finished$/);
+  await expectPlaceLine(page, done, /Finished$/);
   await expect(card(page, reading)).toHaveCount(0);
 
   await filterBy(page, "Not started");
@@ -97,7 +102,7 @@ test("an ebook-only book read past its start is In progress after a reload; one 
   await expect(card(page, done)).toHaveCount(0);
 
   await filterBy(page, "All");
-  expect(await placeLine(page, reading)).not.toMatch(/Finished$/);
+  await expectPlaceLine(page, reading, /Finished$/, { not: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
   await page.screenshot({ path: "artifacts/ebook-only-library-mobile.png", fullPage: true });
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -137,5 +142,5 @@ test("a place read on this device and not yet on the server puts the book under 
   await page.reload();
   await filterBy(page, "In progress");
   await expect(card(page, title)).toBeVisible();
-  expect(await placeLine(page, title)).toMatch(/25% of the ebook$/);
+  await expectPlaceLine(page, title, /25% of the ebook$/);
 });

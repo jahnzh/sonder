@@ -41,6 +41,11 @@ async function fixture(page: Page, name: string, { map = false } = {}) {
   if (!map) {
     await expect.poll(async () => (await jobs()).length, { timeout: 20000 }).toBeGreaterThan(0);
     for (const job of await jobs()) await page.request.patch(`/api/alignments/${job.id}`, { data: { action: "cancel" } });
+    // The cancel took and no map is served: a backfill that had finished first would give the book a map (#662).
+    for (const job of await jobs()) {
+      expect(job.status).toBe("cancelled");
+      expect((await page.request.get(`/api/alignments/${job.id}/map`)).ok()).toBe(false);
+    }
     return { book, ebook, manifest };
   }
   const created = await page.request.post("/api/alignments", { data: { ebookId: ebook, recordingId: book.recordingId, pairings: manifest.sections.map((section: any) => ({ section: section.index, trackId: book.tracks[0].id, start: section.index * 100, duration: 95 })) } });

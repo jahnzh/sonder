@@ -478,6 +478,23 @@ test("chapter jumps can be undone and removing the recording clears its history"
   await expect.poll(async () => (await history(page, book.recordingId)).length).toBe(0);
 });
 
+// Close reader after a tap in the text: in Firefox the dialog also reported a close once the Back had landed, and that
+// second close replaced the Library behind with the Book page (#662, found as this file's chapter-jump test timing out).
+test("Close reader after a tap in the text returns to the Library Now playing was opened from, and stays there", async ({ page }) => {
+  const book = await importWithEbook(page, "Close to the Library");
+  await instrument(page);
+  await page.goto("/");
+  await startPaused(page, book.title);
+  await openReaderPlayer(page);
+  await revealReaderControls(page);
+  await page.locator(".inline-reader").getByRole("button", { name: "Close reader", exact: true }).click();
+  await expect(nowPlaying(page)).toBeHidden();
+  await expect(page.getByRole("heading", { name: "Library", exact: true, level: 1 })).toBeVisible();
+  // The entry the Back landed on is the Library's own, at the start of the app's history, not a Book page put there.
+  await expect.poll(() => page.evaluate(() => [location.hash, window.history.state?.sonderDepth])).toEqual(["#library", 0]);
+  await expect(page.getByRole("region", { name: "Book", exact: true })).toHaveCount(0);
+});
+
 test("source reloads only record a jump when the new source moves the position", async ({ page }) => {
   const book = await importWithEbook(page, "Undo source switch");
   await instrument(page);
