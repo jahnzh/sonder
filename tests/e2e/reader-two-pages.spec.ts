@@ -263,11 +263,12 @@ test("a narrower window, a larger font and Scroll mode show one page, and switch
   await expectTwoPages(page);
 });
 
-test("a phone shows one page as before", async ({ page }) => {
+test("a phone shows one page as before", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const { workId } = await book(page, "Phone page");
   await openRead(page, workId);
   await expect(host(page)).not.toHaveAttribute("data-spread", /.*/);
   await expect(host(page)).toHaveAttribute("data-pages", "1");
   expect((await rect(host(page))).width).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: `artifacts/reader-two-pages-390-${testInfo.project.name}.png` });
 });
