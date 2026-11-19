@@ -42,6 +42,7 @@ import { chapterTimeLeft, currentChapter, playbackTimeline } from "../chapters";
 import { ebookOnlyFootLine, footControls, footRestLine, headRestLine } from "../reader-bands";
 import { ReaderAppearance } from "./ReaderAppearance";
 import { Button } from "../parts/Button";
+import { BLOCKS_IN_LINK, BLOCKS_INSIDE_LINK_SELECTOR, LINK_SELECTOR, followedLink, fragmentTarget } from "../reader-links";
 import { ReaderFootMessage, tappedControl, useReaderMessages, useReaderUpdate } from "./ReaderFootMessage";
 import { messageToShow, type ReaderError, type ReaderNotice } from "../reader-messages";
 import { dismissUpdate, reloadForUpdate } from "../app-update";
@@ -785,6 +786,11 @@ export function ReaderView({
           cleanChapterFonts?.();
           let active = true;
           const doc = content.document;
+          // A link around whole paragraphs is drawn as the text (#727): the theme gives its paragraphs the text's
+          // colour, and its underline, which no rule on a descendant can remove, goes here. An attribute, so CFIs hold.
+          doc?.querySelectorAll?.("a[href]").forEach((link) => {
+            if (link.querySelector(BLOCKS_IN_LINK)) (link as HTMLElement).style?.setProperty("text-decoration", "none", "important");
+          });
           const onFonts = () => {
             if (!disposed && active) redrawHighlight();
           };
@@ -805,8 +811,9 @@ export function ReaderView({
           content.document.addEventListener("pointerdown", (event: PointerEvent) => {
             if (event.button !== 0) return;
             // Links may navigate without a page turn; a tap on the page itself
-            // is only a potential gesture until it moves or turns the page.
-            if ((event.target as Element)?.closest("a")) { gesture(); return; }
+            // is only a potential gesture until it moves or turns the page. An anchor without a target, or one
+            // around whole paragraphs, is the page's text (#727).
+            if (followedLink(event.target as Element)) { gesture(); return; }
             start = { x: event.clientX, y: event.clientY, time: event.timeStamp }; held = false;
             const pressed = event.timeStamp, now = () => content.document.defaultView?.performance.now() ?? pressed + 550;
             const longPress = () => { hold = null; held = true; pageAction.current("sentence", content, event); };
@@ -848,8 +855,19 @@ export function ReaderView({
               pageAction.current(event.key === "ArrowLeft" ? "previous" : "next");
             }
           });
+          // A tap on an anchor that is the page's text toggles the controls above; epub.js's own handler on that
+          // anchor must not also go to its (missing or paragraph-wide) target (#727).
           content.document.addEventListener("click", (event) => {
-            const link = (event.target as Element)?.closest("a[href]");
+            const anchor = (event.target as Element)?.closest?.("a[href]");
+            if (!anchor) return;
+            const link = followedLink<Element>(event.target as Element), note = link && fragmentTarget<Element>(link);
+            if (link && !note) return;
+            event.preventDefault(); event.stopPropagation();
+            // A note on this page: epub.js would look for it outside the book.
+            if (note) void view.display(content.cfiFromNode(note)).catch(() => {});
+          }, true);
+          content.document.addEventListener("click", (event) => {
+            const link = followedLink<Element>(event.target as Element);
             if (link && /^https?:/i.test(link.getAttribute("href") || "")) {
               event.preventDefault();
               window.open(
@@ -975,7 +993,10 @@ export function ReaderView({
         "background-color": "transparent !important",
       },
       "p,li,blockquote,pre,figcaption": { "font-size": "inherit !important", "line-height": "inherit !important" },
-      a: { color: `${appearance.accent} !important` },
+      // Only an anchor with a target is a link; a calibre page whose text sits inside anchors keeps the text's
+      // colour, and so does a paragraph inside a link (#727).
+      [LINK_SELECTOR]: { color: `${appearance.accent} !important` },
+      [BLOCKS_INSIDE_LINK_SELECTOR]: { color: `${theme.text} !important` },
       img: { "max-width": "100%", height: "auto" },
     });
     const flow = preferences.mode === "scroll" ? "scrolled-doc" : "paginated";

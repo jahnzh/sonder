@@ -175,6 +175,8 @@ const desktopProjects = [
               /(^|\/)shell\.spec\.ts$/,
               // A stuck download says why and offers Cancel (#716).
               /(^|\/)activity-cancel\.spec\.ts$/,
+              // A calibre EPUB whose text sits inside anchors: text colour and the centre tap (#727).
+              /(^|\/)reader-text-links\.spec\.ts$/,
               // A paused seek moves the reader's highlight, on a stream and a device copy (#730).
               /(^|\/)reader-paused-seek\.spec\.ts$/,
             ]
