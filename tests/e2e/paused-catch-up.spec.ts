@@ -146,8 +146,11 @@ test("back in view, paused device A shows B's later place before play, and play 
   await page.getByRole("button", { name: "Earlier positions", exact: true }).click();
   const history = page.getByRole("dialog", { name: "Position history", exact: true });
   await expect(history.getByRole("button", { name: /^Other device · 1:40/ })).toBeVisible();
+  const settled = () => page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {}))));
+  await settled();
   await page.screenshot({ path: `${OUT}/paused-catch-up-history-phone.png` });
   await page.setViewportSize({ width: 1280, height: 800 });
+  await settled();
   await page.screenshot({ path: `${OUT}/paused-catch-up-history-desktop.png` });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.keyboard.press("Escape");
