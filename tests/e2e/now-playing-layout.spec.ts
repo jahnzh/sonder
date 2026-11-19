@@ -609,6 +609,39 @@ test.describe("#122 reader Back to narration layout",()=>{
  });
 });
 
+ // An info mark's explanation is a Radix popover whose focus scope pauses Now playing's while it is open and resumes
+ // it only in a timer after it closed: a Tab from the last control before that timer ran left the dialog (#737).
+ // The timer is held back here, so the Tab always comes first.
+ test("Tab wraps inside Now playing while a closed explanation still holds the focus scope",async({page,browserName})=>{
+  skipOnMobile(true,"needs a hardware keyboard (Tab)");
+  const dialog=await open(page,browserName,"Layout plain",[390,844]);
+  const keep=dialog.getByRole("switch",{name:"Keep on this device",exact:true});
+  await expect(keep).toBeEnabled();
+  await dialog.getByRole("button",{name:"Earlier positions",exact:true}).focus();
+  await page.keyboard.press("Tab");
+  await expect(dialog.getByRole("button",{name:"About Keep on this device",exact:true})).toBeFocused();
+  await expect(page.getByRole("tooltip")).toBeVisible();
+  await page.evaluate(()=>{
+   const w=window as typeof window&{__heldTimeout?:typeof setTimeout};
+   w.__heldTimeout=window.setTimeout;
+   window.setTimeout=((run:TimerHandler,ms?:number,...rest:unknown[])=>w.__heldTimeout!(run,ms?ms:1500,...rest)) as typeof setTimeout;
+  });
+  try{
+   await page.keyboard.press("Tab");
+   await expect(keep).toBeFocused();
+   await expect(page.getByRole("tooltip")).toHaveCount(0);
+   await page.keyboard.press("Tab");
+   await expect(dialog.getByRole("button",{name:"Close now playing",exact:true})).toBeFocused();
+   await page.keyboard.press("Shift+Tab");
+   await expect(keep).toBeFocused();
+  }finally{
+   await page.evaluate(()=>{
+    const w=window as typeof window&{__heldTimeout?:typeof setTimeout};
+    if(w.__heldTimeout)window.setTimeout=w.__heldTimeout;
+   });
+  }
+ });
+
  test("Now Playing keeps keyboard focus inside the open dialog",async({page,browserName})=>{
   skipOnMobile(true,"needs a hardware keyboard (Tab, Escape)");
   const dialog=await open(page,browserName,"Layout plain",[390,844]);
