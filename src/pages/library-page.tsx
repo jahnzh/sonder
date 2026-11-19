@@ -17,6 +17,7 @@ import { PickerChoices, PickerDialog, PickerGroup, PickerRow, PickerRows } from 
 import { ProgressBar } from "../parts/ProgressBar";
 import { Segmented } from "../parts/Segmented";
 import { usePlayer } from "../player";
+import { SEARCH_KEY_EVENT } from "../keyboard";
 import type { Book, LibraryWork } from "../types";
 import { chosenRecording } from "./book-model";
 import {
@@ -119,6 +120,14 @@ export function LibraryPage({
     if (searching && opened.current) field.current?.focus();
     opened.current = true;
   }, [searching]);
+  // `/` (src/keyboard.ts) opens the search in place of the Title row before it focuses the field (#614).
+  useEffect(() => {
+    const input = field.current;
+    if (!input) return;
+    const open = () => setSearching(true);
+    input.addEventListener(SEARCH_KEY_EVENT, open);
+    return () => input.removeEventListener(SEARCH_KEY_EVENT, open);
+  }, []);
   // The Series chip is chosen, or a desktop shows a series beside its list: the list stands in place of the shelf.
   const chip: LibraryChip = beside ? SERIES_CHIP : filter;
   const seriesShown = chip === SERIES_CHIP;
@@ -155,6 +164,7 @@ export function LibraryPage({
             className="type-body"
             aria-label="Search your library"
             placeholder="Title or author"
+            data-search-key=""
             ref={field}
             value={query}
             onChange={(e) => setQuery(e.target.value)}

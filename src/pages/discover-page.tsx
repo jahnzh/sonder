@@ -402,6 +402,7 @@ export function DiscoverPage({
             <input
               ref={field}
               className="discover-input"
+              data-search-key=""
               type="search"
               enterKeyHint="search"
               aria-label={segment === "books" ? "Search for a book" : "Search for a series"}

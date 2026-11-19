@@ -12,6 +12,7 @@ import {
   parentOf,
   placeOf,
   readAddress,
+  readLink,
   resolve,
   sameRoute,
   step,
@@ -216,7 +217,8 @@ function onPopState(event: PopStateEvent) {
   }
   // Scroll restoration is manual, so the page still stands where the entry being left had it.
   scrolls.set(current.key, window.scrollY);
-  const route = resolve(readAddress(location.hash), { admin });
+  const read = readLink(location.hash);
+  const route = resolve(read.route, { admin });
   const saved = entryState(event.state);
   // An entry without the app's state: one the browser added on top (a link, a typed address) makes the history
   // longer. Otherwise it is an old one reached by Back or Forward (an older build's, a typed one): what lies behind
@@ -235,7 +237,8 @@ function onPopState(event: PopStateEvent) {
       };
   const before = shownPage;
   show(entry);
-  if (!saved || writeAddress(route) !== location.hash) history.replaceState(stateOf(entry), "", urlOf(route));
+  // An old name, a bad address or an entry without the app's state: replaced by what it shows.
+  if (!saved || read.redirect || writeAddress(route) !== location.hash) history.replaceState(stateOf(entry), "", urlOf(route));
   lengthSeen = history.length;
   traversing = true;
   try {
@@ -262,7 +265,8 @@ function onPageHide() {
  */
 export function startNavigation(options: { admin: boolean }) {
   admin = options.admin;
-  const route = resolve(readAddress(location.hash), { admin });
+  const read = readLink(location.hash);
+  const route = resolve(read.route, { admin });
   const saved = entryState(history.state);
   const depth = saved?.sonderDepth ?? 0;
   const entry: Entry = {
@@ -277,7 +281,7 @@ export function startNavigation(options: { admin: boolean }) {
   };
   const first = !current;
   show(entry);
-  if (!saved || writeAddress(route) !== location.hash) history.replaceState(stateOf(entry), "", urlOf(route));
+  if (!saved || read.redirect || writeAddress(route) !== location.hash) history.replaceState(stateOf(entry), "", urlOf(route));
   lengthSeen = history.length;
   if (!listening) {
     listening = true;
