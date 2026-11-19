@@ -405,6 +405,7 @@ function deleteRecordingRows(recordingId: string) {
     .where(eq(s.serverDownloads.recordingId, recordingId))
     .run();
   db.delete(s.tracks).where(eq(s.tracks.recordingId, recordingId)).run();
+  db.delete(s.recordingReleaseLinks).where(eq(s.recordingReleaseLinks.recordingId, recordingId)).run();
   db.delete(s.recordings).where(eq(s.recordings.id, recordingId)).run();
 }
 
