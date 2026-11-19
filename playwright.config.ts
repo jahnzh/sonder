@@ -155,6 +155,8 @@ const desktopProjects = [
               /(^|\/)catalogue-providers\.spec\.ts$/,
               // A book's Edit page: details, series and cover by hand (#719 part a).
               /(^|\/)edit-page\.spec\.ts$/,
+              // Matching a book's details from a provider, field by field (#719 part b).
+              /(^|\/)metadata-match\.spec\.ts$/,
               // The Series page of a saved series (#562).
               /(^|\/)series-page\.spec\.ts$/,
               // The Reading sync page's buttons (#541).
