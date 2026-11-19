@@ -412,7 +412,8 @@ test("the reader sequence plays more than 60 s before the end of the file, so pl
 
 test("the check seeks and plays where the sequence says (static check of verify-integrated-reader.mjs)", () => {
   const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "verify-integrated-reader.mjs"), "utf8");
-  assert.match(source, /selectReaderRecording\(get,\{preferred\}\)/);
+  assert.match(source, /selectReaderRecording\(get,\{preferred,allowRecent\}\)/);
+  assert.match(source, /^const \{preferred,allowRecent\}=verifyChoice\(\);$/m);
   assert.match(source, /for\(const sample of sequence\.samples\)\{\n  await seek\(sample\.position\);/);
   assert.match(source, /await seek\(follow\.start\);\n await expect\(room\)\.toHaveAttribute\('data-current-passage',follow\.passage\);/);
   assert.match(source, /if\(loaded\.id!==sequence\.trackId\)throw/);
@@ -700,4 +701,122 @@ test("readerSequence says whether the saved position has a narrated sentence: no
   const tracks = [{ duration: 600 }, { duration: 3000 }];
   const into = book("into744", { tracks, progress: { track: 1, position: 5 } });
   assert.equal(rec.readerSequence([mapped(into.tracks[0].id, 500, 503), ...sentences(into.tracks[1].id, 10, 400)], into).startNarrated, true);
+});
+
+// #774: the deploy's check chose whatever aligned book came first, and tonight that was the one the owner was
+// listening to (recording-torbox-139288314, The Gate of the Feral Gods, progress saved minutes before); the last
+// check happened to choose Excession. A fixed clock, so the hour-ago saves stay an hour ago.
+const NOW = 1795600000000;
+const HOUR = 60 * 60 * 1000;
+
+test("#774: with the owner's current book first in the listing, played an hour ago, the check chooses another aligned book", async () => {
+  const gate = book("torbox-139288314", { progress: { position: 42, updatedAt: NOW - HOUR } });
+  const excession = book("excession", { progress: { position: 42, updatedAt: NOW - 5 * 24 * HOUR } });
+  const listing = listingOf([
+    { book: gate, jobs: [job(gate, { status: "ready", updatedAt: 900 })] },
+    { book: excession, jobs: [job(excession, { status: "partial", updatedAt: 100 })] },
+  ]);
+  const { pairs, rejected } = rec.readerPairs(listing, { now: NOW });
+  assert.deepEqual(pairs.map((p) => p.book.recordingId), [excession.recordingId]);
+  assert.deepEqual(rejected, [{ recordingId: gate.recordingId, reason: "listened to in the last 48 h" }]);
+  const { get, requests } = server(listing);
+  const pick = await rec.selectReaderRecording(get, { now: NOW });
+  assert.equal(pick.recordingId, excession.recordingId);
+  assert.ok(!requests.includes(mapPath(listing.jobs[0])), "the map of the book being listened to is not even fetched");
+});
+
+test("#774: every recording of a work with a recently played recording is skipped too, with the recording named", () => {
+  const listened = book("release-a", { workId: "work-shared", progress: { position: 42, updatedAt: NOW - 2 * HOUR } });
+  const sibling = book("release-b", { workId: "work-shared", progress: { position: 42, updatedAt: NOW - 30 * 24 * HOUR } });
+  const unplayed = book("release-c", { workId: "work-shared" });
+  const elsewhere = book("other", { progress: { position: 42, updatedAt: NOW - 30 * 24 * HOUR } });
+  const listing = listingOf([{ book: sibling }, { book: unplayed }, { book: listened }, { book: elsewhere }]);
+  const { pairs, rejected } = rec.readerPairs(listing, { now: NOW });
+  assert.deepEqual(pairs.map((p) => p.book.recordingId), [elsewhere.recordingId]);
+  assert.deepEqual(rejected, [
+    { recordingId: sibling.recordingId, reason: "listened to in the last 48 h (recording recording-release-a of the same work)" },
+    { recordingId: unplayed.recordingId, reason: "listened to in the last 48 h (recording recording-release-a of the same work)" },
+    { recordingId: listened.recordingId, reason: "listened to in the last 48 h" },
+  ]);
+});
+
+test("#774: the window is 48 hours of saved progress; a save from another device's clock ahead counts as recent", () => {
+  assert.equal(rec.RECENT_LISTENING_MS, 48 * HOUR);
+  const at = (updatedAt) => rec.recentlyListened([book("b", { progress: { position: 1, updatedAt } })], NOW).has("work-b");
+  assert.equal(at(NOW - 48 * HOUR), true);
+  assert.equal(at(NOW - 48 * HOUR - 1), false);
+  assert.equal(at(NOW + 60_000), true);
+  assert.equal(rec.recentlyListened([book("never")], NOW).size, 0, "no progress, nothing listened to");
+  // The latest save of the work is the one named.
+  const two = rec.recentlyListened([book("x", { workId: "w", progress: { position: 1, updatedAt: NOW - 3 * HOUR } }), book("y", { workId: "w", progress: { position: 1, updatedAt: NOW - HOUR } })], NOW);
+  assert.deepEqual(two.get("w"), { recordingId: "recording-y", updatedAt: NOW - HOUR });
+});
+
+test("#774: when only recently played books are aligned, the check finds no suitable recording (exit 3) and says why", async () => {
+  const gate = book("torbox-139288314", { progress: { position: 42, updatedAt: NOW - HOUR } });
+  await assert.rejects(rec.selectReaderRecording(server(listingOf([{ book: gate }])).get, { now: NOW }), (error) => {
+    assert.ok(error instanceof NoSuitableRecording);
+    assert.equal(error.reason, "1 aligned recording(s) in the library, none qualifies: recording-torbox-139288314: listened to in the last 48 h");
+    return true;
+  });
+});
+
+test("#774: an explicit choice of a recently played recording is refused, before anything but the book listing is read", async () => {
+  const gate = book("torbox-139288314", { progress: { position: 42, updatedAt: NOW - HOUR } });
+  const excession = book("excession", { progress: { position: 42, updatedAt: NOW - 5 * 24 * HOUR } });
+  const listing = listingOf([{ book: gate }, { book: excession }]);
+  const { get, requests } = server(listing);
+  await assert.rejects(rec.selectReaderRecording(get, { preferred: gate.recordingId, now: NOW }), (error) => {
+    assert.ok(error instanceof rec.RecentChoiceRefused);
+    assert.ok(!(error instanceof NoSuitableRecording), "a refusal is a failure (exit 1), not a skip");
+    assert.equal(error.message, "refusing to check recording recording-torbox-139288314: listened to in the last 48 h, and a live check could clash with that listening; set SONDER_VERIFY_ALLOW_RECENT=1 to check it anyway");
+    return true;
+  });
+  assert.deepEqual(requests, ["/api/books"]);
+  // A sibling recording of the work is refused the same way.
+  const sibling = book("sibling", { workId: gate.workId });
+  await assert.rejects(rec.selectReaderRecording(server(listingOf([{ book: gate }, { book: sibling }])).get, { preferred: sibling.recordingId, now: NOW }), /refusing to check recording recording-sibling: listened to in the last 48 h \(recording recording-torbox-139288314 of the same work\)/);
+});
+
+test("#774: SONDER_VERIFY_ALLOW_RECENT lets the explicit choice be a recently played recording, and only that one", async () => {
+  const gate = book("torbox-139288314", { progress: { position: 42, updatedAt: NOW - HOUR } });
+  const other = book("other-recent", { progress: { position: 42, updatedAt: NOW - HOUR } });
+  const listing = listingOf([{ book: other, jobs: [job(other, { status: "ready", updatedAt: 900 })] }, { book: gate }]);
+  const pick = await select(listing, { preferred: gate.recordingId, allowRecent: true, now: NOW });
+  assert.equal(pick.recordingId, gate.recordingId);
+  const { pairs, rejected } = rec.readerPairs(listing, { preferred: gate.recordingId, allowRecent: true, now: NOW });
+  assert.deepEqual(pairs.map((p) => p.book.recordingId), [gate.recordingId]);
+  assert.deepEqual(rejected, [{ recordingId: other.recordingId, reason: "listened to in the last 48 h" }]);
+  // Without an explicit choice the switch frees nothing.
+  await assert.rejects(select(listing, { allowRecent: true, now: NOW }), NoSuitableRecording);
+});
+
+test("#774: an explicit choice that was not played recently still wins over the chooser's own order", async () => {
+  const named = book("named", { progress: { position: 42, updatedAt: NOW - 3 * 24 * HOUR } });
+  const other = book("other", { progress: { position: 42, updatedAt: NOW - 3 * 24 * HOUR } });
+  const listing = listingOf([{ book: other, jobs: [job(other, { status: "ready", updatedAt: 900 })] }, { book: named, jobs: [job(named, { status: "partial", updatedAt: 100 })] }]);
+  assert.equal((await select(listing, { preferred: named.recordingId, now: NOW })).recordingId, named.recordingId);
+  assert.equal((await select(listing, { now: NOW })).recordingId, other.recordingId);
+});
+
+test("#774: the explicit choice is the first argument, else SONDER_VERIFY_RECORDING; only SONDER_VERIFY_ALLOW_RECENT=1 allows a recent one", () => {
+  assert.deepEqual(rec.verifyChoice([], {}), { preferred: null, allowRecent: false });
+  assert.deepEqual(rec.verifyChoice([], { SONDER_VERIFY_RECORDING: "recording-x" }), { preferred: "recording-x", allowRecent: false });
+  assert.deepEqual(rec.verifyChoice(["recording-arg"], { SONDER_VERIFY_RECORDING: "recording-x" }), { preferred: "recording-arg", allowRecent: false });
+  // deploy.sh passes both through, empty when unset.
+  assert.deepEqual(rec.verifyChoice([], { SONDER_VERIFY_RECORDING: "", SONDER_VERIFY_ALLOW_RECENT: "" }), { preferred: null, allowRecent: false });
+  assert.equal(rec.verifyChoice([], { SONDER_VERIFY_ALLOW_RECENT: "1" }).allowRecent, true);
+  assert.equal(rec.verifyChoice([], { SONDER_VERIFY_ALLOW_RECENT: "true" }).allowRecent, false);
+});
+
+test("#774: the multi-user check's temporary user works on a book the administrator did not play in the last 48 h", () => {
+  const strip = ({ progress, ...rest }) => rest;
+  const gate = book("torbox-139288314", { progress: { position: 42, updatedAt: NOW - HOUR } });
+  const quiet = book("quiet", { progress: { position: 42, updatedAt: NOW - 5 * 24 * HOUR } });
+  const noTracks = book("placeholder", { tracks: [] });
+  const user = [noTracks, gate, quiet].map(strip);
+  assert.deepEqual(rec.multiUserPlayable(user, [gate, quiet, noTracks], NOW), { book: user[2], recent: null });
+  // Every title with audio was played: the first is used (the user's writes stay the user's), and the report says so.
+  assert.deepEqual(rec.multiUserPlayable([noTracks, gate].map(strip), [gate], NOW), { book: strip(gate), recent: "listened to in the last 48 h" });
+  assert.deepEqual(rec.multiUserPlayable([strip(noTracks)], [], NOW), { book: null, recent: null });
 });

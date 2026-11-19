@@ -235,6 +235,29 @@ test("live checks run with SONDER_VERIFY_PRODUCTION=1, which the scripts need to
   }
 });
 
+// #774: an operator names the recording the deploy's checks use; without one each check chooses its own (never the
+// book the owner listened to in the last 48 h, scripts/live-check-recording.mjs).
+test("SONDER_VERIFY_RECORDING and SONDER_VERIFY_ALLOW_RECENT reach every live check when set, and are empty otherwise", () => {
+  const logEnv = ["SONDER_VERIFY_RECORDING", "SONDER_VERIFY_ALLOW_RECENT"];
+  const f = fixture({ "verify-integrated-reader.mjs": { exit: 0, logEnv }, "verify-multi-user.mjs": { exit: 0, logEnv } });
+  try {
+    let r = f.run(["--no-marker"], { SONDER_VERIFY_RECORDING: "recording-excession", SONDER_VERIFY_ALLOW_RECENT: "1" });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.deepEqual(f.ran(), [
+      "verify-integrated-reader.mjs SONDER_VERIFY_RECORDING=recording-excession SONDER_VERIFY_ALLOW_RECENT=1",
+      "verify-multi-user.mjs SONDER_VERIFY_RECORDING=recording-excession SONDER_VERIFY_ALLOW_RECENT=1",
+    ]);
+    rmSync(join(f.dir, "ran.log"));
+    r = f.run(["--no-marker"], { SONDER_VERIFY_RECORDING: "", SONDER_VERIFY_ALLOW_RECENT: "" });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.deepEqual(f.ran(), ["verify-integrated-reader.mjs SONDER_VERIFY_RECORDING= SONDER_VERIFY_ALLOW_RECENT=", "verify-multi-user.mjs SONDER_VERIFY_RECORDING= SONDER_VERIFY_ALLOW_RECENT="]);
+    r = f.run(["--no-marker", "--dry-run"], { SONDER_VERIFY_RECORDING: "recording-excession" });
+    assert.match(r.stdout, /live checks: .*\n {5}recording: recording-excession\n/);
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
 test("the reader check is started without a recording id even when the database has a mapped recording", () => {
   const interval = { paragraphId: "p1", section: 0, trackId: "t1", start: 0, end: 5, confidence: 1 };
   const f = fixture(
