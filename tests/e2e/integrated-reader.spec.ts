@@ -272,8 +272,8 @@ test("back to narration right after a Contents navigation keeps following", asyn
  const room=page.locator(".inline-reader");
  await expect(room).toHaveAttribute("data-current-passage",interval.paragraphId);
  const sidebar=room.getByLabel("Contents sidebar");
- // The narrated chapter is also announced as "Narrating".
- const two=sidebar.getByRole("button",{name:/^The Pool of Tears/});
+ // The narrated chapter is also announced as "Narrating", the mark before the title as the desktop board draws it (#595).
+ const two=sidebar.getByRole("button",{name:"Narrating The Pool of Tears",exact:true});
  await expect(two).toHaveAttribute("aria-current","location");
  // Choose chapter one, then go back to the narration within the second after
  // that navigation lands: the follow jump is our own layout, not navigation.
