@@ -1,6 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { KEYBOARD_SHORTCUTS, playbackKeyAction, readerKeyAction } from "../src/keyboard.ts";
+import {
+  eventKey,
+  KEYBOARD_SHORTCUTS,
+  playbackKeyAction,
+  readerKeyAction,
+  SEARCH_KEY_ATTRIBUTE,
+  searchKeyAction,
+  shortcutGroups,
+} from "../src/keyboard.ts";
 test("Space toggles playback and arrow keys seek 30 seconds when playback is available", () => {
   assert.deepEqual(playbackKeyAction({ key: " " }), { type: "toggle" });
   assert.deepEqual(playbackKeyAction({ key: "ArrowLeft" }), {
@@ -58,22 +66,105 @@ test("playback keys are ignored in text fields, selects, buttons, open dialogs a
 });
 test("README lists every keyboard shortcut", async () => {
   const { readFileSync } = await import("node:fs");
-  const { KEYBOARD_SHORTCUTS } = await import("../src/keyboard.ts");
   const line = readFileSync("README.md", "utf8").split("\n").find(l => l.startsWith("Keyboard shortcuts:")) ?? "";
-  for (const { keys } of KEYBOARD_SHORTCUTS)
-    for (const key of keys) assert.ok(line.includes(`\`${key}\``), key);
+  for (const { key } of KEYBOARD_SHORTCUTS) assert.ok(line.includes(`\`${key}\``), key);
 });
 
-test("each key is listed once, with its meaning, and the reader has no key for a view", () => {
-  const keys = KEYBOARD_SHORTCUTS.flatMap((entry) => entry.keys);
-  assert.deepEqual(keys, [...new Set(keys)]);
-  const arrows = KEYBOARD_SHORTCUTS.find((entry) => entry.keys.includes("←"));
-  assert.equal(arrows?.action, "Skip 30 seconds back or forward");
-  const space = KEYBOARD_SHORTCUTS.find((entry) => entry.keys.includes("Space"));
-  assert.equal(space?.action, "Play or pause");
-  assert.equal(KEYBOARD_SHORTCUTS.find((entry) => entry.keys.includes("f"))?.action, "Follow the audio in the reader");
+// #614: Settings › Playback › Keyboard shortcuts lists exactly the keys that work (SettingsKeys.dc.html).
+test("the keyboard list is the board's rows, in its groups and order, with no key that was removed", () => {
+  assert.deepEqual(
+    KEYBOARD_SHORTCUTS.map(({ group, action, key, note }) => [group, action, key, note ?? ""]),
+    [
+      ["Listening", "Play or pause", "Space", ""],
+      ["Listening", "Back 30 seconds", "←", ""],
+      ["Listening", "Forward 30 seconds", "→", ""],
+      ["Reading", "Back to narration", "F", ""],
+      ["Reading", "Previous page", "←", "While nothing plays"],
+      ["Reading", "Next page", "→", "While nothing plays"],
+      ["Library and Discover", "Search", "/", ""],
+    ],
+  );
+  assert.deepEqual(shortcutGroups().map(({ group, rows }) => [group, rows.length]), [
+    ["Listening", 3],
+    ["Reading", 3],
+    ["Library and Discover", 1],
+  ]);
+  for (const entry of KEYBOARD_SHORTCUTS) assert.equal("word" in entry, false, entry.action);
   // The Lyrics and Word views are gone, and with them `p` and the sentence steps (ADR 0017).
-  for (const key of ["p", "Shift+←", "Shift+→"]) assert.equal(keys.includes(key), false, key);
+  const keys = KEYBOARD_SHORTCUTS.map((entry) => entry.key);
+  for (const key of ["p", "P", "Shift+←", "Shift+→"]) assert.equal(keys.includes(key), false, key);
+});
+
+/** Every key a keyboard function acts on, each function given the situation in which it acts at all. */
+function handledKeys() {
+  const named = ["Space", " ", "Enter", "Escape", "Tab", "Backspace", "Delete", "Home", "End", "PageUp", "PageDown",
+    "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "F1", "?"];
+  const printable = Array.from({ length: 95 }, (_, i) => String.fromCharCode(32 + i));
+  const candidates = [...new Set([...named, ...printable])];
+  const shown = (key: string) => ({ " ": "Space", ArrowLeft: "←", ArrowRight: "→" })[key] ?? (key.length === 1 ? key.toUpperCase() : key);
+  const handled = new Set<string>();
+  for (const key of candidates) {
+    for (const shiftKey of [false, true]) {
+      const input = { key, shiftKey };
+      if (playbackKeyAction(input)) handled.add(`Listening ${shown(key)}`);
+      // The reader's keys: F with the narration loaded, the arrows with nothing in the player.
+      if (readerKeyAction({ ...input, narration: true }) || readerKeyAction({ ...input, playerHasBook: false }))
+        handled.add(`Reading ${shown(key)}`);
+      if (searchKeyAction({ ...input, hasField: true })) handled.add(`Library and Discover ${shown(key)}`);
+    }
+  }
+  return handled;
+}
+
+test("every key the list names is handled by the keyboard functions, and every key they handle is in the list", () => {
+  const listed = new Set(KEYBOARD_SHORTCUTS.map(({ group, key }) => `${group} ${key}`));
+  assert.deepEqual([...handledKeys()].sort(), [...listed].sort());
+  // Each row's key does what the row says.
+  const does = (row: (typeof KEYBOARD_SHORTCUTS)[number]) => {
+    const key = eventKey(row.key);
+    if (row.group === "Listening") return playbackKeyAction({ key });
+    if (row.group === "Reading") return readerKeyAction({ key, narration: true });
+    return searchKeyAction({ key, hasField: true });
+  };
+  assert.deepEqual(
+    KEYBOARD_SHORTCUTS.map((row) => [row.action, does(row)]),
+    [
+      ["Play or pause", { type: "toggle" }],
+      ["Back 30 seconds", { type: "skip", seconds: -30 }],
+      ["Forward 30 seconds", { type: "skip", seconds: 30 }],
+      ["Back to narration", { type: "back-to-narration" }],
+      ["Previous page", { type: "page", direction: "previous" }],
+      ["Next page", { type: "page", direction: "next" }],
+      ["Search", { type: "search" }],
+    ],
+  );
+  // "While nothing plays": with a book in the player the arrows seek it and do not turn pages.
+  for (const row of KEYBOARD_SHORTCUTS.filter((row) => row.note === "While nothing plays"))
+    assert.equal(readerKeyAction({ key: eventKey(row.key), playerHasBook: true }), null, row.action);
+});
+
+test("/ searches only with a search field on the page, and never while typing in a field, in a dialog or with a modifier", () => {
+  const search = { type: "search" };
+  assert.deepEqual(searchKeyAction({ key: "/", hasField: true }), search);
+  // On a Nordic keyboard `/` is Shift+7: Shift is allowed.
+  assert.deepEqual(searchKeyAction({ key: "/", shiftKey: true, hasField: true } as Parameters<typeof searchKeyAction>[0]), search);
+  // A focused button or link is not a field being typed in.
+  for (const targetTag of ["BUTTON", "A", "DIV", null])
+    assert.deepEqual(searchKeyAction({ key: "/", hasField: true, targetTag }), search, String(targetTag));
+  // No field on the page shown (Settings, Activity, a book): nothing.
+  assert.equal(searchKeyAction({ key: "/" }), null);
+  assert.equal(searchKeyAction({ key: "/", hasField: false }), null);
+  for (const targetTag of ["INPUT", "input", "TEXTAREA", "SELECT"])
+    assert.equal(searchKeyAction({ key: "/", hasField: true, targetTag }), null, targetTag);
+  assert.equal(searchKeyAction({ key: "/", hasField: true, contentEditable: true }), null);
+  for (const blocked of [{ dialogOpen: true }, { ctrlKey: true }, { metaKey: true }, { altKey: true }, { defaultPrevented: true }])
+    assert.equal(searchKeyAction({ key: "/", hasField: true, ...blocked }), null, JSON.stringify(blocked));
+  for (const key of ["?", "s", "Slash", "7"]) assert.equal(searchKeyAction({ key, hasField: true }), null, key);
+});
+
+test("the list's keys are named as the board names them and map to the events the functions read", () => {
+  assert.deepEqual(KEYBOARD_SHORTCUTS.map((row) => eventKey(row.key)), [" ", "ArrowLeft", "ArrowRight", "F", "ArrowLeft", "ArrowRight", "/"]);
+  assert.equal(SEARCH_KEY_ATTRIBUTE, "data-search-key");
 });
 
 // #501 review: `F` returns to the narration only when the reader itself has the keyboard.

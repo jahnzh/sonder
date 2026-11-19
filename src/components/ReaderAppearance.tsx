@@ -2,33 +2,23 @@
 // ReaderAppearance.dc.html). The reader's Aa docks this panel in the dock row, in place of the foot: the text band is
 // what is left between the head and the panel, and the reader lays the text out again there with the narrated
 // sentence in view. Rows in the board's order: Reading mode (first: it is the setting used most), Follow the
-// narration, Theme, Font, Size, Line height, then Margins and Line width (not drawn on the board; kept because the
-// plan removes only the view and its two settings). Each change is saved as before (`saveReader`, appearance.ts).
+// narration, Font, Size, Line height, then Margins and Line width (not drawn on the board; kept because the
+// plan removes only the view and its two settings). The board's Theme row went with the reader on its own, the
+// only reader that had it (#613 part 2): the text takes the app's look. Each change is saved as before (`saveReader`, appearance.ts).
 // The panel is not in the address: Back with it open leaves the reader.
-import { useRef, type KeyboardEvent } from "react";
 import type { Appearance } from "../appearance";
 import { Row } from "../parts/Row";
 import { Segmented } from "../parts/Segmented";
 import { Stepper } from "../parts/Stepper";
 import { Switch } from "../parts/Switch";
 import { InfoMark } from "../parts/Tooltip";
-import { segmentForKey } from "../parts/segment-keys";
 import { tip } from "../tooltip-texts";
 import "./reader-appearance.css";
 
 type ReaderPreferences = Appearance["reader"];
-type Theme = ReaderPreferences["theme"];
 
 /** The rows' names, in the board's order. */
-export const APPEARANCE_ROWS = ["Reading mode", "Follow the narration", "Theme", "Font", "Size", "Line height", "Margins", "Line width"] as const;
-
-// The swatches show the page each theme gives the book (Reader.tsx's themes); App is the app's own ground.
-const THEMES: { value: Theme; label: string; swatch: string }[] = [
-  { value: "app", label: "App", swatch: "var(--background)" },
-  { value: "dark", label: "Dark", swatch: "#101510" },
-  { value: "light", label: "Light", swatch: "#ffffff" },
-  { value: "sepia", label: "Sepia", swatch: "#f2e6cd" },
-];
+export const APPEARANCE_ROWS = ["Reading mode", "Follow the narration", "Font", "Size", "Line height", "Margins", "Line width"] as const;
 
 // The ranges the stored appearance allows (appearance.ts), in the steps the old sliders used.
 const STEPPERS = [
@@ -46,44 +36,6 @@ function Close() {
   );
 }
 
-/** Theme as swatches (the board): a radio group, as the Segmented control is, so the arrows choose. */
-function ThemeSwatches({ value, onChange }: { value: Theme; onChange: (value: Theme) => void }) {
-  const buttons = useRef<(HTMLButtonElement | null)[]>([]);
-  const chosen = THEMES.findIndex((theme) => theme.value === value);
-  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
-    const next = segmentForKey(event.key, index, THEMES.map(() => true));
-    if (next === null) return;
-    event.preventDefault();
-    buttons.current[next]?.focus();
-    if (THEMES[next].value !== value) onChange(THEMES[next].value);
-  };
-  return (
-    <span className="reader-appearance-swatches" role="radiogroup" aria-label="Theme">
-      {THEMES.map((theme, index) => (
-        <button
-          key={theme.value}
-          ref={(element) => {
-            buttons.current[index] = element;
-          }}
-          type="button"
-          role="radio"
-          aria-checked={index === chosen}
-          aria-label={theme.label}
-          tabIndex={index === (chosen >= 0 ? chosen : 0) ? 0 : -1}
-          className="reader-appearance-swatch"
-          data-chosen={index === chosen ? "" : undefined}
-          onClick={() => {
-            if (theme.value !== value) onChange(theme.value);
-          }}
-          onKeyDown={(event) => onKeyDown(event, index)}
-        >
-          <span style={{ background: theme.swatch }} />
-        </button>
-      ))}
-    </span>
-  );
-}
-
 export type ReaderAppearanceProps = {
   preferences: ReaderPreferences;
   /** Saves a change of the reader's settings (`saveReader`). */
@@ -91,12 +43,10 @@ export type ReaderAppearanceProps = {
   /** Following the narration: on, the narrated sentence is kept in view and highlighted. */
   follow: boolean;
   onFollow: (on: boolean) => void;
-  /** The Theme row: the reader inside Now playing always takes the app's look, so it has none there. */
-  theme?: boolean;
   onClose: () => void;
 };
 
-export function ReaderAppearance({ preferences, onChange, follow, onFollow, theme = true, onClose }: ReaderAppearanceProps) {
+export function ReaderAppearance({ preferences, onChange, follow, onFollow, onClose }: ReaderAppearanceProps) {
   return (
     <section className="reader-appearance-dock" aria-label="Reader appearance">
       <div className="reader-appearance-heading">
@@ -128,7 +78,6 @@ export function ReaderAppearance({ preferences, onChange, follow, onFollow, them
           info={<InfoMark name="Follow the narration" text={tip("follow")} />}
           control={<Switch label="Follow the narration" on={follow} onChange={onFollow} />}
         />
-        {theme && <Row label="Theme" control={<ThemeSwatches value={preferences.theme} onChange={(value) => onChange({ theme: value })} />} />}
         <Row
           label="Font"
           control={

@@ -289,6 +289,80 @@ test.describe("on a desktop", () => {
     await expect(page).toHaveURL(/#discover$/);
   });
 
+  // #713: the Library and the series beside it are the whole page. The place shown before the Library (Discover,
+  // Settings, Activity) is not rendered under them, however the series was reached: the Library's chip after the tab,
+  // Discover's series search, or an address typed on another place.
+  test.describe("at 1280x800", () => {
+    test.use({ viewport: { width: 1280, height: 800 } });
+
+    /** Only the Library and the series are on the page: no other place's page under them, and nothing below them. */
+    async function onlyLibraryAndSeries(page: Page) {
+      await expect(seriesRegion(page).getByRole("list", { name: /^Books · \d+$/ })).toBeVisible();
+      await expect(savedSeriesList(page)).toBeVisible();
+      await expect(page.getByRole("region", { name: "Discover", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("searchbox", { name: /^Search for a (book|series)$/ })).toHaveCount(0);
+      await expect(page.getByRole("navigation", { name: "Settings", exact: true })).toHaveCount(0);
+      expect(await page.getByRole("heading", { level: 1 }).allInnerTexts()).toEqual(["Library"]);
+      // The series' foot is the page's: nothing of the app's main column starts below the series and the list.
+      const series = await seriesRegion(page).elementHandle();
+      const list = await savedSeriesList(page).elementHandle();
+      const below = await page.evaluate(([series, list]) => {
+        const bottom = Math.max(series!.getBoundingClientRect().bottom, list!.getBoundingClientRect().bottom);
+        return [...document.querySelectorAll("main *")]
+          .filter((element) => {
+            if (series!.contains(element) || list!.contains(element)) return false;
+            const rect = element.getBoundingClientRect();
+            return rect.height > 0 && rect.top >= bottom - 0.5 && getComputedStyle(element).position !== "fixed";
+          })
+          .map((element) => `${element.tagName.toLowerCase()}.${String(element.className).slice(0, 40)}`);
+      }, [series, list]);
+      expect(below, "elements below the Library and the series").toEqual([]);
+    }
+
+    test("opened from the Library's chip after Discover: Discover is not shown under them", async ({ page }) => {
+      restore = await saveBoth(page);
+      await page.goto("/#discover");
+      await expect(page.getByRole("region", { name: "Discover", exact: true })).toBeVisible();
+      await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button", { name: "Library" }).click();
+      await expect(page).toHaveURL(/#library$/);
+      await showSavedSeries(page);
+      await savedSeriesRow(page, "The Crossing", "Ada North").click();
+      await expect(page).toHaveURL(/#series\/701$/);
+      await onlyLibraryAndSeries(page);
+      await page.screenshot({ path: `${OUT}/library-series-desktop-alone-1280x800.png`, fullPage: true });
+      // Another series beside the list: still the whole page.
+      await savedSeriesRow(page, "The Crossing", "Bea South").click();
+      await expect(page).toHaveURL(/#series\/702$/);
+      await onlyLibraryAndSeries(page);
+    });
+
+    test("opened from Discover's series search, or by its address on Settings or Activity: only the Library and the series", async ({ page }) => {
+      restore = await saveBoth(page);
+      await page.goto("/#discover");
+      await expect(page.getByRole("region", { name: "Discover", exact: true })).toBeVisible();
+      const discover = page.getByRole("region", { name: "Discover", exact: true });
+      await discover.getByRole("radio", { name: "Series", exact: true }).click();
+      const field = discover.getByRole("searchbox", { name: "Search for a series", exact: true });
+      await field.fill("Crossing");
+      await field.press("Enter");
+      await discover.getByRole("list", { name: "Series · 2", exact: true }).getByRole("button", { name: /^The Crossing Ada North/ }).click();
+      await expect(page).toHaveURL(/#series\/701$/);
+      await onlyLibraryAndSeries(page);
+      // Back returns to Discover as it was.
+      await page.goBack();
+      await expect(page).toHaveURL(/#discover$/);
+      await expect(page.getByRole("region", { name: "Discover", exact: true })).toBeVisible();
+
+      for (const place of ["#settings", "#activity"]) {
+        await page.goto(`/${place}`);
+        await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
+        await page.evaluate(() => (location.hash = "#series/701"));
+        await expect(page).toHaveURL(/#series\/701$/);
+        await onlyLibraryAndSeries(page);
+      }
+    });
+  });
+
   test("a series the list does not hold as saved stays one centred column", async ({ page }) => {
     restore = await saveBoth(page);
     // The list without 701: the page is shown alone, as the phone shows it.

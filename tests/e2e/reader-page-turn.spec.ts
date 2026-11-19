@@ -577,17 +577,11 @@ test("after a change of text size and after a resize the turn comes at the new b
  });
 });
 
-test("at desktop width with two pages side by side the turn comes when the narration leaves the second page",async({page},testInfo)=>{
+test("at desktop width with two pages side by side the turn comes when the narration leaves the second page, and Back to narration shows that pair",async({page},testInfo)=>{
  test.setTimeout(240000);
  test.skip(!!testInfo.project.use.isMobile,"a desktop window");
- await page.setViewportSize({width:1440,height:900});
- // The desktop board (#595, DesktopReader.dc.html) draws the text as one column of 620 px, too narrow for epub.js's
- // two pages (from 800 px). The reader still turns a pair as one step wherever epub.js lays one out, so this test
- // widens the text's column to 960 px and keeps that rule under test.
- await page.addInitScript(()=>{
-  const wide=()=>{const style=document.createElement("style");style.textContent=".inline-reader .reader-page-area > .reader-viewport{flex:0 1 960px !important}";document.head.append(style);};
-  if(document.head)wide();else document.addEventListener("DOMContentLoaded",wide,{once:true});
- });
+ // At 1920 by 1080 the text area beside the contents has room for two pages of the measure, and Read shows them (#762).
+ await page.setViewportSize({width:1920,height:1080});
  // The chapter with pictures: its tall pictures spread it over many pairs of pages.
  const {book,chapter,text}=await turnBook(page,`Two pages ${testInfo.repeatEachIndex} ${randomUUID()}`);
  const intervals=chapter(2);
@@ -595,6 +589,7 @@ test("at desktop width with two pages side by side the turn comes when the narra
   let room=await openAt(page,book,intervals[0],intervals[0].start+.01);
   // Wide enough for epub.js to lay out two pages side by side: one turn moves both (the page step is the pair).
   expect(await room.locator(".reader-viewport").evaluate(host=>host.clientWidth)).toBeGreaterThanOrEqual(800);
+  await expect(room.locator(".reader-viewport")).toHaveAttribute("data-pages","2");
   // and it does: each of epub.js's columns (a page) is at most half the viewport.
   expect(await room.locator(".reader-viewport").evaluate(host=>{
    const body=host.querySelector("iframe")?.contentDocument?.body;
@@ -622,6 +617,14 @@ test("at desktop width with two pages side by side the turn comes when the narra
   room=await followAt(page,book,leaving!.interval,leaving!.sentence);
   const breaks=await expectTurnsAtEachBreak(page,room,leaving!.interval,leaving!.next,leaving!.sentence,Infinity,"two-pages");
   expect(breaks).toHaveLength(1);
+  // Back to narration across the spread (#762): a pair turned back by hand, then Back to narration shows the pair that
+  // holds the narrated word again.
+  await room.getByRole("button",{name:"Previous page",exact:true}).click();
+  await expect(back(room)).toBeEnabled();
+  await expect.poll(()=>placeShown(room,leaving!.sentence,breaks[0]!)).toBe(false);
+  await back(room).click();
+  await expect.poll(()=>placeShown(room,leaving!.sentence,breaks[0]!),{timeout:READER_WAIT_MS.followHighlight}).toBe(true);
+  await expect(back(room)).toBeDisabled();
  });
 });
 
