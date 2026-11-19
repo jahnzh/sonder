@@ -75,7 +75,7 @@ export function placeLine(work: LibraryWork, deviceChoice: string | null | undef
 
 /**
  * The series line: the work's first series, "The Culture · Book 8"; null without series information. `saved` says
- * whether the user saved it: a saved series opens its Series page (#562), another today's series dialog.
+ * whether the user saved it: both open the Series page (#562, #564).
  */
 export function seriesLine(work: Pick<LibraryWork, "series">): { label: string; id: number | null; saved: boolean } | null {
   const first = work.series[0];
@@ -119,6 +119,11 @@ export type BookModel = {
   listen: boolean;
   /** The EPUB Read opens; null (Read off) without one, also when the work has only a PDF. */
   readEbookId: string | null;
+  /**
+   * Read opens Now playing on its Read face (`#read/<workId>`, #594): a book without a recording reads there like
+   * any other book. With a recording, Read opens it there only while that book is in the player (the page decides).
+   */
+  readFace: boolean;
   /** The page's main action. */
   main: "listen" | "get-audiobook" | "add" | null;
   audiobook: {
@@ -196,6 +201,7 @@ export function bookModel(work: LibraryWork, facts: { admin: boolean; deviceChoi
     series: seriesLine(work),
     listen: work.inLibrary && listen,
     readEbookId: work.inLibrary && epub ? epub.id : null,
+    readFace: work.inLibrary && !!epub && !listen,
     main,
     audiobook,
     ebook,

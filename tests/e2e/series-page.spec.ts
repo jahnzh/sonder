@@ -4,7 +4,10 @@
 // the book to continue; Related works are listed and not counted; a failed ebook search shows "Series search failed"
 // with Retry, which runs it again to done; the refresh error with Retry over the last saved list; the address on a
 // reload and from a link, its back button to the Library; the measures at phone size and on a desktop.
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+// Each test runs its own server (own-server.ts): on the suite's server the specs before it leave The Crossing's
+// fixture showing Crossing Three, and the page counted 3 books where the list counted 2 (#564's second fix round).
+import { test, expect } from "./own-server";
 import { mkdirSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { noOverflow } from "./overflow";

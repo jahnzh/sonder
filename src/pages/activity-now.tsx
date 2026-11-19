@@ -49,7 +49,7 @@ export type ActivityNowProps = {
   /** The server's message when its last read was answered with an error (administrator); null otherwise. */
   serverError: string | null;
   open: NowOpeners;
-  /** Sends Retry, Resume or Discard of a server item; rejects with the server's reason. */
+  /** Sends Retry, Resume, Discard or Cancel of a server item; rejects with the server's reason. */
   onServer: (action: Extract<NowButton, { source: "server" }>["action"], itemId: string) => Promise<void>;
   /** Pauses, resumes or retries a save to this device. */
   onDevice: (
@@ -62,7 +62,18 @@ export type ActivityNowProps = {
 };
 
 const MARK: Partial<Record<NonNullable<NowIcon>, FileKind>> = { audiobook: "audiobook", ebook: "ebook", "reading-sync": "sync" };
-const LABEL = { pause: "Pause", resume: "Resume", retry: "Retry", discard: "Discard" } as const;
+const LABEL = { pause: "Pause", resume: "Resume", retry: "Retry", discard: "Discard", cancel: "Cancel" } as const;
+
+/** What a server action that removes something asks, once, in place before it is sent (Discard; Cancel, #716). */
+const ASK = {
+  discard: { question: (title: string) => `Discard “${title}” for good? It is not sent again.`, dismiss: "Cancel", confirm: "Discard" },
+  cancel: {
+    question: (title: string) => `Cancel the download of “${title}”? Its torrent and partial files are removed. Other copies of the book stay.`,
+    dismiss: "Keep",
+    confirm: "Cancel download",
+  },
+} as const;
+type Asked = keyof typeof ASK;
 
 /** A card of one or two lines in a Group: Nothing running, No connection, the server's message. */
 function Note({ title, text, icon, alert }: { title: string; text?: string; icon?: "offline" | "error"; alert?: boolean }) {
@@ -82,30 +93,34 @@ function Note({ title, text, icon, alert }: { title: string; text?: string; icon
 }
 
 function Row({ row, at, open, onServer, onDevice }: { row: NowRow; at: number } & Omit<ActivityNowProps, "now" | "serverError">) {
-  const [asking, setAsking] = useState(false);
+  const [asking, setAsking] = useState<{ action: Asked; itemId: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  const button = row.button;
-  const name = button ? (button.source === "device" && button.action === "pause" ? `Pause saving ${row.title}` : `${LABEL[button.action]} ${row.title}`) : "";
+  const buttons = [row.button, row.cancel].filter((button): button is NowButton => !!button);
+  const nameOf = (button: NowButton) =>
+    button.source === "device" && button.action === "pause" ? `Pause saving ${row.title}` : `${LABEL[button.action]} ${row.title}`;
   const send = (action: Extract<NowButton, { source: "server" }>["action"], itemId: string) => {
     setBusy(true);
     setFailure(null);
     onServer(action, itemId)
-      .then(() => setAsking(false))
+      .then(() => setAsking(null))
       .catch((error: unknown) => setFailure(error instanceof Error ? error.message : String(error)))
       .finally(() => setBusy(false));
   };
-  const press = () => {
-    if (!button) return;
+  const press = (button: NowButton) => {
     if (button.source === "device") {
       setFailure(null);
       return onDevice(button.action, button.recordingId, button.bookId, button.keep && button.workId ? { workId: button.workId } : null);
     }
-    // Discard asks once, in place.
-    if (button.action === "discard") return setAsking((shown) => !shown);
+    // Discard and Cancel remove something: they ask once, in place.
+    if (button.action === "discard" || button.action === "cancel") {
+      const action = button.action;
+      return setAsking((shown) => (shown?.action === action ? null : { action, itemId: button.itemId }));
+    }
     send(button.action, button.itemId);
   };
   const mark = row.icon ? MARK[row.icon] : undefined;
+  const ask = asking ? ASK[asking.action] : null;
   return (
     <>
       <BookRow
@@ -119,20 +134,30 @@ function Row({ row, at, open, onServer, onDevice }: { row: NowRow; at: number } 
         trailing={row.finishedAt !== null ? finishedAgo(row.finishedAt, at) : null}
         onClick={row.opens ? () => openNowRow(row.opens, open) : undefined}
         action={
-          button ? (
-            <Button aria-label={name} aria-expanded={button.action === "discard" ? asking : undefined} disabled={busy} onClick={press}>
-              {LABEL[button.action]}
-            </Button>
+          buttons.length ? (
+            <span className="activity-now-actions">
+              {buttons.map((button) => (
+                <Button
+                  key={button.action}
+                  aria-label={nameOf(button)}
+                  aria-expanded={button.action === "discard" || button.action === "cancel" ? asking?.action === button.action : undefined}
+                  disabled={busy}
+                  onClick={() => press(button)}
+                >
+                  {LABEL[button.action]}
+                </Button>
+              ))}
+            </span>
           ) : undefined
         }
       />
-      {asking && button?.source === "server" && (
-        <li className="activity-now-confirm" role="group" aria-label={`Discard ${row.title}`}>
-          <span className="type-body">{`Discard “${row.title}” for good? It is not sent again.`}</span>
+      {asking && ask && (
+        <li className="activity-now-confirm" role="group" aria-label={`${LABEL[asking.action]} ${row.title}`}>
+          <span className="type-body">{ask.question(row.title)}</span>
           <span className="activity-now-confirm-buttons">
-            <Button onClick={() => { setAsking(false); setFailure(null); }}>Cancel</Button>
-            <Button className="activity-now-discard" disabled={busy} onClick={() => send("discard", button.itemId)}>
-              Discard
+            <Button onClick={() => { setAsking(null); setFailure(null); }}>{ask.dismiss}</Button>
+            <Button className="activity-now-discard" disabled={busy} onClick={() => send(asking.action, asking.itemId)}>
+              {ask.confirm}
             </Button>
           </span>
         </li>

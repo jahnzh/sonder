@@ -38,7 +38,6 @@ body,
 .mobile-nav,
 .player-dock,
 .dialog-content,
-.option-menu,
 .toast,
 .topbar {
   background: var(--surface);
@@ -84,7 +83,6 @@ textarea {
 }
 .settings-form label,
 .settings-section h2,
-.chapter-row,
 .book-title,
 .sidebar-link {
   color: var(--text);

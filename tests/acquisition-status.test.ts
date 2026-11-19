@@ -96,6 +96,8 @@ const expected: Record<string, { state: string; named: boolean }> = {
   paused: { state: "queued", named: true },
   ready: { state: "missing", named: false },
   error: { state: "failed", named: true },
+  // Cancelled from Activity (#716): nothing on its way and nothing failed; the work gets audio again from Get audiobook.
+  cancelled: { state: "missing", named: false },
 };
 
 test("after every status write the media state read is the expected one", () => {

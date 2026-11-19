@@ -17,6 +17,7 @@ import {
   relativeSeekTarget,
   absoluteSeekTarget,
 } from "./chapters";
+import { heldPosition, landingStep, LANDING_RECHECK_MS, type Landing } from "./seek-landing";
 import type { Book, Track, Progress, PlaybackSourceChoice } from "./types";
 import {
   deviceFault,
@@ -73,7 +74,6 @@ type PlayerState = {
   speedRecordingId: string | undefined;
   /** Changes whenever a saved speed changes. */
   speedRevision: number;
-  volume: number;
   sleep: number | null;
   error: string | null;
   /**
@@ -102,7 +102,6 @@ type PlayerState = {
   setSpeed: (n: number, recordingId?: string) => void;
   /** Removes a recording's own speed so it plays at the default again. */
   resetSpeed: (recordingId: string) => void;
-  setVolume: (n: number) => void;
   setSleep: (n: number | null) => void;
   next: () => void;
   previous: () => void;
@@ -134,7 +133,6 @@ export function PlayerProvider({
   const [position, setPosition] = useState(0);
   const [length, setLength] = useState(0);
   const [speed, setSpeedState] = useState(1);
-  const [volume, setVolumeState] = useState(1);
   const [sleep, setSleepState] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<PlayerState["source"]>(null);
@@ -149,6 +147,18 @@ export function PlayerProvider({
   const lastSave = useRef(0);
   const [progressClock] = useState(createProgressClock);
   const pendingSeek = useRef<number | null>(null);
+  // The seek a load made from `loadedmetadata`, held as the place until it is seen to land (src/seek-landing.ts).
+  const landing = useRef<Landing | null>(null);
+  const generation = useRef(0);
+  /** The element's place, or a load's seek target while that seek has not been seen to land. */
+  const elementPlace = useCallback(
+    () => heldPosition(landing.current, generation.current, audio.current.currentTime),
+    [],
+  );
+  /** A seek the user or the player makes now: a load's held seek takes it as its target. */
+  const aim = useCallback((target: number) => {
+    if (landing.current?.generation === generation.current) landing.current = { ...landing.current, target };
+  }, []);
   const persistAfterLoad = useRef(false);
   const sourceSwitch = useRef<{ recordingId: string; entry: PositionEntry } | null>(null);
   const undoing = useRef(false);
@@ -157,7 +167,6 @@ export function PlayerProvider({
   const knownDurations = useRef(new Map<string, number>());
   const objectUrl = useRef<string | null>(null);
   const sleepEnd = useRef<number | null>(null);
-  const generation = useRef(0);
   const playRequests = useRef(0);
   // The explicit server or original load now in the element. A switch to the
   // device copy is kept in `recovery`, so a load switches at most once; a failed
@@ -213,14 +222,14 @@ export function PlayerProvider({
     const p = {
       recordingId: book.recordingId,
       trackId: track.id,
-      position: el.currentTime,
+      position: elementPlace(),
       duration: Number.isFinite(el.duration) ? el.duration : track.duration,
       updatedAt: progressClock(book.recordingId, Date.now(), book.progress?.updatedAt),
     };
     lastSave.current = Date.now();
     onProgressRef.current(p);
     void saveProgress(p);
-  }, [progressClock]);
+  }, [progressClock, elementPlace]);
   const rememberPosition = useCallback((recordingId: string, entry: PositionEntry, onRecord?: RecordedPosition) => {
     void updatePositionHistory(recordingId, entry).catch(() => {
       notifyRef.current?.("Could not save the previous playback position.");
@@ -230,11 +239,11 @@ export function PlayerProvider({
   }, []);
   const currentPosition = useCallback(() => {
     const { book, track } = state.current;
-    const position = pendingSeek.current ?? audio.current.currentTime;
+    const position = pendingSeek.current ?? elementPlace();
     return book && track && Number.isFinite(position)
       ? { book, track, position }
       : null;
-  }, []);
+  }, [elementPlace]);
   const rememberCurrent = useCallback((kind: JumpKind, targetTrackId?: string, targetPosition?: number, onRecord?: RecordedPosition) => {
     const current = currentPosition();
     if (!current || (current.track.id === targetTrackId && current.position === targetPosition)) return;
@@ -312,7 +321,7 @@ export function PlayerProvider({
         playRequest: playRequests.current,
         paused: el.paused,
         pendingSeek: pendingSeek.current,
-        currentTime: el.currentTime,
+        currentTime: elementPlace(),
       });
       if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
       objectUrl.current = local;
@@ -423,12 +432,11 @@ export function PlayerProvider({
       ) {
         applyRate(rate);
         if (t) {
-          recordMove(Math.max(0, Math.min(start, Number.isFinite(el.duration) ? el.duration : start)));
-          el.currentTime = Math.max(
-            0,
-            Math.min(start, Number.isFinite(el.duration) ? el.duration : start),
-          );
-          setPosition(el.currentTime);
+          const target = Math.max(0, Math.min(start, Number.isFinite(el.duration) ? el.duration : start));
+          recordMove(target);
+          el.currentTime = target;
+          aim(target);
+          setPosition(target);
           persist();
         }
         setError(null);
@@ -442,11 +450,11 @@ export function PlayerProvider({
         return;
       }
       const targetPosition = jump === "source" && current?.id === selected.id
-        ? pendingSeek.current ?? el.currentTime
+        ? pendingSeek.current ?? elementPlace()
         : t
         ? start
         : current?.id === selected.id
-          ? pendingSeek.current ?? el.currentTime
+          ? pendingSeek.current ?? elementPlace()
           : progress?.trackId === selected.id
             ? progress.position
             : start;
@@ -563,7 +571,7 @@ export function PlayerProvider({
         }
       }
     },
-    [persist, speedFor, applyRate, recoverOnDevice, failures, currentPosition, rememberCurrent, rememberPosition],
+    [persist, speedFor, applyRate, recoverOnDevice, failures, currentPosition, rememberCurrent, rememberPosition, elementPlace, aim],
   );
   const play = useCallback(
     async (
@@ -596,21 +604,22 @@ export function PlayerProvider({
     const { book, track } = state.current;
     if (!book || !track) return;
     const all = listeningChapters(book),
-      current = currentChapter(book, track.id, audio.current.currentTime);
+      current = currentChapter(book, track.id, elementPlace());
     const idx = all.findIndex(
       (c) => c.track.id === current?.track.id && c.start === current?.start,
     );
     const target = all[idx + 1];
     if (target) void playRef.current(book, target.track, target.start, true, false, automatic ? null : "chapter");
-  }, []);
+  }, [elementPlace]);
   const previous = useCallback(() => {
     const { book, track } = state.current;
     if (!book || !track) return;
     const all = listeningChapters(book),
-      current = currentChapter(book, track.id, audio.current.currentTime);
-    if (current && audio.current.currentTime - current.start > 3) {
+      current = currentChapter(book, track.id, elementPlace());
+    if (current && elementPlace() - current.start > 3) {
       rememberCurrent("chapter", track.id, current.start);
       audio.current.currentTime = current.start;
+      aim(current.start);
       setPosition(current.start);
       persist();
       return;
@@ -620,7 +629,7 @@ export function PlayerProvider({
     );
     const target = all[Math.max(0, idx - 1)];
     if (target) void playRef.current(book, target.track, target.start, true, false, "chapter");
-  }, [persist, rememberCurrent]);
+  }, [persist, rememberCurrent, elementPlace, aim]);
   const seekTo = useCallback(
     (n: number, kind: JumpKind | null) => {
       const el = audio.current;
@@ -632,13 +641,14 @@ export function PlayerProvider({
       const target = Math.min(max, Math.max(0, n));
       if (kind) rememberCurrent(kind, state.current.track?.id, target);
       el.currentTime = target;
+      aim(target);
       // A load still waiting for its saved position takes the newest target.
       if (pendingSeek.current !== null) pendingSeek.current = target;
-      setPosition(el.currentTime);
+      setPosition(elementPlace());
       persist();
       return true;
     },
-    [persist, rememberCurrent],
+    [persist, rememberCurrent, elementPlace, aim],
   );
   const seek = useCallback((n: number) => seekTo(n, "seek"), [seekTo]);
   const performSkip = useCallback(
@@ -651,7 +661,7 @@ export function PlayerProvider({
           duration: knownDurations.current.get(track.id) || track.duration,
         })),
         track.id,
-        pendingSeek.current ?? audio.current.currentTime,
+        pendingSeek.current ?? elementPlace(),
         n,
         audio.current.duration,
       );
@@ -667,7 +677,7 @@ export function PlayerProvider({
           "skip",
         );
     },
-    [seekTo],
+    [seekTo, elementPlace],
   );
   const skip = useCallback((n: number) => {
     const recordingId = state.current.book?.recordingId;
@@ -751,12 +761,12 @@ export function PlayerProvider({
     if (el.paused) {
       setError(null);
       const { book, track } = state.current;
-      if (book && track) void playRef.current(book, track, pendingSeek.current ?? el.currentTime);
+      if (book && track) void playRef.current(book, track, pendingSeek.current ?? elementPlace());
     } else {
       ++playRequests.current;
       el.pause();
     }
-  }, []);
+  }, [elementPlace]);
   const pause = useCallback(() => {
     ++playRequests.current;
     audio.current.pause();
@@ -772,13 +782,13 @@ export function PlayerProvider({
       await playRef.current(
         book,
         track,
-        pendingSeek.current ?? audio.current.currentTime,
+        pendingSeek.current ?? elementPlace(),
         !audio.current.paused,
         true,
         "source",
       );
     },
-    [failures],
+    [failures, elementPlace],
   );
   useEffect(() => {
     const el = audio.current;
@@ -815,8 +825,33 @@ export function PlayerProvider({
         navigator.mediaSession.setPositionState(report);
       } catch {}
     };
+    // Confirms a load's seek where the element landed; Firefox can land it short (src/seek-landing.ts).
+    let landingCheck: ReturnType<typeof setTimeout> | undefined;
+    const checkLanding = () => {
+      const step = landingStep(landing.current, {
+        generation: generation.current,
+        seeking: el.seeking,
+        currentTime: el.currentTime,
+        covers: (target) => {
+          for (let i = 0; i < el.buffered.length; i++)
+            if (el.buffered.start(i) <= target && target <= el.buffered.end(i)) return true;
+          return false;
+        },
+        now: Date.now(),
+      });
+      if (step.action === "reseek") {
+        landing.current = { ...landing.current!, tries: landing.current!.tries + 1 };
+        el.currentTime = step.target;
+      } else if (step.action === "none" || step.action === "done") landing.current = null;
+      else if (step.recheck && landingCheck === undefined)
+        landingCheck = setTimeout(() => {
+          landingCheck = undefined;
+          checkLanding();
+        }, LANDING_RECHECK_MS);
+    };
     const time = () => {
-      setPosition(el.currentTime);
+      checkLanding();
+      setPosition(elementPlace());
       if (Date.now() - lastSave.current > 5000) persist();
       positionState();
     };
@@ -831,16 +866,18 @@ export function PlayerProvider({
         Number.isFinite(el.duration) ? el.duration : state.current.length,
       );
       if (pendingSeek.current !== null) {
-        el.currentTime = Math.min(
+        const target = Math.min(
           pendingSeek.current,
           Math.max(0, el.duration - 0.1),
         );
+        el.currentTime = target;
+        landing.current = { generation: generation.current, target, tries: 0, since: Date.now() };
         pendingSeek.current = null;
       }
       const switched = sourceSwitch.current;
       sourceSwitch.current = null;
       if (switched && state.current.book?.recordingId === switched.recordingId &&
-          state.current.track?.id === switched.entry.trackId && el.currentTime !== switched.entry.position) {
+          state.current.track?.id === switched.entry.trackId && elementPlace() !== switched.entry.position) {
         rememberPosition(switched.recordingId, switched.entry);
         persistAfterLoad.current = true;
       }
@@ -901,6 +938,7 @@ export function PlayerProvider({
     const failLoad = () => {
       // The load is abandoned: its source switch must not apply to a later one.
       sourceSwitch.current = null;
+      landing.current = null;
       setLoading(false);
       setPlaying(false);
       if (el.src)
@@ -933,7 +971,11 @@ export function PlayerProvider({
       setLoading(true);
       stalling();
     };
-    const seeked = () => watchdog.cancel();
+    const seeked = () => {
+      watchdog.cancel();
+      checkLanding();
+      setPosition(elementPlace());
+    };
     const ready = () => setLoading(false);
     const pagehide = () => persist();
     const online = () => {
@@ -983,6 +1025,8 @@ export function PlayerProvider({
     el.addEventListener("waiting", waiting);
     el.addEventListener("stalled", stalling);
     el.addEventListener("seeked", seeked);
+    // More of a device copy read: a load's seek that landed short of it can now land.
+    el.addEventListener("progress", checkLanding);
     el.addEventListener("canplay", ready);
     window.addEventListener("pagehide", pagehide);
     window.addEventListener("online", online);
@@ -1020,6 +1064,8 @@ export function PlayerProvider({
       el.removeEventListener("waiting", waiting);
       el.removeEventListener("stalled", stalling);
       el.removeEventListener("seeked", seeked);
+    el.removeEventListener("progress", checkLanding);
+    clearTimeout(landingCheck);
       watchdog.cancel();
       stall.current = null;
       el.removeEventListener("canplay", ready);
@@ -1073,10 +1119,6 @@ export function PlayerProvider({
       void speedFor(recordingId).then(applyRate);
     setSpeedRevision((revision) => revision + 1);
   };
-  const setVolume = (n: number) => {
-    audio.current.volume = n;
-    setVolumeState(n);
-  };
   const setSleep = (minutes: number | null) => {
     sleepEnd.current = minutes ? Date.now() + minutes * 60000 : null;
     setSleepState(minutes ? minutes * 60 : null);
@@ -1097,7 +1139,6 @@ export function PlayerProvider({
         ownSpeedOf: speeds.own,
         speedRecordingId: speedTarget,
         speedRevision,
-        volume,
         sleep,
         error,
         source,
@@ -1116,7 +1157,6 @@ export function PlayerProvider({
         restoreJump,
         setSpeed,
         resetSpeed,
-        setVolume,
         setSleep,
         next,
         previous,

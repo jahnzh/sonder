@@ -11,7 +11,7 @@
 import type { DeviceSaveEntry } from "./device-saves";
 import {
   downloadLine, ebookCheckLine, failedLine, finishedLine, readingSyncLine, serverCopyLine, seriesSearchLine,
-  withFileCount, withReason, withUser, deviceSaveLine,
+  withFileCount, withReason, withUser, deviceSaveLine, ALREADY_HAS_COPY_LINE,
   type DownloadFacts, type EbookCheckFacts, type ReadingSyncJobFacts, type SeriesSearchFacts, type ServerCopyFacts,
 } from "./status-lines";
 import type { ActivityItem, ActivityItemAction, ActivityProcess, ActivityResponse } from "./types";
@@ -87,6 +87,8 @@ export type NowRow = {
   /** When the shown entry finished, for "how long ago" on the right in Finished today; null elsewhere. */
   finishedAt: number | null;
   button: NowButton | null;
+  /** Cancel beside the button, for a stuck or failing download that also offers Retry (#716); absent otherwise. */
+  cancel?: Extract<NowButton, { source: "server" }>;
   opens: NowOpens;
   /** The newest change of any of the row's entries, which orders the rows of a group. */
   changedAt: number;
@@ -124,8 +126,10 @@ export type NowInput = {
 /** One entry before rows are joined by work. */
 type Entry = Omit<NowRow, "key" | "changedAt"> & { group: NowGroupId; changedAt: number };
 
+/** The row's button: the first of the item's actions in this order; Cancel only when there is nothing else (#716). */
+const BUTTON_ORDER = ["retry", "resume", "discard", "cancel"] as const satisfies readonly ActivityItemAction[];
 const firstAction = (actions: readonly ActivityItemAction[]): ActivityItemAction | null =>
-  (["retry", "resume", "discard"] as const).find((action) => actions.includes(action)) ?? null;
+  BUTTON_ORDER.find((action) => actions.includes(action)) ?? null;
 
 const ENTRY_OF: Record<ActivityItem["kind"], NowEntryKind> = {
   acquisition: "download",
@@ -198,7 +202,7 @@ function doneLine(item: ActivityItem): string | null {
   const facts = item.facts;
   switch (facts.kind) {
     case "acquisition":
-      return finishedLine({ entry: "download", backend: facts.backend as DownloadFacts["backend"] });
+      return finishedLine({ entry: "download", backend: facts.backend as DownloadFacts["backend"], cancelled: facts.status === "cancelled" });
     case "server-copy":
       return finishedLine({ entry: "server-copy" });
     case "series-acquisition":
@@ -235,7 +239,12 @@ function serverEntry(item: ActivityItem, now: number): Entry | null {
   else line = movingLine(item);
   // A finished series search for the audiobook has no line: the download it starts takes over the row.
   if (line === null && entry === "series-search" && item.state === "done") return null;
-  if (!notBook && item.stuck) line = withReason(line ?? item.detail ?? "", item.stuck.reason);
+  // A cause the source named leads the line (#716: "No peers · Downloading to server · 0%"), so a row with a button
+  // still shows it on a phone; "No change for …" and "Blocked by …" follow the line as before.
+  if (!notBook && item.stuck)
+    line = item.stuck.known ? withReason(item.stuck.reason, line ?? item.detail) : withReason(line ?? item.detail ?? "", item.stuck.reason);
+  // A stalled download of a book that already has a copy (#716) says so first; it is not stuck and stays in its group.
+  else if (!notBook && item.superseded) line = withReason(ALREADY_HAS_COPY_LINE, line ?? item.detail);
   const action = firstAction(item.actions);
   const syncOpen = entry === "reading-sync" && item.state !== "done";
   return {
@@ -250,9 +259,10 @@ function serverEntry(item: ActivityItem, now: number): Entry | null {
     icon: notBook ? "server" : item.facts.kind === "series-acquisition" ? item.facts.search : ICON_OF[entry] ?? null,
     line: line ?? item.detail ?? "",
     failed: failed || notBook,
-    progress: group === "progress" && !item.stuck ? item.progress : null,
+    progress: group === "progress" && !item.stuck && !item.superseded ? item.progress : null,
     finishedAt: group === "finished" ? item.updatedAt : null,
     button: action ? { action, source: "server", itemId: item.id } : null,
+    ...(action && action !== "cancel" && item.actions.includes("cancel") ? { cancel: { action: "cancel" as const, source: "server" as const, itemId: item.id } } : {}),
     opens: notBook
       ? { to: "server" }
       : item.workId

@@ -1,10 +1,12 @@
 // Remove series (#566, spec #560 "Remove series"; boards SeriesMore.dc.html, SeriesRemove.dc.html): the last row of a
-import { openSeriesResult } from "./discover-search";
 // saved series' page opens one dialog over the page. With the switch off (or for someone who is not the
 // administrator) the books stay; the administrator's "Remove the books it added" lists only the books the series
 // added, each with its line, and removes the chosen ones with the series. Cancel and Back send nothing. The measures
 // at phone size and on a desktop.
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+// Each test runs its own server (own-server.ts): on the suite's server the specs before it save The Crossing's series,
+// add their books and read 701 from Hardcover; "from series 701" failed in a full Firefox run only (#575).
+import { test, expect } from "./own-server";
 import { mkdirSync } from "node:fs";
 import { noOverflow } from "./overflow";
 
@@ -12,16 +14,14 @@ const OUT = "OUT";
 mkdirSync(OUT, { recursive: true });
 const ALICE = "Alice’s Adventures in Wonderland";
 import { openSavedSeries, showSavedSeries, savedSeriesRow } from "./library-series";
+import { saveSeriesOnPage, viewSeriesFromDiscover } from "./series-save";
 
 async function saveCrossingSeries(page: import("@playwright/test").Page) {
   await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
   await page.request.post("/api/hardcover/books", { data: { id: 501 } });
-  await openSeriesResult(page, "Crossing", "The Crossing", "Ada North");
-  await page.getByRole("checkbox", { name: /Crossing Two/ }).uncheck();
-  await page.getByRole("checkbox", { name: /Crossing Companion/ }).check();
-  await page.getByRole("button", { name: "Add selected works" }).click();
-  await expect(page.getByRole("dialog").getByText("Series saved.")).toBeVisible();
-  await page.getByRole("button", { name: "Close series" }).click();
+  // Saved through its page and Save series (#564), with Crossing Companion instead of Crossing Two.
+  await viewSeriesFromDiscover(page, "Crossing", "The Crossing", "Ada North");
+  await saveSeriesOnPage(page, { toggle: ["Crossing Two Book 2", "Crossing Companion Related work"] });
 }
 
 const savedIds = async (page: Page) => ((await (await page.request.get("/api/series")).json()) as { id: number }[]).map((series) => series.id);
