@@ -889,8 +889,8 @@ function LibraryApp({
                 key={recordingQuery !== null && !coveredPage() ? "under-sheet" : "discover"}
                 admin={user.role === "admin"}
                 online={online}
-                // Hardcover is removed (#721 part d): its search is never asked; Discover's own search is rebuilt in part c2.
-                hardcoverConnected={false}
+                // False since Hardcover's removal (#721 part d) deleted every token; Discover's search is rebuilt in part c2.
+                hardcoverConnected={!!settings?.hardcoverConfigured}
                 settingsRead={!!settings}
                 onBook={openBook}
                 onSeries={(id) => address.navigate({ name: "series", id: String(id) })}

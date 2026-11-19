@@ -1,4 +1,4 @@
-import { currentUser, currentUserId, issueSession, sessionUser, requireAdmin, registerUsers, verifyPassword } from "./users.ts";
+import { currentUser, currentUserId, getUserSecret, issueSession, sessionUser, requireAdmin, registerUsers, verifyPassword } from "./users.ts";
 import Fastify, { type FastifyServerOptions } from "fastify";
 import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
@@ -489,12 +489,13 @@ export async function createApp(options?: {
         .run();
     return { progress: p, conflict: false };
   });
-  app.get("/api/settings", async (req) => currentUser(req).role !== "admin" ? ({ name: getSetting("name") || "My listening space", authenticationEnabled: !!process.env.APP_PASSWORD, role: currentUser(req).role, hardcoverConfigured: false }) : ({
+  app.get("/api/settings", async (req) => currentUser(req).role !== "admin" ? ({ name: getSetting("name") || "My listening space", authenticationEnabled: !!process.env.APP_PASSWORD, role: currentUser(req).role, hardcoverConfigured: !!getUserSecret(currentUserId(req), "hardcover") }) : ({
     role: currentUser(req).role,
     name: getSetting("name") || "My listening space",
     torboxConfigured: !!getSetting("torbox"),
-    // Hardcover is removed (#721 part d); the field stays, always false, for the builds that still read it.
-    hardcoverConfigured: false,
+    // Hardcover is removed (#721 part d): the switch deleted every token and nothing stores one again, so this is
+    // false. The field stays for the builds that read it, and for Discover's Hardcover search until part c2 replaces it.
+    hardcoverConfigured: !!getUserSecret(currentUserId(req), "hardcover"),
     // AudiobookDB (#721): the server's AUDIOBOOKDB_API_KEY, else the key saved here; which one is in use.
     audiobookdbConfigured: !!audiobookDbKey().key,
     audiobookdbSource: audiobookDbKey().source,
