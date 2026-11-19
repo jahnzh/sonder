@@ -2,6 +2,8 @@
 // the library, and the loop that keeps the cache to its licence (refresh a week's details, delete what is gone).
 //
 // - A work links to an AudiobookDB book, or to an Open Library work when it has no audiobook.
+// - Beside that main link, a work may link to a Google Books volume and an iTunes audiobook (part e), picked on its
+//   match page only: the batch never searches those two. Any link makes the work matched.
 // - A recording may link to an AudiobookDB release: narrator, length, ASIN and chapters are kept on the link.
 // - A link fills only what is missing (the work's description, the edition's narrator); title, author and cover stay.
 //   The first series and its position are kept on the link for the series part (721b).
@@ -22,7 +24,18 @@ import {
   type CatalogueRelease,
 } from "./audiobookdb.ts";
 import { openLibraryWork, openLibraryWorkUrl, refreshOpenLibraryEntry, searchOpenLibrary } from "./openlibrary.ts";
-import { CatalogueError, dropExpiredSearches, expiredDetails, type CatalogueProviderName, type Priority } from "./catalogue-provider.ts";
+import { googleBooksUrl, googleBooksVolume, refreshGoogleBooksEntry } from "./googlebooks.ts";
+import { itunesAudiobook, itunesUrl, refreshItunesEntry } from "./itunes.ts";
+import {
+  CatalogueError,
+  dropExpiredSearches,
+  expiredDetails,
+  isExtraProvider,
+  type CatalogueProviderName,
+  type ExtraCatalogueProvider,
+  type MainCatalogueProvider,
+  type Priority,
+} from "./catalogue-provider.ts";
 import type { BackgroundProcess } from "./background-runner.ts";
 
 // ---- The matcher (pure) ----
@@ -132,7 +145,7 @@ const missingNarrator = (value: string | null | undefined) => !value || !value.t
 
 // ---- Links ----
 export type WorkLink = {
-  provider: CatalogueProviderName;
+  provider: MainCatalogueProvider;
   id: string;
   title: string;
   author: string;
@@ -140,7 +153,7 @@ export type WorkLink = {
   matchedBy: "title" | "asin" | "manual";
   url: string;
 };
-type LinkRow = { provider: CatalogueProviderName; externalId: string; title: string; author: string; seriesId: string | null; seriesName: string | null; seriesPosition: string | null; seriesSort: number | null; matchedBy: WorkLink["matchedBy"] };
+type LinkRow = { provider: MainCatalogueProvider; externalId: string; title: string; author: string; seriesId: string | null; seriesName: string | null; seriesPosition: string | null; seriesSort: number | null; matchedBy: WorkLink["matchedBy"] };
 export function workLink(workId: string): WorkLink | null {
   const row = sqlite
     .prepare(
@@ -159,6 +172,17 @@ export function workLink(workId: string): WorkLink | null {
     url: row.provider === "openlibrary" ? openLibraryWorkUrl(row.externalId) : "https://audiobookdb.org",
   };
 }
+/** A work's Google Books or iTunes link (part e), beside its main link. */
+export type ProviderLink = { provider: ExtraCatalogueProvider; id: string; title: string; author: string; matchedBy: "manual"; url: string };
+export function providerLinks(workId: string): ProviderLink[] {
+  const rows = sqlite
+    .prepare("SELECT provider,external_id AS id,title,author,matched_by AS matchedBy FROM work_provider_links WHERE work_id=? ORDER BY CASE provider WHEN 'googlebooks' THEN 0 ELSE 1 END")
+    .all(workId) as Omit<ProviderLink, "url">[];
+  return rows.map((row) => ({ ...row, url: row.provider === "googlebooks" ? googleBooksUrl(row.id) : itunesUrl(row.id) }));
+}
+/** The works with any link: the batch skips them and the list of works not matched leaves them out. */
+const LINKED_WORKS = "SELECT work_id FROM work_catalogue_links UNION SELECT work_id FROM work_provider_links";
+
 export type ReleaseLink = { releaseId: string; bookId: string; narrator: string | null; lengthMs: number | null; asin: string | null; language: string | null; chapters: number; matchedBy: "asin" | "length" | "manual" };
 export function releaseLink(recordingId: string): ReleaseLink | null {
   const row = sqlite
@@ -179,7 +203,7 @@ export async function linkRecording(recordingId: string, releaseId: string, matc
     .get(recordingId) as { id: string; editionId: string; workId: string; narrator: string } | undefined;
   if (!recording) throw new Error("This recording is not on the server.");
   const link = workLink(recording.workId);
-  if (!link || link.provider !== "audiobookdb") throw new Error("Match the book on AudiobookDB first.");
+  if (link?.provider !== "audiobookdb") throw new Error("Match the book on AudiobookDB first.");
   const release = await audiobookDbRelease(releaseId, { priority, bookId: link.id });
   if (release.bookId && release.bookId !== link.id) throw new Error("This release belongs to another book.");
   const narrator = release.narrators.join(", ") || null;
@@ -212,6 +236,7 @@ export async function linkWork(
   const work = workRow(workId);
   if (!work) throw new Error("This book is not on the server.");
   const wantsDescription = !work.description.trim();
+  if (isExtraProvider(target.provider)) return linkProvider(workId, target.provider, target.id, wantsDescription, priority);
   let stored: { title: string; author: string; series: CatalogueBook["series"][number] | null; description: string | null };
   let releases: CatalogueRelease[] = [];
   if (target.provider === "audiobookdb") {
@@ -249,6 +274,32 @@ export async function linkWork(
     if (picked) await linkRecording(recording.recordingId, picked.release.id, picked.by, priority);
   }
 }
+/**
+ * A Google Books volume or an iTunes audiobook (part e), linked beside the main link. It fills only what is missing:
+ * of series, position, narrator and description these two give only the description; title, author and cover stay.
+ */
+async function linkProvider(workId: string, provider: ExtraCatalogueProvider, id: string, wantsDescription: boolean, priority: Priority): Promise<void> {
+  // A live answer only when the description is to be filled: the cache never holds one.
+  const book = provider === "googlebooks" ? await googleBooksVolume(id, { priority, fresh: wantsDescription }) : await itunesAudiobook(id, { priority, fresh: wantsDescription });
+  const now = Date.now();
+  sqlite.transaction(() => {
+    sqlite
+      .prepare(
+        `INSERT INTO work_provider_links(work_id,provider,external_id,title,author,matched_by,linked_at) VALUES(?,?,?,?,?,'manual',?)
+         ON CONFLICT(work_id,provider) DO UPDATE SET external_id=excluded.external_id,title=excluded.title,author=excluded.author,matched_by=excluded.matched_by,linked_at=excluded.linked_at`,
+      )
+      .run(workId, provider, book.id, book.title, book.authors.join(", ").slice(0, 300), now);
+    if (wantsDescription && book.description) sqlite.prepare("UPDATE works SET description=? WHERE id=? AND trim(description)=''").run(book.description, workId);
+    sqlite
+      .prepare("INSERT INTO work_catalogue_match(work_id,outcome,reason,candidates,checked_at) VALUES(?,?,NULL,1,?) ON CONFLICT(work_id) DO UPDATE SET outcome=excluded.outcome,reason=NULL,candidates=1,checked_at=excluded.checked_at")
+      .run(workId, "matched", now);
+  })();
+}
+/** Removes one Google Books or iTunes link; the main link and the other stay. */
+export function unlinkProvider(workId: string, provider: ExtraCatalogueProvider) {
+  sqlite.prepare("DELETE FROM work_provider_links WHERE work_id=? AND provider=?").run(workId, provider);
+}
+/** Removes the main link (AudiobookDB or Open Library) and its recordings' release links; Google Books and iTunes stay. */
 export function unlinkWork(workId: string) {
   sqlite.transaction(() => {
     sqlite.prepare("DELETE FROM work_catalogue_links WHERE work_id=?").run(workId);
@@ -326,7 +377,7 @@ export const batchFinished = () => batchRun ?? Promise.resolve();
 /** Starts the batch over every work without a link, unless one is running. */
 export function startBatchMatch(): BatchStatus {
   if (batch.running) return batchStatus();
-  const works = sqlite.prepare("SELECT id FROM works WHERE id NOT IN (SELECT work_id FROM work_catalogue_links) ORDER BY title").pluck().all() as string[];
+  const works = sqlite.prepare(`SELECT id FROM works WHERE id NOT IN (${LINKED_WORKS}) ORDER BY title`).pluck().all() as string[];
   batch = { running: true, startedAt: Date.now(), finishedAt: null, done: 0, total: works.length, matched: 0, error: null };
   batchRun = (async () => {
     for (const workId of works) {
@@ -356,7 +407,7 @@ export function unmatchedWorks(): { workId: string; title: string; author: strin
   return sqlite
     .prepare(
       `SELECT w.id AS workId,w.title,w.author,m.outcome,m.reason,m.candidates FROM work_catalogue_match m JOIN works w ON w.id=m.work_id
-       WHERE m.outcome<>'matched' AND m.work_id NOT IN (SELECT work_id FROM work_catalogue_links) ORDER BY w.title`,
+       WHERE m.outcome<>'matched' AND m.work_id NOT IN (${LINKED_WORKS}) ORDER BY w.title`,
     )
     .all() as ReturnType<typeof unmatchedWorks>;
 }
@@ -367,9 +418,14 @@ export async function refreshCatalogue(now = Date.now(), limit = 20): Promise<{ 
   const dropped = dropExpiredSearches(now);
   let refreshed = 0;
   let failed = 0;
+  // A provider out of key or units waits for the next round; the others go on.
+  const stopped = new Set<CatalogueProviderName>();
   for (const entry of expiredDetails(now, limit)) {
+    if (stopped.has(entry.provider)) continue;
     try {
       if (entry.provider === "audiobookdb") await refreshAudiobookDbEntry(entry.kind, entry.key);
+      else if (entry.provider === "googlebooks") await refreshGoogleBooksEntry(entry.kind, entry.key);
+      else if (entry.provider === "itunes") await refreshItunesEntry(entry.kind, entry.key);
       else await refreshOpenLibraryEntry(entry.kind, entry.key);
       refreshed++;
     } catch (error) {
@@ -378,8 +434,8 @@ export async function refreshCatalogue(now = Date.now(), limit = 20): Promise<{ 
         continue;
       }
       failed++;
-      // No key or no units left: the rest waits for the next round; the stale entry keeps serving.
-      if (error instanceof CatalogueError && ["missing_key", "rejected", "daily_limit"].includes(error.kind)) break;
+      // No key or no units left: that provider's rest waits for the next round; the stale entry keeps serving.
+      if (error instanceof CatalogueError && ["missing_key", "rejected", "daily_limit", "rate_limited"].includes(error.kind)) stopped.add(entry.provider);
     }
   }
   return { dropped, refreshed, failed };

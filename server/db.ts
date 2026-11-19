@@ -171,6 +171,8 @@ CREATE TABLE IF NOT EXISTS catalogue_usage(provider TEXT NOT NULL,day TEXT NOT N
 CREATE TABLE IF NOT EXISTS work_catalogue_links(work_id TEXT PRIMARY KEY,provider TEXT NOT NULL CHECK(provider IN ('audiobookdb','openlibrary')),external_id TEXT NOT NULL,title TEXT NOT NULL,author TEXT NOT NULL,series_id TEXT,series_name TEXT,series_position TEXT,series_sort REAL,matched_by TEXT NOT NULL CHECK(matched_by IN ('title','asin','manual')),linked_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS recording_release_links(recording_id TEXT PRIMARY KEY,book_id TEXT NOT NULL,release_id TEXT NOT NULL,narrator TEXT,length_ms INTEGER,asin TEXT,language TEXT,chapters TEXT NOT NULL DEFAULT '[]',matched_by TEXT NOT NULL CHECK(matched_by IN ('asin','length','manual')),linked_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS work_catalogue_match(work_id TEXT PRIMARY KEY,outcome TEXT NOT NULL CHECK(outcome IN ('matched','ambiguous','missing','failed')),reason TEXT,candidates INTEGER NOT NULL DEFAULT 0,checked_at INTEGER NOT NULL);
+-- Part e: a work's links to Google Books and iTunes, beside its main link (one per provider), picked on the match page.
+CREATE TABLE IF NOT EXISTS work_provider_links(work_id TEXT NOT NULL,provider TEXT NOT NULL CHECK(provider IN ('googlebooks','itunes')),external_id TEXT NOT NULL,title TEXT NOT NULL,author TEXT NOT NULL,matched_by TEXT NOT NULL DEFAULT 'manual' CHECK(matched_by IN ('manual')),linked_at INTEGER NOT NULL,PRIMARY KEY(work_id,provider));
 `);
 // A series search that could not reach its source is tried again by itself (#717): how often it was, and not before when.
 {
