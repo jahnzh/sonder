@@ -1,0 +1,161 @@
+/* The book's Edit page (src/pages/edit-page.tsx, #719): the match page's one column (match-page.css) with fields in
+   Groups, as Settings' fields are (settings.css .settings-field). Colours are the app's variables; the parts keep their
+   own measures. */
+.edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  min-width: 0;
+}
+.edit-field-name {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-8);
+}
+/* Edited: the accent's word after the label. */
+.edit-field-mark {
+  color: var(--accent);
+  font-weight: 400;
+}
+.edit-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--height-control);
+}
+textarea.edit-description {
+  resize: vertical;
+  min-height: 120px;
+  padding: var(--space-12);
+}
+.edit-switch {
+  align-self: flex-start;
+}
+/* Under an edited field: the source's value (muted, one line) and Revert. */
+.edit-field-source {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+  margin-top: var(--space-4);
+  color: var(--muted);
+  min-width: 0;
+}
+.edit-field-was {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.edit-series-add {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  min-width: 0;
+}
+.edit-inline {
+  display: flex;
+  gap: var(--space-12);
+  padding: 0;
+}
+.edit-inline label:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.edit-inline label:last-child {
+  flex: 0 0 96px;
+}
+.edit-actions,
+.edit-save {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+}
+.edit-actions {
+  justify-content: flex-end;
+}
+.edit-save > .part-button {
+  flex: 1 1 100%;
+}
+.edit-choices {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-radius: var(--corner-group);
+  background: var(--surface);
+  overflow: hidden;
+}
+.edit-choices li + li {
+  border-top: 1px solid var(--border);
+}
+.edit-choice {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--height-row);
+  padding: var(--space-8) var(--space-16);
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  text-align: left;
+  cursor: pointer;
+}
+.edit-choice[aria-checked="true"] {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.edit-choice:focus-visible,
+.edit-cover-choice:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.edit-choice-detail {
+  color: var(--muted);
+  font-weight: 400;
+}
+.edit-cover-row {
+  display: flex;
+  gap: var(--space-16);
+  align-items: flex-start;
+}
+.edit-cover {
+  flex: none;
+  width: 72px;
+  height: 72px;
+  border-radius: var(--corner-control);
+  object-fit: cover;
+  background: var(--raised);
+}
+.edit-cover-address {
+  flex: 1;
+  min-width: 0;
+}
+.edit-covers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  gap: var(--space-8);
+}
+.edit-cover-choice {
+  width: 100%;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: var(--corner-control);
+  background: var(--raised);
+  overflow: hidden;
+  cursor: pointer;
+}
+.edit-cover-choice[aria-pressed="true"] {
+  border-color: var(--accent);
+}
+.edit-cover-choice img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}

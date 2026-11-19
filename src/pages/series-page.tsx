@@ -371,7 +371,7 @@ export function SeriesPage({ id, admin, online, books, revision, onSaved, onRemo
       )}
       {model && model.related.length > 0 && <Group caption={`Related works · ${model.related.length}`}>{model.related.map(renderRow)}</Group>}
 
-      {model?.saved && (
+      {model?.removable && (
         <div className="series-page-remove">
           <Group label="Series">
             <Row label="Remove series" disabled={busy || model.removeOff} onClick={() => setRemoveOpen(true)} />

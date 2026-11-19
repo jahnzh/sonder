@@ -445,6 +445,8 @@ export function BookPage(props: Props) {
           <Row label={wantToRead.label} disabled={busy || !online} onClick={() => void toggleWantToRead()} />
           {/* The catalogue match (#721), the administrator's. */}
           {admin && <Row label="Match" opens onClick={() => address.navigate({ name: "book-page", workId, page: "match" })} />}
+          {/* The book's details, series and cover by hand (#719), the administrator's. */}
+          {admin && <Row label="Edit" opens onClick={() => address.navigate({ name: "book-page", workId, page: "edit" })} />}
           <Row label={model.finished ? "Mark as not finished" : "Mark as finished"} disabled={busy || !online} onClick={() => void markFinished()} />
           <Row label="Remove from library" disabled={busy || confirmRemove} onClick={() => setConfirmRemove(true)} />
         </Group>

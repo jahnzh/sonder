@@ -3,7 +3,7 @@
 
 /** One of the top-level areas. Activity took the Downloads slot (#516); `#downloads` is an old name for it. */
 export type Place = "library" | "discover" | "activity" | "settings";
-export type BookPage = "audiobook" | "ebook" | "sync" | "chapters" | "bookmarks" | "search" | "match";
+export type BookPage = "audiobook" | "ebook" | "sync" | "chapters" | "bookmarks" | "search" | "match" | "edit";
 export type ActivityPart = "now" | "device" | "server";
 /** The pages of Settings (spec #572, "Settings"): `#settings/<page>`. */
 export type SettingsPage = "account" | "appearance" | "playback" | "connections" | "users" | "library" | "app";
@@ -45,7 +45,7 @@ export type Route =
   /** An address that names nothing; it shows the first page of the place it points into. */
   | { name: "unknown"; place: Place };
 
-const BOOK_PAGES: readonly BookPage[] = ["audiobook", "ebook", "sync", "chapters", "bookmarks", "search", "match"];
+const BOOK_PAGES: readonly BookPage[] = ["audiobook", "ebook", "sync", "chapters", "bookmarks", "search", "match", "edit"];
 
 function decode(part: string): string | null {
   try {
@@ -286,6 +286,8 @@ function built(route: Route): boolean {
   if (route.name === "book-page" && (route.page === "audiobook" || route.page === "ebook")) return true;
   // A book's catalogue match page (#721), in place of the Hardcover page (#721 part d).
   if (route.name === "book-page" && route.page === "match") return true;
+  // A book's Edit page (#719 part a), the administrator's.
+  if (route.name === "book-page" && route.page === "edit") return true;
   // The reader's pages: Chapters, Bookmarks and Search (#590).
   if (route.name === "book-page" && (route.page === "chapters" || route.page === "bookmarks" || route.page === "search")) return true;
   // The Reading sync page and its Details (#540).

@@ -60,6 +60,7 @@ import { ActivityDevice } from "./pages/activity-device";
 import { SettingsPage } from "./pages/settings-page";
 import { AudiobookPage } from "./pages/audiobook-page";
 import { MatchPage } from "./pages/match-page";
+import { EditPage } from "./pages/edit-page";
 import { EbookPage } from "./pages/ebook-page";
 import { BookPage } from "./pages/book-page";
 import { ReadingSyncDetailsPage, ReadingSyncPage } from "./pages/reading-sync-page";
@@ -848,7 +849,7 @@ function LibraryApp({
               <ReadingSyncDetailsPage key={pageRoute.workId} workId={pageRoute.workId} />
             ) : seriesRouteId !== null && !seriesBeside ? (
               seriesPage(seriesRouteId, false)
-            ) : pageRoute.name === "book-page" && pageRoute.page === "match" ? <MatchPage key={pageRoute.workId} workId={pageRoute.workId} admin={user.role === "admin"} onChanged={() => void refresh()} /> : ebookPage ? (
+            ) : pageRoute.name === "book-page" && pageRoute.page === "match" ? <MatchPage key={pageRoute.workId} workId={pageRoute.workId} admin={user.role === "admin"} onChanged={() => void refresh()} /> : pageRoute.name === "book-page" && pageRoute.page === "edit" ? <EditPage key={pageRoute.workId} workId={pageRoute.workId} admin={user.role === "admin"} onChanged={() => void refresh()} /> : ebookPage ? (
               <EbookPage
                 key={ebookPage}
                 workId={ebookPage}
