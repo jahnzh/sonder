@@ -26,7 +26,8 @@
             "holdReason": "unreleased",
             "acquisition": null
           },
-          "hardcover": null
+          "hardcover": null,
+          "wantToRead": false
         },
         {
           "workId": "w-beside",
@@ -82,7 +83,8 @@
           "readingSync": [],
           "series": [],
           "mediaState": null,
-          "hardcover": null
+          "hardcover": null,
+          "wantToRead": false
         },
         {
           "workId": "w-two",
@@ -225,7 +227,8 @@
             "progressPending": false,
             "syncError": null,
             "listIds": []
-          }
+          },
+          "wantToRead": false
         },
         {
           "workId": "w-unplayed",
@@ -315,7 +318,8 @@
           "readingSync": [],
           "series": [],
           "mediaState": null,
-          "hardcover": null
+          "hardcover": null,
+          "wantToRead": false
         },
         {
           "workId": "w-removed",
@@ -381,7 +385,8 @@
           "readingSync": [],
           "series": [],
           "mediaState": null,
-          "hardcover": null
+          "hardcover": null,
+          "wantToRead": false
         }
       ]
     },
@@ -410,7 +415,8 @@
           "holdReason": "unreleased",
           "acquisition": null
         },
-        "hardcover": null
+        "hardcover": null,
+        "wantToRead": false
       }
     },
     "/api/works/w-beside": {
@@ -469,7 +475,8 @@
         "readingSync": [],
         "series": [],
         "mediaState": null,
-        "hardcover": null
+        "hardcover": null,
+        "wantToRead": false
       }
     },
     "/api/works/w-two": {
@@ -615,7 +622,8 @@
           "progressPending": false,
           "syncError": null,
           "listIds": []
-        }
+        },
+        "wantToRead": false
       }
     },
     "/api/works/w-unplayed": {
@@ -708,7 +716,8 @@
         "readingSync": [],
         "series": [],
         "mediaState": null,
-        "hardcover": null
+        "hardcover": null,
+        "wantToRead": false
       }
     },
     "/api/works/w-removed": {
@@ -777,7 +786,8 @@
         "readingSync": [],
         "series": [],
         "mediaState": null,
-        "hardcover": null
+        "hardcover": null,
+        "wantToRead": false
       }
     },
     "/api/works/w-outside": {
@@ -801,7 +811,8 @@
         "readingSync": [],
         "series": [],
         "mediaState": null,
-        "hardcover": null
+        "hardcover": null,
+        "wantToRead": false
       }
     },
     "/api/works/w-sam": {
@@ -825,7 +836,8 @@
         "readingSync": [],
         "series": [],
         "mediaState": null,
-        "hardcover": null
+        "hardcover": null,
+        "wantToRead": false
       }
     },
     "/api/works/work-hc-9001": {
@@ -971,7 +983,8 @@
           "progressPending": false,
           "syncError": null,
           "listIds": []
-        }
+        },
+        "wantToRead": false
       }
     },
     "/api/works/w-none": {
@@ -1086,7 +1099,8 @@
             "progressPending": false,
             "syncError": null,
             "listIds": []
-          }
+          },
+          "wantToRead": false
         },
         {
           "workId": "w-sam",
@@ -1107,7 +1121,8 @@
           "readingSync": [],
           "series": [],
           "mediaState": null,
-          "hardcover": null
+          "hardcover": null,
+          "wantToRead": false
         }
       ]
     },
@@ -1138,7 +1153,8 @@
         "readingSync": [],
         "series": [],
         "mediaState": null,
-        "hardcover": null
+        "hardcover": null,
+        "wantToRead": false
       }
     },
     "/api/works/w-two": {
@@ -1244,7 +1260,8 @@
           "progressPending": false,
           "syncError": null,
           "listIds": []
-        }
+        },
+        "wantToRead": false
       }
     },
     "/api/works/w-unplayed": {
@@ -1268,7 +1285,8 @@
         "readingSync": [],
         "series": [],
         "mediaState": null,
-        "hardcover": null
+        "hardcover": null,
+        "wantToRead": false
       }
     },
     "/api/works/w-removed": {
@@ -1292,7 +1310,8 @@
         "readingSync": [],
         "series": [],
         "mediaState": null,
-        "hardcover": null
+        "hardcover": null,
+        "wantToRead": false
       }
     },
     "/api/works/w-outside": {
@@ -1316,7 +1335,8 @@
         "readingSync": [],
         "series": [],
         "mediaState": null,
-        "hardcover": null
+        "hardcover": null,
+        "wantToRead": false
       }
     },
     "/api/works/w-sam": {
@@ -1340,7 +1360,8 @@
         "readingSync": [],
         "series": [],
         "mediaState": null,
-        "hardcover": null
+        "hardcover": null,
+        "wantToRead": false
       }
     },
     "/api/works/work-hc-9001": {
@@ -1446,7 +1467,8 @@
           "progressPending": false,
           "syncError": null,
           "listIds": []
-        }
+        },
+        "wantToRead": false
       }
     },
     "/api/works/w-none": {

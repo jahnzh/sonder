@@ -115,6 +115,7 @@ test("an unknown work-hc-<n> answers Hardcover's book, not in the library, and w
       syncError: null,
       listIds: [],
     },
+    wantToRead: false,
   } satisfies LibraryWork);
   // Sam reads the same book the same way.
   assert.equal((await request(SAM, "/api/works/work-hc-501")).json().workId, "work-hc-501");
