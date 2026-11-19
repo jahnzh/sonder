@@ -169,6 +169,8 @@ const desktopProjects = [
               /(^|\/)shell\.spec\.ts$/,
               // A stuck download says why and offers Cancel (#716).
               /(^|\/)activity-cancel\.spec\.ts$/,
+              // A calibre EPUB whose text sits inside anchors: text colour and the centre tap (#727).
+              /(^|\/)reader-text-links\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },
