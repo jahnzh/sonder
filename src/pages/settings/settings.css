@@ -103,7 +103,7 @@
   box-sizing: border-box;
   width: var(--height-control);
   height: 36px;
-  padding: 2px;
+  padding: 0;
   border: 1px solid var(--border);
   border-radius: var(--corner-control);
   background: var(--raised);
@@ -284,7 +284,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 2px; /* tokens: SettingsUsers.dc.html, 2 between a request's name and its line */
   overflow-wrap: anywhere;
 }
 .settings-request-head {

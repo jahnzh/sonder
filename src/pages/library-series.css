@@ -83,14 +83,14 @@
   top: 2px;
   width: 36px;
   height: 36px;
-  border-radius: 7px;
+  border-radius: 7px; /* tokens: LibrarySeries.dc.html, the middle cover of the stack */
 }
 .library-series-cover[data-layer="2"] {
   left: 20px;
   top: 4px;
   width: 32px;
   height: 32px;
-  border-radius: 6px;
+  border-radius: 6px; /* tokens: LibrarySeries.dc.html, the back cover of the stack */
 }
 .library-series-cover > img {
   display: block;
