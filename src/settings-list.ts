@@ -3,7 +3,7 @@
 import type { SettingsPage } from "./routes";
 import type { Appearance } from "./appearance";
 import { formatSpeed } from "./playback-speed";
-import { bytes } from "./size-format";
+import { freeSpace } from "./settings-server";
 
 export type SettingsListInput = {
   user: { username: string; role: "admin" | "user" };
@@ -68,8 +68,7 @@ export function storageValue(settings: SettingsListInput["settings"]): string {
   const storage = settings?.storage;
   if (!storage) return "";
   if (!storage.connected) return "Not connected";
-  if (storage.usedBytes === null || storage.totalBytes === null) return "";
-  return `${bytes(Math.max(0, storage.totalBytes - storage.usedBytes))} free`;
+  return freeSpace(storage) ?? "";
 }
 
 export function settingsList(input: SettingsListInput): SettingsGroup[] {

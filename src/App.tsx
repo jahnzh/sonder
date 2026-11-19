@@ -49,7 +49,6 @@ import { Join } from "./components/Join";
 import { PlayerDock } from "./components/Player";
 import { NowPlaying } from "./pages/now-playing";
 import { AppUpdate } from "./components/AppUpdate";
-import { type HardcoverFilter } from "./components/Hardcover";
 import { type Page, Mark } from "./pages/shared";
 import { LibraryPage } from "./pages/library-page";
 import { askDiscoverSearch, DiscoverPage } from "./pages/discover-page";
@@ -75,10 +74,14 @@ import { deviceImports } from "./device-import";
 import { Gallery, isGalleryRoute } from "./gallery/Gallery";
 import { refreshLibraryWorks, startLibraryWorks, useLibraryWorksStored, useStoredWorksWithPlaces } from "./library-works-store";
 import { toggleFavoriteWork, WORK_FAVORITES_KEY } from "./favorites-by-work";
-import { ALL_CHIP, readChip, type LibraryChip } from "./pages/library-filter";
+import { ALL_CHIP, readChip, readHardcoverFilter, readSort, readView, type LibraryChip, type LibraryView, type ShelfFilter, type SortOrder } from "./pages/library-filter";
 
 /** The Library's chip on this device (#577), per account through `userStorageKey`. */
 const LIBRARY_CHIP_KEY = "sonder-library-chip";
+// The sort-and-view control's choices (#578), remembered on this device for this account like the chip.
+const LIBRARY_SORT_KEY = "sonder-library-sort";
+const LIBRARY_VIEW_KEY = "sonder-library-view";
+const LIBRARY_HARDCOVER_KEY = "sonder-library-hardcover";
 import { bookStatus, workProgress } from "./work-progress";
 import { classifyStop, type StopCause } from "./keep";
 import { activeSaves, claimRecording, keepSaver, pauseKeep, resumeKeep, keepOffAndRemove, onKeepJob, savesInOtherTabs, startKeepSaver, stopKeepSaver, useKeptWorks } from "./keep-runtime";
@@ -286,12 +289,15 @@ function LibraryApp({
   useEffect(() => {
     localStorage.setItem(chipKey(), filter);
   }, [filter]);
-  const [hardcoverFilter, setHardcoverFilter] = useState<HardcoverFilter>({
-    shelf: "all",
-    list: "all",
-  });
-  const [sort, setSort] = useState("recent");
-  const [view, setView] = useState<"grid" | "list">("grid");
+  // Sort, view and the Hardcover shelf and list, remembered on this device for this account (#578; #455).
+  const [hardcoverFilter, setHardcoverFilter] = useState<ShelfFilter>(() => readHardcoverFilter(localStorage.getItem(userStorageKey(LIBRARY_HARDCOVER_KEY))));
+  const [sort, setSort] = useState<SortOrder>(() => readSort(localStorage.getItem(userStorageKey(LIBRARY_SORT_KEY))));
+  const [view, setView] = useState<LibraryView>(() => readView(localStorage.getItem(userStorageKey(LIBRARY_VIEW_KEY))));
+  useEffect(() => {
+    localStorage.setItem(userStorageKey(LIBRARY_SORT_KEY), sort);
+    localStorage.setItem(userStorageKey(LIBRARY_VIEW_KEY), view);
+    localStorage.setItem(userStorageKey(LIBRARY_HARDCOVER_KEY), JSON.stringify(hardcoverFilter));
+  }, [sort, view, hardcoverFilter]);
   // The favourites by work (#577): work ids, read from this account's device database.
   const [favorites, setFavorites] = useState<string[]>([]);
   const [online, setOnline] = useState(navigator.onLine);
@@ -879,9 +885,7 @@ function LibraryApp({
                 favorites={favorites}
                 onDevice={keptComplete}
                 openWork={openWork}
-                refresh={refresh}
                 navigate={navigate}
-                notify={notify}
               />
             )}
             {page === "discover" && (

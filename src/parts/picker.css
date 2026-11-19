@@ -1,37 +1,118 @@
-/* Picker (src/parts/Picker.tsx): the dialog's list, one 52 high row per choice on a surface card with a 1 px line
-   between rows, the chosen one in bold with the accent's tick. Tokens from tokens.css, colours the variables. */
+/* Picker (src/parts/Picker.tsx; boards LibrarySort.dc.html, LibraryShelf.dc.html). On a phone a panel on the surface
+   rising from the bottom edge over a dimmed page, corner 14 at its top, a 1 px line along its top edge; on a desktop
+   a panel under its button. The head (44 high): the name in Heading text and Done, with a back button before the
+   name in a second list. Groups with a caption; choice rows and picker rows 52 high on a card of the ground colour
+   with a 1 px line between rows, the chosen row raised and in bold with the accent's tick. Tokens from tokens.css,
+   colours the variables. */
+.part-picker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  background: color-mix(in srgb, var(--background) 65%, transparent);
+}
 .part-picker {
-  width: min(360px, calc(100vw - 32px));
+  position: fixed;
+  z-index: 96;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  padding: var(--space-16) var(--space-16) var(--space-24);
+  background: var(--surface);
+  color: var(--text);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  outline: none;
+  /* A phone: from the bottom edge, the window's width. */
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: calc(100dvh - var(--space-32));
+  border-top: 1px solid var(--border);
+  border-radius: var(--corner-group) var(--corner-group) 0 0;
+  padding-bottom: calc(var(--space-24) + env(safe-area-inset-bottom, 0px));
+}
+@media (min-width: 760px) {
+  .part-picker-overlay[data-anchored] {
+    background: transparent;
+  }
+  /* A desktop: 360 wide, in the middle, or under its button once placed. */
+  .part-picker {
+    right: auto;
+    bottom: auto;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 360px;
+    max-height: calc(100dvh - var(--space-32));
+    border: 1px solid var(--border);
+    border-radius: var(--corner-group);
+    padding-bottom: var(--space-16);
+    box-shadow: 0 16px 48px color-mix(in srgb, var(--background) 60%, transparent);
+  }
+  .part-picker[data-placed] {
+    transform: none;
+  }
+}
+.part-picker-head {
+  flex: none;
+  height: var(--height-control);
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.part-picker-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.part-picker-done,
+.part-picker-back {
+  flex: none;
+}
+.part-picker-group,
+.part-picker-sub {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.part-picker-caption {
+  margin: 0;
+  padding: 0 var(--space-16);
+  color: var(--muted);
 }
 .part-picker-list {
-  margin: var(--space-8) 0 0;
+  margin: 0;
   padding: 0;
   list-style: none;
   border-radius: var(--corner-group);
-  background: var(--surface);
+  background: var(--background);
   overflow: hidden;
-  max-height: min(60vh, 520px);
-  overflow-y: auto;
 }
 .part-picker-list > li + li {
   border-top: 1px solid var(--border);
 }
-.part-picker-choice {
+.part-picker-choice,
+.part-picker-row {
   box-sizing: border-box;
   width: 100%;
-  height: var(--height-row);
+  min-height: var(--height-row);
   padding: 0 var(--space-16);
   border: 0;
   background: transparent;
   color: var(--text);
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-12);
   text-align: left;
   cursor: pointer;
 }
 .part-picker-label {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -39,15 +120,32 @@
 }
 .part-picker-choice[data-chosen] {
   font-weight: 600;
+  background: var(--raised);
+}
+.part-picker-detail,
+.part-picker-value {
+  flex: none;
+  color: var(--muted);
+}
+.part-picker-value {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .part-picker-tick {
   flex: none;
   color: var(--accent);
 }
-.part-picker-choice:hover {
+.part-picker-choice:not([data-chosen]):hover,
+.part-picker-row:hover {
   background: color-mix(in srgb, var(--raised) 55%, transparent);
 }
-.part-picker-choice:focus-visible {
+.part-picker-choice:focus-visible,
+.part-picker-row:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }

@@ -41,7 +41,7 @@ test("row values: theme with custom colours, one account, nothing connected, the
   assert.equal(rows({ ...base, accounts: null })[1][1][1], "users|Users|");
   assert.equal(connectionsValue(null, true), "");
   assert.equal(connectionsValue({ torboxConfigured: false, hardcoverConfigured: false, prowlarrConfigured: true }, true), "Prowlarr");
-  assert.equal(storageValue({ ...base.settings!, storage: { connected: true, usedBytes: 1e12, totalBytes: 4e12 } }), "3000 GB free");
+  assert.equal(storageValue({ ...base.settings!, storage: { connected: true, usedBytes: 1e12, totalBytes: 4e12 } }), "3 TB free");
   assert.equal(storageValue({ ...base.settings!, storage: { connected: false, usedBytes: null, totalBytes: null } }), "Not connected");
   assert.equal(storageValue({ ...base.settings!, storage: null }), "");
   assert.equal(storageValue(base.settings), "");
