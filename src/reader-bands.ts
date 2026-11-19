@@ -26,3 +26,27 @@ export function footRestLine(
       : `${Math.round(Math.min(1, Math.max(0, Number.isFinite(place.fraction) ? place.fraction : 0)) * 100)}% of the book`;
   return headRestLine(chapter, where);
 }
+
+/** A control of the foot: at rest, or in the row shown with the controls. */
+export type FootControl = "pause" | "chapters" | "back-to-narration" | "transport" | "sleep-timer" | "speed" | "position";
+
+/**
+ * What the foot holds (#594, spec #586 "A book without a recording", ReaderEbookOnly.dc.html). A work with a
+ * recording: Pause at rest; with the controls shown Chapters, Back to narration, the transport, the sleep timer and
+ * Speed under the timeline. A work without one (an ebook-only book, #555) has no narration to hold: at rest the
+ * progress line and the place in the book only, no Pause; with the controls shown Chapters and the position slider,
+ * "Position in the book". No Back to narration, transport, Speed or Sleep timer.
+ */
+export function footControls(recording: boolean): { rest: FootControl[]; shown: FootControl[] } {
+  return recording
+    ? { rest: ["pause"], shown: ["chapters", "back-to-narration", "transport", "sleep-timer", "speed"] }
+    : { rest: [], shown: ["chapters", "position"] };
+}
+
+/**
+ * The foot's line with the controls shown for a work without a recording: the chapter, and "N% of the book" for the
+ * page's place in the whole book (the slider beside Chapters moves through the whole book too).
+ */
+export function ebookOnlyFootLine(chapter: string | undefined, fraction: number) {
+  return { chapter: chapter?.trim() ?? "", place: footRestLine(undefined, { fraction }) };
+}

@@ -193,6 +193,11 @@ test("Read opens the chosen EPUB: the shared default, then this device's choice,
   assert.equal(epubOnly.readEbookId, "e1");
   assert.equal(epubOnly.listen, false);
   assert.equal(epubOnly.device, true);
+  // Its Read opens Now playing's Read face (#594); a book with a recording keeps the page's rule (the player).
+  assert.equal(epubOnly.readFace, true);
+  assert.equal(bookModel(two, { admin: false }).readFace, false);
+  assert.equal(bookModel(work({ inLibrary: false, ebooks: [ebook("e1")] }), { admin: true }).readFace, false);
+  assert.equal(bookModel(work({ ebooks: [ebook("p1", "pdf")] }), { admin: true }).readFace, false, "a PDF-only book has no Read");
 });
 
 test("a work outside the library: Add to library is the one main action; no Listen, Read or This device", () => {
