@@ -95,6 +95,18 @@ Progress uses the cumulative position across physical tracks. It maps by percent
 
 Local playback stays authoritative while its changes are queued. Later remote changes can move a position backward as well as forward. An unchanged remote checkpoint is not repeatedly imported. A first import preserves a newer local position; two-way mode publishes that position on the first sync. **Use Hardcover position** explicitly selects the remote position and resumes playback. Matching preserves recording IDs, file paths, and each recording’s own progress. Switching account tokens disables sync and clears account-specific queues/list caches before another account can be used.
 
+## Catalogue: AudiobookDB and Open Library
+
+AudiobookDB (`server/audiobookdb.ts`) is the catalogue for audiobooks; Open Library (`server/openlibrary.ts`, no key) gives a book without an audiobook its link (#721). Both are called by the server only, with the User-Agent `Sonder/<version> (+https://sonder.pecori.no)`.
+
+- **Key:** the server's `AUDIOBOOKDB_API_KEY` (in `.env`). Settings → Connections then says "Set in the server's file" and offers **Test**. Without it, a key saved there (encrypted like the other keys) is used. Open Library needs nothing.
+- **Limits:** one request at a time, waiting whenever AudiobookDB's `RateLimit-Remaining` reaches 0 (until `RateLimit-Reset`) or it answers `Retry-After`. Units are counted per UTC day (detail 1, list 2, search 3, of 10,000). Near the limit, new searches are refused with "AudiobookDB's daily limit is reached; try again later." and cached answers still serve.
+- **Cache** (`catalogue_cache`): searches for a day, keyed by the lower-case, single-spaced query and its type. Book, release and work details are kept a week and fetched again by the hourly `catalogue-refresh` loop; one the provider no longer has (404) is deleted. Descriptions are never cached and covers are shown from the provider by address.
+- **Links:** a work links to an AudiobookDB book or an Open Library work (`work_catalogue_links`, with the first series and its position kept for the series part). A recording may link to a release (`recording_release_links`: narrator, length, ASIN, chapters). A link fills only what is missing (the work's description, the edition's narrator); title, author and cover stay.
+- **Match library** (administrator, Connections): one pass over every work without a link. A sure match is applied: the ASIN in the file names, or exactly one result with the same normalised title and author whose releases are not all in another language. A recording is linked to the release with its ASIN, or to the only English release within a minute (and 1 %) of its length. A book without audio that Open Library has under the same title and author links there. The rest are listed under **Not matched** ("Several fit", "Not found", "Failed"); each opens the book's match page. A matched work is never searched again by the batch.
+- **Match page** (`#book/<workId>/match`, from the Book page's **Match** row, administrator only): the link and Unlink, each recording's release with a picker, and one search of both providers filled with the title and author; choose a result and **Match**.
+- A provider failure answers with its reason and touches nothing else; the library and playback never call a provider.
+
 ## Ebook sources
 
 Discover → Ebooks searches **Library Genesis**; its mirror is configurable in Settings. It requires no key; unavailable mirrors are reported instead of appearing to return no matches. Anna’s Archive was removed for now (#8). Older clients that still ask for it get a clear refusal.

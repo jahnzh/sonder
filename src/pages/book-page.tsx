@@ -418,6 +418,8 @@ export function BookPage(props: Props) {
           {hardcoverValue !== null && (
             <Row label="Hardcover" value={hardcoverValue} opens onClick={() => address.navigate({ name: "book-page", workId, page: "hardcover" })} />
           )}
+          {/* The catalogue match (#721), the administrator's. */}
+          {admin && <Row label="Match" opens onClick={() => address.navigate({ name: "book-page", workId, page: "match" })} />}
           <Row label={model.finished ? "Mark as not finished" : "Mark as finished"} disabled={busy || !online} onClick={() => void markFinished()} />
           <Row label="Remove from library" disabled={busy || confirmRemove} onClick={() => setConfirmRemove(true)} />
         </Group>

@@ -124,6 +124,9 @@ for (const [size, viewport] of [["phone", { width: 390, height: 844 }], ["deskto
         "Prowlarr",
         "AudioBookBay",
         "Library Genesis",
+        // The catalogue (#721).
+        "AudiobookDB",
+        "Open Library",
       ]);
       await expect(main.getByRole("heading", { name: "Anna’s Archive" })).toHaveCount(0);
       // The old long form is gone: no save bar, no section for the local torrent client.
@@ -333,7 +336,7 @@ for (const [size, viewport] of [["phone", { width: 390, height: 844 }], ["deskto
       await expect(pageTitle(page, desktop)).toHaveText("Connections");
       const main = page.locator("main");
       await expect(main.getByRole("heading", { name: "Hardcover", exact: true })).toBeVisible();
-      for (const service of ["TorBox", "Prowlarr", "AudioBookBay", "Library Genesis"])
+      for (const service of ["TorBox", "Prowlarr", "AudioBookBay", "Library Genesis", "AudiobookDB", "Open Library"])
         await expect(main.getByRole("heading", { name: service, exact: true })).toHaveCount(0);
       await expect(main.getByRole("textbox", { name: "TorBox API key" })).toHaveCount(0);
       // Their settings carry no storage and none of the server's connections.

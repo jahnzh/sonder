@@ -161,6 +161,17 @@ CREATE TABLE IF NOT EXISTS series_acquisition_jobs(id TEXT PRIMARY KEY,user_id I
 CREATE UNIQUE INDEX IF NOT EXISTS series_acquisition_jobs_user_series_book_kind ON series_acquisition_jobs(user_id,series_id,book_id,kind);
 CREATE UNIQUE INDEX IF NOT EXISTS series_acquisition_jobs_user_work_kind ON series_acquisition_jobs(user_id,work_id,kind);
 `);
+// The catalogue (#721): AudiobookDB and Open Library answers cached with their expiry (searches a day, details a
+// week; covers and descriptions are never stored), the daily units spent per provider, a work's link to a provider
+// book or work, a recording's link to an AudiobookDB release, and the last outcome of the matcher for a work.
+// No foreign keys: a work or recording removed elsewhere leaves a row nothing reads, and its removal is not refused.
+sqlite.exec(`
+CREATE TABLE IF NOT EXISTS catalogue_cache(provider TEXT NOT NULL,kind TEXT NOT NULL,key TEXT NOT NULL,data TEXT NOT NULL,fetched_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,PRIMARY KEY(provider,kind,key));
+CREATE TABLE IF NOT EXISTS catalogue_usage(provider TEXT NOT NULL,day TEXT NOT NULL,units INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(provider,day));
+CREATE TABLE IF NOT EXISTS work_catalogue_links(work_id TEXT PRIMARY KEY,provider TEXT NOT NULL CHECK(provider IN ('audiobookdb','openlibrary')),external_id TEXT NOT NULL,title TEXT NOT NULL,author TEXT NOT NULL,series_id TEXT,series_name TEXT,series_position TEXT,series_sort REAL,matched_by TEXT NOT NULL CHECK(matched_by IN ('title','asin','manual')),linked_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS recording_release_links(recording_id TEXT PRIMARY KEY,book_id TEXT NOT NULL,release_id TEXT NOT NULL,narrator TEXT,length_ms INTEGER,asin TEXT,language TEXT,chapters TEXT NOT NULL DEFAULT '[]',matched_by TEXT NOT NULL CHECK(matched_by IN ('asin','length','manual')),linked_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS work_catalogue_match(work_id TEXT PRIMARY KEY,outcome TEXT NOT NULL CHECK(outcome IN ('matched','ambiguous','missing','failed')),reason TEXT,candidates INTEGER NOT NULL DEFAULT 0,checked_at INTEGER NOT NULL);
+`);
 // A series search that could not reach its source is tried again by itself (#717): how often it was, and not before when.
 {
   const seriesJobColumns = new Set((sqlite.prepare("PRAGMA table_info(series_acquisition_jobs)").all() as { name: string }[]).map((c) => c.name));

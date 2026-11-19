@@ -222,6 +222,9 @@ export type Settings = {
   storageLabel: string;
   prowlarrUrl?: string;
   prowlarrConfigured?: boolean;
+  /** AudiobookDB (#721), for the administrator: a key is set, and whether it is the server's file or Settings. */
+  audiobookdbConfigured?: boolean;
+  audiobookdbSource?: "env" | "settings" | null;
   /** The media drive, for the administrator (spec #572, "Server storage"); absent from servers that predate it. */
   storage?: { connected: boolean; usedBytes: number | null; totalBytes: number | null } | null;
 };
