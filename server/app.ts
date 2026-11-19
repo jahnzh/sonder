@@ -32,7 +32,7 @@ import { registerHardcoverRoutes } from "./hardcover-routes.ts";
 import { switchFromHardcover } from "./hardcover-switch.ts";
 import { registerCatalogueRoutes } from "./catalogue-routes.ts";
 import { registerSeriesRoutes } from "./series-routes.ts";
-import { savedSeriesRefreshLoop } from "./series-catalogue.ts";
+import { savedCatalogueSeries, savedSeriesRefreshLoop } from "./series-catalogue.ts";
 import { discardResave, retryResave, seriesResaveLoop } from "./series-resave.ts";
 import { catalogueRefreshLoop } from "./catalogue-links.ts";
 import { audiobookDbKey } from "./audiobookdb.ts";
@@ -43,7 +43,8 @@ import { registerAppearance } from "./appearance.ts";
 import { registerAccountRequests } from "./account-requests.ts";
 import { registerInvites } from "./invites.ts";
 import { registerReader } from "./reader.ts";
-import { registerLibraryWorks } from "./library-works.ts";
+import { registerLibraryWorks, workMetadata } from "./library-works.ts";
+import { registerMetadataMatchRoutes, retryMetadataMatch } from "./metadata-match.ts";
 import { registerDeviceKeep } from "./device-keep.ts";
 import { registerAlignment, autoQueueAlignmentsForWork, persistedPoolErrors, resumeAlignmentJob } from "./alignment.ts";
 import { checkPoolHostsSetting, getAlignmentPoolCoordinator, getAlignmentPoolStatus } from "./alignment-pool.ts";
@@ -348,6 +349,16 @@ export async function createApp(options?: {
   registerHardcoverRoutes(app);
   registerCatalogueRoutes(app);
   registerSeriesRoutes(app);
+  // #719 part b: the comparison with a provider, Apply, 'Match automatically' per book and per series.
+  registerMetadataMatchRoutes(app, workMetadata, (userId, seriesId) => {
+    try {
+      return savedCatalogueSeries(userId, seriesId).works.flatMap((work) => (work.added && work.workId ? [work.workId] : []));
+    } catch (error) {
+      // A series the administrator has not saved: no works to match (the route answers 404).
+      if ((error as Error).message === "This saved series could not be found.") return [];
+      throw error;
+    }
+  });
   registerEbookSetRoutes(app);
   registerAppearance(app);
   registerReader(app);
@@ -368,6 +379,7 @@ export async function createApp(options?: {
     resumeAlignment: resumeAlignmentJob,
     retrySeriesSearch: retrySeriesAcquisitionJob,
     retrySeriesResave: retryResave,
+    retryMetadataMatch: (workId: string) => retryMetadataMatch(workMetadata, workId),
     discardSeriesResave: discardResave,
     pauseState,
     setPaused,

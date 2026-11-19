@@ -101,6 +101,7 @@ export function readItunesAudiobook(value: unknown): CatalogueBook | null {
     series: [],
     releaseIds: [],
     description: plainDescription(text(value.description)),
+    ...(text(value.primaryGenreName) ? { genres: [text(value.primaryGenreName)!] } : {}),
   };
 }
 const resultsOf = (data: unknown) => (isObject(data) && Array.isArray(data.results) ? data.results : []);

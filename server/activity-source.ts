@@ -41,6 +41,8 @@ export type ActivityDeps = {
   /** A saved series of the reset (#721 part b) tried on AudiobookDB again now (`retryResave`), and its row discarded. */
   retrySeriesResave?: (userId: number, hardcoverSeriesId: number, onError: (error: unknown) => void) => Record<string, unknown>;
   discardSeriesResave?: (userId: number, hardcoverSeriesId: number) => boolean;
+  /** A work of a series' 'Match automatically' (#719 part b) that failed or found no sure match, queued again. */
+  retryMetadataMatch?: (workId: string) => boolean;
   /**
    * What the local torrent client says of these torrents (#716), to name why a download is stuck. Absent where a test
    * does not need it; a hash the client does not have is absent from the answer. Throws a `TransmissionError`.

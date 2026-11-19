@@ -27,6 +27,8 @@ import {
 import { searchOpenLibrarySeries } from "./openlibrary.ts";
 import { CatalogueError, type Priority } from "./catalogue-provider.ts";
 import { LINKED_ENTRIES, authorMatches, englishRelease, linkWork, normaliseTitle, titleMatches } from "./catalogue-links.ts";
+import { applyTitleEdits, handSeriesMembers, isLocalSeriesId, localSeriesHead, localSeriesIds } from "./work-metadata.ts";
+import { workVisibleTo } from "./work-library.ts";
 import { ensurePlaceholder, isPlaceholderEdition } from "./placeholder-edition.ts";
 import { hasServerMedia } from "./downloads.ts";
 import { getWorkMediaStates } from "./work-media-state.ts";
@@ -384,6 +386,11 @@ type SavedRow = {
   workId: string | null; added: number; introduced: number; seen: number;
 };
 function savedRows(userId: number, id: string): SavedRow[] {
+  // A local series (#719) is the works the administrator put in it by hand, the ones in the user's library.
+  if (isLocalSeriesId(id)) return handRows(userId, id, []).filter((row) => row.added);
+  return handRows(userId, id, catalogueRows(userId, id));
+}
+function catalogueRows(userId: number, id: string): SavedRow[] {
   return sqlite
     .prepare(
       `SELECT c.book_id AS id,c.title,c.position,c.position_label AS positionLabel,c.cover,c.unreleased,c.provider,c.author,c.language,c.release_date AS releaseDate,
@@ -394,7 +401,53 @@ function savedRows(userId: number, id: string): SavedRow[] {
     )
     .all(userId, userId, id) as SavedRow[];
 }
+/**
+ * The rows with the series edited by hand (#719): a work put in this series on its Edit page stands at the position
+ * given there, and one the catalogue does not list joins it (book id `work:<workId>`) for the users who may see it.
+ */
+function handRows(userId: number, id: string, rows: SavedRow[]): SavedRow[] {
+  const hand = handSeriesMembers(id);
+  if (!hand.length) return rows;
+  const byWork = new Map(hand.map((member) => [member.workId, member]));
+  const present = new Set<string>();
+  const out = rows.map((row) => {
+    const member = row.workId ? byWork.get(row.workId) : undefined;
+    if (!member) return row;
+    present.add(member.workId);
+    return { ...row, position: member.position, positionLabel: member.positionLabel };
+  });
+  const joining = hand.filter((member) => !present.has(member.workId) && workVisibleTo(userId, member.workId));
+  const works = new Map(
+    applyTitleEdits(
+      joining.length
+        ? (sqlite
+            .prepare(
+              `SELECT w.id,w.title,w.author,(SELECT e.cover FROM audio_editions e WHERE e.work_id=w.id ORDER BY e.rowid LIMIT 1) AS cover
+               FROM works w WHERE w.id IN (SELECT value FROM json_each(?))`,
+            )
+            .all(JSON.stringify(joining.map((member) => member.workId))) as { id: string; title: string; author: string; cover: string | null }[])
+        : [],
+    ).map((work) => [work.id, work]),
+  );
+  for (const member of joining) {
+    const work = works.get(member.workId);
+    if (!work) continue;
+    out.push({
+      id: `work:${member.workId}`, title: work.title, position: member.position, positionLabel: member.positionLabel, cover: work.cover, unreleased: 0,
+      provider: "audiobookdb", author: work.author, language: null, releaseDate: null, workId: member.workId,
+      added: Number(ownsWork(userId, member.workId)), introduced: 0, seen: 1,
+    });
+  }
+  return out.sort((a, b) => (a.position === null ? 1 : 0) - (b.position === null ? 1 : 0) || (a.position ?? 0) - (b.position ?? 0) || compareIds(a.id, b.id));
+}
 function savedHead(userId: number, id: string) {
+  if (isLocalSeriesId(id)) {
+    const head = localSeriesHead(id);
+    const rows = head ? savedRows(userId, id) : [];
+    if (!head || !rows.length) throw new Error("This saved series could not be found.");
+    const authors = [...new Set(rows.map((row) => row.author).filter(Boolean))];
+    return { id: head.id, name: head.name, author: authors.length === 1 ? authors[0] : null, count: rows.length, local: true as const };
+  }
   const series = sqlite
     .prepare("SELECT c.id,c.name,c.author,c.book_count AS count FROM series_catalogue c JOIN user_saved_series u ON u.series_id=c.id WHERE u.user_id=? AND c.id=?")
     .get(userId, id) as { id: string; name: string; author: string | null; count: number | null } | undefined;
@@ -509,7 +562,16 @@ function seriesWorkState(userId: number, workId: string | null, series?: { serie
 export function listSavedCatalogueSeries(userId: number) {
   const list = sqlite
     .prepare("SELECT c.id,c.name,c.author,c.book_count AS count FROM series_catalogue c JOIN user_saved_series u ON u.series_id=c.id WHERE u.user_id=? ORDER BY c.name,c.id")
-    .all(userId) as { id: string; name: string; author: string | null; count: number | null }[];
+    .all(userId) as { id: string; name: string; author: string | null; count: number | null; local?: true }[];
+  // The local series (#719) with a book in the user's library are theirs as a saved series is: nothing to save.
+  for (const id of localSeriesIds()) {
+    try {
+      list.push(savedHead(userId, id));
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "This saved series could not be found.") throw error;
+    }
+  }
+  list.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : compareIds(a.id, b.id)));
   return list.map((series) => ({ ...series, ...savedSeriesCounts(userId, series.id, series.author || "Unknown author") }));
 }
 function savedSeriesCounts(userId: number, id: string, author: string) {
@@ -575,6 +637,8 @@ export async function refreshCatalogueSeries(id: string, options: { priority?: P
  */
 export async function refreshSavedCatalogueSeries(userId: number, id: string, options?: { force?: boolean; language?: string }) {
   savedHead(userId, id);
+  // A local series (#719) has no provider to read again.
+  if (isLocalSeriesId(id)) return withDefaults(userId, id, options?.language || "en");
   const refreshedAt = sqlite.prepare("SELECT refreshed_at FROM user_saved_series WHERE user_id=? AND series_id=?").pluck().get(userId, id) as number | null;
   // The page reads the series again while its books are fetched: a read of the last minute stands.
   if (!options?.force && refreshedAt && Date.now() - refreshedAt < SERIES_REFRESH_MAX_AGE_MS) return withDefaults(userId, id, options?.language || "en");

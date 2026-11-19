@@ -98,8 +98,13 @@ export type LibraryWork = {
    * (those stay on the alignment routes). A running rebuild's state is under `rebuild`.
    */
   readingSync: ReadingSyncSummary[];
-  /** Every series of the work on AudiobookDB, the ones the user saved first, then by name. */
+  /**
+   * Every series of the work on AudiobookDB, the ones the user saved first, then by name; when the administrator
+   * edited the work's series (#719), that list instead, in its order.
+   */
   series: WorkSeries[];
+  /** The rest of the work's details (#719 part a), with the fields edited by hand. Absent from an older server. */
+  details?: WorkDetails;
   /** The media state of ADR 0011, as `Book.mediaState`; null when the work has none for the user. */
   mediaState: WorkMediaState | null;
   /** As `Book.hardcover` in `GET /api/books`; null when the work has no Hardcover book. */
@@ -168,7 +173,82 @@ export type WorkResult = {
   wantToRead?: boolean;
 };
 /** A series of a work on AudiobookDB (#721): its id, name, number and label ("1.5"), and whether the user saved it. */
-export type WorkSeries = { id: string | null; name: string; position: number | null; positionLabel?: string | null; saved: boolean };
+/** `local`: a series made by hand on the book's Edit page (#719), id `local-<n>`, not from a provider. */
+export type WorkSeries = { id: string | null; name: string; position: number | null; positionLabel?: string | null; saved: boolean; local?: boolean };
+/** The fields of the book's Edit page (#719 part a); `narrators` is a recording's. */
+export const WORK_FIELDS = ["title", "subtitle", "authors", "series", "genres", "tags", "publisher", "year", "language", "isbn", "asin", "description", "abridged", "explicit", "cover"] as const;
+export type WorkField = (typeof WORK_FIELDS)[number];
+/** One series of a work as the Edit page writes it: a provider's (`id` from AudiobookDB), or a local one (`id` null for a new one). */
+export type SeriesEntry = { id: string | null; name: string; position: number | null; positionLabel: string | null; local: boolean };
+/** A work's details beyond `LibraryWork`'s first fields (#719): the edited value where there is one, else the source's. */
+export type WorkDetails = {
+  subtitle: string;
+  authors: string[];
+  genres: string[];
+  tags: string[];
+  publisher: string;
+  language: string;
+  isbn: string;
+  asin: string;
+  abridged: boolean | null;
+  explicit: boolean | null;
+  /** The fields edited by hand: shown as Edited. */
+  edited: WorkField[];
+};
+export type WorkFieldValues = {
+  title: string;
+  subtitle: string;
+  authors: string[];
+  series: SeriesEntry[];
+  genres: string[];
+  tags: string[];
+  publisher: string;
+  year: number | null;
+  language: string;
+  isbn: string;
+  asin: string;
+  description: string;
+  abridged: boolean | null;
+  explicit: boolean | null;
+  cover: string;
+};
+/** `GET /api/works/<workId>/metadata` (the administrator's): each field's value, the source's value and whether it was edited. */
+export type WorkMetadata = {
+  workId: string;
+  values: WorkFieldValues;
+  source: WorkFieldValues;
+  edited: WorkField[];
+  /** The provider an edited field was taken from by a match (#719 part b); absent for a field edited by hand, and from an older server. */
+  from?: Partial<Record<WorkField, MetadataProvider>>;
+  recordings: { recordingId: string; label: string; narrators: string[]; source: string[]; edited: boolean; from?: MetadataProvider | null }[];
+};
+/** The providers a book's details are matched from (#719 part b, #721's four). */
+export type MetadataProvider = "audiobookdb" | "openlibrary" | "googlebooks" | "itunes";
+/** The fields of the comparison (#719 part b): the work's, and `narrators` (a recording's, one row per recording). */
+export const MATCH_FIELDS = ["title", "subtitle", "authors", "series", "genres", "publisher", "year", "language", "isbn", "asin", "description", "cover"] as const satisfies readonly WorkField[];
+export type MatchField = (typeof MATCH_FIELDS)[number];
+/** One row of the comparison: the value now, the provider's (null when it gives none), and whether it is ticked by default. */
+export type MatchRow<T = unknown> = { current: T; found: T | null; ticked: boolean; same: boolean };
+/**
+ * `GET /api/works/<workId>/metadata/match?provider=&id=` (the administrator's): the per-field comparison of the work
+ * with one provider's book. Ticked by default: the fields the work has no value for and the provider has.
+ */
+export type MetadataComparison = {
+  workId: string;
+  provider: MetadataProvider;
+  id: string;
+  title: string;
+  fields: Record<MatchField, MatchRow>;
+  recordings: ({ recordingId: string; label: string } & MatchRow<string[]>)[];
+};
+/** What `POST /api/works/<workId>/metadata/match` and `/metadata/auto` wrote (or why nothing). */
+export type MetadataApplied = {
+  outcome: "applied" | "nothing" | "unsure" | "missing" | "failed";
+  provider: MetadataProvider | null;
+  fields: string[];
+  reason: string | null;
+  metadata: WorkMetadata | null;
+};
 export type WorkMediaState = {
   state: "missing" | "queued" | "failed" | "available";
   holdReason: "unreleased" | "empty_search" | null;
@@ -181,7 +261,12 @@ export type WorkMediaState = {
 export type WorkRecording = {
   recordingId: string;
   editionId: string;
+  /** The narrators joined with ", " (the edited ones when the administrator edited them, #719). */
   narrator: string;
+  /** The narrators one by one (#719); absent from an older server. */
+  narrators?: string[];
+  /** Whether the narrators were edited by hand (#719). */
+  narratorsEdited?: boolean;
   language: string | null;
   releaseTitle: string | null;
   sourceLabel: string;
@@ -433,6 +518,11 @@ export type ActivityFacts =
        * the series name and the error the reason; an older client reads it as a failed audiobook search.
        */
       saveAgain?: true;
+      /**
+       * Not a search: a book of a series' 'Match automatically' (#719 part b). `status` is the row's own (`pending`,
+       * `running`, `done`, `unsure`, `failed`); the error is the reason. An older client reads it as a series search.
+       */
+      metadataMatch?: true;
     }
   | {
       kind: "alignment";

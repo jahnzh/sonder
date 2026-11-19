@@ -49,6 +49,8 @@ export type SeriesJobRow = {
    * row's own (`missing`, `failed`, `saved`), `title` the series name, `error` the reason.
    */
   resave?: { userId: number; hardcoverSeriesId: number };
+  /** A book of a series' 'Match automatically' (#719 part b, `metadata_match_jobs`): `status` is the row's own. */
+  metadataMatch?: { workId: string };
 };
 
 /** The reset's rows Activity lists: a series not found or not saved yet, and one saved without some of its books. */
@@ -68,6 +70,24 @@ function resaveRows(sqlite: Parameters<typeof worksWithFile>[0]): SeriesJobRow[]
     updated_at: row.updated_at, retry_at: null, work: null, resave: { userId: row.userId, hardcoverSeriesId: row.hardcoverSeriesId },
   }));
 }
+/** A series' 'Match automatically' (#719 part b): one row per book, waiting, matching, or ended without a sure match or failed. */
+const MATCH_STATES: Record<string, ActivityState> = { pending: "queued", running: "running", done: "done", unsure: "done", failed: "failed" };
+function metadataMatchRows(sqlite: Parameters<typeof worksWithFile>[0], userId: number): SeriesJobRow[] {
+  const table = sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='metadata_match_jobs'").get();
+  if (!table) return [];
+  const rows = sqlite
+    .prepare(
+      `SELECT j.work_id AS workId,u.username AS user,w.title,j.status,j.reason,j.updated_at FROM metadata_match_jobs j
+         JOIN works w ON w.id=j.work_id LEFT JOIN users u ON u.id=j.user_id ORDER BY j.rowid`,
+    )
+    .all() as { workId: string; user: string | null; title: string; status: string; reason: string | null; updated_at: number }[];
+  return withWorks(sqlite, userId, rows, (row) => row.workId).map((row) => ({
+    id: `match:${row.workId}`, user: row.user, kind: "metadata", title: row.title, status: row.status, error: row.reason,
+    updated_at: row.updated_at, retry_at: null, work: row.work, metadataMatch: { workId: row.workId },
+  }));
+}
+const parseMatchId = (id: string) => id.match(/^series-acquisition:match:(.+)$/)?.[1] ?? null;
+
 export const parseResaveId = (id: string) => {
   const match = id.match(/^series-acquisition:resave:(\d+):(\d+)$/);
   return match ? { userId: Number(match[1]), hardcoverSeriesId: Number(match[2]) } : null;
@@ -78,6 +98,13 @@ const expectedOutcome = (row: Pick<SeriesJobRow, "status" | "error">) =>
 
 /** The administrator's Retry on a failed search: the feature puts the job back in its queue (`retrySeriesAcquisitionJob`). */
 const retry: ActivityAction = async (id, { deps, log }) => {
+  const matchWorkId = parseMatchId(id);
+  if (matchWorkId) {
+    if (!deps.retryMetadataMatch) throw activityFailure(400, "This item has no retry or discard yet.");
+    if (!deps.retryMetadataMatch(matchWorkId)) throw activityFailure(409, "This book is being matched already.");
+    log.info({ action: "activity.retry", workId: matchWorkId }, "Match automatically queued again");
+    return { ok: true };
+  }
   const resave = parseResaveId(id);
   if (resave) {
     if (!deps.retrySeriesResave) throw activityFailure(400, "This item has no retry or discard yet.");
@@ -108,7 +135,7 @@ export const seriesAcquisitionSource = defineSource<SeriesJobRow[]>({
           ORDER BY j.rowid`,
       ).all() as Array<Omit<SeriesJobRow, "work"> & { work_id: string | null }>,
       (row) => row.work_id,
-    ).filter((row) => !failedButHasFile(sqlite, row)).map((row): SeriesJobRow => row).concat(resaveRows(sqlite)),
+    ).filter((row) => !failedButHasFile(sqlite, row)).map((row): SeriesJobRow => row).concat(resaveRows(sqlite), metadataMatchRows(sqlite, userId)),
   report(rows, _probe, context) {
     const now = context?.now ?? Date.now();
     // The search running now is first in line; the waiting jobs that may run follow in the queue's order.
@@ -118,6 +145,7 @@ export const seriesAcquisitionSource = defineSource<SeriesJobRow[]>({
       if (row.status === "pending" && !(row.retry_at && row.retry_at > now)) places.set(row.id, ++place);
     const drafts = rows.map((row) => {
       if (row.resave) return resaveDraft(row);
+      if (row.metadataMatch) return metadataMatchDraft(row);
       const mapped = stateFrom(SERIES_ACQUISITION_ACTIVITY_STATES, row.status);
       const expected = expectedOutcome(row);
       const state = expected ? "done" : mapped.state;
@@ -147,6 +175,20 @@ export const seriesAcquisitionSource = defineSource<SeriesJobRow[]>({
     return { ok: true };
   },
 });
+
+/** A book of a series' 'Match automatically': Retry when it failed or found no sure match. */
+function metadataMatchDraft(row: SeriesJobRow) {
+  const state = MATCH_STATES[row.status] ?? "failed";
+  return {
+    id: `series-acquisition:${row.id}`, kind: "series-acquisition" as const, processId: "series-acquisition",
+    title: row.title || "Book", detail: "Match automatically",
+    user: row.user, state, progress: null, host: null, startedAt: null, updatedAt: row.updated_at,
+    ...itemWork(row.work),
+    facts: { kind: "series-acquisition" as const, status: row.status, search: "audiobook" as const, place: null, retryAt: null, metadataMatch: true as const },
+    error: row.error, changedAt: row.updated_at,
+    actions: row.status === "failed" || row.status === "unsure" ? ["retry" as const] : [],
+  };
+}
 
 /** A series of the reset: not found (Discard), not saved yet (Retry), or saved without some books (Discard). */
 function resaveDraft(row: SeriesJobRow) {

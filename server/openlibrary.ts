@@ -151,7 +151,7 @@ export async function searchOpenLibrarySeries(name: string, options: { priority?
 export async function openLibraryWork(
   id: string,
   options: { priority?: Priority; fresh?: boolean } = {},
-): Promise<{ id: string; title: string; description: string | null; cover: string | null; authorIds: string[]; year: number | null }> {
+): Promise<{ id: string; title: string; subtitle: string | null; description: string | null; cover: string | null; authorIds: string[]; year: number | null; subjects: string[] }> {
   if (!/^OL\d+W$/.test(id)) throw fail("not_found", "Open Library has no work with this id.");
   const { data } = await cached({
     provider: "openlibrary",
@@ -170,7 +170,9 @@ export async function openLibraryWork(
     .map((key) => key?.match(/(OL\d+A)$/)?.[1] ?? null)
     .filter((key): key is string => !!key);
   const year = text(data.first_publish_date)?.match(/\b(1[5-9]\d\d|20\d\d)\b/)?.[1];
-  return { id, title: text(data.title)!, description, cover: coverUrl(Array.isArray(data.covers) ? data.covers[0] : null), authorIds, year: year ? Number(year) : null };
+  // The first few subjects stand for genres (#719 part b): Open Library lists many, most of them not genres.
+  const subjects = (Array.isArray(data.subjects) ? data.subjects : []).filter((entry): entry is string => typeof entry === "string" && !!entry.trim()).slice(0, 5);
+  return { id, title: text(data.title)!, subtitle: text(data.subtitle), description, cover: coverUrl(Array.isArray(data.covers) ? data.covers[0] : null), authorIds, year: year ? Number(year) : null, subjects };
 }
 
 /** `/authors/{id}.json`: the author's name, cached a week. */

@@ -104,6 +104,8 @@ test("a work with only a placeholder has no recordings and the placeholder's cov
     mediaState: { state: "missing", holdReason: "unreleased", acquisition: null },
     hardcover: null,
     wantToRead: false,
+    // The details of the Edit page (#719): the source's values, nothing edited.
+    details: { subtitle: "", authors: ["Author of Only a Placeholder"], genres: ["Fiction"], tags: [], publisher: "", language: "", isbn: "", asin: "", abridged: null, explicit: null, edited: [] },
   });
   assert.deepEqual(await work(OWNER_TOKEN, "w-only"), only);
 });
@@ -153,6 +155,8 @@ test("two recordings are one work, and the one with the newest place is chosen",
     faults: {},
     progress: { recordingId: "rec-two-b", trackId: "t-two-b-0", position: 60, duration: 600, updatedAt: T0 + 11 * DAY },
     serverCopy: null,
+    narrators: ["Narrator B"],
+    narratorsEdited: false,
   });
 });
 
@@ -259,6 +263,8 @@ test("a work outside the library comes through the one-work read", async () => {
     mediaState: null,
     hardcover: null,
     wantToRead: false,
+    // The details of the Edit page (#719): the source's values, nothing edited.
+    details: { subtitle: "", authors: ["Author of Outside the Library"], genres: ["Fiction"], tags: [], publisher: "", language: "en", isbn: "", asin: "", abridged: null, explicit: null, edited: [] },
   });
 });
 

@@ -36,6 +36,10 @@ export type CatalogueBook = {
   releaseIds: string[];
   /** Only on a live detail answer: never cached, never sent on unless a match fills an empty description. */
   description: string | null;
+  /** Where the provider gives them (#719 part b's comparison): genres or subjects, the publisher, an ISBN. */
+  genres?: string[];
+  publisher?: string | null;
+  isbn?: string | null;
 };
 
 /** English as a provider writes it: a name or a code. An unknown language is not English. */

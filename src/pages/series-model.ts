@@ -58,6 +58,8 @@ export type SeriesPageSeries = {
   works: SeriesPageWork[];
   /** AudiobookDB could not be read: the page shows the last saved list with this message and Retry. */
   refreshError?: string;
+  /** A series made by hand on a book's Edit page (#719): its books are the user's, so there is nothing to remove. */
+  local?: boolean;
 };
 
 export type SeriesRowAction =
@@ -126,6 +128,8 @@ export type SeriesPageModel = {
   noConnection: string | null;
   /** Remove series is off: without a connection it cannot reach the server. */
   removeOff: boolean;
+  /** Remove series is shown: not on a local series (#719), which is the books the administrator put in it. */
+  removable: boolean;
   /**
    * The New card under the intro while any row is marked New: the new titles for its second line, comma-separated
    * in reading order (the screen cuts them with an ellipsis), and every work the answer marks new for Dismiss to
@@ -304,6 +308,7 @@ export function seriesPageModel(
     refreshError: offline || !saved ? null : series.refreshError || null,
     noConnection: offline ? NO_CONNECTION_LINE : null,
     removeOff: offline,
+    removable: saved && !series.local,
     dismissOff: offline,
     newCard,
   };
