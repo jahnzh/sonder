@@ -98,7 +98,7 @@ export type LibraryWork = {
    * (those stay on the alignment routes). A running rebuild's state is under `rebuild`.
    */
   readingSync: ReadingSyncSummary[];
-  /** Every series of the work (its Hardcover book's), the ones the user saved first, then in Hardcover's order. */
+  /** Every series of the work on AudiobookDB, the ones the user saved first, then by name. */
   series: WorkSeries[];
   /** The media state of ADR 0011, as `Book.mediaState`; null when the work has none for the user. */
   mediaState: WorkMediaState | null;
@@ -167,7 +167,8 @@ export type WorkResult = {
   /** On the user's own Want to read (#721 part c1); absent from a server before it. */
   wantToRead?: boolean;
 };
-export type WorkSeries = { id: number | null; name: string; position: number | null; saved: boolean };
+/** A series of a work on AudiobookDB (#721): its id, name, number and label ("1.5"), and whether the user saved it. */
+export type WorkSeries = { id: string | null; name: string; position: number | null; positionLabel?: string | null; saved: boolean };
 export type WorkMediaState = {
   state: "missing" | "queued" | "failed" | "available";
   holdReason: "unreleased" | "empty_search" | null;
@@ -222,7 +223,8 @@ export type DownloadPart = {
 };
 export type Settings = {
   torboxConfigured: boolean;
-  hardcoverConfigured: boolean;
+  /** A Hardcover token is stored: never after the switch from Hardcover (#721 part d); kept for older builds. */
+  hardcoverConfigured?: boolean;
   abbUrl: string;
   name: string;
   authenticated?: boolean;
@@ -331,21 +333,6 @@ export type SeriesWorkAcquisition = {
     | null;
 };
 
-export type HardcoverState = {
-  configured: boolean;
-  mode: "off" | "import" | "two-way";
-  syncLists: boolean;
-  accountId: number | null;
-  username: string | null;
-  lastSync: number;
-  lastError: string | null;
-  listWarning: string | null;
-  syncing: boolean;
-  pending: number;
-  linked: number;
-  lists: { id: number; name: string; count: number; slug: string | null }[];
-  shelves: { id: number; name: string }[];
-};
 export type TorrentHealth = {
   status: "ok" | "offline" | "unreachable" | "auth" | "error" | "unconfigured";
   // RPC answered with a valid session.
@@ -363,7 +350,6 @@ export type ActivityKind =
   | "server-copy"
   | "series-acquisition"
   | "alignment"
-  | "hardcover"
   | "ebook-set"
   | "backup";
 export type ActivityState = "running" | "queued" | "paused" | "failed" | "done";
@@ -378,7 +364,7 @@ export type ActivityItem = {
   processId: string;
   title: string;
   detail: string | null;
-  /** Whose item it is when the page is read by the administrator (one row per user for Hardcover). */
+  /** Whose item it is when the page is read by the administrator (an item a user owns). */
   user: string | null;
   state: ActivityState;
   /** 0 to 1, or null when the kind has no measurable progress. */
@@ -398,7 +384,7 @@ export type ActivityItem = {
   stuck: { reason: string; known?: true } | null;
   /** The background process this item cannot move without, while that process is down. */
   blockedBy: string | null;
-  /** The work the item concerns; null for an acquisition with no work yet, a Hardcover queue and a backup (#514). */
+  /** The work the item concerns; null for an acquisition with no work yet and a backup (#514). */
   workId: string | null;
   /** The audio edition of the work's chosen recording; null when it has none, and never a placeholder's (#514). */
   bookId: string | null;
@@ -442,6 +428,11 @@ export type ActivityFacts =
       place?: number | null;
       /** A search put back in the queue by itself after its source could not be reached waits until then; else null. */
       retryAt?: number | null;
+      /**
+       * Not a search: a saved series of the Hardcover tables saved again on AudiobookDB (#721 part b). The title is
+       * the series name and the error the reason; an older client reads it as a failed audiobook search.
+       */
+      saveAgain?: true;
     }
   | {
       kind: "alignment";
@@ -461,7 +452,6 @@ export type ActivityFacts =
       /** Queued by itself (the backfill, an ebook-set check, new audio), not by a Prepare (#718). */
       background?: boolean;
     }
-  | { kind: "hardcover"; status: "waiting" | "failing"; queue: "status" | "listening" | "reading" }
   /** An ebook's check against the narration: the member's status, with the reason it is held when it is. */
   | { kind: "ebook-set"; status: string; holdReason: string | null }
   | { kind: "backup"; status: string };

@@ -78,8 +78,8 @@ export function resetSeriesReleaseSearchDeps() {
 
 export function savedSeriesWork(
   userId: number,
-  seriesId: number,
-  bookId: number,
+  seriesId: string,
+  bookId: string,
 ) {
   const row = sqlite
     .prepare(
@@ -106,8 +106,8 @@ export function defaultReleaseSearchQuery(
 
 export async function searchSeriesWorkReleases(
   userId: number,
-  seriesId: number,
-  bookId: number,
+  seriesId: string,
+  bookId: string,
   query: string,
   page = 1,
 ) {
@@ -158,8 +158,8 @@ export async function searchSeriesWorkReleases(
 
 export async function selectSeriesWorkRelease(
   userId: number,
-  seriesId: number,
-  bookId: number,
+  seriesId: string,
+  bookId: string,
   input: {
     source: "abb" | "prowlarr";
     id: string;

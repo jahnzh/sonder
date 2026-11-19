@@ -6,7 +6,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { parseFile } from "music-metadata";
 import { audioParseOptions, normalizeChapters, type Chapter } from "./chapters.ts";
 import { db, sqlite } from "./db.ts";
-import { hardcoverWorkForMedia } from "./hardcover.ts";
+import { matchedWorkForMedia } from "./same-book.ts";
 import { claimWorkAudio } from "./work-library.ts";
 import * as s from "./schema.ts";
 import { getSecret, torbox } from "./services.ts";
@@ -232,7 +232,7 @@ function createBook(
   const id =
     job.backend === "torbox" ? `torbox-${job.remoteId}` : `local-${job.hash}`;
   const workId =
-    job.workId || hardcoverWorkForMedia(job.title, job.author) || `work-${id}`;
+    job.workId || matchedWorkForMedia(job.title, job.author) || `work-${id}`;
   sqlite.transaction(() => {
     if (!db.select().from(s.editions).where(eq(s.editions.id, id)).get()) {
       db.insert(s.works)

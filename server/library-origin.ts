@@ -8,20 +8,23 @@ export function setLibraryOrigin(
   userId: number,
   workId: string,
   source: Exclude<LibraryOriginSource, "unknown">,
-  options?: { seriesId?: number; addedAt?: number },
+  options?: { seriesId?: string; addedAt?: number },
 ) {
   const addedAt = options?.addedAt ?? Date.now();
+  // The series is named by its AudiobookDB id (#721); the Hardcover `series_id` is no longer written.
+  const catalogueSeriesId = options?.seriesId ?? null;
   db.insert(s.userWorkLibraryOrigin)
     .values({
       userId,
       workId,
       source,
-      seriesId: options?.seriesId ?? null,
+      seriesId: null,
+      catalogueSeriesId,
       addedAt,
     })
     .onConflictDoUpdate({
       target: [s.userWorkLibraryOrigin.userId, s.userWorkLibraryOrigin.workId],
-      set: { source, seriesId: options?.seriesId ?? null, addedAt },
+      set: { source, seriesId: null, catalogueSeriesId, addedAt },
     })
     .run();
 }
@@ -31,13 +34,14 @@ export function recordLibraryOrigin(
   userId: number,
   workId: string,
   source: Exclude<LibraryOriginSource, "unknown">,
-  options?: { seriesId?: number; addedAt?: number },
+  options?: { seriesId?: string; addedAt?: number },
 ) {
   setLibraryOrigin(userId, workId, source, options);
 }
 
+/** The work's origin for the user; `seriesId` is the AudiobookDB series that brought it (#721). */
 export function libraryOriginFor(userId: number, workId: string) {
-  return db
+  const row = db
     .select()
     .from(s.userWorkLibraryOrigin)
     .where(
@@ -47,12 +51,13 @@ export function libraryOriginFor(userId: number, workId: string) {
       ),
     )
     .get();
+  return row ? { userId: row.userId, workId: row.workId, source: row.source, seriesId: row.catalogueSeriesId, addedAt: row.addedAt } : undefined;
 }
 
 export function countOtherSavedSeries(
   userId: number,
   workId: string,
-  exceptSeriesId: number,
+  exceptSeriesId: string,
 ) {
   const row = sqlite
     .prepare(
@@ -106,7 +111,7 @@ export function removeUserLibraryRow(userId: number, bookId: string) {
 /** Whether this work counts as introduced through this series for removal defaults. */
 export function workIntroducedViaSeries(
   userId: number,
-  seriesId: number,
+  seriesId: string,
   workId: string,
   legacyIntroduced: boolean,
 ) {
@@ -118,7 +123,7 @@ export function workIntroducedViaSeries(
 
 export function seriesRemovalWorkSelectedByDefault(
   userId: number,
-  seriesId: number,
+  seriesId: string,
   workId: string,
   legacyIntroduced: boolean,
   otherSeriesCount: number,
@@ -129,7 +134,7 @@ export function seriesRemovalWorkSelectedByDefault(
 
 export function removalDefaultSelected(
   userId: number,
-  seriesId: number,
+  seriesId: string,
   work: { added: boolean; workId: string | null },
   legacyIntroduced: boolean,
 ) {
@@ -144,8 +149,8 @@ export function removalDefaultSelected(
 }
 
 export function libraryOriginLabel(
-  origin: { source: LibraryOriginSource; seriesId: number | null } | undefined,
-  seriesId: number,
+  origin: { source: LibraryOriginSource; seriesId: string | null } | undefined,
+  seriesId: string,
 ): string | null {
   if (!origin || origin.source === "unknown") return null;
   if (origin.source === "manual") return "Added manually";

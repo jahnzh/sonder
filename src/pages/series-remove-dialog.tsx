@@ -15,7 +15,7 @@ import { seriesRemoveModel, type SeriesRemovalPreview, type SeriesRemoveManual }
 import "./series-remove-dialog.css";
 
 type Props = {
-  seriesId: number;
+  seriesId: string;
   /** The series' name as the page shows it. */
   name: string;
   admin: boolean;
@@ -99,7 +99,7 @@ export function SeriesRemoveDialog({ seriesId, name, admin, online, open, onClos
               <ChoiceList
                 label={model.caption}
                 options={model.choices.map((choice) => ({ value: String(choice.bookId), label: choice.title, detail: choice.detail, chosen: choice.chosen }))}
-                onToggle={(value, chosen) => setManual((current) => ({ ...current, [Number(value)]: chosen }))}
+                onToggle={(value, chosen) => setManual((current) => ({ ...current, [value]: chosen }))}
               />
             </div>
           )}

@@ -1,6 +1,6 @@
 // Add to library and Remove from library by work (#527): `PUT` and `DELETE /api/works/<workId>/library`
-// on the fixture of `tests/library-works-fixture.ts`, with a few works of its own and a fake Hardcover
-// account for the owner, read as the owner (the administrator) and as Sam (a user).
+// on the fixture of `tests/library-works-fixture.ts`, with a few works of its own, read as the owner (the
+// administrator) and as Sam (a user). Hardcover is removed (#721 part d): nothing is queued for it any more.
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
@@ -21,7 +21,7 @@ writeLibraryFixture(sqlite, process.env.MEDIA_ROOT, hashToken);
 const run = (sql: string, ...args: unknown[]) => sqlite.prepare(sql).run(...args);
 // Written here, not in the shared fixture, so the `GET /api/books` pin stays as recorded.
 // - w-pair: two real recordings in nobody's library; the owner hid ed-pair-b and has a place in it.
-//   Linked to Hardcover book 9002, which is on none of the owner's Hardcover shelves.
+//   Linked to Hardcover book 9002 (a stored link that stays, unused).
 // - w-text: a work with an ebook and no audio edition at all.
 // - w-two gets an ebook edition with the owner's place, checkpoint and bookmark in it.
 run("INSERT INTO works(id,title,author,description,genre,year) VALUES('w-pair','A Pair','Pair Author','About a pair.','Fiction',2002)");
@@ -54,48 +54,6 @@ run("INSERT INTO user_ebook_progress(user_id,edition_id,cfi,chapter,updated_at) 
 run("INSERT INTO user_reader_checkpoints(user_id,edition_id,data) VALUES(?,'eb-two','{\"progression\":0.4}')", OWNER);
 run("INSERT INTO user_reader_bookmarks(user_id,id,edition_id,label,locator,created_at) VALUES(?,'bm-1','eb-two','Here','{}',?)", OWNER, T0);
 
-// The owner's Hardcover account: Two Recordings (book 9001, linked to w-two) is on its Listening shelf.
-const book = (id: number, title: string) => ({
-  id,
-  title,
-  slug: title.toLowerCase().replace(/ /g, "-"),
-  pages: 200,
-  description: `About ${title}.`,
-  release_year: 2001,
-  cached_image: null,
-  contributions: [{ contribution: "author", author: { name: `Author of ${title}` } }],
-  book_series: [],
-  default_audio_edition: null,
-  editions: [],
-});
-const books: Record<number, ReturnType<typeof book>> = { 9001: book(9001, "Two Recordings"), 9002: book(9002, "A Pair") };
-const entries: any[] = [{ id: 11, book_id: 9001, status_id: 2, updated_at: "2020-01-01T00:00:00Z", book: books[9001], user_book_reads: [] }];
-/** Each shelf add the server sent Hardcover: the book and its shelf. */
-const shelfAdds: { bookId: number; statusId: number }[] = [];
-const realFetch = globalThis.fetch;
-globalThis.fetch = async (input, init) => {
-  if (!String(input).startsWith("https://api.hardcover.app/")) return realFetch(input, init);
-  const { query, variables: v } = JSON.parse(String(init?.body));
-  let data: unknown;
-  if (query.includes("SonderAccount")) data = { me: [{ id: 7001, username: "hc-owner" }] };
-  else if (query.includes("SonderLibrary")) data = { user_books: entries.slice(v.offset, v.offset + 250) };
-  else if (query.includes("SonderShelfAdd")) {
-    shelfAdds.push({ bookId: v.object.book_id, statusId: v.object.status_id });
-    const added = {
-      id: 100 + entries.length,
-      book_id: v.object.book_id,
-      status_id: v.object.status_id,
-      updated_at: new Date().toISOString(),
-      book: books[v.object.book_id],
-      user_book_reads: [],
-    };
-    entries.push(added);
-    data = { insert_user_book: { error: null, user_book: added } };
-  } else if (query.includes("SonderBookProgress")) data = { user_books: entries.filter((e) => e.book_id === v.bookId) };
-  else throw new Error(`Unexpected Hardcover operation: ${query.slice(0, 70)}`);
-  return Response.json({ data: structuredClone(data) });
-};
-
 // The fixture is a library after the one-off start step (#555): w-text stays outside the owner's
 // library until a test adds it, so the step is marked done before the server starts.
 run("INSERT INTO user_settings(user_id,key,value) VALUES(?,'shelfEbooksJoined','1')", OWNER);
@@ -104,7 +62,6 @@ const app = await createApp({ background: { manual: true } });
 await removeRecording((options) => app.inject(options));
 
 after(async () => {
-  globalThis.fetch = realFetch;
   await app.close();
   sqlite.close();
 });
@@ -158,21 +115,7 @@ async function work(workId: string, token = OWNER_TOKEN) {
   assert.equal(response.statusCode, 200, response.body);
   return response.json() as LibraryWork;
 }
-async function sync() {
-  const response = await call("POST", "/api/hardcover/sync", OWNER_TOKEN);
-  assert.equal(response.statusCode, 200, response.body);
-}
-
-test("the owner's Hardcover account syncs two-way before any change", async () => {
-  assert.equal((await call("PUT", "/api/hardcover/token", OWNER_TOKEN, { token: "owner-key" })).statusCode, 200);
-  const configured = await call("PATCH", "/api/hardcover/config", OWNER_TOKEN, { mode: "two-way", syncLists: false });
-  assert.equal(configured.statusCode, 200, configured.body);
-  await sync();
-  assert.deepEqual(outbox(OWNER), []);
-  assert.ok((await library()).includes("w-two"));
-});
-
-test("PUT adds every recording of a work and unhides a hidden one; the origin and the Hardcover add are written once", async () => {
+test("PUT adds every recording of a work and unhides a hidden one; the origin is written once and Hardcover is told nothing", async () => {
   const sam = userState(SAM);
   assert.deepEqual(libraryRows(OWNER, "w-pair"), []);
   assert.deepEqual(hiddenRows(OWNER, "w-pair"), ["ed-pair-b"]);
@@ -183,20 +126,16 @@ test("PUT adds every recording of a work and unhides a hidden one; the origin an
   assert.deepEqual(libraryRows(OWNER, "w-pair"), ["ed-pair-a", "ed-pair-b"]);
   assert.deepEqual(hiddenRows(OWNER, "w-pair"), []);
   assert.deepEqual(origin(OWNER, "w-pair"), { source: "manual", seriesId: null });
-  assert.deepEqual(outbox(OWNER), [{ bookId: 9002, statusId: 1, intent: "add" }]);
+  assert.deepEqual(outbox(OWNER), []);
   // The work is in the library with both recordings, the place in the one that was hidden kept.
   const pair = await work("w-pair");
   assert.equal(pair.inLibrary, true);
   assert.deepEqual(pair.recordings.map((r) => r.recordingId), ["rec-pair-a", "rec-pair-b"]);
   assert.equal(pair.recordings[1].progress?.position, 250);
   assert.ok((await library()).includes("w-pair"));
-  // Hardcover is told once: one shelf add reaches it, and adding the work again sends nothing more.
-  await sync();
-  assert.deepEqual(shelfAdds, [{ bookId: 9002, statusId: 1 }]);
+  // Adding the work again writes nothing more.
   assert.equal((await membership("PUT", "w-pair")).statusCode, 200);
   assert.deepEqual(outbox(OWNER), []);
-  await sync();
-  assert.deepEqual(shelfAdds, [{ bookId: 9002, statusId: 1 }]);
   assert.deepEqual(libraryRows(OWNER, "w-pair"), ["ed-pair-a", "ed-pair-b"]);
   assert.deepEqual(userState(SAM), sam, "Sam's rows are untouched");
 });
@@ -310,8 +249,7 @@ test("DELETE hides every edition of the work and keeps places, bookmarks and the
   assert.equal(outside.inLibrary, false);
   assert.deepEqual(outside.recordings, []);
   assert.ok((await library(SAM_TOKEN)).includes("w-two"));
-  // The book is still on the owner's Hardcover Listening shelf; a sync does not add it back.
-  await sync();
+  // The stored Hardcover shelf row does not bring it back (Hardcover is removed, #721 part d).
   assert.deepEqual(libraryRows(OWNER, "w-two"), []);
   assert.ok(!(await library()).includes("w-two"));
   // Removing it again changes nothing.
@@ -319,7 +257,7 @@ test("DELETE hides every edition of the work and keeps places, bookmarks and the
   assert.deepEqual(hiddenRows(OWNER, "w-two"), ["ed-two-a", "ed-two-b"]);
 });
 
-test("DELETE hides the placeholder too, so a work with only a placeholder stays out after a sync", async () => {
+test("DELETE hides the placeholder too, so a work with only a placeholder stays out", async () => {
   assert.equal((await membership("DELETE", "w-only")).statusCode, 200);
   assert.deepEqual(libraryRows(OWNER, "w-only"), []);
   assert.deepEqual(hiddenRows(OWNER, "w-only"), ["hc-101"]);
@@ -327,7 +265,6 @@ test("DELETE hides the placeholder too, so a work with only a placeholder stays 
   assert.equal((await membership("DELETE", "w-beside")).statusCode, 200);
   assert.deepEqual(hiddenRows(OWNER, "w-beside"), ["ed-beside", "hc-102"]);
   assert.deepEqual(libraryRows(SAM, "w-beside"), ["ed-beside"]);
-  await sync();
   for (const workId of ["w-only", "w-beside"]) assert.ok(!(await library()).includes(workId), workId);
   // Adding w-beside again unhides and adds only the real edition; the placeholder stays hidden.
   assert.equal((await membership("PUT", "w-beside")).statusCode, 200);

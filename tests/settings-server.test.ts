@@ -2,7 +2,7 @@
 // request's age and the line after Approve.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { approvedLine, driveSize, freeSpace, hardcoverSyncLine, requestAge, usedLine, usedShare } from "../src/settings-server.ts";
+import { approvedLine, driveSize, freeSpace, requestAge, usedLine, usedShare } from "../src/settings-server.ts";
 
 const drive = (usedBytes: number | null, totalBytes: number | null, connected = true) => ({ connected, usedBytes, totalBytes });
 
@@ -24,15 +24,6 @@ test("the bar: the share used, held between 0 and 1, none without sizes or a dri
   assert.equal(usedShare(drive(null, 4e12)), null);
   assert.equal(usedShare(drive(1e12, 0)), null);
   assert.equal(usedShare(drive(1e12, 4e12, false)), null);
-});
-
-test("Hardcover's Sync row: the changes waiting first, else when it last synced, else not yet", () => {
-  const now = new Date(2026, 10, 18, 15, 0).getTime();
-  assert.equal(hardcoverSyncLine({ pending: 3, lastSync: now - 60000 }, now), "3 changes waiting");
-  assert.equal(hardcoverSyncLine({ pending: 1, lastSync: 0 }, now), "1 change waiting");
-  assert.equal(hardcoverSyncLine({ pending: 0, lastSync: new Date(2026, 10, 18, 14, 2).getTime() }, now), "Last synced today 14:02");
-  assert.equal(hardcoverSyncLine({ pending: 0, lastSync: 0 }, now), "Not synced yet");
-  assert.equal(hardcoverSyncLine(null, now), "");
 });
 
 test("an account request's age and the line after Approve", () => {

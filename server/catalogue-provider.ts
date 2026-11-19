@@ -201,6 +201,8 @@ export function createLimiter(options: { clock?: LimiterClock; minIntervalMs: nu
     },
     /** Runs `run` in turn. An interactive request that would wait longer than `maxWaitMs` fails at once instead. */
     schedule<T>(run: () => Promise<T>, priority: Priority, onTooLong: () => Error, maxWaitMs = 3000): Promise<T> {
+      // Refused at once, not after the requests queued ahead of it (a background refresh sleeping out a pause).
+      if (priority === "interactive" && retryAt - clock.now() > maxWaitMs) return Promise.reject(onTooLong());
       const result = tail.then(async () => {
         const wait = Math.max(nextAt, retryAt) - clock.now();
         if (wait > 0) {

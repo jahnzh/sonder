@@ -11,7 +11,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
-import { claimHardcoverAudio, hiddenHardcoverPlaceholders, queueHardcoverStatus } from "./hardcover.ts";
+import { hiddenHardcoverPlaceholders } from "./hardcover.ts";
 import { removeUserLibraryRow, setLibraryOrigin } from "./library-origin.ts";
 import { ensurePlaceholder, placeholderEditionSql } from "./placeholder-edition.ts";
 import { ADMIN_USER_ID, getUserSetting, listUserIds, setUserSetting } from "./users.ts";
@@ -86,12 +86,10 @@ export function workInLibrary(userId: number, workId: string) {
  * decision 2), so it joins the library through it.
  *
  * When the work joins the library (the user had no row of it before), its library origin becomes
- * "manual" and Hardcover is told "add", once for the work. Adding a work that is already in the
- * library keeps its origin and its shelf status, so a repeated request changes nothing.
- * `tellHardcover: false` leaves Hardcover's queue alone (the one-time copy of its Want to read
- * shelf, `want-to-read.ts`, whose books are on that shelf already).
+ * "manual", once for the work. Adding a work that is already in the library keeps its origin and
+ * its shelf status, so a repeated request changes nothing.
  */
-export function addWorkToLibrary(userId: number, workId: string, options: { tellHardcover?: boolean } = {}) {
+export function addWorkToLibrary(userId: number, workId: string) {
   sqlite.transaction(() => {
     if (!workEditions(workId).length) ensurePlaceholder(sqlite, workId);
     const editions = workEditions(workId);
@@ -111,10 +109,7 @@ export function addWorkToLibrary(userId: number, workId: string, options: { tell
     if (real.length)
       for (const edition of editions)
         if (edition.placeholder && hasLibraryRow(userId, edition.id)) removeUserLibraryRow(userId, edition.id);
-    if (joins) {
-      setLibraryOrigin(userId, workId, "manual", { addedAt });
-      if (options.tellHardcover !== false) queueHardcoverStatus(userId, workId, "unread", "add");
-    }
+    if (joins) setLibraryOrigin(userId, workId, "manual", { addedAt });
   })();
 }
 
@@ -140,8 +135,8 @@ export function joinLibraryWithEbook(userId: number, ebookId: string) {
  * row of one of the work's placeholders gets the new edition `editionId`'s row with the status of
  * that placeholder row and loses the placeholder rows. A user who hid `editionId` is left alone
  * (their placeholder row stays, so the book stays in their library without the recording they
- * removed). Then the Hardcover part (`claimHardcoverAudio`) runs, which does something only for a
- * work matched on Hardcover. The library origin, places in the ebook and bookmarks are not touched.
+ * removed). The library origin, places in the ebook and bookmarks are not touched (Hardcover's shelf
+ * status and position are no longer applied here: its sync is removed, #721 part d).
  *
  * The acquisition import and the upload call it inside the transaction that wrote the edition.
  */
@@ -171,7 +166,6 @@ export function claimWorkAudio(workId: string, editionId: string) {
           .run();
         for (const edition of placeholders) removeUserLibraryRow(userId, edition.id);
       }
-    claimHardcoverAudio(workId, editionId);
   })();
 }
 

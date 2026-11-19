@@ -154,6 +154,13 @@ test("pickAutoAcquireCandidate prefers plain releases and ignores compilations a
     },
   ];
   assert.equal(pickAutoAcquireCandidate(candidates)?.id, "3");
+  // Two plain releases: the one read by the narrator AudiobookDB names for the release wins (#721).
+  const plain: SeriesAudioCandidate[] = [
+    { source: "prowlarr", id: "4", title: "Plain release", kind: "plain", query: "q", hash: "c".repeat(40), narrator: "Someone Else" },
+    { source: "prowlarr", id: "5", title: "Plain release", kind: "plain", query: "q", hash: "d".repeat(40), narrator: "Jefferson Mays" },
+  ];
+  assert.equal(pickAutoAcquireCandidate(plain)?.id, "4", "without what AudiobookDB says, the first stays first");
+  assert.equal(pickAutoAcquireCandidate(plain, { narrators: ["Jefferson Mays"], lengthMs: null })?.id, "5");
 });
 
 test("withProviderRetry logs errors and returns null after repeated failures", async () => {

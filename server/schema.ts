@@ -268,16 +268,20 @@ export const userEbookProgress = sqliteTable("user_ebook_progress", { userId: in
 export const userReaderCheckpoints = sqliteTable("user_reader_checkpoints", { userId: integer("user_id").notNull(), editionId: text("edition_id").notNull(), data: text("data").notNull() }, t => [primaryKey({ columns: [t.userId, t.editionId] })]);
 export const userReaderBookmarks = sqliteTable("user_reader_bookmarks", { userId: integer("user_id").notNull(), id: text("id").notNull(), editionId: text("edition_id").notNull(), label: text("label").notNull(), locator: text("locator").notNull(), createdAt: integer("created_at").notNull() }, t => [primaryKey({ columns: [t.userId, t.id] })]);
 export const userReaderEvents = sqliteTable("user_reader_events", { userId: integer("user_id").notNull(), eventId: text("event_id").notNull(), editionId: text("edition_id").notNull() }, t => [primaryKey({ columns: [t.userId, t.eventId] })]);
-export const seriesCatalogue = sqliteTable("series_catalogue", { id: integer("id").primaryKey(), name: text("name").notNull(), author: text("author"), bookCount: integer("book_count") });
-export const seriesCatalogueWorks = sqliteTable("series_catalogue_works", { seriesId: integer("series_id").notNull(), bookId: integer("book_id").notNull(), workId: text("work_id"), title: text("title").notNull(), position: real("position"), cover: text("cover"), unreleased: integer("unreleased").notNull().default(0) }, t => [primaryKey({ columns: [t.seriesId, t.bookId] })]);
-export const userSavedSeries = sqliteTable("user_saved_series", { userId: integer("user_id").notNull(), seriesId: integer("series_id").notNull(), savedAt: integer("saved_at").notNull(), refreshedAt: integer("refreshed_at") }, t => [primaryKey({ columns: [t.userId, t.seriesId] })]);
-export const userSavedSeriesWorks = sqliteTable("user_saved_series_works", { userId: integer("user_id").notNull(), seriesId: integer("series_id").notNull(), bookId: integer("book_id").notNull(), workId: text("work_id").notNull(), introduced: integer("introduced").notNull() }, t => [primaryKey({ columns: [t.userId, t.seriesId, t.bookId] })]);
-export const userSeriesSeenWorks = sqliteTable("user_series_seen_works", { userId: integer("user_id").notNull(), seriesId: integer("series_id").notNull(), bookId: integer("book_id").notNull(), acknowledgedAt: integer("acknowledged_at").notNull() }, t => [primaryKey({ columns: [t.userId, t.seriesId, t.bookId] })]);
+// The series on AudiobookDB's text ids (#721 part b; the Hardcover tables they replace are `hardcover_<name>`, unused).
+export const seriesCatalogue = sqliteTable("series_catalogue", { id: text("id").primaryKey(), name: text("name").notNull(), author: text("author"), bookCount: integer("book_count") });
+/** A book of a series: an AudiobookDB book, or (`provider` openlibrary, `book_id` `openlibrary:<work>`) one with no audiobook yet. */
+export const seriesCatalogueWorks = sqliteTable("series_catalogue_works", { seriesId: text("series_id").notNull(), bookId: text("book_id").notNull(), workId: text("work_id"), title: text("title").notNull(), position: real("position"), cover: text("cover"), unreleased: integer("unreleased").notNull().default(0), positionLabel: text("position_label"), author: text("author"), provider: text("provider", { enum: ["audiobookdb", "openlibrary"] }).notNull().default("audiobookdb"), language: text("language"), narrators: text("narrators").notNull().default("[]"), lengthMs: integer("length_ms"), releaseDate: text("release_date") }, t => [primaryKey({ columns: [t.seriesId, t.bookId] })]);
+export const userSavedSeries = sqliteTable("user_saved_series", { userId: integer("user_id").notNull(), seriesId: text("series_id").notNull(), savedAt: integer("saved_at").notNull(), refreshedAt: integer("refreshed_at") }, t => [primaryKey({ columns: [t.userId, t.seriesId] })]);
+export const userSavedSeriesWorks = sqliteTable("user_saved_series_works", { userId: integer("user_id").notNull(), seriesId: text("series_id").notNull(), bookId: text("book_id").notNull(), workId: text("work_id").notNull(), introduced: integer("introduced").notNull() }, t => [primaryKey({ columns: [t.userId, t.seriesId, t.bookId] })]);
+export const userSeriesSeenWorks = sqliteTable("user_series_seen_works", { userId: integer("user_id").notNull(), seriesId: text("series_id").notNull(), bookId: text("book_id").notNull(), acknowledgedAt: integer("acknowledged_at").notNull() }, t => [primaryKey({ columns: [t.userId, t.seriesId, t.bookId] })]);
+/** A saved series of the Hardcover tables, to be saved again by its name on AudiobookDB (`server/series-resave.ts`). */
+export const seriesResave = sqliteTable("series_resave", { userId: integer("user_id").notNull(), hardcoverSeriesId: integer("hardcover_series_id").notNull(), name: text("name").notNull(), author: text("author"), workIds: text("work_ids").notNull().default("[]"), status: text("status", { enum: ["pending", "saved", "missing", "failed"] }).notNull(), seriesId: text("series_id"), reason: text("reason"), attempts: integer("attempts").notNull().default(0), updatedAt: integer("updated_at").notNull() }, t => [primaryKey({ columns: [t.userId, t.hardcoverSeriesId] })]);
 export const seriesAcquisitionJobs = sqliteTable("series_acquisition_jobs", {
   id: text("id").primaryKey(),
   userId: integer("user_id").notNull(),
-  seriesId: integer("series_id").notNull(),
-  bookId: integer("book_id").notNull(),
+  seriesId: text("series_id").notNull(),
+  bookId: text("book_id").notNull(),
   workId: text("work_id").notNull(),
   kind: text("kind").notNull(),
   status: text("status").notNull(),
@@ -295,8 +299,11 @@ export const userWorkLibraryOrigin = sqliteTable(
     userId: integer("user_id").notNull(),
     workId: text("work_id").notNull(),
     source: text("source").notNull(),
+    /** The Hardcover series of an older row; unused since #721. */
     seriesId: integer("series_id"),
     addedAt: integer("added_at").notNull(),
+    /** The AudiobookDB series that brought the work into the library (#721). */
+    catalogueSeriesId: text("catalogue_series_id"),
   },
   (t) => [primaryKey({ columns: [t.userId, t.workId] })],
 );

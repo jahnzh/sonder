@@ -18,12 +18,11 @@ const PAUSE: Record<string, string> = {
   "server-copies": "Off: no new copy to the server starts. One that is running finishes.",
   "series-acquisition": "Off: no new search or download for a series starts.",
   "ebook-set": "Off: no new check of an ebook against the narration starts. One that is running finishes. Turning the reading sync queue off holds these checks too.",
-  "hardcover-sync": "Off: your changes are still saved, but nothing is sent to Hardcover until it is on again. Sync now still works.",
   backups: "Off: no new daily backup starts. One that is running finishes. A deploy still makes its own backup.",
 };
 const LABELS: Record<string, string> = {
   alignment: "Reading sync queue", acquisitions: "Download queue", "server-copies": "Copies to server", "series-acquisition": "Series search",
-  "ebook-set": "Ebook checks", "hardcover-sync": "Hardcover sync", backups: "Database backups",
+  "ebook-set": "Ebook checks", backups: "Database backups",
 };
 const queue = (id: string, over: Partial<ActivityProcess> = {}): ActivityProcess => ({
   id, label: LABELS[id], type: "loop", health: "ok", reason: null, since: null, notTracked: false, pausable: true, paused: false,
@@ -59,7 +58,7 @@ const offlineAt = new Date(new Date().setHours(14, 2, 0, 0)).getTime();
 function boardState({ paused = false, empty = false } = {}): ActivityResponse {
   return answer(
     [
-      queue("acquisitions"), queue("server-copies"), queue("series-acquisition", { paused: !empty }), queue("hardcover-sync"),
+      queue("acquisitions"), queue("server-copies"), queue("series-acquisition", { paused: !empty }),
       queue("alignment", { paused }), queue("ebook-set"),
       queue("backups", { reason: "Last run 17 Nov 03:00 UTC: succeeded, 48.0 MB · Next run 18 Nov 03:00 UTC" }),
       service("torrent-client", "Torrent client"),
@@ -72,7 +71,6 @@ function boardState({ paused = false, empty = false } = {}): ActivityResponse {
       item("alignment", "queued", { kind: "alignment", title: "Children of Time", facts: { kind: "alignment", status: "queued", outcome: null, coverage: null, wholeBook: true, stage: null, files: null } }),
       item("acquisitions", "running"),
       item("ebook-set", "running", { kind: "ebook-set", facts: { kind: "ebook-set", status: "pending", holdReason: null } }),
-      item("hardcover-sync", "queued", { kind: "hardcover", detail: "2 waiting to be sent", user: "admin", facts: { kind: "hardcover", status: "waiting", queue: "listening" } }),
     ],
     paused || empty ? 0 : 1,
   );
@@ -111,7 +109,7 @@ const BOARD_ROWS = [
   ["Reading sync queue", 64], ["Prepare for all books", 52],
   ["wsl", 64], ["lisa", 64],
   ["Download queue", 64], ["Torrent client", 64], ["Copies to server", 64], ["Series search", 64],
-  ["Ebook checks", 64], ["Hardcover sync", 64], ["Database backups", 64], ["Imports", 64],
+  ["Ebook checks", 64], ["Database backups", 64], ["Imports", 64],
 ];
 
 for (const [size, viewport] of [["phone", null], ["desktop", DESKTOP]] as const) {
@@ -128,7 +126,6 @@ for (const [size, viewport] of [["phone", null], ["desktop", DESKTOP]] as const)
     await expect(lineOf(page, "torrent-client")).toHaveText("Running");
     await expect(lineOf(page, "series-acquisition")).toHaveText("Paused");
     await expect(lineOf(page, "ebook-set")).toHaveText("1 checking");
-    await expect(lineOf(page, "hardcover-sync")).toHaveText("2 changes waiting · admin");
     await expect(lineOf(page, "backups")).toHaveText("Last run 17 Nov 03:00 UTC: succeeded, 48.0 MB · Next run 18 Nov 03:00 UTC");
     await expect(lineOf(page, "imports")).toHaveText("Not tracked yet");
     await expect(row(page, "imports")).toHaveAttribute("data-muted", "");
@@ -140,7 +137,7 @@ for (const [size, viewport] of [["phone", null], ["desktop", DESKTOP]] as const)
     await expect(workerRow(page, "lisa").getByRole("img", { name: mark })).toBeVisible();
     await expect(page.getByTestId("activity-server").getByRole("img", { name: mark })).toHaveCount(1);
     // Every queue has its switch, named by the queue; each is on.
-    for (const id of ["alignment", "acquisitions", "server-copies", "ebook-set", "hardcover-sync", "backups"])
+    for (const id of ["alignment", "acquisitions", "server-copies", "ebook-set", "backups"])
       await expect(row(page, id).getByRole("switch", { name: LABELS[id] })).toHaveAttribute("aria-checked", "true");
     await expect(row(page, "series-acquisition").getByRole("switch")).toHaveAttribute("aria-checked", "false");
     await noOverflow(page);
@@ -164,7 +161,7 @@ for (const [size, viewport] of [["phone", null], ["desktop", DESKTOP]] as const)
     // Nothing running: every queue keeps its row.
     state = boardState({ empty: true });
     await page.reload();
-    for (const id of ["alignment", "acquisitions", "server-copies", "ebook-set", "hardcover-sync"])
+    for (const id of ["alignment", "acquisitions", "server-copies", "ebook-set"])
       await expect(lineOf(page, id)).toHaveText("Nothing running");
     await expect(workerRow(page, "wsl").getByTestId("server-row-line")).toHaveText("Online · GPU");
     await expect(workerRow(page, "lisa").getByTestId("server-row-line")).toHaveText("Online · CPU");

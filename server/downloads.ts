@@ -17,8 +17,6 @@ import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
 import { mediaRoot, ensureMediaStorage } from "./storage.ts";
 import { TorBoxError, torboxUrl } from "./services.ts";
-import { queueHardcoverProgress } from "./hardcover.ts";
-import { listUserIds } from "./users.ts";
 import { audioFileExtension, audioFileMime, isCompleteMediaResponse } from "./media-response.ts";
 const controllers = new Map<string, AbortController>();
 let running = false;
@@ -418,8 +416,6 @@ export async function processServerDownloads() {
           })
           .where(eq(s.serverDownloads.recordingId, job.recordingId))
           .run();
-        for (const userId of listUserIds())
-          queueHardcoverProgress(userId, job.recordingId);
       } catch (error) {
         // Cancelled: drop the partial files; a pause keeps them to continue.
         if (

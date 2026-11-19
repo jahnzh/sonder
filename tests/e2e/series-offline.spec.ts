@@ -7,6 +7,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { savedSeriesRow, showSavedSeries } from "./library-series";
+import { connectAudiobookDb } from "./series-save";
 
 const OUT = "OUT";
 mkdirSync(OUT, { recursive: true });
@@ -20,20 +21,20 @@ const libraryTitles = async (page: Page) =>
 
 /** Saves The Crossing by Ada North (701) with two books and by Bea South (702); afterwards both are as they were. */
 async function saveBoth(page: Page) {
-  expect((await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } })).ok()).toBe(true);
+  await connectAudiobookDb(page);
   const before = await libraryTitles(page);
-  const savedBefore = new Set(((await (await page.request.get("/api/series")).json()) as { id: number }[]).map((series) => series.id));
-  const added: Record<number, number[]> = {};
-  for (const id of [701, 702])
+  const savedBefore = new Set(((await (await page.request.get("/api/series")).json()) as { id: string }[]).map((series) => series.id));
+  const added: Record<string, string[]> = {};
+  for (const id of ["701", "702"])
     added[id] = savedBefore.has(id)
-      ? ((await (await page.request.get(`/api/series/${id}`)).json()).works as { id: number; added: boolean }[]).filter((w) => w.added).map((w) => w.id)
+      ? ((await (await page.request.get(`/api/series/${id}`)).json()).works as { id: string; added: boolean }[]).filter((w) => w.added).map((w) => w.id)
       : [];
-  expect((await page.request.post("/api/series", { data: { id: 701, bookIds: [503, 504] } })).ok()).toBe(true);
-  expect((await page.request.post("/api/series", { data: { id: 702, bookIds: [] } })).ok()).toBe(true);
+  expect((await page.request.post("/api/series", { data: { id: "701", bookIds: ["503", "504"] } })).ok()).toBe(true);
+  expect((await page.request.post("/api/series", { data: { id: "702", bookIds: [] } })).ok()).toBe(true);
   return async () => {
-    await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
-    for (const id of [701, 702]) {
-      const works = (await (await page.request.get(`/api/series/${id}`)).json()).works as { id: number; title: string; added: boolean }[];
+    await connectAudiobookDb(page);
+    for (const id of ["701", "702"]) {
+      const works = (await (await page.request.get(`/api/series/${id}`)).json()).works as { id: string; title: string; added: boolean }[];
       const mine = works.filter((work) => work.added && !added[id].includes(work.id) && !before.has(work.title)).map((work) => work.id);
       expect((await page.request.delete(`/api/series/${id}`, { data: { bookIds: mine } })).ok()).toBe(true);
       if (savedBefore.has(id)) expect((await page.request.post("/api/series", { data: { id, bookIds: added[id] } })).ok()).toBe(true);
@@ -133,7 +134,7 @@ test("a saved series opened once shows offline after a reload with its books' li
   for (const retry of await region(page).getByRole("button", { name: /^Retry/ }).all()) await expect(retry).toBeDisabled();
   await expect(region(page).getByRole("button", { name: "Remove series", exact: true })).toBeDisabled();
   // The refresh error card does not stand beside it.
-  await expect(region(page).getByRole("group", { name: "Hardcover could not be read", exact: true })).toHaveCount(0);
+  await expect(region(page).getByRole("group", { name: "AudiobookDB could not be read", exact: true })).toHaveCount(0);
   await page.screenshot({ path: `${OUT}/series-offline-phone.png`, fullPage: true });
 
   // The address on a reload without a connection shows the same.

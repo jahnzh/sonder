@@ -180,15 +180,15 @@ test("before a search: the server's works outside the library, with what the ser
   assert.equal(hasLine({ hasAudiobook: false, hasEbook: false }), null);
 });
 
-test("a series line: author, its books, Saved, and Hardcover's number when two names are equal", () => {
+test("a series line: author, its books, Saved, and AudiobookDB's id when two names are equal", () => {
   const series: SeriesResult[] = [
-    { id: 701, name: "The Crossing", author: "Ada North", count: 4, cover: null, saved: true },
-    { id: 702, name: "The crossing ", author: "Bea South", count: 1, cover: null, saved: false },
-    { id: 5501, name: "Culture", author: "Iain M. Banks", count: 10, cover: null },
+    { id: "sr-crossing-a", name: "The Crossing", author: "Ada North", count: 4, cover: null, saved: true },
+    { id: "sr-crossing-b", name: "The crossing ", author: "Bea South", count: 1, cover: null, saved: false },
+    { id: "sr-culture", name: "Culture", author: "Iain M. Banks", count: 10, cover: null },
   ];
   assert.deepEqual(series.map((item) => seriesLine(item, series)), [
-    "Ada North · 4 books · Saved · Hardcover #701",
-    "Bea South · 1 book · Hardcover #702",
+    "Ada North · 4 books · Saved · AudiobookDB sr-crossing-a",
+    "Bea South · 1 book · AudiobookDB sr-crossing-b",
     "Iain M. Banks · 10 books",
   ]);
 });

@@ -96,9 +96,9 @@ test("the place line in each case", () => {
 });
 
 test("the series line: the work's first series, with its position", () => {
-  assert.deepEqual(seriesLine(work({ series: [{ id: 7, name: "The Culture", position: 8, saved: true }, { id: 9, name: "Other", position: 1, saved: false }] })), {
+  assert.deepEqual(seriesLine(work({ series: [{ id: "7", name: "The Culture", position: 8, saved: true }, { id: "9", name: "Other", position: 1, saved: false }] })), {
     label: "The Culture · Book 8",
-    id: 7,
+    id: "7",
     saved: true,
   });
   assert.deepEqual(seriesLine(work({ series: [{ id: null, name: "Loose", position: null, saved: false }] })), { label: "Loose", id: null, saved: false });

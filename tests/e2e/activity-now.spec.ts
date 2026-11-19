@@ -51,7 +51,7 @@ async function works(page: Page): Promise<Record<string, Work>> {
 }
 const of = (work: Work) => ({ workId: work.workId, bookId: work.id, cover: work.cover, title: work.title });
 
-/** The 2026-11-06 outage: the torrent client unreachable, downloads blocked by it, a Hardcover change that cannot succeed. */
+/** The 2026-11-06 outage: the torrent client unreachable, downloads blocked by it, a backup that failed (in place of the Hardcover change of the day, #721 part d). */
 function outage(): ActivityResponse {
   const blocked = (id: string, title: string, progress: number) =>
     item(`acquisition:${id}`, {
@@ -63,10 +63,9 @@ function outage(): ActivityResponse {
     [
       blocked("a", "Ender in Exile", 0.77),
       blocked("b", "Shadow of the Hegemon", 0.78),
-      item("hardcover:status:1", {
-        title: "Hardcover listening changes", detail: "1 waiting to be sent", user: "admin", state: "failed", permanent: true,
-        error: "We weren't able to find that book. Was it deleted?", actions: ["discard"], stuck: { reason: "This change cannot succeed" },
-        attention: true, facts: { kind: "hardcover", status: "failing", queue: "listening" },
+      item("backup:2026-11-06", {
+        title: "Daily database backup", detail: null, user: "admin", state: "failed", permanent: true,
+        error: "The backup folder is full.", actions: [], attention: true, facts: { kind: "backup", status: "failed" },
       }),
       item("server-copy:r1", {
         title: "Speaker for the Dead", state: "done", progress: 1, updatedAt: Date.now() - 3_600_000,
@@ -195,7 +194,7 @@ const routeAnswer = (page: Page, json: () => ActivityResponse) => page.route("**
 
 // ---- What today's Activity spec guarded for work ----------------------------------------------------------------
 
-test("the outage: blocked downloads say why, the torrent client is down, a Hardcover change names its reason and its user, a finished copy", async ({ page }) => {
+test("the outage: blocked downloads say why, the torrent client is down, a failed backup names its reason and its user, a finished copy", async ({ page }) => {
   await routeAnswer(page, outage);
   await page.goto("/#library");
   await expect(activityTab(page).getByRole("img", { name: DOT })).toBeAttached();
@@ -207,7 +206,7 @@ test("the outage: blocked downloads say why, the torrent client is down, a Hardc
   await expect(rowOf(page, "Ender in Exile")).toContainText("Downloading to server · 77% · Blocked by Torrent client");
   await expect(rowOf(page, "Shadow of the Hegemon")).toContainText("Downloading to server · 78% · Blocked by Torrent client");
   await expect(attention.getByRole("listitem").filter({ hasText: /^Torrent client/ })).toHaveText("Torrent client" + "The local torrent client cannot be reached.");
-  await expect(rowOf(page, "Hardcover listening changes")).toContainText("We weren't able to find that book. Was it deleted? · admin");
+  await expect(rowOf(page, "Daily database backup")).toContainText("The backup folder is full. · admin");
   // A finished copy under Finished today, with how long ago.
   await expect(group(page, "Finished today").getByRole("listitem")).toHaveText(["Speaker for the DeadAudiobook on server1 h ago"]);
   // Imports, not tracked yet, light nothing and are Server's: not on Now.
@@ -235,53 +234,54 @@ test("a failed read shows the server's message in the card's place, and the next
   await expect(group(page, "Needs attention")).toContainText("Ender in Exile");
 });
 
-const hardcover = (id: string, actions: Array<"retry" | "discard">, permanent: boolean) =>
+// A failure the row offers Discard or Retry for. Hardcover's queues were the server's only Discard (gone, #721 part d);
+// the row still offers whatever actions an item names, so a backup stands in.
+const failure = (id: string, actions: Array<"retry" | "discard">, permanent: boolean) =>
   item(id, {
-    title: "Hardcover shelf changes", detail: "1 waiting to be sent", user: "admin", state: "failed", permanent, actions, attention: true,
-    error: permanent ? "We weren't able to find that book. Was it deleted?" : "socket hang up",
-    stuck: permanent ? { reason: "This change cannot succeed" } : null, facts: { kind: "hardcover", status: "failing", queue: "status" },
+    title: "Daily database backup", detail: null, user: "admin", state: "failed", permanent, actions, attention: true,
+    error: permanent ? "The backup cannot be written." : "socket hang up", facts: { kind: "backup", status: "failed" },
   });
 
 test("Discard asks first, can be cancelled without a request, and removes the item, sending its id", async ({ page }) => {
   let present = true;
   const requests: unknown[] = [];
-  await routeAnswer(page, () => answer(present ? [hardcover("hardcover:status:1", ["discard"], true)] : []));
+  await routeAnswer(page, () => answer(present ? [failure("backup:1", ["discard"], true)] : []));
   await page.route("**/api/activity/items/discard", (route) => {
     requests.push(route.request().postDataJSON());
     present = false;
     return route.fulfill({ json: { ok: true, discarded: 1 } });
   });
   await page.goto("/#activity");
-  const row = rowOf(page, "Hardcover shelf changes");
+  const row = rowOf(page, "Daily database backup");
   // A change that cannot succeed offers Discard and no Retry.
-  await expect(row.getByRole("button", { name: "Retry Hardcover shelf changes" })).toHaveCount(0);
-  const discard = row.getByRole("button", { name: "Discard Hardcover shelf changes", exact: true });
+  await expect(row.getByRole("button", { name: "Retry Daily database backup" })).toHaveCount(0);
+  const discard = row.getByRole("button", { name: "Discard Daily database backup", exact: true });
   await discard.click();
-  const confirm = page.getByRole("group", { name: "Discard Hardcover shelf changes" });
-  await expect(confirm).toContainText("Discard “Hardcover shelf changes” for good?");
+  const confirm = page.getByRole("group", { name: "Discard Daily database backup" });
+  await expect(confirm).toContainText("Discard “Daily database backup” for good?");
   await confirm.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(confirm).toHaveCount(0);
   expect(requests).toEqual([]);
   await discard.click();
   await confirm.getByRole("button", { name: "Discard", exact: true }).click();
-  await expect(nowPart(page).getByText("Hardcover shelf changes")).toHaveCount(0);
+  await expect(nowPart(page).getByText("Daily database backup")).toHaveCount(0);
   await expect(nowPart(page)).toContainText("Nothing running");
-  expect(requests).toEqual([{ id: "hardcover:status:1" }]);
+  expect(requests).toEqual([{ id: "backup:1" }]);
 });
 
 test("Retry sends the item's id and shows a failure on the row; a change that can succeed offers Retry and no Discard", async ({ page }) => {
   const requests: unknown[] = [];
-  await routeAnswer(page, () => answer([hardcover("hardcover:listening:2", ["retry"], false)]));
+  await routeAnswer(page, () => answer([failure("backup:2", ["retry"], false)]));
   await page.route("**/api/activity/items/retry", (route) => {
     requests.push(route.request().postDataJSON());
-    return route.fulfill({ status: 400, json: { error: "Add your Hardcover token first." } });
+    return route.fulfill({ status: 400, json: { error: "The backup folder is not mounted." } });
   });
   await page.goto("/#activity");
   const attention = group(page, "Needs attention");
   await expect(attention.getByRole("button", { name: /^Discard/ })).toHaveCount(0);
-  await attention.getByRole("button", { name: "Retry Hardcover shelf changes", exact: true }).click();
-  await expect(attention.getByRole("alert")).toHaveText("Add your Hardcover token first.");
-  expect(requests).toEqual([{ id: "hardcover:listening:2" }]);
+  await attention.getByRole("button", { name: "Retry Daily database backup", exact: true }).click();
+  await expect(attention.getByRole("alert")).toHaveText("The backup folder is not mounted.");
+  expect(requests).toEqual([{ id: "backup:2" }]);
 });
 
 test("a paused download's Resume and a failed download's Retry send their requests", async ({ page }) => {

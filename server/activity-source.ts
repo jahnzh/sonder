@@ -26,8 +26,6 @@ export type ActivityDeps = {
   requireAdmin: (req: any) => unknown;
   /** The user who made the request; the covers of the items are read from their library (#514). */
   userId?: (req: any) => number;
-  /** Run a Hardcover sync for one user now (the "Retry" action on a queued change). */
-  syncHardcover: (userId: number) => Promise<unknown>;
   /** Evaluate one ebook-set member again in the background (the "Retry" action on an ebook-set check). */
   retryEbookSetMember: (workId: string, ebookId: string) => Promise<unknown>;
   /**
@@ -40,6 +38,9 @@ export type ActivityDeps = {
    * own failure goes to `onQueueError`. Absent where a test does not need it.
    */
   retrySeriesSearch?: (jobId: string, onQueueError: (error: unknown) => void) => Record<string, unknown>;
+  /** A saved series of the reset (#721 part b) tried on AudiobookDB again now (`retryResave`), and its row discarded. */
+  retrySeriesResave?: (userId: number, hardcoverSeriesId: number, onError: (error: unknown) => void) => Record<string, unknown>;
+  discardSeriesResave?: (userId: number, hardcoverSeriesId: number) => boolean;
   /**
    * What the local torrent client says of these torrents (#716), to name why a download is stuck. Absent where a test
    * does not need it; a hash the client does not have is absent from the answer. Throws a `TransmissionError`.

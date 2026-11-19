@@ -15,7 +15,7 @@ import {
   type SeriesRemovalWork,
 } from "../src/pages/series-remove-model.ts";
 
-function work(bookId: number, title: string, parts: Partial<SeriesRemovalWork> = {}): SeriesRemovalWork {
+function work(bookId: string, title: string, parts: Partial<SeriesRemovalWork> = {}): SeriesRemovalWork {
   return {
     bookId,
     title,
@@ -32,15 +32,15 @@ const deleted = { editionId: "e1", releaseTitle: "Unabridged", wouldDelete: true
 const kept = { editionId: "e2", releaseTitle: "Other", wouldDelete: false, retainReason: "Another listener still has this release in their library." };
 
 const preview: SeriesRemovalPreview = {
-  id: 701,
+  id: "s701",
   name: "The Culture",
   works: [
-    work(1, "Consider Phlebas", { introduced: false, selectedByDefault: false, audioEditions: [deleted] }),
-    work(7, "Look to Windward", { audioEditions: [deleted] }),
-    work(8, "Matter", { selectedByDefault: false, otherSeries: [{ id: 702, name: "The Crossing" }], audioEditions: [deleted] }),
-    work(9, "Surface Detail", { activeDownloads: [{ id: "a1", title: "Surface Detail", status: "downloading" }], audioEditions: [deleted] }),
-    work(10, "The Hydrogen Sonata", { audioEditions: [deleted, kept] }),
-    work(11, "The Drawings"),
+    work("b01", "Consider Phlebas", { introduced: false, selectedByDefault: false, audioEditions: [deleted] }),
+    work("b07", "Look to Windward", { audioEditions: [deleted] }),
+    work("b08", "Matter", { selectedByDefault: false, otherSeries: [{ id: "s702", name: "The Crossing" }], audioEditions: [deleted] }),
+    work("b09", "Surface Detail", { activeDownloads: [{ id: "a1", title: "Surface Detail", status: "downloading" }], audioEditions: [deleted] }),
+    work("b10", "The Hydrogen Sonata", { audioEditions: [deleted, kept] }),
+    work("b11", "The Drawings"),
   ],
 };
 const base = { name: "The Culture", preview, admin: true, on: false, manual: {} };
@@ -73,27 +73,27 @@ test("switched on: only the works the series added, chosen by selectedByDefault,
   assert.deepEqual(model.switch, { label: REMOVE_BOOKS_LABEL, on: true });
   assert.equal(model.caption, "Added with this series · 5");
   assert.deepEqual(model.choices, [
-    { bookId: 7, title: "Look to Windward", detail: "Its audiobook is deleted from the server", chosen: true },
-    { bookId: 8, title: "Matter", detail: "Also in The Crossing", chosen: false },
-    { bookId: 9, title: "Surface Detail", detail: "Its download stops", chosen: true },
-    { bookId: 10, title: "The Hydrogen Sonata", detail: "Its audiobook stays: another listener has it", chosen: true },
-    { bookId: 11, title: "The Drawings", detail: "Leaves your library", chosen: true },
+    { bookId: "b07", title: "Look to Windward", detail: "Its audiobook is deleted from the server", chosen: true },
+    { bookId: "b08", title: "Matter", detail: "Also in The Crossing", chosen: false },
+    { bookId: "b09", title: "Surface Detail", detail: "Its download stops", chosen: true },
+    { bookId: "b10", title: "The Hydrogen Sonata", detail: "Its audiobook stays: another listener has it", chosen: true },
+    { bookId: "b11", title: "The Drawings", detail: "Leaves your library", chosen: true },
   ]);
   assert.equal(model.button, "Remove series and 4 books");
-  assert.deepEqual(model.body, { bookIds: [7, 9, 10, 11] });
+  assert.deepEqual(model.body, { bookIds: ["b07", "b09", "b10", "b11"] });
 });
 
 test("what the user ticks and unticks decides; with none chosen the series goes alone with an empty body", () => {
-  const ticked = seriesRemoveModel({ ...base, on: true, manual: { 8: true, 7: false, 9: false, 10: false } });
-  assert.deepEqual(ticked.choices.filter((choice) => choice.chosen).map((choice) => choice.bookId), [8, 11]);
+  const ticked = seriesRemoveModel({ ...base, on: true, manual: { b08: true, b07: false, b09: false, b10: false } });
+  assert.deepEqual(ticked.choices.filter((choice) => choice.chosen).map((choice) => choice.bookId), ["b08", "b11"]);
   assert.equal(ticked.button, "Remove series and 2 books");
-  assert.deepEqual(ticked.body, { bookIds: [8, 11] });
+  assert.deepEqual(ticked.body, { bookIds: ["b08", "b11"] });
 
-  const one = seriesRemoveModel({ ...base, on: true, manual: { 7: false, 9: false, 10: false } });
+  const one = seriesRemoveModel({ ...base, on: true, manual: { b07: false, b09: false, b10: false } });
   assert.equal(one.button, "Remove series and 1 book");
-  assert.deepEqual(one.body, { bookIds: [11] });
+  assert.deepEqual(one.body, { bookIds: ["b11"] });
 
-  const none = seriesRemoveModel({ ...base, on: true, manual: { 7: false, 9: false, 10: false, 11: false } });
+  const none = seriesRemoveModel({ ...base, on: true, manual: { b07: false, b09: false, b10: false, b11: false } });
   assert.equal(none.button, "Remove series");
   assert.deepEqual(none.body, {});
   // The switch is still on: the list and its note stay.
@@ -102,7 +102,7 @@ test("what the user ticks and unticks decides; with none chosen the series goes 
 });
 
 test("switching off again sends no books, whatever was ticked", () => {
-  const model = seriesRemoveModel({ ...base, on: false, manual: { 8: true } });
+  const model = seriesRemoveModel({ ...base, on: false, manual: { b08: true } });
   assert.deepEqual(model.body, {});
   assert.equal(model.button, "Remove series");
   assert.equal(model.note, KEEP_NOTE);
@@ -110,7 +110,7 @@ test("switching off again sends no books, whatever was ticked", () => {
 
 test("someone who is not the administrator gets no switch, the note that the books stay and an empty body", () => {
   for (const on of [false, true]) {
-    const model = seriesRemoveModel({ ...base, admin: false, on, manual: { 7: true } });
+    const model = seriesRemoveModel({ ...base, admin: false, on, manual: { b07: true } });
     assert.equal(model.title, "Remove The Culture?");
     assert.equal(model.switch, null);
     assert.equal(model.note, KEEP_NOTE);
@@ -122,7 +122,7 @@ test("someone who is not the administrator gets no switch, the note that the boo
 });
 
 test("a series that added no books offers no switch", () => {
-  const own: SeriesRemovalPreview = { ...preview, works: [work(1, "Consider Phlebas", { introduced: false, selectedByDefault: false })] };
+  const own: SeriesRemovalPreview = { ...preview, works: [work("b01", "Consider Phlebas", { introduced: false, selectedByDefault: false })] };
   const model = seriesRemoveModel({ ...base, preview: own, on: true });
   assert.equal(model.switch, null);
   assert.equal(model.note, KEEP_NOTE);
@@ -133,18 +133,18 @@ test("a series that added no books offers no switch", () => {
 test("each line in its order: another series, then a download, then the audio, else the library", () => {
   // Another series wins over everything, and names every one.
   assert.equal(
-    removalLine(work(1, "A", { otherSeries: [{ id: 2, name: "The Crossing" }, { id: 3, name: "Hainish Cycle" }], activeDownloads: [{ id: "x", title: "A", status: "queued" }], audioEditions: [deleted] })),
+    removalLine(work("b01", "A", { otherSeries: [{ id: "s2", name: "The Crossing" }, { id: "s3", name: "Hainish Cycle" }], activeDownloads: [{ id: "x", title: "A", status: "queued" }], audioEditions: [deleted] })),
     "Also in The Crossing, Hainish Cycle",
   );
   // A download wins over the audio.
-  assert.equal(removalLine(work(1, "A", { activeDownloads: [{ id: "x", title: "A", status: "queued" }], audioEditions: [deleted] })), "Its download stops");
+  assert.equal(removalLine(work("b01", "A", { activeDownloads: [{ id: "x", title: "A", status: "queued" }], audioEditions: [deleted] })), "Its download stops");
   // Every edition deleted.
-  assert.equal(removalLine(work(1, "A", { audioEditions: [deleted, { ...deleted, editionId: "e3" }] })), "Its audiobook is deleted from the server");
+  assert.equal(removalLine(work("b01", "A", { audioEditions: [deleted, { ...deleted, editionId: "e3" }] })), "Its audiobook is deleted from the server");
   // One kept for another listener.
-  assert.equal(removalLine(work(1, "A", { audioEditions: [deleted, kept] })), "Its audiobook stays: another listener has it");
-  assert.equal(removalLine(work(1, "A", { audioEditions: [kept] })), "Its audiobook stays: another listener has it");
+  assert.equal(removalLine(work("b01", "A", { audioEditions: [deleted, kept] })), "Its audiobook stays: another listener has it");
+  assert.equal(removalLine(work("b01", "A", { audioEditions: [kept] })), "Its audiobook stays: another listener has it");
   // No audio.
-  assert.equal(removalLine(work(1, "A")), "Leaves your library");
+  assert.equal(removalLine(work("b01", "A")), "Leaves your library");
 });
 
 test("the button counts the books", () => {

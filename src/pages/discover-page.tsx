@@ -57,14 +57,14 @@ export function askDiscoverSearch(segment: DiscoverSegment) {
  */
 const LOAD = Math.random().toString(36).slice(2);
 
-export const HARDCOVER_FAILED_LINE = "Hardcover could not be searched.";
 export const AUDIOBOOKDB_FAILED_LINE = "AudiobookDB could not be searched.";
 export const OPENLIBRARY_FAILED_LINE = "Open Library could not be searched.";
 export const AUDIOBOOKDB_KEY_LINE = "Add the AudiobookDB API key in Settings to search audiobooks";
 export const AUDIOBOOKDB_CREDIT = "Data from AudiobookDB";
 export const SERVER_FAILED_LINE = "The server could not be searched.";
 export const OFFLINE_SEARCH_LINE = "Searching needs a connection.";
-export const CONNECT_HARDCOVER_SERIES_LINE = "Connect Hardcover to search for series.";
+/** Series come from AudiobookDB (#721): its search failed; the server's reason follows. */
+export const SERIES_FAILED_LINE = "AudiobookDB could not be searched";
 
 const waiting = { state: "waiting" } as const;
 const answered = <T,>(value: T): Answer<T> => ({ state: "done", value });
@@ -77,6 +77,8 @@ type State = {
   audiobookdb: Answer<CatalogueHit[]>;
   openlibrary: Answer<CatalogueHit[]>;
   series: Answer<SeriesResult[]>;
+  /** The server's reason when the series search failed. */
+  seriesError?: string;
 };
 
 /** The entry's kept state, its answers only when they came in this load. */
@@ -108,7 +110,6 @@ function initialState(): { state: State; rerun: boolean } {
 export function DiscoverPage({
   admin,
   online,
-  hardcoverConnected,
   settingsRead,
   onBook,
   onSeries,
@@ -118,11 +119,10 @@ export function DiscoverPage({
 }: {
   admin: boolean;
   online: boolean;
-  hardcoverConnected: boolean;
-  /** The settings are read: whether Hardcover is connected is known. */
+  /** The settings are read: whether the administrator has AudiobookDB's key is known. */
   settingsRead: boolean;
   onBook: (workId: string) => void;
-  onSeries: (id: number) => void;
+  onSeries: (id: string) => void;
   onRecording: (query: string) => void;
   onConnect: () => void;
   /** Says what a row's Want to read action did. */
@@ -207,14 +207,14 @@ export function DiscoverPage({
     setState((s) => ({ ...s, searched: words, series: waiting }));
     api<SeriesResult[]>(`/discover/series?q=${encodeURIComponent(words)}`)
       .then((answer) => id === searchId.current && setState((s) => ({ ...s, series: answered(answer) })))
-      .catch(() => id === searchId.current && setState((s) => ({ ...s, series: { state: "failed" } })));
+      .catch((reason: Error) => id === searchId.current && setState((s) => ({ ...s, series: { state: "failed" }, seriesError: reason.message })));
   };
   const run = (seg: DiscoverSegment, words: string) => {
     if (seg === "books") searchBooks(words);
-    else if (hardcoverConnected) searchSeries(words);
+    else searchSeries(words);
   };
 
-  // A reload runs the kept query again, once the settings say whether Hardcover's series are searched.
+  // A reload runs the kept query again, once the settings are read.
   const reran = useRef(!rerun);
   useEffect(() => {
     if (reran.current || !settingsRead || !online || !searched) return;
@@ -358,11 +358,11 @@ export function DiscoverPage({
         {recordingRow}
       </>
     );
-  } else if (hardcoverConnected) {
+  } else {
     const found = state.series;
     body =
       found.state === "failed" ? (
-        failed(HARDCOVER_FAILED_LINE, () => searchSeries(searched))
+        failed(state.seriesError ? `${SERIES_FAILED_LINE} · ${state.seriesError.replace(/\.$/, "")}` : SERIES_FAILED_LINE, () => searchSeries(searched))
       ) : found.state === "done" ? (
         found.value.length ? (
           <Group caption={`Series · ${found.value.length}`}>
@@ -424,17 +424,7 @@ export function DiscoverPage({
           <p className="discover-line type-label" role="status">
             {OFFLINE_SEARCH_LINE}
           </p>
-        ) : (
-          settingsRead &&
-          !hardcoverConnected &&
-          segment === "series" && (
-            <p className="discover-line type-label">
-              <button type="button" className="discover-link" onClick={onConnect}>
-                {CONNECT_HARDCOVER_SERIES_LINE}
-              </button>
-            </p>
-          )
-        )}
+        ) : null}
       </div>
       <div className="discover-results" aria-busy={busy || undefined}>
         {body}

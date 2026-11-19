@@ -5,7 +5,7 @@
 // at phone size and on a desktop.
 import { type Page } from "@playwright/test";
 // Each test runs its own server (own-server.ts): on the suite's server the specs before it save The Crossing's series,
-// add their books and read 701 from Hardcover; "from series 701" failed in a full Firefox run only (#575).
+// add their books and read 701 from AudiobookDB; "from series 701" failed in a full Firefox run only (#575).
 import { test, expect } from "./own-server";
 import { mkdirSync } from "node:fs";
 import { noOverflow } from "./overflow";
@@ -14,17 +14,17 @@ const OUT = "OUT";
 mkdirSync(OUT, { recursive: true });
 const ALICE = "Alice’s Adventures in Wonderland";
 import { openSavedSeries, showSavedSeries, savedSeriesRow } from "./library-series";
-import { saveSeriesOnPage, viewSeriesFromDiscover } from "./series-save";
+import { connectAudiobookDb, saveSeriesOnPage, viewSeriesFromDiscover } from "./series-save";
 
 async function saveCrossingSeries(page: import("@playwright/test").Page) {
-  await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
-  await page.request.post("/api/hardcover/books", { data: { id: 501 } });
+  await connectAudiobookDb(page);
+  await page.request.post("/api/__fixture/library-book", { data: { title: "Alice’s Adventures in Wonderland", author: "Lewis Carroll" } });
   // Saved through its page and Save series (#564), with Crossing Companion instead of Crossing Two.
   await viewSeriesFromDiscover(page, "Crossing", "The Crossing", "Ada North");
   await saveSeriesOnPage(page, { toggle: ["Crossing Two Book 2", "Crossing Companion Related work"] });
 }
 
-const savedIds = async (page: Page) => ((await (await page.request.get("/api/series")).json()) as { id: number }[]).map((series) => series.id);
+const savedIds = async (page: Page) => ((await (await page.request.get("/api/series")).json()) as { id: string }[]).map((series) => series.id);
 const inLibrary = async (page: Page) =>
   ((await (await page.request.get("/api/books")).json()) as { id: string; title: string; inLibrary: boolean }[]).filter((book) => book.inLibrary);
 
@@ -33,17 +33,17 @@ const CROSSING = ["Crossing Two", "Crossing Companion", "Crossing Three", "Futur
 
 /**
  * The series this spec saves are removed and The Crossing's own books leave the library (an earlier spec may have
- * added them), so each test saves from the same start; Alice is back from Hardcover's shelves, as the suite starts.
+ * added them), so each test saves from the same start; Alice is back in the library (the fixture route), as the suite starts.
  */
 async function reset(page: Page) {
-  await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
-  for (const id of [701, 702]) if ((await savedIds(page)).includes(id)) expect((await page.request.delete(`/api/series/${id}`, { data: {} })).ok()).toBe(true);
+  await connectAudiobookDb(page);
+  for (const id of ["701", "702"]) if ((await savedIds(page)).includes(id)) expect((await page.request.delete(`/api/series/${id}`, { data: {} })).ok()).toBe(true);
   const books = (await (await page.request.get("/api/books")).json()) as { title: string; inLibrary: boolean; workId: string }[];
   for (const workId of new Set(books.filter((book) => book.inLibrary && CROSSING.includes(book.title)).map((book) => book.workId)))
     expect((await page.request.delete(`/api/works/${encodeURIComponent(workId)}/library`)).ok()).toBe(true);
 }
 async function aliceFromShelves(page: Page) {
-  if (!(await inLibrary(page)).some((book) => book.title === ALICE)) expect((await page.request.post("/api/hardcover/books", { data: { id: 501 } })).ok()).toBe(true);
+  if (!(await inLibrary(page)).some((book) => book.title === ALICE)) expect((await page.request.post("/api/__fixture/library-book", { data: { title: "Alice’s Adventures in Wonderland", author: "Lewis Carroll" } })).ok()).toBe(true);
 }
 /** Alice leaves the library, so a series saved next adds her (she is then Added with that series). */
 async function aliceOut(page: Page) {
@@ -73,7 +73,7 @@ function deletes(page: Page) {
   const sent: { path: string; body: unknown }[] = [];
   page.on("request", (request) => {
     const path = new URL(request.url()).pathname;
-    if (request.method() === "DELETE" && /^\/api\/series\/\d+$/.test(path)) sent.push({ path, body: request.postDataJSON() });
+    if (request.method() === "DELETE" && /^\/api\/series\/[^/]+$/.test(path)) sent.push({ path, body: request.postDataJSON() });
   });
   return sent;
 }
@@ -86,7 +86,7 @@ test("remove a saved series while keeping its works", async ({ page }) => {
   const sent = deletes(page);
 
   await page.goto("/#library");
-  // Revisiting a saved series refreshes it, and the fixture can then list a new work (#206).
+  // Revisiting a saved series reads it again (#206).
   const refreshed = page.waitForResponse(
     (response) => new URL(response.url()).pathname === "/api/series/701",
   );
@@ -114,8 +114,8 @@ test("remove a saved series while keeping its works", async ({ page }) => {
   );
   expect(after.length).toBe(before.length);
   // Other tests on this server may leave series 702 saved; only 701 is removed here.
-  const saved = (await (await page.request.get("/api/series")).json()) as { id: number }[];
-  expect(saved.map((series) => series.id)).not.toContain(701);
+  const saved = (await (await page.request.get("/api/series")).json()) as { id: string }[];
+  expect(saved.map((series) => series.id)).not.toContain("701");
 });
 
 test("a book added on its own is not offered; Cancel and Back send nothing", async ({ page }) => {
@@ -151,14 +151,14 @@ test("a book added on its own is not offered; Cancel and Back send nothing", asy
   await expect(dialog(page)).toHaveCount(0);
   await expect(page).toHaveURL(/#library$/);
   expect(sent).toEqual([]);
-  expect(await savedIds(page)).toContain(701);
+  expect(await savedIds(page)).toContain("701");
 });
 
 test("a book also in the other saved series is offered unchosen and names it, from series 701", async ({ page }) => {
   // Alice comes in with 701, and is also in 702.
   await aliceOut(page);
-  expect((await page.request.post("/api/series", { data: { id: 701, bookIds: [501, 503] } })).ok()).toBe(true);
-  expect((await page.request.post("/api/series", { data: { id: 702, bookIds: [501] } })).ok()).toBe(true);
+  expect((await page.request.post("/api/series", { data: { id: "701", bookIds: ["501", "503"] } })).ok()).toBe(true);
+  expect((await page.request.post("/api/series", { data: { id: "702", bookIds: ["501"] } })).ok()).toBe(true);
   await page.goto("/#library");
   await openSavedSeries(page, "The Crossing", "Ada North");
   await removeRow(page).click();
@@ -173,8 +173,8 @@ test("a book also in the other saved series is offered unchosen and names it, fr
 }) => {
   // Alice comes in with 702, and is also in 701.
   await aliceOut(page);
-  expect((await page.request.post("/api/series", { data: { id: 702, bookIds: [501] } })).ok()).toBe(true);
-  expect((await page.request.post("/api/series", { data: { id: 701, bookIds: [501, 503] } })).ok()).toBe(true);
+  expect((await page.request.post("/api/series", { data: { id: "702", bookIds: ["501"] } })).ok()).toBe(true);
+  expect((await page.request.post("/api/series", { data: { id: "701", bookIds: ["501", "503"] } })).ok()).toBe(true);
   await page.goto("/#library");
   await openSavedSeries(page, "The Crossing", "Bea South");
   await removeRow(page).click();
@@ -236,7 +236,7 @@ test("admin can remove a selected work from the confirmation dialog", async ({ p
   await dialog(page).getByRole("button", { name: "Remove series and 1 book", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "Series removed" })).toBeVisible();
   await expect(savedSeriesRow(page, "The Crossing", "Ada North")).toHaveCount(0);
-  expect(sent).toEqual([{ path: "/api/series/701", body: { bookIds: [504] } }]);
+  expect(sent).toEqual([{ path: "/api/series/701", body: { bookIds: ["504"] } }]);
   const after = (await (await page.request.get("/api/books")).json()).filter(
     (book: { inLibrary: boolean }) => book.inLibrary,
   );
@@ -252,13 +252,13 @@ test("admin can remove a selected work from the confirmation dialog", async ({ p
 
 test("someone who is not the administrator has no switch, and the series goes alone", async ({ page }) => {
   await aliceOut(page);
-  expect((await page.request.post("/api/series", { data: { id: 701, bookIds: [501, 503] } })).ok()).toBe(true);
+  expect((await page.request.post("/api/series", { data: { id: "701", bookIds: ["501", "503"] } })).ok()).toBe(true);
   await page.route("**/api/auth/status", (route) =>
     route.fulfill({ json: { required: true, authenticated: true, user: { id: 1, username: "reader", role: "user" } } }),
   );
   const previews: string[] = [];
   page.on("request", (request) => {
-    if (/\/api\/series\/\d+\/removal$/.test(new URL(request.url()).pathname)) previews.push(request.url());
+    if (/\/api\/series\/[^/]+\/removal$/.test(new URL(request.url()).pathname)) previews.push(request.url());
   });
   const sent = deletes(page);
   await page.goto("/#series/701");
@@ -279,8 +279,8 @@ test("someone who is not the administrator has no switch, and the series goes al
 
 test("measured against SeriesRemove.dc.html at 390 by 844 and on a desktop", async ({ page }) => {
   await aliceOut(page);
-  expect((await page.request.post("/api/series", { data: { id: 701, bookIds: [501, 503] } })).ok()).toBe(true);
-  expect((await page.request.post("/api/series", { data: { id: 702, bookIds: [501] } })).ok()).toBe(true);
+  expect((await page.request.post("/api/series", { data: { id: "701", bookIds: ["501", "503"] } })).ok()).toBe(true);
+  expect((await page.request.post("/api/series", { data: { id: "702", bookIds: ["501"] } })).ok()).toBe(true);
   await page.goto("/#series/701");
   // The last row of the page, 52 high, in the destructive colour.
   const row = removeRow(page);

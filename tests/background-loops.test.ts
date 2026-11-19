@@ -24,7 +24,7 @@ const app = await createApp({ background: { manual: true } });
 const runner = backgroundRunner(app);
 after(() => rmSync(temp, { recursive: true, force: true }));
 
-test("the app runs its nine loops in one runner, with the intervals and immediate runs they always had", { timeout: 10_000 }, () => {
+test("the app runs its ten loops in one runner (Hardcover sync went, #721 part d), with the intervals and immediate runs they always had", { timeout: 10_000 }, () => {
   assert.deepEqual(
     runner.processes().map(({ id, intervalMs, runAtStart, pausedBy }) => ({ id, intervalMs, runAtStart: !!runAtStart, pausedBy })),
     [
@@ -33,11 +33,14 @@ test("the app runs its nine loops in one runner, with the intervals and immediat
       { id: "acquisitions", intervalMs: 10_000, runAtStart: true, pausedBy: "acquisitions" },
       { id: "server-copies", intervalMs: 10_000, runAtStart: true, pausedBy: "server-copies" },
       { id: "series-acquisition", intervalMs: 30_000, runAtStart: true, pausedBy: "series-acquisition" },
-      { id: "hardcover-sync", intervalMs: 60_000, runAtStart: true, pausedBy: "hardcover-sync" },
       // The ebook-set evaluation (#325) runs at start, so members left pending by a restart resume.
       { id: "ebook-set", intervalMs: 30_000, runAtStart: true, pausedBy: "ebook-set" },
       { id: "backups", intervalMs: 600_000, runAtStart: false, pausedBy: "backups" },
       { id: "catalogue-refresh", intervalMs: 3_600_000, runAtStart: false, pausedBy: undefined },
+      // Series on AudiobookDB (#721 part b): saved series read again (hourly, each once a day), and the Hardcover
+      // series saved again after the reset, at start so a restart resumes it.
+      { id: "series-refresh", intervalMs: 3_600_000, runAtStart: false, pausedBy: undefined },
+      { id: "series-resave", intervalMs: 900_000, runAtStart: true, pausedBy: undefined },
     ],
     "start order; the app stops them in reverse",
   );
@@ -62,7 +65,7 @@ test("the runner holds each loop while its switch is on, and the series loop whi
   } finally {
     delete process.env.SONDER_SKIP_SERIES_ACQUISITION;
   }
-  for (const id of ["hardcover-sync", "series-acquisition", "activity-sampler"])
+  for (const id of ["ebook-set", "series-acquisition", "activity-sampler"])
     assert.equal(await runner.tick(id), "ran", `${id}: resumed`);
 });
 
@@ -106,5 +109,5 @@ test("the loops keep their start and close work, and closing the app releases th
   await app.close();
   const claim = sqlite.prepare("SELECT claim_owner FROM alignment_jobs WHERE id='job-loop'").get() as { claim_owner: string | null };
   assert.equal(claim.claim_owner, null, "the alignment loop's stop hook released the claim");
-  assert.equal(await runner.tick("hardcover-sync"), "stopped", "no loop ticks after close");
+  assert.equal(await runner.tick("ebook-set"), "stopped", "no loop ticks after close");
 });

@@ -1,13 +1,10 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { spawn, type ChildProcess } from "node:child_process";
-import { createServer, type AddressInfo } from "node:net";
 import { readerFixture } from "../reader-fixture";
 import { installReaderWaitBudget, READER_WAIT_MS, timedWait } from "./timing";
 import { listenFace, nowPlaying, openListen, openRead } from "./now-playing";
 import { playFromLibrary } from "./library-play";
-import { connectHardcover } from "./connections";
 
 // Per-step expect ceilings are up to 45 s; leave room around history restores.
 installReaderWaitBudget(test);
@@ -515,84 +512,6 @@ test("source reloads only record a jump when the new source moves the position",
   await openReaderPlayer(page);
   await restoreLatest(page);
   await expect.poll(async () => (await audioState(page)).position).toBe(150.25);
-});
-
-// Hardcover's position is for Alice (the fixture's book 501), so this test needs an EPUB on Alice, which no route
-// removes again; reading it copies Alice's streamed tracks to the server, and the sync saves a Hardcover token and
-// Alice's place. On the shared server every later spec (and a repeat of this file) would find Alice opening in the
-// reader with "On server" copies. So it runs against a server of its own, which it stops afterwards.
-async function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const probe = createServer();
-    probe.once("error", reject);
-    probe.listen(0, "127.0.0.1", () => {
-      const { port } = probe.address() as AddressInfo;
-      probe.close(() => resolve(port));
-    });
-  });
-}
-test.describe("on a server of its own", () => {
-  let server: ChildProcess | undefined;
-  let base = "";
-  test.beforeAll(async () => {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const port = await freePort();
-      base = `http://127.0.0.1:${port}`;
-      server = spawn(process.execPath, ["--import", "tsx", "tests/browser-server.ts"], {
-        env: { ...process.env, PLAYWRIGHT_PORT: String(port) },
-        stdio: "ignore",
-      });
-      for (let i = 0; i < 150 && server.exitCode === null; i++) {
-        try {
-          if ((await fetch(`${base}/api/health`)).ok) return;
-        } catch {}
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      server.kill();
-    }
-    throw new Error("Browser server for the Hardcover test did not start");
-  });
-  test.afterAll(() => {
-    server?.kill();
-  });
-
-test("Use Hardcover position can be undone through the normal progress path", async ({ browser }) => {
-  const context = await browser.newContext({ baseURL: base, viewport: { width: 390, height: 844 } });
-  const page = await context.newPage();
-  try {
-  await instrument(page);
-  await page.goto("/#settings/connections");
-  await connectHardcover(page, "Two-way");
-  await page.getByRole("button", { name: "Sync now", exact: true }).click();
-  await expect(page.getByText(/Synced/)).toBeVisible();
-  await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button", { name: "Library", exact: true }).click();
-  const book = (await (await page.request.get("/api/books")).json()).find((item: any) => item.id === "alice");
-  const uploaded = await page.request.post(`/api/ebooks/import?workId=${book.workId}`, {
-    multipart: { file: { name: "Companion.epub", mimeType: "application/epub+zip", buffer: await readerFixture() } },
-  });
-  expect(uploaded.ok()).toBe(true);
-  await page.reload();
-  await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button", { name: "Library", exact: true }).click();
-  await startPaused(page, book.title);
-  await setPosition(page, 70.25);
-  await page.getByRole("button", { name: `About ${book.title}`, exact: true }).click();
-  // The Book page's Hardcover row (#532) opens the Hardcover page (#529), where Use Hardcover position is.
-  await page.getByRole("region", { name: "Book", exact: true }).getByRole("button", { name: /^Hardcover / }).click();
-  await expect(page).toHaveURL(/#book\/[^/]+\/hardcover$/);
-  await page.getByRole("button", { name: "Use Hardcover position", exact: true }).click();
-  await expect.poll(async () => (await history(page, book.recordingId)).at(-1)?.kind).toBe("hardcover");
-  await page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true }).click();
-  await openReaderPlayer(page);
-  await restoreLatest(page);
-  await expect.poll(async () => (await audioState(page)).position).toBe(70.25);
-  await expect.poll(async () => {
-    const books = await (await page.request.get("/api/books")).json();
-    return books.find((item: any) => item.id === book.id)?.progress?.position;
-  }).toBe(70.25);
-  } finally {
-    await context.close();
-  }
-});
 });
 
 // Listen from here is the long-press on a sentence (#592). Long-press a sentence that is on the page. The reader may

@@ -1,6 +1,6 @@
 // The Add sheet of a saved series (#563, spec #560 "The Add sheet"; board SeriesAdd.dc.html): `#series/<id>/add`.
 // Add on a row opens it with that book chosen; Close and Back change nothing; on a reload it opens with the server's
-// choice, so the book Hardcover added later is chosen and adding it adds it once (the book already in the library
+// choice, so the book AudiobookDB listed later is chosen and adding it adds it once (the book already in the library
 // stays single); the administrator's Get switches search for the chosen books and skip one that has audio; someone
 // who is not the administrator gets no switches, and a refusal shows the server's message and keeps the choice; the
 // preferred language picks the book at each number and keeps a number the user unticked; the measures at phone size
@@ -8,6 +8,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { noOverflow } from "./overflow";
+import { connectAudiobookDb, listCrossingThree } from "./series-save";
 
 test.use({ serviceWorkers: "block" });
 
@@ -15,7 +16,7 @@ const OUT = "OUT";
 mkdirSync(OUT, { recursive: true });
 
 type SeriesWork = {
-  id: number;
+  id: string;
   title: string;
   added: boolean;
   new?: boolean;
@@ -30,30 +31,32 @@ const libraryBooks = async (page: Page) =>
 const libraryTitles = async (page: Page) => new Set((await libraryBooks(page)).map((book) => book.title));
 const ALICE = "Alice’s Adventures in Wonderland";
 
-/** Alice (Hardcover 501, number 1 of The Crossing) is in the library, as the suite's Hardcover sync puts it there. */
+/** Alice (AudiobookDB 501, number 1 of The Crossing) is in the library, added by the fixture route. */
 async function aliceInLibrary(page: Page) {
-  if (!(await libraryTitles(page)).has(ALICE)) expect((await page.request.post("/api/hardcover/books", { data: { id: 501 } })).ok()).toBe(true);
+  if (!(await libraryTitles(page)).has(ALICE)) expect((await page.request.post("/api/__fixture/library-book", { data: { title: "Alice’s Adventures in Wonderland", author: "Lewis Carroll" } })).ok()).toBe(true);
 }
 
 /**
- * Saves The Crossing (#701) with `bookIds` for the test, after a series search has set the suite's Hardcover answer
- * back to the four first works, and puts the series and the library back as it found them afterwards.
+ * Saves The Crossing (#701) with `bookIds` for the test, with AudiobookDB listing the four first works, and puts the
+ * series, the library and AudiobookDB's answer back as it found them afterwards.
  */
-async function saveCrossing(page: Page, bookIds: number[]) {
-  expect((await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } })).ok()).toBe(true);
+async function saveCrossing(page: Page, bookIds: string[]) {
+  await connectAudiobookDb(page);
   await aliceInLibrary(page);
   const before = await libraryTitles(page);
-  const savedBefore = ((await (await page.request.get("/api/series")).json()) as { id: number }[]).some((series) => series.id === 701);
+  const savedBefore = ((await (await page.request.get("/api/series")).json()) as { id: string }[]).some((series) => series.id === "701");
   const addedBefore = savedBefore ? (await crossing(page)).works.filter((work) => work.added).map((work) => work.id) : [];
-  expect((await page.request.get("/api/discover/series?q=Crossing")).ok()).toBe(true);
-  const saved = await page.request.post("/api/series", { data: { id: 701, bookIds } });
+  await listCrossingThree(page, false);
+  const saved = await page.request.post("/api/series", { data: { id: "701", bookIds } });
   expect(saved.ok(), await saved.text()).toBe(true);
   return async () => {
-    await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
+    await connectAudiobookDb(page);
     await aliceInLibrary(page);
     const added = (await crossing(page)).works.filter((work) => work.added && !addedBefore.includes(work.id) && !before.has(work.title));
     expect((await page.request.delete("/api/series/701", { data: { bookIds: added.map((work) => work.id) } })).ok()).toBe(true);
-    if (savedBefore) expect((await page.request.post("/api/series", { data: { id: 701, bookIds: addedBefore } })).ok()).toBe(true);
+    if (savedBefore) expect((await page.request.post("/api/series", { data: { id: "701", bookIds: addedBefore } })).ok()).toBe(true);
+    // AudiobookDB lists the four first works again, and the series' catalogue drops Crossing Three.
+    await listCrossingThree(page, false);
     expect(await libraryTitles(page)).toEqual(before);
   };
 }
@@ -84,10 +87,10 @@ function saves(page: Page) {
 }
 const settled = (page: Page) => page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
 
-test("Add on a row opens the sheet with that book chosen; Close and Back change nothing; a reload; the book Hardcover added later is added once", async ({ page }) => {
-  restore = await saveCrossing(page, [503]);
-  // The suite's Hardcover lists Crossing Three at number 4 from its third answer on: the series read twice more.
-  expect((await page.request.get("/api/series/701")).ok()).toBe(true);
+test("Add on a row opens the sheet with that book chosen; Close and Back change nothing; a reload; the book AudiobookDB listed later is added once", async ({ page }) => {
+  restore = await saveCrossing(page, ["503"]);
+  // AudiobookDB lists Crossing Three at number 4 after the save; the series is read again.
+  await listCrossingThree(page, true);
   expect((await page.request.get("/api/series/701?refresh=1")).ok()).toBe(true);
   const three = (await crossing(page)).works.find((work) => work.title === "Crossing Three");
   expect(three?.new).toBe(true);
@@ -128,7 +131,7 @@ test("Add on a row opens the sheet with that book chosen; Close and Back change 
   expect(sent).toEqual([]);
   expect(await libraryTitles(page)).toEqual(library);
 
-  // The address on a reload: the server's choice, the work Hardcover listed later; a book not released yet is not chosen.
+  // The address on a reload: the server's choice, the work AudiobookDB listed later; a book not released yet is not chosen.
   await page.goto("/#series/701/add");
   await page.reload();
   await expect(sheet(page)).toBeVisible();
@@ -139,7 +142,7 @@ test("Add on a row opens the sheet with that book chosen; Close and Back change 
   await sheet(page).getByRole("button", { name: "Add 1 book", exact: true }).click();
   await expect(sheet(page)).toHaveCount(0);
   await expect(page).toHaveURL(/#series\/701$/);
-  expect(sent).toEqual([{ id: 701, bookIds: [506], searchAudio: false, searchEbooks: false }]);
+  expect(sent).toEqual([{ id: "701", bookIds: ["506"], searchAudio: false, searchEbooks: false }]);
   // Added once; the book already in the library stays single; the page reads the series again: it is a library book.
   const after = await libraryBooks(page);
   expect(after.filter((book) => book.title === "Crossing Three")).toHaveLength(1);
@@ -174,9 +177,9 @@ test("the administrator's Get switches search for the chosen books and skip one 
   await sheet(page).getByRole("button", { name: "Add 2 books", exact: true }).click();
   await expect(sheet(page)).toHaveCount(0);
   await expect(page).toHaveURL(/#series\/701$/);
-  expect(sent).toEqual([{ id: 701, bookIds: [501, 503], searchAudio: true, searchEbooks: true }]);
-  await expect.poll(async () => (await crossing(page)).works.find((work) => work.id === 501)?.acquisition?.audio?.skipReason ?? null).toBe("has_audio");
-  await expect.poll(async () => (await crossing(page)).works.find((work) => work.id === 503)?.acquisition?.audio?.status ?? null).not.toBeNull();
+  expect(sent).toEqual([{ id: "701", bookIds: ["501", "503"], searchAudio: true, searchEbooks: true }]);
+  await expect.poll(async () => (await crossing(page)).works.find((work) => work.id === "501")?.acquisition?.audio?.skipReason ?? null).toBe("has_audio");
+  await expect.poll(async () => (await crossing(page)).works.find((work) => work.id === "503")?.acquisition?.audio?.status ?? null).not.toBeNull();
   expect((await libraryBooks(page)).filter((book) => book.title === ALICE)).toHaveLength(1);
 
   // As the administrator last set them on this device.
@@ -195,7 +198,7 @@ test("the administrator's Get switches search for the chosen books and skip one 
 });
 
 test("someone who is not the administrator gets no switches; a refusal shows the server's message and keeps the choice", async ({ page }) => {
-  restore = await saveCrossing(page, [503]);
+  restore = await saveCrossing(page, ["503"]);
   await page.route("**/api/auth/status", (route) =>
     route.fulfill({ json: { required: true, authenticated: true, user: { id: 1, username: "reader", role: "user" } } }),
   );
@@ -230,27 +233,27 @@ test("someone who is not the administrator gets no switches; a refusal shows the
   await sheet(page).getByRole("button", { name: "Add 1 book", exact: true }).click();
   await expect(sheet(page)).toHaveCount(0);
   expect(bodies).toEqual([
-    { id: 701, bookIds: [504], searchAudio: false, searchEbooks: false },
-    { id: 701, bookIds: [504], searchAudio: false, searchEbooks: false },
+    { id: "701", bookIds: ["504"], searchAudio: false, searchEbooks: false },
+    { id: "701", bookIds: ["504"], searchAudio: false, searchEbooks: false },
   ]);
 });
 
 test("the preferred language picks the book at each number; a number the user unticked stays unticked", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("sonder-series-language", "en"));
-  const work = (id: number, title: string, position: number, language: string, selected: boolean) => ({
+  const work = (id: string, title: string, position: number, language: string, selected: boolean) => ({
     id, title, position, language, popularity: 10, unreleased: false, workId: null, cover: null, added: false, new: true, needsAdmin: false, selected,
   });
   await page.route(/\/api\/series\/701(\?.*)?$/, (route) =>
     route.fulfill({ json: {
-      id: 701, name: "The Crossing", author: "Ada North", count: 4,
-      works: [work(1, "English first", 1, "en", true), work(2, "French first", 1, "fr", false), work(3, "English second", 2, "en", true), work(4, "French second", 2, "fr", false)],
+      id: "701", name: "The Crossing", author: "Ada North", count: 4,
+      works: [work("1", "English first", 1, "en", true), work("2", "French first", 1, "fr", false), work("3", "English second", 2, "en", true), work("4", "French second", 2, "fr", false)],
     } }),
   );
   // The page asks the saved series whether 701 is saved (#564): the faked series is.
   await page.route(/\/api\/series$/, async (route) => {
     if (route.request().method() !== "GET") return route.continue();
-    const list = (await (await route.fetch()).json()) as { id: number }[];
-    const saved = list.some((item) => item.id === 701) ? list : [...list, { id: 701, name: "The Crossing", author: "Ada North", count: 4, finished: 0, total: 2, covers: [] }];
+    const list = (await (await route.fetch()).json()) as { id: string }[];
+    const saved = list.some((item) => item.id === "701") ? list : [...list, { id: "701", name: "The Crossing", author: "Ada North", count: 4, finished: 0, total: 2, covers: [] }];
     await route.fulfill({ json: saved }).catch(() => {});
   });
   await page.goto("/#series/701/add");
@@ -272,7 +275,7 @@ test("the preferred language picks the book at each number; a number the user un
 });
 
 test("measured against the board at phone size and on a desktop: choice rows 64, rows 52, the groups' order, no overflow", async ({ page }) => {
-  restore = await saveCrossing(page, [503]);
+  restore = await saveCrossing(page, ["503"]);
   const measure = async () => {
     await expect(choices(page)).toBeVisible();
     const heights = (selector: string) =>

@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  NOT_IN_LIBRARY_LINE, QUEUE_OFF_LINE, WORKER_OFF_LINE, ALREADY_HAS_COPY_LINE,
+  NOT_IN_LIBRARY_LINE, NO_AUDIOBOOK_LINE, SERIES_NOT_SAVED_AGAIN_LINE, SERIES_SAVED_AGAIN_LINE, QUEUE_OFF_LINE, WORKER_OFF_LINE, ALREADY_HAS_COPY_LINE,
   deviceSaveLine, downloadLine, ebookCheckLine, readingSyncLine, serverCopyLine, spareEditionsLine, withReason,
   type EbookCheckFacts, type ReadingSyncJobFacts,
 } from "../src/status-lines.ts";
@@ -105,6 +105,9 @@ test("a save to this device: every line of the table, with its figures", () => {
 
 test("the fixed lines", () => {
   assert.equal(NOT_IN_LIBRARY_LINE, "Not in your library");
+  assert.equal(NO_AUDIOBOOK_LINE, "No audiobook yet");
+  assert.equal(SERIES_NOT_SAVED_AGAIN_LINE, "Series not saved again");
+  assert.equal(SERIES_SAVED_AGAIN_LINE, "Series saved again");
   assert.equal(QUEUE_OFF_LINE, "Paused");
   assert.equal(WORKER_OFF_LINE, "Not in use");
 });

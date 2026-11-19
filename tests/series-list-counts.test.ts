@@ -4,7 +4,7 @@
  *
  * `tests/fixtures/series-routes-pin.json` holds every other field of `GET /api/series`,
  * `GET /api/series/<id>` and `GET /api/hardcover/series/<id>` for this fixture, recorded on the
- * revision before #561. Never rewrite it to make this test pass; rewrite it only for an intended
+ * revision before #561 and recorded again for the move of series to AudiobookDB (#721 part b). Never rewrite it to make this test pass; rewrite it only for an intended
  * change to those routes, with `SONDER_UPDATE_SERIES_PIN=1 npx tsx --test tests/series-list-counts.test.ts`,
  * and review the diff.
  */
@@ -21,42 +21,46 @@ process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
 process.env.APP_PASSWORD = "admin-password";
 
+process.env.SONDER_SKIP_SERIES_ACQUISITION = "1";
+process.env.AUDIOBOOKDB_API_KEY = "env-key";
+
+// The series is AudiobookDB's (#721 part b), from recorded answers; nothing reaches the network.
+const { createControl, fixtureFetch, seriesMember } = await import("./audiobookdb-fixture.ts");
+type FixtureMember = ReturnType<typeof seriesMember>;
+const control = createControl();
+const refuse: typeof fetch = async (input) => {
+  throw new Error(`Unexpected external request: ${String(input)}`);
+};
+const originalFetch = globalThis.fetch;
+globalThis.fetch = refuse;
+let now = Date.parse("2026-11-19T12:00:00Z");
+const clock = { now: () => now, sleep: async (ms: number) => void (now += ms) };
+const abdb = await import("../server/audiobookdb.ts");
+const ol = await import("../server/openlibrary.ts");
+abdb.configureAudiobookDbForTests({ fetch: fixtureFetch(control, refuse), clock });
+ol.configureOpenLibraryForTests({ fetch: fixtureFetch(control, refuse), clock });
 const { createApp } = await import("../server/app.ts");
 const { sqlite } = await import("../server/db.ts");
 const app = await createApp({ background: { manual: true } });
-const originalFetch = globalThis.fetch;
 
-const SERIES = 51;
-const cover = (id: number) => `https://covers.test/${id}.jpg`;
-// Hardcover lists the French translations at the same number as the originals.
-const entries: { position: number | null; id: number; title: string; date: string; language: string }[] = [
-  { position: 1, id: 201, title: "The First Tide", date: "2001-01-01", language: "en" },
-  { position: 1, id: 211, title: "La Première Marée", date: "2003-01-01", language: "fr" },
-  { position: 2, id: 202, title: "The Second Tide", date: "2002-01-01", language: "en" },
-  { position: 2, id: 212, title: "La Deuxième Marée", date: "2004-01-01", language: "fr" },
-  { position: 3, id: 203, title: "The Third Tide", date: "2005-01-01", language: "en" },
-  { position: 4, id: 204, title: "The Last Tide", date: "2999-01-01", language: "en" },
-  { position: null, id: 205, title: "Tide Charts", date: "2006-01-01", language: "en" },
+const SERIES = "sr-tides";
+const cover = (id: string) => `https://images.audiobookdb.org/${id}.jpg`;
+// AudiobookDB lists a second English book at numbers 1 and 2 (a later recording, released later), so a number has
+// two candidates: the earlier release is the default, the one in a user's library stands for them.
+const entries: { position: number | null; id: string; title: string; date: string }[] = [
+  { position: 1, id: "201", title: "The First Tide", date: "2001-01-01" },
+  { position: 1, id: "221", title: "The First Tide, Dramatized", date: "2003-01-01" },
+  { position: 2, id: "202", title: "The Second Tide", date: "2002-01-01" },
+  { position: 2, id: "222", title: "The Second Tide, Dramatized", date: "2004-01-01" },
+  { position: 3, id: "203", title: "The Third Tide", date: "2005-01-01" },
+  { position: 4, id: "204", title: "The Last Tide", date: "2999-01-01" },
+  { position: null, id: "205", title: "Tide Charts", date: "2006-01-01" },
 ];
-const books = entries.map((entry) => ({
-  id: entry.id, title: entry.title, slug: null, description: null,
-  release_year: Number(entry.date.slice(0, 4)), release_date: entry.date,
-  cached_image: { url: cover(entry.id) }, users_count: 10,
-  default_physical_edition: { language: { language: entry.language, code2: entry.language } },
-  default_audio_edition: null, editions: [],
-  contributions: [{ contribution: "author", author: { name: "Mara Coast" } }],
-  book_series: [{ position: entry.position, series: { id: SERIES, name: "The Tides" } }],
-}));
-globalThis.fetch = async (input, init) => {
-  if (!String(input).startsWith("https://api.hardcover.app/")) throw new Error(`Unexpected external request: ${String(input)}`);
-  const { query, variables } = JSON.parse(String(init?.body));
-  if (query.includes("SonderSeriesPreview")) return Response.json({ data: { series_by_pk: {
-    id: SERIES, name: "The Tides", books_count: entries.length, author: { name: "Mara Coast" },
-    book_series: entries.map((entry) => ({ position: entry.position, book: books.find((book) => book.id === entry.id) })),
-  } } });
-  if (query.includes("SonderBook(")) return Response.json({ data: { books_by_pk: books.find((book) => book.id === variables.id) ?? null } });
-  return Response.json({ errors: [{ message: "Unexpected Hardcover query" }] });
+const member = (entry: (typeof entries)[number]): FixtureMember => {
+  const listed = seriesMember(entry.id, entry.title, "Mara Coast", String(entry.position ?? ""), entry.position ?? 0, { releaseDate: entry.date });
+  return entry.position === null ? ({ ...listed, position: null } as unknown as FixtureMember) : listed;
 };
+control.series.set(SERIES, { id: SERIES, name: "The Tides", people: [{ name: "Mara Coast", role: { name: "Author" } }], books: entries.map(member) });
 after(async () => {
   globalThis.fetch = originalFetch;
   await app.close();
@@ -79,14 +83,12 @@ async function get(cookie: string, url: string) {
   assert.equal(response.statusCode, 200, `${url}: ${response.body}`);
   return response.json();
 }
-async function save(cookie: string, bookIds: number[]) {
-  const token = await app.inject({ method: "PUT", url: "/api/hardcover/token", cookies: { sonder_session: cookie }, payload: { token: "fixture-token" } });
-  assert.equal(token.statusCode, 200, token.body);
+async function save(cookie: string, bookIds: string[]) {
   const response = await app.inject({ method: "POST", url: "/api/series", cookies: { sonder_session: cookie }, payload: { id: SERIES, bookIds } });
   assert.equal(response.statusCode, 200, response.body);
 }
-async function finish(cookie: string, bookId: number) {
-  const work = (await get(cookie, `/api/series/${SERIES}`)).works.find((item: { id: number }) => item.id === bookId);
+async function finish(cookie: string, bookId: string) {
+  const work = (await get(cookie, `/api/series/${SERIES}`)).works.find((item: { id: string }) => item.id === bookId);
   assert.ok(work?.editionId, `book ${bookId} is in the library`);
   const response = await app.inject({ method: "PATCH", url: `/api/library/${work.editionId}`, cookies: { sonder_session: cookie }, payload: { status: "finished" } });
   assert.equal(response.statusCode, 200, response.body);
@@ -94,15 +96,15 @@ async function finish(cookie: string, bookId: number) {
 const counts = (item: { finished: number; total: number; covers: (string | null)[] }) =>
   ({ finished: item.finished, total: item.total, covers: item.covers });
 
-// The owner holds number 1 (finished), the French translation at number 2 (unfinished) and the
+// The owner holds number 1 (finished), the later recording at number 2 (unfinished) and the
 // related work (finished). Number 3 is missing and released; number 4 is not released yet.
-await save(owner, [201, 212, 205]);
-await finish(owner, 201);
-await finish(owner, 205);
+await save(owner, ["201", "222", "205"]);
+await finish(owner, "201");
+await finish(owner, "205");
 const samBefore = await get(sam, "/api/series");
 // Sam holds only number 3, finished.
-await save(sam, [203]);
-await finish(sam, 203);
+await save(sam, ["203"]);
+await finish(sam, "203");
 
 // Runs first, before the tests below change any place.
 const PIN = new URL("./fixtures/series-routes-pin.json", import.meta.url);
@@ -151,8 +153,8 @@ test("GET /api/series counts the numbers whose book is held or released, and the
   const [series] = await get(owner, "/api/series");
   assert.deepEqual(counts(series), {
     finished: 1, total: 3,
-    // The book at number 2 is the translation in the library, not the English original.
-    covers: [cover(201), cover(212), cover(203)],
+    // The book at number 2 is the later recording in the library, not the default.
+    covers: [cover("201"), cover("222"), cover("203")],
   });
 });
 
@@ -161,13 +163,13 @@ test("GET /api/series gives a second user counts and covers from their own libra
   const [series] = await get(sam, "/api/series");
   assert.deepEqual(counts(series), {
     finished: 1, total: 3,
-    // The owner's French book at number 2 does not stand there for Sam: the English original does.
-    covers: [cover(201), cover(202), cover(203)],
+    // The owner's later recording at number 2 does not stand there for Sam: the default does.
+    covers: [cover("201"), cover("202"), cover("203")],
   });
-  await finish(owner, 212);
-  assert.deepEqual(counts((await get(owner, "/api/series"))[0]), { finished: 2, total: 3, covers: [cover(201), cover(212), cover(203)] });
+  await finish(owner, "222");
+  assert.deepEqual(counts((await get(owner, "/api/series"))[0]), { finished: 2, total: 3, covers: [cover("201"), cover("222"), cover("203")] });
   assert.deepEqual(counts((await get(sam, "/api/series"))[0]), counts(series), "the owner finishing a book leaves Sam's counts alone");
-  const status = await app.inject({ method: "PATCH", url: `/api/library/${(await get(owner, `/api/series/${SERIES}`)).works.find((item: { id: number }) => item.id === 212).editionId}`,
+  const status = await app.inject({ method: "PATCH", url: `/api/library/${(await get(owner, `/api/series/${SERIES}`)).works.find((item: { id: string }) => item.id === "222").editionId}`,
     cookies: { sonder_session: owner }, payload: { status: "unread" } });
   assert.equal(status.statusCode, 200, status.body);
 });

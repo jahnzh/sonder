@@ -36,10 +36,6 @@ process.env.API_RATE_LIMIT = "6000";
 process.env.CSP_MODE ??= "enforce";
 if (process.env.PLAYWRIGHT_AUTH !== "1") delete process.env.APP_PASSWORD;
 delete process.env.TRANSMISSION_RPC_URL;
-const { installHardcoverFixture } = await import(
-  "./hardcover-browser-fixture.ts"
-);
-installHardcoverFixture();
 const { installAlignmentFixture, holdAlignment, heldAlignmentRequests } = await import("./alignment-browser-fixture.ts");
 await installAlignmentFixture();
 const { installProwlarrFixture } = await import("./prowlarr-browser-fixture.ts");
@@ -49,7 +45,10 @@ const { installSeriesAcquisitionFixture } = await import(
 );
 installSeriesAcquisitionFixture();
 // AudiobookDB and Open Library answered from recorded answers (#721): no live call.
-(await import("./audiobookdb-fixture.ts")).installAudiobookDbFixture();
+const catalogue = (await import("./audiobookdb-fixture.ts")).installAudiobookDbFixture();
+// The series specs' AudiobookDB series (#721 part b): The Crossing (701, 702) and The Ferry Road (703).
+const { installBrowserSeries, listLateCrossing } = await import("./series-browser-fixture.ts");
+installBrowserSeries(catalogue);
 const { createApp } = await import("../server/app.ts");
 const app = await createApp();
 // The alignment fixture's hold (#542): a spec keeps a real job's worker requests waiting, then lets them go.
@@ -58,6 +57,27 @@ app.post("/api/__fixture/alignment-hold", async (request) => {
   return { released: holdAlignment(String(token), !!hold) };
 });
 app.get("/api/__fixture/alignment-hold", async (request) => ({ held: heldAlignmentRequests(String((request.query as { token?: string }).token)) }));
+// AudiobookDB's series as a spec needs them (#721 part b). `late` lists Crossing Three in 701 or not, then reads the
+// series again as the daily refresh does (a series nobody saved: its cached answer only), so the next page shows it.
+// `stale` ages a saved series as a week would: its cached answer expired and its last read long ago, so the next
+// `GET /api/series/<id>` reads AudiobookDB (and shows the refresh error when that fails).
+app.post("/api/__fixture/audiobookdb-series", async (request) => {
+  const { id, late, stale } = request.body as { id: string; late?: boolean; stale?: boolean };
+  const { sqlite } = await import("../server/db.ts");
+  if (late !== undefined) {
+    listLateCrossing(catalogue, !!late);
+    const { readCatalogueSeries, refreshCatalogueSeries } = await import("../server/series-catalogue.ts");
+    if (sqlite.prepare("SELECT 1 FROM series_catalogue WHERE id=?").get(String(id))) await refreshCatalogueSeries(String(id), { fresh: true, priority: "interactive" });
+    else await readCatalogueSeries(String(id), { fresh: true, priority: "interactive" });
+  }
+  if (stale) {
+    sqlite.prepare("UPDATE catalogue_cache SET expires_at=0 WHERE provider='audiobookdb' AND kind='series' AND key=?").run(String(id));
+    sqlite.prepare("UPDATE user_saved_series SET refreshed_at=0 WHERE series_id=?").run(String(id));
+  }
+  return { ok: true };
+});
+// A book in the library without Hardcover's import (#721): the series and Discover specs' Alice and Matter.
+(await import("./library-fixture-routes.ts")).registerLibraryFixtureRoutes(app);
 // The Get sheet without a book (#576): its add answered without TorBox or a torrent client.
 await (await import("./new-book-browser-fixture.ts")).installNewBookFixture(app);
 await app.listen({ port: Number(process.env.PLAYWRIGHT_PORT || 4173), host: "127.0.0.1" });

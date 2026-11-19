@@ -19,10 +19,31 @@ process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
 process.env.APP_PASSWORD = "admin-password";
 
+process.env.SONDER_SKIP_SERIES_ACQUISITION = "1";
+process.env.AUDIOBOOKDB_API_KEY = "env-key";
+// The series is AudiobookDB's (#721 part b), from recorded answers (tests/audiobookdb-fixture.ts).
+const { createControl, fixtureFetch, seriesMember } = await import("./audiobookdb-fixture.ts");
+const control = createControl();
+const author = "Pin Author";
+control.series.set("61", {
+  id: "61",
+  name: "Pinned Saga",
+  people: [{ name: author, role: { name: "Author" } }],
+  books: [401, 402].map((id) => seriesMember(String(id), `Pinned volume ${id}`, author, String(id - 400), id - 400, { releaseDate: "2020-01-01" })),
+});
+const refuse: typeof fetch = async (input) => {
+  throw new Error(`Unexpected external request: ${String(input)}`);
+};
+const realFetch = globalThis.fetch;
+globalThis.fetch = refuse;
+const clock = { now: () => Date.now(), sleep: async () => {} };
+(await import("../server/audiobookdb.ts")).configureAudiobookDbForTests({ fetch: fixtureFetch(control, refuse), clock });
+(await import("../server/openlibrary.ts")).configureOpenLibraryForTests({ fetch: fixtureFetch(control, refuse), clock });
+
 const { createApp } = await import("../server/app.ts");
 const { sqlite, db } = await import("../server/db.ts");
 const s = await import("../server/schema.ts");
-const hc = await import("../server/hardcover.ts");
+const { ensurePlaceholder } = await import("../server/placeholder-edition.ts");
 const { claimWorkAudio } = await import("../server/work-library.ts");
 const removal = await import("../server/series-removal.ts");
 const { deriveWorkMediaStates, playableWorks } = await import(
@@ -30,44 +51,17 @@ const { deriveWorkMediaStates, playableWorks } = await import(
 );
 const app = await createApp({ background: { manual: ["series-acquisition"] } });
 
-const author = "Pin Author";
-const catalogBook = (id: number, title = `Pinned volume ${id}`) => ({
-  id,
-  title,
-  slug: null,
-  description: null,
-  release_year: 2020,
-  release_date: "2020-01-01",
-  cached_image: null,
-  contributions: [{ contribution: "author", author: { name: author } }],
-  book_series: [{ position: id - 400, series: { id: 61, name: "Pinned Saga" } }],
-  editions: [],
-});
-const seriesBooks = [401, 402].map((id) => catalogBook(id));
-
-const realFetch = globalThis.fetch;
-globalThis.fetch = async (input, init) => {
-  if (!String(input).startsWith("https://api.hardcover.app/"))
-    throw new Error(`Unexpected external request: ${String(input)}`);
-  const { query, variables } = JSON.parse(String(init?.body));
-  if (query.includes("SonderSeriesPreview"))
-    return Response.json({
-      data: {
-        series_by_pk: {
-          id: 61,
-          name: "Pinned Saga",
-          books_count: seriesBooks.length,
-          author: { name: author },
-          book_series: seriesBooks.map((book) => ({ position: book.id - 400, book })),
-        },
-      },
-    });
-  if (query.includes("SonderBook("))
-    return Response.json({
-      data: { books_by_pk: seriesBooks.find((book) => book.id === variables.id) ?? null },
-    });
-  return Response.json({ errors: [{ message: "Unexpected Hardcover query" }] });
-};
+/**
+ * A placeholder as the Hardcover import left one before its removal (#721 part d): the work `work-hc-<id>` linked to
+ * Hardcover book `id`, its placeholder `hc-<id>` in the user's library, and the book on that user's stored shelf.
+ */
+function storedHardcoverPlaceholder(userId: number, id: number, title: string) {
+  sqlite.prepare("INSERT INTO works(id,title,author,description,genre,year) VALUES(?,?,?,'','',2020)").run(`work-hc-${id}`, title, author);
+  sqlite.prepare("INSERT INTO hardcover_links(work_id,book_id,slug,series) VALUES(?,?,NULL,'[]')").run(`work-hc-${id}`, id);
+  const edition = ensurePlaceholder(sqlite, `work-hc-${id}`);
+  sqlite.prepare("INSERT INTO user_library(user_id,book_id,status,added_at) VALUES(?,?,'unread',?)").run(userId, edition, Date.now());
+  sqlite.prepare("INSERT INTO user_hardcover_links(user_id,book_id,status_id) VALUES(?,?,1)").run(userId, id);
+}
 
 after(async () => {
   globalThis.fetch = realFetch;
@@ -176,14 +170,8 @@ function editionExists(editionId: string) {
   return !!sqlite.prepare("SELECT 1 FROM audio_editions WHERE id=?").get(editionId);
 }
 
-async function saveSeries(bookIds: number[]) {
+async function saveSeries(bookIds: string[]) {
   const cookie = await adminCookie();
-  await app.inject({
-    method: "PUT",
-    url: "/api/hardcover/token",
-    cookies: { sonder_session: cookie },
-    payload: { token: "fixture-token" },
-  });
   const saved = await app.inject({
     method: "POST",
     url: "/api/series",
@@ -194,16 +182,16 @@ async function saveSeries(bookIds: number[]) {
   const view = (
     await app.inject({ url: "/api/series/61", cookies: { sonder_session: cookie } })
   ).json();
-  return (bookId: number) =>
-    view.works.find((work: { id: number }) => work.id === bookId).workId as string;
+  return (bookId: string) =>
+    view.works.find((work: { id: string }) => work.id === bookId).workId as string;
 }
 
 // --- Series removal (server/series-removal.ts) -------------------------------------------
 
 test("series removal preview lists a work's real audio editions and not its placeholder", async () => {
-  const workOf = await saveSeries([401]);
-  const workId = workOf(401);
-  assert.ok(editionExists("hc-401"), "saving the series made the Hardcover placeholder");
+  const workOf = await saveSeries(["401"]);
+  const workId = workOf("401");
+  assert.ok(editionExists(`placeholder-${workId}`), "saving the series made the work's placeholder");
   addEdition(workId, "real-401", 1);
   shelve(1, "real-401");
 
@@ -212,7 +200,7 @@ test("series removal preview lists a work's real audio editions and not its plac
     cookies: { sonder_session: await adminCookie() },
   });
   assert.equal(preview.statusCode, 200, preview.body);
-  const work = preview.json().works.find((w: { bookId: number }) => w.bookId === 401);
+  const work = preview.json().works.find((w: { bookId: string }) => w.bookId === "401");
   assert.deepEqual(
     work.audioEditions.map((edition: { editionId: string }) => edition.editionId),
     ["real-401"],
@@ -228,9 +216,10 @@ test("series removal preview lists a work's real audio editions and not its plac
 });
 
 test("removing a work with its series deletes its real audio edition and keeps its placeholder", async () => {
-  const workOf = await saveSeries([402]);
-  const workId = workOf(402);
-  assert.ok(editionExists("hc-402"));
+  const workOf = await saveSeries(["402"]);
+  const workId = workOf("402");
+  const placeholder = `placeholder-${workId}`;
+  assert.ok(editionExists(placeholder));
   addEdition(workId, "real-402", 1);
   shelve(1, "real-402");
 
@@ -238,7 +227,7 @@ test("removing a work with its series deletes its real audio edition and keeps i
     method: "DELETE",
     url: "/api/series/61",
     cookies: { sonder_session: await adminCookie() },
-    payload: { bookIds: [402] },
+    payload: { bookIds: ["402"] },
   });
   assert.equal(removed.statusCode, 200, removed.body);
   assert.deepEqual(
@@ -249,11 +238,11 @@ test("removing a work with its series deletes its real audio edition and keeps i
     [["real-402", true]],
   );
   assert.equal(editionExists("real-402"), false);
-  assert.equal(editionExists("hc-402"), true);
+  assert.equal(editionExists(placeholder), true);
   assert.ok(
     sqlite
-      .prepare("SELECT 1 FROM user_hidden_library WHERE user_id=1 AND book_id='hc-402'")
-      .get(),
+      .prepare("SELECT 1 FROM user_hidden_library WHERE user_id=1 AND book_id=?")
+      .get(placeholder),
     "the placeholder keeps the Hardcover sync from adding the work back",
   );
 });
@@ -273,39 +262,29 @@ test("suppressing the Hardcover sync of an unlinked work hides its placeholder, 
   addWork("work-pin-hc");
   addEdition("work-pin-hc", "real-pin-hc", 1);
   addEdition("work-pin-hc", "hc-990001", 0);
-  removal.ensureHardcoverSyncSuppressed(1, "work-pin-hc");
+  removal.keepRemovedWorkHidden(1, "work-pin-hc");
   assert.deepEqual(hiddenOf(1, ["real-pin-hc", "hc-990001"]), ["hc-990001"]);
 
   // Without a Hardcover placeholder, an edition without audio stands in for the work.
   addWork("work-pin-empty");
   addEdition("work-pin-empty", "real-pin-empty", 1);
   addEdition("work-pin-empty", "empty-pin-empty", 0);
-  removal.ensureHardcoverSyncSuppressed(1, "work-pin-empty");
+  removal.keepRemovedWorkHidden(1, "work-pin-empty");
   assert.deepEqual(hiddenOf(1, ["real-pin-empty", "empty-pin-empty"]), ["empty-pin-empty"]);
 
   // A work with only audio hides nothing.
   addWork("work-pin-audio");
   addEdition("work-pin-audio", "real-pin-audio", 1);
-  removal.ensureHardcoverSyncSuppressed(1, "work-pin-audio");
+  removal.keepRemovedWorkHidden(1, "work-pin-audio");
   assert.deepEqual(hiddenOf(1, ["real-pin-audio"]), []);
 });
 
 // --- Hardcover import (server/hardcover.ts) ----------------------------------------------
 
-test("importing a Hardcover book whose work has audio replaces the placeholder on the shelf", () => {
-  const book = catalogBook(7101, "Shelf swap volume");
-  hc.applyHardcoverCatalogBook(1, book);
-  assert.deepEqual(shelvedIds(1, ["hc-7101"]), ["hc-7101"], "first import shelves a placeholder");
-  addEdition("work-hc-7101", "real-7101", 1);
-
-  hc.applyHardcoverCatalogBook(1, book);
-  assert.deepEqual(shelvedIds(1, ["hc-7101", "real-7101"]), ["real-7101"]);
-});
-
 test("one user's Hardcover placeholder is not listed for another user, while audio is", async () => {
   const owner = await listener("pin-owner");
   const other = await listener("pin-other");
-  hc.applyHardcoverCatalogBook(owner.id, catalogBook(7201, "Private shelf volume"));
+  storedHardcoverPlaceholder(owner.id, 7201, "Private shelf volume");
   assert.ok(editionExists("hc-7201"));
   addWork("work-7202");
   addEdition("work-7202", "real-7202", 1);

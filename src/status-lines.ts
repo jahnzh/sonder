@@ -371,6 +371,13 @@ export function seriesSearchLine({ status, search, place, retrying, reason }: Se
   }
 }
 
+/**
+ * A series saved on Hardcover, saved again on AudiobookDB at the switch (#721 part b): not found there (or not yet
+ * saved: the key is missing), or saved without some of its books. The reason follows.
+ */
+export const SERIES_NOT_SAVED_AGAIN_LINE = "Series not saved again";
+export const SERIES_SAVED_AGAIN_LINE = "Series saved again";
+
 /** What a finished entry of Now concerns, with the facts its line is written from. */
 export type FinishedFacts =
   | { entry: "download"; backend?: "local" | "torbox" | "copy" | null; cancelled?: boolean }
@@ -611,6 +618,11 @@ export const mappedShare = (coverage: number | null | undefined): string => perc
  * on the server" is how the administrator sees the same hold).
  */
 
+/**
+ * A book of a series AudiobookDB has no audiobook of (#721 part b): Open Library lists it. Added, its ebook is
+ * searched for; its audiobook once AudiobookDB lists it.
+ */
+export const NO_AUDIOBOOK_LINE = "No audiobook yet";
 /** A book of a series that is not out yet. */
 export const NOT_RELEASED_LINE = "Not released yet";
 /** A series search for the book's audiobook or ebook failed (`series_acquisition_jobs`, `failed`). */

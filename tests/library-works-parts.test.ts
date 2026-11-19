@@ -143,7 +143,7 @@ ebook("eb-pdf", "w-epub", "pdf", null);
 checkpoint(OWNER, "eb-epub", 0.4, "reading", T0 + 15 * DAY);
 
 // w-two: two EPUBs in its ebook set (the default accepted, the other held), the set's consensus text,
-// a ready reading sync pair (rec-two-a) and one being rebuilt (rec-two-b), and two Hardcover series.
+// a ready reading sync pair (rec-two-a) and one being rebuilt (rec-two-b), and its series.
 ebook("eb-two", "w-two", "epub", "two epub");
 ebook("eb-two-held", "w-two", "epub", "held epub!");
 run("INSERT INTO ebook_editions(id,work_id,format,source) VALUES('set-consensus:w-two','w-two','epub','consensus:w-two')");
@@ -167,13 +167,20 @@ job(
   T0 + 4,
   alignment("job-rebuild", "eb-two", "rec-two-b", "ready", 1, { engine: "ctc-wav2vec2-base-960h-torchaudio-2.8-v2" }),
 );
-run("UPDATE hardcover_links SET series=? WHERE work_id='w-two'", JSON.stringify([
-  { id: 77, name: "Pair Saga", position: 1 },
-  { id: 88, name: "Wider World", position: 4.5 },
-  { name: "Unnumbered Cycle", position: null },
-]));
-run("INSERT INTO series_catalogue(id,name,author,book_count) VALUES(77,'Pair Saga','A',2),(88,'Wider World','A',9)");
-run("INSERT INTO user_saved_series(user_id,series_id,saved_at) VALUES(?,88,?)", OWNER, T0);
+// Its series (#721 part b) are AudiobookDB's: two in the stored series catalogue and the one its catalogue link names
+// with no number. The series Hardcover lists for its book are no longer read.
+run("UPDATE hardcover_links SET series=? WHERE work_id='w-two'", JSON.stringify([{ id: 99, name: "Hardcover Only Saga", position: 2 }]));
+run("INSERT INTO series_catalogue(id,name,author,book_count) VALUES('sr-pair','Pair Saga','A',2),('sr-wider','Wider World','A',9)");
+run(
+  `INSERT INTO series_catalogue_works(series_id,book_id,work_id,title,position,position_label,author)
+   VALUES('sr-pair','bk-two','w-two','Two',1,'1','A'),('sr-wider','bk-two','w-two','Two',4.5,'4.5','A')`,
+);
+run(
+  `INSERT INTO work_catalogue_links(work_id,provider,external_id,title,author,series_id,series_name,series_position,series_sort,matched_by,linked_at)
+   VALUES('w-two','audiobookdb','bk-two','Two','A','sr-cycle','Unnumbered Cycle',NULL,NULL,'manual',?)`,
+  T0,
+);
+run("INSERT INTO user_saved_series(user_id,series_id,saved_at) VALUES(?,'sr-wider',?)", OWNER, T0);
 run("INSERT INTO user_hardcover_links(user_id,book_id,status_id) VALUES(?,9001,3)", OWNER);
 run("INSERT INTO user_hardcover_links(user_id,book_id,status_id) VALUES(?,9001,1)", SAM);
 run(
@@ -348,20 +355,20 @@ test("reading sync: one entry per pair with a job, in the alignment list's summa
   assert.deepEqual((await work(OWNER_TOKEN, "w-outside")).readingSync, []);
 });
 
-test("series: every series of the work, the saved one first, then in Hardcover's order", async () => {
+test("series: every series of the work, the saved one first, then by name", async () => {
   const owner = await bothReads(OWNER_TOKEN, "w-two");
   assert.deepEqual(owner.series, [
-    { id: 88, name: "Wider World", position: 4.5, saved: true },
-    { id: 77, name: "Pair Saga", position: 1, saved: false },
-    { id: null, name: "Unnumbered Cycle", position: null, saved: false },
+    { id: "sr-wider", name: "Wider World", position: 4.5, positionLabel: "4.5", saved: true },
+    { id: "sr-pair", name: "Pair Saga", position: 1, positionLabel: "1", saved: false },
+    { id: "sr-cycle", name: "Unnumbered Cycle", position: null, positionLabel: null, saved: false },
   ]);
-  // Sam saved none: Hardcover's order, nothing saved.
+  // Sam saved none: by name, nothing saved.
   assert.deepEqual((await bothReads(SAM_TOKEN, "w-two")).series, [
-    { id: 77, name: "Pair Saga", position: 1, saved: false },
-    { id: 88, name: "Wider World", position: 4.5, saved: false },
-    { id: null, name: "Unnumbered Cycle", position: null, saved: false },
+    { id: "sr-pair", name: "Pair Saga", position: 1, positionLabel: "1", saved: false },
+    { id: "sr-cycle", name: "Unnumbered Cycle", position: null, positionLabel: null, saved: false },
+    { id: "sr-wider", name: "Wider World", position: 4.5, positionLabel: "4.5", saved: false },
   ]);
-  assert.deepEqual((await bothReads(OWNER_TOKEN, "w-unplayed")).series, [], "a work without a Hardcover book has none");
+  assert.deepEqual((await bothReads(OWNER_TOKEN, "w-unplayed")).series, [], "a work in no series has none");
 });
 
 test("media state: queued with the acquisition's progress, failed with its error, held with its reason", async () => {
@@ -467,7 +474,7 @@ test("finished by a recording's end, by an ebook edition's end and by the overri
 });
 
 test("a second user's places, overrides and saved series are not visible", async () => {
-  // The owner's place in eb-epub, override on w-two and saved series 88 (tests above set or keep them).
+  // The owner's place in eb-epub, override on w-two and saved series sr-wider (tests above set or keep them).
   checkpoint(OWNER, "eb-epub", 0.4, "reading", T0 + 15 * DAY);
   run(
     "INSERT INTO user_work_completion(user_id,work_id,status) VALUES(?,'w-two','finished') ON CONFLICT DO UPDATE SET status='finished'",
@@ -600,8 +607,8 @@ test("the entity tag follows each part a work holds", async () => {
       assert.equal(entry.engine, "ctc-wav2vec2-base-960h-torchaudio-2.8-book-v2");
     },
   );
-  await tagFollows(OWNER_TOKEN, "a saved series", () => run("INSERT INTO user_saved_series(user_id,series_id,saved_at) VALUES(?,77,?)", OWNER, T0),
-    (works) => assert.deepEqual(inWork(works, "w-two").series.map((e) => [e.id, e.saved]), [[77, true], [88, true], [null, false]]));
+  await tagFollows(OWNER_TOKEN, "a saved series", () => run("INSERT INTO user_saved_series(user_id,series_id,saved_at) VALUES(?,'sr-pair',?)", OWNER, T0),
+    (works) => assert.deepEqual(inWork(works, "w-two").series.map((e) => [e.id, e.saved]), [["sr-pair", true], ["sr-wider", true], ["sr-cycle", false]]));
   await tagFollows(OWNER_TOKEN, "a hold reason", () => run("UPDATE work_media_states SET hold_reason='empty_search' WHERE user_id=? AND work_id='w-only'", OWNER),
     (works) => assert.equal(inWork(works, "w-only").mediaState?.holdReason, "empty_search"));
   await tagFollows(OWNER_TOKEN, "an acquisition's error", () => acquisition("acq-failed", "w-failed", "error", 0.1, "Another reason", [OWNER]),

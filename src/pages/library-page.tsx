@@ -96,12 +96,12 @@ export function LibraryPage({
   setShelf: (shelf: ShelfFilter) => void;
   /** `GET /api/series`, for the Series chip (#567). */
   savedSeries: { items: SavedSeriesItem[] | undefined; error: string };
-  openSeries: (id: number) => void;
+  openSeries: (id: string) => void;
   findSeries: () => void;
   /** The plus, "Add a book" (#575): Discover with its field focused. */
   findBook: () => void;
   /** A desktop's `#series/<id>`: the Series chip's list with this series beside it (DesktopSeries.dc.html). */
-  beside?: { id: number; page: ReactNode } | null;
+  beside?: { id: string; page: ReactNode } | null;
   /** The favourites by work. */
   favorites: string[];
   /** Works kept on this device and complete. */

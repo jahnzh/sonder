@@ -11,7 +11,7 @@
 import type { DeviceSaveEntry } from "./device-saves";
 import {
   downloadLine, ebookCheckLine, failedLine, finishedLine, readingSyncLine, serverCopyLine, seriesSearchLine, spareEditionsLine,
-  withFileCount, withReason, withUser, deviceSaveLine, ALREADY_HAS_COPY_LINE,
+  withFileCount, withReason, withUser, deviceSaveLine, ALREADY_HAS_COPY_LINE, searchReason, SERIES_NOT_SAVED_AGAIN_LINE, SERIES_SAVED_AGAIN_LINE,
   type DownloadFacts, type EbookCheckFacts, type ReadingSyncJobFacts, type SeriesSearchFacts, type ServerCopyFacts,
 } from "./status-lines";
 import type { ActivityItem, ActivityItemAction, ActivityProcess, ActivityResponse } from "./types";
@@ -61,15 +61,15 @@ export type NowOpens =
 /** The kinds of entry a row can show, in the order a group prefers them (`ENTRY_ORDER`). */
 export type NowEntryKind =
   | "download" | "server-copy" | "series-search" | "ebook-check" | "reading-sync" | "device-save"
-  | "hardcover" | "backup" | "process";
+  | "backup" | "process";
 const ENTRY_ORDER: NowEntryKind[] = [
-  "download", "server-copy", "series-search", "ebook-check", "reading-sync", "device-save", "hardcover", "backup", "process",
+  "download", "server-copy", "series-search", "ebook-check", "reading-sync", "device-save", "backup", "process",
 ];
 
 export type NowRow = {
   /** Stable key: `work:<id>`, or the server item or process id for a row that has no work. */
   key: string;
-  /** A book row (with a cover), or a row that is not a book (a process that is down, a Hardcover queue, a backup). */
+  /** A book row (with a cover), or a row that is not a book (a process that is down, a backup). */
   book: boolean;
   workId: string | null;
   bookId: string | null;
@@ -140,7 +140,6 @@ const ENTRY_OF: Record<ActivityItem["kind"], NowEntryKind> = {
   "series-acquisition": "series-search",
   "ebook-set": "ebook-check",
   alignment: "reading-sync",
-  hardcover: "hardcover",
   backup: "backup",
 };
 
@@ -262,12 +261,15 @@ function serverEntry(item: ActivityItem, now: number, spares: Map<string, { tota
   if (spare) group = "waiting";
   const entry = ENTRY_OF[item.kind];
   const failed = item.state === "failed";
-  // A Hardcover queue and a backup are not books: they appear only when they need attention.
-  const notBook = entry === "hardcover" || entry === "backup";
+  // A backup is not a book: it appears only when it needs attention.
+  const notBook = entry === "backup";
   if (notBook && group !== "attention") return null;
   let line: string | null;
-  // A Hardcover queue is one user's: its line names whose it is, as Server's queue line does ("… · admin").
+  // A row that is not a book names whose it is when it has a user, as Server's queue line does ("… · admin").
   if (notBook) line = withUser(item.error ?? item.stuck?.reason ?? item.detail ?? "", item.user);
+  // A saved series moved to AudiobookDB (#721): not found or not saved yet, or saved without some books, and why.
+  else if (item.facts.kind === "series-acquisition" && item.facts.saveAgain)
+    line = withReason(failed ? SERIES_NOT_SAVED_AGAIN_LINE : SERIES_SAVED_AGAIN_LINE, searchReason(item.error));
   // A failed series search names which search failed and why (#717).
   else if (failed && item.facts.kind === "series-acquisition")
     line = seriesSearchLine({ status: "failed", search: item.facts.search, reason: item.error });
@@ -277,6 +279,7 @@ function serverEntry(item: ActivityItem, now: number, spares: Map<string, { tota
   else line = movingLine(item);
   // A finished series search for the audiobook has no line: the download it starts takes over the row.
   if (line === null && entry === "series-search" && item.state === "done") return null;
+  const saveAgain = item.facts.kind === "series-acquisition" && !!item.facts.saveAgain;
   // A cause the source named leads the line (#716: "No peers · Downloading to server · 0%"), so a row with a button
   // still shows it on a phone; "No change for …" and "Blocked by …" follow the line as before.
   if (!notBook && item.stuck)
@@ -294,7 +297,7 @@ function serverEntry(item: ActivityItem, now: number, spares: Map<string, { tota
     cover: notBook ? null : item.cover,
     entry,
     // A series search is about the file it looks for ("Ebook on server" has the Ebook icon, ActivityFailedSave.dc.html).
-    icon: notBook ? "server" : item.facts.kind === "series-acquisition" ? item.facts.search : ICON_OF[entry] ?? null,
+    icon: notBook || saveAgain ? "server" : item.facts.kind === "series-acquisition" ? item.facts.search : ICON_OF[entry] ?? null,
     line: line ?? item.detail ?? "",
     failed: failed || notBook,
     progress: group === "progress" && !item.stuck && !item.superseded ? item.progress : null,

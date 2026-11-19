@@ -9,7 +9,7 @@ export const saveSheet = (page: Page) => page.getByRole("dialog", { name: "Save 
 /** Opens `#series/<id>` from Discover's series search (#575): the row of `<name>` by `<author>`. */
 export async function viewSeriesFromDiscover(page: Page, query: string, name: string, author: string) {
   await openSeriesResult(page, query, name, author);
-  await expect(page).toHaveURL(/#series\/\d+$/);
+  await expect(page).toHaveURL(/#series\/[A-Za-z0-9_.:-]+$/);
 }
 
 /**
@@ -43,7 +43,32 @@ export async function saveSeriesOnPage(page: Page, options: { toggle?: string[];
  * A spec that saves a series through its page needs it not saved: another spec on the server may have saved it. The
  * series is removed with an empty body, so its books stay in the library; the spec saves it back when it is done.
  */
-export async function unsaveSeries(page: Page, id: number) {
-  const saved = ((await (await page.request.get("/api/series")).json()) as { id: number }[]).some((series) => series.id === id);
+export async function unsaveSeries(page: Page, id: string | number) {
+  // AudiobookDB's ids are text (#721); a spec written for Hardcover's numbers still finds its series.
+  const saved = ((await (await page.request.get("/api/series")).json()) as { id: string }[]).some((series) => String(series.id) === String(id));
   if (saved) expect((await page.request.delete(`/api/series/${id}`, { data: {} })).ok()).toBe(true);
+}
+
+/**
+ * Series come from AudiobookDB (#721): its key saved in Settings › Connections, as the owner saves it (the browser
+ * server's AudiobookDB is the recorded answers of tests/audiobookdb-fixture.ts and tests/series-browser-fixture.ts).
+ * `base` is the address of a spec's own server.
+ */
+export async function connectAudiobookDb(page: Page, base = "") {
+  expect((await page.request.patch(`${base}/api/settings`, { data: { audiobookdb: "browser-key" } })).ok()).toBe(true);
+}
+/** Without AudiobookDB's key: a series search or a read of a series fails, saying to add it. */
+export async function disconnectAudiobookDb(page: Page, base = "") {
+  expect((await page.request.patch(`${base}/api/settings`, { data: { audiobookdb: "" } })).ok()).toBe(true);
+}
+/**
+ * Whether AudiobookDB lists Crossing Three at number 4 of The Crossing (701), the book it listed after the series was
+ * saved; the browser server reads the series again, so the next page shows it (a saved series marks it New).
+ */
+export async function listCrossingThree(page: Page, late: boolean, base = "") {
+  expect((await page.request.post(`${base}/api/__fixture/audiobookdb-series`, { data: { id: "701", late } })).ok()).toBe(true);
+}
+/** A saved series a week later: its AudiobookDB answer expired, so the next `GET /api/series/<id>` reads AudiobookDB. */
+export async function ageSeries(page: Page, id: string, base = "") {
+  expect((await page.request.post(`${base}/api/__fixture/audiobookdb-series`, { data: { id, stale: true } })).ok()).toBe(true);
 }

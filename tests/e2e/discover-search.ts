@@ -1,5 +1,5 @@
 // Discover's series search (#575): the Series segment, the words in "Search for a series" and Enter. A result is a
-// row named by the series' name and its line ("Ada North · 4 books · Hardcover #701"); it opens `#series/<id>`, the
+// row named by the series' name and its line ("Ada North · 4 books · AudiobookDB 701", AudiobookDB's text id since #721); it opens `#series/<id>`, the
 // Series page, with Save series for a series this account has not saved (#564).
 import { expect, type Page } from "@playwright/test";
 

@@ -79,7 +79,7 @@ function StackedCover({ covers }: { covers: (string | null)[] }) {
 }
 
 /** One series row; Discover's series search lists its results with it too (#575). */
-export function SeriesListItem({ row, beside, onOpen }: { row: SeriesListRow; beside: boolean; onOpen: (id: number) => void }) {
+export function SeriesListItem({ row, beside, onOpen }: { row: SeriesListRow; beside: boolean; onOpen: (id: string) => void }) {
   const id = useId();
   return (
     <li className="library-series-item">
@@ -124,10 +124,10 @@ export function SeriesList({
   error: string;
   query: string;
   /** The series shown beside the list. */
-  current?: number | null;
+  current?: string | null;
   /** The list stands beside a series (a desktop): no heading of its own, no chevrons. */
   beside?: boolean;
-  onOpen: (id: number) => void;
+  onOpen: (id: string) => void;
   onFind: () => void;
 }) {
   const rows = items ? seriesListRows(items, { query, current }) : [];

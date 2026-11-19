@@ -1,64 +1,83 @@
+// Removing a saved series (#721 part b: series on AudiobookDB's text ids, against recorded answers from
+// tests/audiobookdb-fixture.ts): the series alone, or with chosen works and their audio, what is kept for another
+// listener, legacy rows and active downloads, and the Hardcover hidden marker of a work that is linked to Hardcover.
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
+import { tempDir } from "./temp-dir.ts";
 
-const temp = mkdtempSync(join(tmpdir(), "sonder-series-removal-"));
+const temp = tempDir("sonder-series-removal-");
 process.env.DATA_DIR = join(temp, "db");
 process.env.MEDIA_ROOT = join(temp, "media");
 mkdirSync(join(temp, "media"), { recursive: true });
 process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
 process.env.APP_PASSWORD = "admin-password";
+process.env.AUDIOBOOKDB_API_KEY = "env-key";
 
-const { createApp } = await import("../server/app.ts");
-const { sqlite, db } = await import("../server/db.ts");
-const schema = await import("../server/schema.ts");
-// The series loop never ticks on its own here; the tests call tickSeriesAcquisition themselves.
-const app = await createApp({ background: { manual: ["series-acquisition"] } });
+const { createControl, fixtureFetch, seriesMember } = await import("./audiobookdb-fixture.ts");
+const control = createControl();
+const SERIES = "sr-removal";
+const author = "Rem Author";
+control.series.set(SERIES, {
+  id: SERIES,
+  name: "Removal Saga",
+  people: [{ name: author, role: { name: "Author" } }],
+  books: [
+    seriesMember("bk-rem-1", "Volume one", author, "1", 1, { releaseDate: "2020-01-01" }),
+    seriesMember("bk-rem-2", "Volume two", author, "2", 2, { releaseDate: "2021-01-01" }),
+    seriesMember("bk-rem-3", "Side story", author, "3", 3, { releaseDate: "2022-01-01" }),
+  ],
+});
+control.openLibrarySeries.set("removal saga", []);
 
-const books = [
-  { id: 301, title: "Volume one", release_year: 2020, release_date: "2020-01-01" },
-  { id: 302, title: "Volume two", release_year: 2021, release_date: "2021-01-01" },
-  { id: 303, title: "Side story", release_year: 2022, release_date: "2022-01-01" },
+// Hardcover answers only for the two tests that link a series work to Hardcover on purpose (the hidden marker that
+// keeps a Hardcover sync from adding the work back). Any other host is refused: no live call.
+const hardcoverBooks = [
+  { id: 301, title: "Volume one", release_year: 2020 },
+  { id: 302, title: "Volume two", release_year: 2021 },
 ].map((book) => ({
   ...book,
   slug: null,
   description: null,
   cached_image: null,
-  contributions: [{ contribution: "author", author: { name: "Rem Author" } }],
+  contributions: [{ contribution: "author", author: { name: author } }],
   book_series: [{ position: book.id - 300, series: { id: 41, name: "Removal Saga" } }],
   editions: [],
 }));
-
-globalThis.fetch = async (input, init) => {
-  if (!String(input).startsWith("https://api.hardcover.app/")) {
-    throw new Error(`Unexpected external request: ${String(input)}`);
-  }
+const hardcoverFake: typeof fetch = async (input, init) => {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  if (!url.startsWith("https://api.hardcover.app/")) throw new Error(`Unexpected external request: ${url}`);
   const { query, variables } = JSON.parse(String(init?.body));
-  if (query.includes("SonderSeriesPreview")) {
-    return Response.json({
-      data: {
-        series_by_pk: {
-          id: 41,
-          name: "Removal Saga",
-          books_count: 3,
-          author: { name: "Rem Author" },
-          book_series: books.map((book) => ({ position: book.id - 300, book })),
-        },
-      },
-    });
-  }
-  if (query.includes("SonderBook(")) {
-    return Response.json({
-      data: { books_by_pk: books.find((book) => book.id === variables.id) ?? null },
-    });
-  }
+  if (query.includes("SonderBook(")) return Response.json({ data: { books_by_pk: hardcoverBooks.find((book) => book.id === variables.id) ?? null } });
   return Response.json({ errors: [{ message: "Unexpected Hardcover query" }] });
 };
+const recordedFetch = fixtureFetch(control, hardcoverFake);
+globalThis.fetch = recordedFetch;
+let now = Date.parse("2026-11-19T12:00:00Z");
+const clock = { now: () => now, sleep: async (ms: number) => void (now += ms) };
+const abdb = await import("../server/audiobookdb.ts");
+const ol = await import("../server/openlibrary.ts");
+abdb.configureAudiobookDbForTests({ fetch: recordedFetch, clock });
+ol.configureOpenLibraryForTests({ fetch: recordedFetch, clock });
+
+const { createApp } = await import("../server/app.ts");
+const { sqlite, db } = await import("../server/db.ts");
+const schema = await import("../server/schema.ts");
+const acquisition = await import("../server/series-acquisition.ts");
+// The series searches run against nothing: no live AudioBookBay, Prowlarr or ebook source in a test.
+const empty = async () => ({ results: [], page: 1, nextPage: null });
+const noSources = {
+  seriesAudioDeps: { abbSearch: empty, prowlarrSearch: empty, abbMagnetLink: async () => "", prowlarrMagnetLink: async () => "", cachedHashes: async () => new Set<string>(), log: () => {} },
+  fetchEbooks: async () => ({ downloaded: [], skipped: null, failures: [] }),
+  acquire: (async () => ({})) as never,
+};
+acquisition.setSeriesAcquisitionDeps(noSources);
+// No loop ticks on its own here; the tests call tickSeriesAcquisition themselves.
+const app = await createApp({ background: { manual: true } });
 
 let cachedAdminCookie: string | undefined;
 async function adminCookie() {
@@ -94,43 +113,50 @@ async function userCookie(username: string) {
 
 async function saveSeries(
   cookie: string,
-  bookIds: number[],
+  bookIds: string[],
   options?: { searchAudio?: boolean },
 ) {
-  await app.inject({
-    method: "PUT",
-    url: "/api/hardcover/token",
-    cookies: { sonder_session: cookie },
-    payload: { token: "fixture-token" },
-  });
-  return app.inject({
+  const saved = await app.inject({
     method: "POST",
     url: "/api/series",
     cookies: { sonder_session: cookie },
-    payload: { id: 41, bookIds, searchAudio: options?.searchAudio },
+    payload: { id: SERIES, bookIds, searchAudio: options?.searchAudio },
   });
+  assert.equal(saved.statusCode, 200, saved.body);
+  return saved;
 }
 
-function markIntroduced(userId: number, bookId: number, introduced: number) {
+async function seriesWorkId(cookie: string, bookId: string) {
+  const page = await app.inject({ url: `/api/series/${SERIES}`, cookies: { sonder_session: cookie } });
+  assert.equal(page.statusCode, 200, page.body);
+  const work = page.json().works.find((w: { id: string }) => w.id === bookId);
+  assert.ok(work?.workId, page.body);
+  return work.workId as string;
+}
+
+function markIntroduced(userId: number, bookId: string, introduced: number) {
   sqlite
     .prepare(
-      `UPDATE user_saved_series_works SET introduced=? WHERE user_id=? AND series_id=41 AND book_id=?`,
+      `UPDATE user_saved_series_works SET introduced=? WHERE user_id=? AND series_id=? AND book_id=?`,
     )
-    .run(introduced, userId, bookId);
+    .run(introduced, userId, SERIES, bookId);
+}
+
+/** The work linked to a Hardcover book on purpose: the case `keepRemovedWorkHidden` still covers. */
+async function linkToHardcover(workId: string, hardcoverBookId: number) {
+  // A link kept from before Hardcover's removal (#721 part d); no token is needed to read it.
+  sqlite.prepare("INSERT OR IGNORE INTO hardcover_links(work_id,book_id) VALUES(?,?)").run(workId, hardcoverBookId);
 }
 
 after(async () => {
   await app.close();
   sqlite.close();
-  rmSync(temp, { recursive: true, force: true });
 });
 
 test("removing only the saved series leaves works, downloads and audio intact", async () => {
   const cookie = await adminCookie();
-  await saveSeries(cookie, [301, 302]);
-  const workId = (
-    await app.inject({ url: "/api/series/41", cookies: { sonder_session: cookie } })
-  ).json().works.find((w: { id: number }) => w.id === 301).workId;
+  await saveSeries(cookie, ["bk-rem-1", "bk-rem-2"]);
+  const workId = await seriesWorkId(cookie, "bk-rem-1");
   const audioPath = join(temp, "media", "keep-me.mp3");
   writeFileSync(audioPath, "audio");
   const editionId = "local-removal-one";
@@ -186,8 +212,8 @@ test("removing only the saved series leaves works, downloads and audio intact", 
     .values({
       id: randomUUID(),
       userId: 1,
-      seriesId: 41,
-      bookId: 302,
+      seriesId: SERIES,
+      bookId: "bk-rem-2",
       workId,
       kind: "audio",
       status: "pending",
@@ -205,7 +231,7 @@ test("removing only the saved series leaves works, downloads and audio intact", 
 
   const removed = await app.inject({
     method: "DELETE",
-    url: "/api/series/41",
+    url: `/api/series/${SERIES}`,
     cookies: { sonder_session: cookie },
     payload: {},
   });
@@ -234,49 +260,47 @@ test("removing only the saved series leaves works, downloads and audio intact", 
 
 test("removal preview defaults follow provenance and shared series membership", async () => {
   const cookie = await adminCookie();
-  await saveSeries(cookie, [301, 302, 303]);
-  markIntroduced(1, 302, 0);
+  await saveSeries(cookie, ["bk-rem-1", "bk-rem-2", "bk-rem-3"]);
+  markIntroduced(1, "bk-rem-2", 0);
   const seriesView = (
-    await app.inject({ url: "/api/series/41", cookies: { sonder_session: cookie } })
+    await app.inject({ url: `/api/series/${SERIES}`, cookies: { sonder_session: cookie } })
   ).json();
-  const workId = seriesView.works.find((w: { id: number }) => w.id === 301).workId;
-  const workIdTwo = seriesView.works.find((w: { id: number }) => w.id === 302).workId;
+  const workId = seriesView.works.find((w: { id: string }) => w.id === "bk-rem-1").workId;
+  const workIdTwo = seriesView.works.find((w: { id: string }) => w.id === "bk-rem-2").workId;
   sqlite.prepare(`DELETE FROM user_work_library_origin WHERE user_id=? AND work_id=?`).run(1, workIdTwo);
   sqlite.prepare(
-    `INSERT INTO user_work_library_origin(user_id,work_id,source,series_id,added_at) VALUES(?,?,?,?,?)`,
+    `INSERT INTO user_work_library_origin(user_id,work_id,source,catalogue_series_id,added_at) VALUES(?,?,?,?,?)`,
   ).run(1, workIdTwo, "manual", null, Date.now());
   sqlite.prepare(
-    `INSERT OR IGNORE INTO series_catalogue(id,name,author,book_count) VALUES(42,'Other Saga','Rem Author',1)`,
+    `INSERT OR IGNORE INTO series_catalogue(id,name,author,book_count) VALUES('sr-other','Other Saga','Rem Author',1)`,
   ).run();
   sqlite.prepare(
     `INSERT OR IGNORE INTO series_catalogue_works(series_id,book_id,work_id,title,position,cover,unreleased)
-     VALUES(42,888,?, 'Volume one', 1, NULL, 0)`,
+     VALUES('sr-other','bk-other-1',?, 'Volume one', 1, NULL, 0)`,
   ).run(workId);
-  sqlite.prepare(`INSERT INTO user_saved_series(user_id,series_id,saved_at) VALUES(1,42,?)`).run(
+  sqlite.prepare(`INSERT INTO user_saved_series(user_id,series_id,saved_at) VALUES(1,'sr-other',?)`).run(
     Date.now(),
   );
   sqlite.prepare(
-    `INSERT INTO user_saved_series_works(user_id,series_id,book_id,work_id,introduced) VALUES(1,42,888,?,1)`,
+    `INSERT INTO user_saved_series_works(user_id,series_id,book_id,work_id,introduced) VALUES(1,'sr-other','bk-other-1',?,1)`,
   ).run(workId);
 
   const preview = (
-    await app.inject({ url: "/api/series/41/removal", cookies: { sonder_session: cookie } })
+    await app.inject({ url: `/api/series/${SERIES}/removal`, cookies: { sonder_session: cookie } })
   ).json();
-  const one = preview.works.find((w: { bookId: number }) => w.bookId === 301);
-  const two = preview.works.find((w: { bookId: number }) => w.bookId === 302);
-  const three = preview.works.find((w: { bookId: number }) => w.bookId === 303);
+  const one = preview.works.find((w: { bookId: string }) => w.bookId === "bk-rem-1");
+  const two = preview.works.find((w: { bookId: string }) => w.bookId === "bk-rem-2");
+  const three = preview.works.find((w: { bookId: string }) => w.bookId === "bk-rem-3");
   assert.equal(one.selectedByDefault, false);
-  assert.deepEqual(one.otherSeries, [{ id: 42, name: "Other Saga" }]);
+  assert.deepEqual(one.otherSeries, [{ id: "sr-other", name: "Other Saga" }]);
   assert.equal(two.selectedByDefault, false);
   assert.equal(three.selectedByDefault, true);
 });
 
 test("removing selected works cancels active downloads and deletes downloaded audio", async () => {
   const cookie = await adminCookie();
-  await saveSeries(cookie, [301]);
-  const workId = (
-    await app.inject({ url: "/api/series/41", cookies: { sonder_session: cookie } })
-  ).json().works.find((w: { id: number }) => w.id === 301).workId;
+  await saveSeries(cookie, ["bk-rem-1"]);
+  const workId = await seriesWorkId(cookie, "bk-rem-1");
   const audioPath = join(temp, "media", "delete-me.mp3");
   writeFileSync(audioPath, "audio");
   const editionId = "local-removal-delete";
@@ -334,9 +358,9 @@ test("removing selected works cancels active downloads and deletes downloaded au
 
   const removed = await app.inject({
     method: "DELETE",
-    url: "/api/series/41",
+    url: `/api/series/${SERIES}`,
     cookies: { sonder_session: cookie },
-    payload: { bookIds: [301] },
+    payload: { bookIds: ["bk-rem-1"] },
   });
   assert.equal(removed.statusCode, 200, removed.body);
   assert.equal(existsSync(audioPath), false);
@@ -358,9 +382,8 @@ test("removing selected works cancels active downloads and deletes downloaded au
 test("audio needed by another user is retained and explained", async () => {
   const admin = await adminCookie();
   const { id: otherUserId } = await userCookie("listener-a");
-  await saveSeries(admin, [301]);
-  const workId = (await app.inject({ url: "/api/series/41", cookies: { sonder_session: admin } }))
-    .json().works.find((w: { id: number }) => w.id === 301).workId;
+  await saveSeries(admin, ["bk-rem-1"]);
+  const workId = await seriesWorkId(admin, "bk-rem-1");
   const audioPath = join(temp, "media", "shared.mp3");
   writeFileSync(audioPath, "audio");
   const editionId = "local-shared";
@@ -406,21 +429,21 @@ test("audio needed by another user is retained and explained", async () => {
     })
     .run();
   sqlite.prepare(
-    `INSERT OR IGNORE INTO series_catalogue(id,name,author,book_count) VALUES(43,'Other Saga Two','Rem Author',1)`,
+    `INSERT OR IGNORE INTO series_catalogue(id,name,author,book_count) VALUES('sr-other-two','Other Saga Two','Rem Author',1)`,
   ).run();
   sqlite.prepare(
     `INSERT OR IGNORE INTO series_catalogue_works(series_id,book_id,work_id,title,position,cover,unreleased)
-     VALUES(43,889,?, 'Volume one', 1, NULL, 0)`,
+     VALUES('sr-other-two','bk-other-two-1',?, 'Volume one', 1, NULL, 0)`,
   ).run(workId);
   sqlite.prepare(
-    `INSERT OR IGNORE INTO user_saved_series(user_id,series_id,saved_at) VALUES(?,43,?)`,
+    `INSERT OR IGNORE INTO user_saved_series(user_id,series_id,saved_at) VALUES(?,'sr-other-two',?)`,
   ).run(otherUserId, Date.now());
   sqlite.prepare(
-    `INSERT OR IGNORE INTO user_saved_series_works(user_id,series_id,book_id,work_id,introduced) VALUES(?,43,889,?,1)`,
+    `INSERT OR IGNORE INTO user_saved_series_works(user_id,series_id,book_id,work_id,introduced) VALUES(?,'sr-other-two','bk-other-two-1',?,1)`,
   ).run(otherUserId, workId);
 
   const preview = (
-    await app.inject({ url: "/api/series/41/removal", cookies: { sonder_session: admin } })
+    await app.inject({ url: `/api/series/${SERIES}/removal`, cookies: { sonder_session: admin } })
   ).json();
   const edition = preview.works[0].audioEditions[0];
   assert.equal(edition.wouldDelete, false);
@@ -428,9 +451,9 @@ test("audio needed by another user is retained and explained", async () => {
 
   const removed = await app.inject({
     method: "DELETE",
-    url: "/api/series/41",
+    url: `/api/series/${SERIES}`,
     cookies: { sonder_session: admin },
-    payload: { bookIds: [301] },
+    payload: { bookIds: ["bk-rem-1"] },
   });
   assert.equal(removed.statusCode, 200, removed.body);
   assert.ok(existsSync(audioPath));
@@ -457,11 +480,9 @@ test("audio needed by another user is retained and explained", async () => {
 
 test("progress without library blocks deleting another user's audio", async () => {
   const admin = await adminCookie();
-  await saveSeries(admin, [302]);
-  const workId = (
-    await app.inject({ url: "/api/series/41", cookies: { sonder_session: admin } })
-  ).json().works.find((w: { id: number }) => w.id === 302).workId;
-  await userCookie("listener-progress");
+  await saveSeries(admin, ["bk-rem-2"]);
+  const workId = await seriesWorkId(admin, "bk-rem-2");
+  const { id: progressUserId } = await userCookie("listener-progress");
   const audioPath = join(temp, "media", "progress-only.mp3");
   writeFileSync(audioPath, "audio");
   const editionId = "local-progress-only";
@@ -492,7 +513,7 @@ test("progress without library blocks deleting another user's audio", async () =
     .run();
   db.insert(schema.userProgress)
     .values({
-      userId: 2,
+      userId: progressUserId,
       recordingId: "rec-progress",
       trackId: "track-progress",
       position: 1,
@@ -504,9 +525,9 @@ test("progress without library blocks deleting another user's audio", async () =
     .values({ userId: 1, bookId: editionId, status: "unread", addedAt: Date.now() })
     .run();
   const preview = (
-    await app.inject({ url: "/api/series/41/removal", cookies: { sonder_session: admin } })
+    await app.inject({ url: `/api/series/${SERIES}/removal`, cookies: { sonder_session: admin } })
   ).json();
-  const previewWork = preview.works.find((work: { bookId: number }) => work.bookId === 302);
+  const previewWork = preview.works.find((work: { bookId: string }) => work.bookId === "bk-rem-2");
   assert.ok(previewWork, JSON.stringify(preview.works));
   const row = previewWork.audioEditions.find(
     (edition: { editionId: string }) => edition.editionId === editionId,
@@ -515,9 +536,9 @@ test("progress without library blocks deleting another user's audio", async () =
   assert.match(row.retainReason, /listening progress/);
   const removed = await app.inject({
     method: "DELETE",
-    url: "/api/series/41",
+    url: `/api/series/${SERIES}`,
     cookies: { sonder_session: admin },
-    payload: { bookIds: [302] },
+    payload: { bookIds: ["bk-rem-2"] },
   });
   assert.equal(removed.statusCode, 200, removed.body);
   assert.ok(existsSync(audioPath));
@@ -526,10 +547,8 @@ test("progress without library blocks deleting another user's audio", async () =
 
 test("edition delete clears recording foreign keys", async () => {
   const cookie = await adminCookie();
-  await saveSeries(cookie, [301]);
-  const workId = (
-    await app.inject({ url: "/api/series/41", cookies: { sonder_session: cookie } })
-  ).json().works.find((w: { id: number }) => w.id === 301).workId;
+  await saveSeries(cookie, ["bk-rem-1"]);
+  const workId = await seriesWorkId(cookie, "bk-rem-1");
   const audioPath = join(temp, "media", "fk-edition.mp3");
   writeFileSync(audioPath, "audio");
   const editionId = "local-fk-edition";
@@ -598,9 +617,9 @@ test("edition delete clears recording foreign keys", async () => {
     .run(workId, Date.now());
   const removed = await app.inject({
     method: "DELETE",
-    url: "/api/series/41",
+    url: `/api/series/${SERIES}`,
     cookies: { sonder_session: cookie },
-    payload: { bookIds: [301] },
+    payload: { bookIds: ["bk-rem-1"] },
   });
   assert.equal(removed.statusCode, 200, removed.body);
   assert.equal(existsSync(audioPath), false);
@@ -618,10 +637,8 @@ test("edition delete clears recording foreign keys", async () => {
 
 test("paths outside MEDIA_ROOT are not unlinked", async () => {
   const cookie = await adminCookie();
-  await saveSeries(cookie, [301]);
-  const workId = (
-    await app.inject({ url: "/api/series/41", cookies: { sonder_session: cookie } })
-  ).json().works.find((w: { id: number }) => w.id === 301).workId;
+  await saveSeries(cookie, ["bk-rem-1"]);
+  const workId = await seriesWorkId(cookie, "bk-rem-1");
   const outside = join(temp, "outside-managed.mp3");
   writeFileSync(outside, "audio");
   const editionId = "local-outside-path";
@@ -655,9 +672,9 @@ test("paths outside MEDIA_ROOT are not unlinked", async () => {
     .run();
   const removed = await app.inject({
     method: "DELETE",
-    url: "/api/series/41",
+    url: `/api/series/${SERIES}`,
     cookies: { sonder_session: cookie },
-    payload: { bookIds: [301] },
+    payload: { bookIds: ["bk-rem-1"] },
   });
   assert.equal(removed.statusCode, 200, removed.body);
   assert.ok(existsSync(outside));
@@ -666,10 +683,10 @@ test("paths outside MEDIA_ROOT are not unlinked", async () => {
 
 test("DELETE /api/series/:id accepts JSON content-type with no body", async () => {
   const cookie = await adminCookie();
-  await saveSeries(cookie, [301]);
+  await saveSeries(cookie, ["bk-rem-1"]);
   const removed = await app.inject({
     method: "DELETE",
-    url: "/api/series/41",
+    url: `/api/series/${SERIES}`,
     cookies: { sonder_session: cookie },
     headers: { "content-type": "application/json" },
   });
@@ -679,11 +696,9 @@ test("DELETE /api/series/:id accepts JSON content-type with no body", async () =
 test("non-admin cannot remove works and audio", async () => {
   const admin = await adminCookie();
   const { cookie: listener, id: listenerId } = await userCookie("listener-b");
-  await saveSeries(admin, [301]);
-  await saveSeries(listener, [301]);
-  const workId = (
-    await app.inject({ url: "/api/series/41", cookies: { sonder_session: listener } })
-  ).json().works.find((w: { id: number }) => w.id === 301).workId;
+  await saveSeries(admin, ["bk-rem-1"]);
+  await saveSeries(listener, ["bk-rem-1"]);
+  const workId = await seriesWorkId(listener, "bk-rem-1");
   const audioPath = join(temp, "media", "non-admin-keep.mp3");
   writeFileSync(audioPath, "audio");
   const editionId = "local-non-admin";
@@ -717,9 +732,9 @@ test("non-admin cannot remove works and audio", async () => {
     .all(listenerId) as { book_id: string }[];
   const denied = await app.inject({
     method: "DELETE",
-    url: "/api/series/41",
+    url: `/api/series/${SERIES}`,
     cookies: { sonder_session: listener },
-    payload: { bookIds: [301] },
+    payload: { bookIds: ["bk-rem-1"] },
   });
   assert.equal(denied.statusCode, 403, denied.body);
   assert.ok(existsSync(audioPath));
@@ -734,13 +749,13 @@ test("non-admin cannot remove works and audio", async () => {
   assert.ok(
     sqlite
       .prepare(
-        "SELECT 1 FROM user_saved_series_works WHERE user_id=? AND series_id=41 AND book_id=301",
+        "SELECT 1 FROM user_saved_series_works WHERE user_id=? AND series_id='sr-removal' AND book_id='bk-rem-1'",
       )
       .get(listenerId),
   );
   const seriesOnly = await app.inject({
     method: "DELETE",
-    url: "/api/series/41",
+    url: `/api/series/${SERIES}`,
     cookies: { sonder_session: listener },
     payload: {},
   });
@@ -748,129 +763,59 @@ test("non-admin cannot remove works and audio", async () => {
 });
 
 test("removed work does not resume series acquisition after ticker runs", async () => {
-  const { tickSeriesAcquisition, setSeriesAcquisitionDeps, resetSeriesAcquisitionDeps } =
-    await import("../server/series-acquisition.ts");
+  const { tickSeriesAcquisition, setSeriesAcquisitionDeps } = acquisition;
   let acquireCalls = 0;
+  let searches = 0;
+  // The audio search of the saved book is held open until the work has been removed; it then answers a release.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const hash = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
   setSeriesAcquisitionDeps({
     canAcquireMedia: () => true,
+    seriesAudioDeps: {
+      ...noSources.seriesAudioDeps,
+      abbSearch: async () => {
+        searches++;
+        await held;
+        return { results: [{ id: "abb-rem-3", title: "Removal Saga 3 - Side story - Rem Author", narrator: "Jefferson Mays" }], page: 1, nextPage: null };
+      },
+      abbMagnetLink: async () => `magnet:?xt=urn:btih:${hash}`,
+    },
     acquire: (async () => {
       acquireCalls++;
       throw new Error("should not acquire after removal");
     }) as import("../server/series-acquisition.ts").SeriesAcquisitionDeps["acquire"],
   });
-  const cookie = await adminCookie();
-  await saveSeries(cookie, [301], { searchAudio: true });
-  const job = db.select().from(schema.seriesAcquisitionJobs).get();
-  assert.ok(job);
-  db.update(schema.seriesAcquisitionJobs)
-    .set({ status: "searching", updatedAt: Date.now() })
-    .where(eq(schema.seriesAcquisitionJobs.id, job!.id))
-    .run();
-  await app.inject({
-    method: "DELETE",
-    url: "/api/series/41",
-    cookies: { sonder_session: cookie },
-    payload: { bookIds: [301] },
-  });
-  await tickSeriesAcquisition();
-  assert.equal(acquireCalls, 0);
-  resetSeriesAcquisitionDeps();
-});
-
-test("removed audio-only work stays hidden from Hardcover import", async () => {
-  const { applyHardcoverCatalogBook, hardcoverBook } = await import("../server/hardcover.ts");
-  const { purgeEditionForTests } = await import("../server/series-removal.ts");
-  const cookie = await adminCookie();
-  await saveSeries(cookie, [302]);
-  const workId = (
-    sqlite
-      .prepare(
-        "SELECT work_id AS workId FROM user_saved_series_works WHERE user_id=1 AND series_id=41 AND book_id=302",
-      )
-      .get() as { workId: string }
-  ).workId;
-  const placeholderId = "hc-302";
-  for (const edition of db
-    .select()
-    .from(schema.editions)
-    .where(eq(schema.editions.workId, workId))
-    .all()) {
-    purgeEditionForTests(edition.id);
+  try {
+    const cookie = await adminCookie();
+    await saveSeries(cookie, ["bk-rem-3"], { searchAudio: true });
+    const job = db.select().from(schema.seriesAcquisitionJobs).get();
+    assert.ok(job);
+    // The tick Save series started is in the search.
+    for (let i = 0; i < 100 && !searches; i++) await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(searches, 1, JSON.stringify(db.select().from(schema.seriesAcquisitionJobs).all()));
+    assert.equal(db.select().from(schema.seriesAcquisitionJobs).where(eq(schema.seriesAcquisitionJobs.id, job!.id)).get()?.status, "searching");
+    const removed = await app.inject({
+      method: "DELETE",
+      url: `/api/series/${SERIES}`,
+      cookies: { sonder_session: cookie },
+      payload: { bookIds: ["bk-rem-3"] },
+    });
+    assert.equal(removed.statusCode, 200, removed.body);
+    assert.equal(db.select().from(schema.seriesAcquisitionJobs).all().length, 0);
+    release();
+    await tickSeriesAcquisition();
+    assert.equal(acquireCalls, 0);
+  } finally {
+    release();
+    setSeriesAcquisitionDeps({ ...noSources, canAcquireMedia: undefined });
   }
-  assert.equal(
-    db.select().from(schema.editions).where(eq(schema.editions.workId, workId)).all().length,
-    0,
-  );
-  const audioPath = join(temp, "media", "hc-hide-audio.mp3");
-  writeFileSync(audioPath, "audio");
-  const editionId = "local-audio-only";
-  db.insert(schema.editions)
-    .values({
-      id: editionId,
-      workId,
-      cover: "",
-      narrator: "N",
-      language: null,
-      releaseTitle: "Volume two",
-      rating: 0,
-      sourceLabel: "Test",
-    })
-    .run();
-  db.insert(schema.recordings).values({ id: "rec-audio-only", editionId }).run();
-  db.insert(schema.tracks)
-    .values({
-      id: "track-audio-only",
-      recordingId: "rec-audio-only",
-      title: "Ch 1",
-      index: 0,
-      duration: 10,
-      chapters: [],
-      source: audioPath,
-      sourceType: "local",
-    })
-    .run();
-  db.insert(schema.userLibrary)
-    .values({ userId: 1, bookId: editionId, status: "unread", addedAt: Date.now() })
-    .run();
-  const removed = await app.inject({
-    method: "DELETE",
-    url: "/api/series/41",
-    cookies: { sonder_session: cookie },
-    payload: { bookIds: [302] },
-  });
-  assert.equal(removed.statusCode, 200, removed.body);
-  assert.ok(
-    sqlite
-      .prepare(
-        "SELECT 1 FROM user_hidden_library WHERE user_id=1 AND book_id=?",
-      )
-      .get(placeholderId),
-  );
-  assert.ok(
-    db.select().from(schema.editions).where(eq(schema.editions.id, placeholderId)).get(),
-  );
-  const book = await hardcoverBook(1, 302);
-  applyHardcoverCatalogBook(1, book);
-  assert.equal(
-    sqlite
-      .prepare("SELECT 1 FROM user_library WHERE user_id=1 AND book_id=?")
-      .get(editionId),
-    undefined,
-  );
-  assert.equal(
-    sqlite
-      .prepare("SELECT 1 FROM user_library WHERE user_id=1 AND book_id=?")
-      .get(placeholderId),
-    undefined,
-  );
 });
 
 test("legacy library row blocks edition deletion", async () => {
   const cookie = await adminCookie();
-  await saveSeries(cookie, [301]);
-  const workId = (
-    await app.inject({ url: "/api/series/41", cookies: { sonder_session: cookie } })
-  ).json().works.find((w: { id: number }) => w.id === 301).workId;
+  await saveSeries(cookie, ["bk-rem-1"]);
+  const workId = await seriesWorkId(cookie, "bk-rem-1");
   const editionId = "local-legacy-library";
   const audioPath = join(temp, "media", "legacy-library.mp3");
   writeFileSync(audioPath, "audio");
@@ -903,105 +848,25 @@ test("legacy library row blocks edition deletion", async () => {
     .prepare("INSERT INTO library(book_id,status,added_at) VALUES(?,?,?)")
     .run(editionId, "unread", Date.now());
   const preview = (
-    await app.inject({ url: "/api/series/41/removal", cookies: { sonder_session: cookie } })
+    await app.inject({ url: `/api/series/${SERIES}/removal`, cookies: { sonder_session: cookie } })
   ).json();
-  const work = preview.works.find((w: { bookId: number }) => w.bookId === 301);
+  const work = preview.works.find((w: { bookId: string }) => w.bookId === "bk-rem-1");
   assert.equal(work.audioEditions[0].wouldDelete, false);
   const removed = await app.inject({
     method: "DELETE",
-    url: "/api/series/41",
+    url: `/api/series/${SERIES}`,
     cookies: { sonder_session: cookie },
-    payload: { bookIds: [301] },
+    payload: { bookIds: ["bk-rem-1"] },
   });
   assert.equal(removed.statusCode, 200, removed.body);
   assert.ok(existsSync(audioPath));
   assert.ok(db.select().from(schema.editions).where(eq(schema.editions.id, editionId)).get());
 });
 
-test("removed work with hc placeholder keeps hidden marker after audio delete", async () => {
-  const { importHardcoverBook } = await import("../server/hardcover.ts");
-  const cookie = await adminCookie();
-  await saveSeries(cookie, [301]);
-  const workId = (
-    await app.inject({ url: "/api/series/41", cookies: { sonder_session: cookie } })
-  ).json().works.find((w: { id: number }) => w.id === 301).workId;
-  const placeholderId = "hc-301";
-  db.insert(schema.editions)
-    .values({
-      id: placeholderId,
-      workId,
-      cover: "",
-      narrator: "Audio not added",
-      language: null,
-      releaseTitle: null,
-      rating: 0,
-      sourceLabel: "Hardcover library",
-    })
-    .onConflictDoNothing()
-    .run();
-  db.insert(schema.recordings)
-    .values({ id: `recording-${placeholderId}`, editionId: placeholderId })
-    .onConflictDoNothing()
-    .run();
-  const audioPath = join(temp, "media", "with-placeholder.mp3");
-  writeFileSync(audioPath, "audio");
-  const editionId = "local-with-placeholder";
-  db.insert(schema.editions)
-    .values({
-      id: editionId,
-      workId,
-      cover: "",
-      narrator: "N",
-      language: null,
-      releaseTitle: "Volume one",
-      rating: 0,
-      sourceLabel: "Test",
-    })
-    .run();
-  db.insert(schema.recordings).values({ id: "rec-ph", editionId }).run();
-  db.insert(schema.tracks)
-    .values({
-      id: "track-ph",
-      recordingId: "rec-ph",
-      title: "Ch 1",
-      index: 0,
-      duration: 10,
-      chapters: [],
-      source: audioPath,
-      sourceType: "local",
-    })
-    .run();
-  db.insert(schema.userLibrary)
-    .values({ userId: 1, bookId: editionId, status: "unread", addedAt: Date.now() })
-    .run();
-  await app.inject({
-    method: "DELETE",
-    url: "/api/series/41",
-    cookies: { sonder_session: cookie },
-    payload: { bookIds: [301] },
-  });
-  assert.ok(
-    sqlite
-      .prepare(
-        "SELECT 1 FROM user_hidden_library WHERE user_id=1 AND book_id=?",
-      )
-      .get(placeholderId),
-  );
-  await importHardcoverBook(1, 301);
-  assert.equal(
-    sqlite
-      .prepare("SELECT 1 FROM user_library WHERE user_id=1 AND book_id=?")
-      .get(editionId),
-    undefined,
-  );
-});
-
 test("legacy progress blocks deleting an edition for any user", async () => {
   const cookie = await adminCookie();
-  await saveSeries(cookie, [301]);
-  const workId = (
-    await app.inject({ url: "/api/series/41", cookies: { sonder_session: cookie } })
-  ).json().works.find((w: { id: number }) => w.id === 301).workId;
+  await saveSeries(cookie, ["bk-rem-1"]);
+  const workId = await seriesWorkId(cookie, "bk-rem-1");
   const editionId = "local-legacy-progress";
   const audioPath = join(temp, "media", "legacy-progress.mp3");
   writeFileSync(audioPath, "audio");
@@ -1036,15 +901,15 @@ test("legacy progress blocks deleting an edition for any user", async () => {
     )
     .run("rec-legacy", "track-legacy", 1, 10, Date.now());
   const preview = (
-    await app.inject({ url: "/api/series/41/removal", cookies: { sonder_session: cookie } })
+    await app.inject({ url: `/api/series/${SERIES}/removal`, cookies: { sonder_session: cookie } })
   ).json();
-  const work = preview.works.find((w: { bookId: number }) => w.bookId === 301);
+  const work = preview.works.find((w: { bookId: string }) => w.bookId === "bk-rem-1");
   assert.equal(work.audioEditions[0].wouldDelete, false);
   await app.inject({
     method: "DELETE",
-    url: "/api/series/41",
+    url: `/api/series/${SERIES}`,
     cookies: { sonder_session: cookie },
-    payload: { bookIds: [301] },
+    payload: { bookIds: ["bk-rem-1"] },
   });
   assert.ok(existsSync(audioPath));
   assert.ok(db.select().from(schema.editions).where(eq(schema.editions.id, editionId)).get());
@@ -1053,10 +918,8 @@ test("legacy progress blocks deleting an edition for any user", async () => {
 test("active server download blocks file deletion until idle", async () => {
   process.env.SONDER_DOWNLOAD_IDLE_MS = "50";
   const cookie = await adminCookie();
-  await saveSeries(cookie, [301]);
-  const workId = (
-    await app.inject({ url: "/api/series/41", cookies: { sonder_session: cookie } })
-  ).json().works.find((w: { id: number }) => w.id === 301).workId;
+  await saveSeries(cookie, ["bk-rem-1"]);
+  const workId = await seriesWorkId(cookie, "bk-rem-1");
   const audioPath = join(temp, "media", "download-busy.mp3");
   writeFileSync(audioPath, "audio");
   const editionId = "local-download-busy";
@@ -1098,9 +961,9 @@ test("active server download blocks file deletion until idle", async () => {
     .run();
   const removed = await app.inject({
     method: "DELETE",
-    url: "/api/series/41",
+    url: `/api/series/${SERIES}`,
     cookies: { sonder_session: cookie },
-    payload: { bookIds: [301] },
+    payload: { bookIds: ["bk-rem-1"] },
   });
   assert.equal(removed.statusCode, 200, removed.body);
   assert.ok(existsSync(audioPath));

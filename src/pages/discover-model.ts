@@ -22,7 +22,7 @@ export type CatalogueHit = {
 };
 /** One entry of `GET /api/discover/series` (`saved` since #573). */
 export type SeriesResult = {
-  id: number;
+  id: string;
   name: string;
   author: string | null;
   count: number | null;
@@ -196,14 +196,14 @@ export function startRows(works: readonly WorkResult[]): DiscoverRow[] {
   return works.filter((work) => !work.inLibrary).map(serverRow);
 }
 
-/** A series row's line: "author · N books", then "Saved", then "Hardcover #<id>" when another result has its name. */
+/** A series row's line: "author · N books", then "Saved", then "AudiobookDB <id>" when another result has its name. */
 export function seriesLine(series: SeriesResult, all: readonly SeriesResult[]): string {
   const sameName = all.some((other) => other.id !== series.id && other.name.trim().toLowerCase() === series.name.trim().toLowerCase());
   return joined(
     series.author,
     series.count != null ? `${series.count} ${series.count === 1 ? "book" : "books"}` : null,
     series.saved ? "Saved" : null,
-    sameName ? `Hardcover #${series.id}` : null,
+    sameName ? `AudiobookDB ${series.id}` : null,
   );
 }
 

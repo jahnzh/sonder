@@ -291,6 +291,65 @@ export function readRelease(value: unknown, bookId: string | null = null): Catal
   };
 }
 
+// ---- Series (#721 part b) ----
+export type CatalogueSeriesSummary = { id: string; name: string; author: string | null; count: number | null; cover: string | null };
+export type CatalogueSeriesMember = {
+  book: CatalogueBook;
+  /** The member's place as AudiobookDB labels it ("1", "1.5", "0.1"), and the number it sorts by. */
+  position: string | null;
+  sort: number | null;
+  /** The release date as given (a full date where AudiobookDB has one), for "Not released yet". */
+  releaseDate: string | null;
+  lengthMs: number | null;
+};
+export type CatalogueSeries = CatalogueSeriesSummary & { members: CatalogueSeriesMember[] };
+
+const countOf = (entry: Json) => numberOf(entry.bookCount ?? entry.booksCount ?? entry.book_count ?? entry.count ?? entry.totalBooks);
+function releaseDateOf(entry: Json): string | null {
+  for (const value of [entry.releaseDate, entry.publishedDate, entry.release_date, entry.datePublished]) {
+    const found = text(value)?.match(/^\d{4}(?:-\d\d(?:-\d\d)?)?/)?.[0];
+    if (found) return found;
+  }
+  const year = yearOf(entry);
+  return year === null ? null : String(year);
+}
+/** A series from a search result or the head of a detail answer. */
+export function readSeriesSummary(value: unknown): CatalogueSeriesSummary | null {
+  const entry = isObject(value) && isObject(value.series) && !Array.isArray(value.series) ? value.series : value;
+  if (!isObject(entry)) return null;
+  const id = idOf(entry);
+  const name = nameOf(entry) ?? text(entry.title);
+  if (!id || !name) return null;
+  const members = arrayOf(entry.books ?? entry.members ?? entry.items ?? entry.entries);
+  const firstCover = members.filter(isObject).map((member) => coverOf(isObject(member.book) ? member.book : member)).find((url) => !!url) ?? null;
+  return {
+    id,
+    name,
+    author: peopleWithRole(entry, "author")[0] ?? null,
+    count: countOf(entry) ?? (members.length || null),
+    cover: coverOf(entry) ?? firstCover,
+  };
+}
+/** `GET /series/{id}`: the members with their structured position, in AudiobookDB's order of `sortKey`. */
+export function readSeries(value: unknown): CatalogueSeries | null {
+  const entry = isObject(value) && isObject(value.series) && !Array.isArray(value.series) ? value.series : value;
+  const summary = readSeriesSummary(entry);
+  if (!summary || !isObject(entry)) return null;
+  const members = arrayOf(entry.books ?? entry.members ?? entry.items ?? entry.entries)
+    .filter(isObject)
+    .flatMap((member): CatalogueSeriesMember[] => {
+      const bookEntry = isObject(member.book) ? member.book : member;
+      const book = readBook(bookEntry);
+      if (!book) return [];
+      const own = book.series.find((series) => series.id === summary.id);
+      const place = member.position ?? member.sequence;
+      const position = place !== undefined && place !== null ? positionOf(place) : own ? { position: own.position, sort: own.sort } : { position: null, sort: null };
+      return [{ book: { ...book, description: null }, position: position.position, sort: position.sort, releaseDate: releaseDateOf(bookEntry), lengthMs: lengthOf(bookEntry) }];
+    })
+    .sort((a, b) => (a.sort ?? Infinity) - (b.sort ?? Infinity));
+  const author = summary.author ?? members[0]?.book.authors[0] ?? null;
+  return { ...summary, author, count: summary.count ?? members.length, members };
+}
 
 // ---- The calls ----
 export type CallOptions = { priority?: Priority; fresh?: boolean };
@@ -309,6 +368,38 @@ export async function searchAudiobookDbBooks(query: string, options: CallOptions
     live: () => request("/search", { method: "POST", body: { q: query.trim(), type: "books" }, units: UNITS.search, purpose: "search", priority: options.priority ?? "interactive" }),
   });
   return readSearchList(data, "books").map(readBook).filter((book): book is CatalogueBook => !!book).map((book) => ({ ...book, description: null }));
+}
+
+/** `POST /search` for series, cached a day by the normalised query. */
+export async function searchAudiobookDbSeries(query: string, options: CallOptions = {}): Promise<CatalogueSeriesSummary[]> {
+  const q = normaliseQuery(query);
+  if (q.length < 2) return [];
+  const { data } = await cached({
+    provider: "audiobookdb",
+    kind: "search:series",
+    key: q,
+    ttlMs: SEARCH_TTL_MS,
+    now: config.clock.now(),
+    fresh: options.fresh,
+    live: () => request("/search", { method: "POST", body: { q: query.trim(), type: "series" }, units: UNITS.search, purpose: "search", priority: options.priority ?? "interactive" }),
+  });
+  return readSearchList(data, "series").map(readSeriesSummary).filter((series): series is CatalogueSeriesSummary => !!series);
+}
+
+/** `GET /series/{id}`, cached a week (a saved series is fetched again on its own schedule). */
+export async function audiobookDbSeries(id: string, options: CallOptions = {}): Promise<CatalogueSeries> {
+  const { data } = await cached({
+    provider: "audiobookdb",
+    kind: "series",
+    key: id,
+    ttlMs: DETAIL_TTL_MS,
+    now: config.clock.now(),
+    fresh: options.fresh,
+    live: () => request(`/series/${encodeURIComponent(id)}`, { method: "GET", units: UNITS.detail, purpose: "detail", priority: options.priority ?? "interactive" }),
+  });
+  const series = readSeries(data);
+  if (!series) throw fail("unexpected", "AudiobookDB returned an unexpected response.");
+  return series;
 }
 
 /** `GET /books/{id}?include=releasesExternal`, cached a week. The description is there only on a live answer. */
@@ -392,6 +483,7 @@ export async function refreshAudiobookDbEntry(kind: string, key: string): Promis
   if (kind === "book") await audiobookDbBook(key, options);
   else if (kind === "release") await audiobookDbRelease(key, options);
   else if (kind === "asin") await audiobookDbByAsin(key, options);
+  else if (kind === "series") await audiobookDbSeries(key, options);
 }
 
 export function audiobookDbUnitsToday(): number {

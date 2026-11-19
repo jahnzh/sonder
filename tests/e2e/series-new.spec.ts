@@ -1,5 +1,5 @@
 // The New mark on a series and Dismiss (#565, spec #560 "The Series page"; boards SeriesNew.dc.html,
-// SeriesMore.dc.html): a work Hardcover lists in a saved series after the user last looked is marked New in the accent
+// SeriesMore.dc.html): a work AudiobookDB lists in a saved series after the user last looked is marked New in the accent
 // colour and named on the card under the intro; Dismiss sends `POST /api/series/<id>/ack` with every new work, clears
 // the card and the marks, and they stay gone after a reload; a failure shows on the card; adding a book from the
 // series clears them too (the server marks every work seen on save), which the page shows once it reads the series
@@ -12,6 +12,7 @@ import { mkdirSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 import { test, expect, type Page } from "@playwright/test";
 import { noOverflow } from "./overflow";
+import { connectAudiobookDb, listCrossingThree } from "./series-save";
 
 test.use({ serviceWorkers: "block" });
 
@@ -45,18 +46,19 @@ test.afterEach(async () => {
   server = null;
 });
 
-type SeriesView = { works: { id: number; title: string; new?: boolean; added: boolean }[] };
+type SeriesView = { works: { id: string; title: string; new?: boolean; added: boolean }[] };
 
 /**
- * Saves The Crossing (#701) with nothing added, then reads it from Hardcover again until the fixture lists the book
- * it adds later (Crossing Three, #506): that work is new.
+ * Saves The Crossing (#701) with nothing added, then AudiobookDB lists the book it adds later (Crossing Three, #506)
+ * and the series is read from AudiobookDB again until it is there: that work is new.
  */
-async function saveThenHardcoverAdds(page: Page) {
-  expect((await page.request.put(`${base}/api/hardcover/token`, { data: { token: "series-browser-token" } })).ok()).toBe(true);
-  const saved = await page.request.post(`${base}/api/series`, { data: { id: 701, bookIds: [] } });
+async function saveThenAudiobookDbAdds(page: Page) {
+  await connectAudiobookDb(page, base);
+  const saved = await page.request.post(`${base}/api/series`, { data: { id: "701", bookIds: [] } });
   expect(saved.ok(), await saved.text()).toBe(true);
-  // Every work Hardcover listed at the save is seen.
+  // Every work AudiobookDB listed at the save is seen.
   expect(((await saved.json()) as SeriesView).works.filter((work) => work.new)).toEqual([]);
+  await listCrossingThree(page, true, base);
   await expect
     .poll(async () => {
       const series = (await (await page.request.get(`${base}/api/series/701?refresh=1`)).json()) as SeriesView;
@@ -66,7 +68,7 @@ async function saveThenHardcoverAdds(page: Page) {
 }
 
 const seriesPage = (page: Page) => page.getByRole("region", { name: "Series", exact: true });
-const newCard = (page: Page) => seriesPage(page).getByRole("group", { name: "New from Hardcover", exact: true });
+const newCard = (page: Page) => seriesPage(page).getByRole("group", { name: "New from AudiobookDB", exact: true });
 const bookRow = (page: Page, title: string) => seriesPage(page).getByRole("listitem").filter({ hasText: title });
 const box = async (locator: ReturnType<Page["locator"]>) => (await locator.boundingBox())!;
 
@@ -83,8 +85,8 @@ const markColours = (page: Page, title: string) =>
       return { mark: getComputedStyle(mark).color, accent, text: mark.textContent };
     });
 
-test("a work Hardcover added is marked New and named on the card; Dismiss acknowledges every new work and the marks stay gone", async ({ page }) => {
-  await saveThenHardcoverAdds(page);
+test("a work AudiobookDB added is marked New and named on the card; Dismiss acknowledges every new work and the marks stay gone", async ({ page }) => {
+  await saveThenAudiobookDbAdds(page);
   await page.goto(`${base}/#series/701`);
   await expect(page.getByRole("heading", { level: 1, name: "The Crossing" })).toBeVisible();
 
@@ -100,7 +102,7 @@ test("a work Hardcover added is marked New and named on the card; Dismiss acknow
   // The card under the intro names it, with Dismiss.
   const card = newCard(page);
   await expect(card).toBeVisible();
-  await expect(card.getByText("New from Hardcover", { exact: true })).toBeVisible();
+  await expect(card.getByText("New from AudiobookDB", { exact: true })).toBeVisible();
   await expect(card.getByText("Crossing Three", { exact: true })).toBeVisible();
   const dismiss = card.getByRole("button", { name: "Dismiss", exact: true });
   // Measured against SeriesNew.dc.html at 390 by 844: under the intro, above Books; 64 high; Dismiss at least 44 high.
@@ -131,12 +133,12 @@ test("a work Hardcover added is marked New and named on the card; Dismiss acknow
   // Dismiss sends the acknowledgement with every new work and clears the card and the marks.
   const ack = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/series/701/ack");
   await dismiss.click();
-  expect((await ack).postDataJSON()).toEqual({ bookIds: [506] });
+  expect((await ack).postDataJSON()).toEqual({ bookIds: ["506"] });
   await expect(card).toHaveCount(0);
   await expect(bookRow(page, "Crossing Three")).toHaveAccessibleName(/Crossing Three Not in your library$/);
   await expect(seriesPage(page).locator(".part-book-row-lead")).toHaveCount(0);
 
-  // They stay gone after a reload (and Hardcover read again).
+  // They stay gone after a reload (and AudiobookDB read again).
   await page.reload();
   await expect(bookRow(page, "Crossing Three")).toHaveAccessibleName(/Crossing Three Not in your library$/);
   await expect(newCard(page)).toHaveCount(0);
@@ -146,7 +148,7 @@ test("a work Hardcover added is marked New and named on the card; Dismiss acknow
 });
 
 test("adding a book from the series clears the New marks once the page reads the series again", async ({ page }) => {
-  await saveThenHardcoverAdds(page);
+  await saveThenAudiobookDbAdds(page);
   await page.goto(`${base}/#series/701`);
   await expect(newCard(page)).toBeVisible();
   await expect(bookRow(page, "Crossing Three")).toHaveAccessibleName(/Crossing Three New · Not in your library$/);
@@ -159,7 +161,7 @@ test("adding a book from the series clears the New marks once the page reads the
   await sheet.getByRole("button", { name: "Add 1 book", exact: true }).click();
   const answer = await saved;
   expect(answer.ok()).toBe(true);
-  expect((answer.request().postDataJSON() as { bookIds: number[] }).bookIds).toContain(506);
+  expect((answer.request().postDataJSON() as { bookIds: string[] }).bookIds).toContain("506");
   await expect(sheet).toHaveCount(0);
 
   // The page reads the series again: no card, no mark; Crossing Three is a book of the library, added once.

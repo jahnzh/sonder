@@ -8,16 +8,19 @@ A self-hosted audiobook player with a built-in ebook reader that follows the nar
 An ordered group of related works.
 
 **Saved series**:
-A series a user has added to their library for ongoing reference, independently of the individual works they have added. Its list follows Hardcover: a work Hardcover adds later is marked new. Removing it keeps its works in the library unless the administrator also removes the works it added.
+A series a user has added to their library for ongoing reference, independently of the individual works they have added. Its list follows AudiobookDB (#721): a work AudiobookDB adds later is marked new. Removing it keeps its works in the library unless the administrator also removes the works it added.
 _Avoid_: Followed series, series selection
 
 **Related work**:
-A work Hardcover lists in a series without a number, such as a companion or a collection. It is shown after the numbered works and does not count towards how many of the series are finished.
+A work the catalogue lists in a series without a number, such as a companion or a collection. It is shown after the numbered works and does not count towards how many of the series are finished.
 _Avoid_: Unnumbered work, extra
 
 **New in a series**:
-A work Hardcover added to a saved series after the user last reviewed it. It stays marked until the user dismisses the marks or adds a work from the series.
+A work AudiobookDB added to a saved series after the user last reviewed it. It stays marked until the user dismisses the marks or adds a work from the series.
 _Avoid_: Unseen work
+
+**No audiobook yet**:
+A book of a series that AudiobookDB does not list because it has no audio release; Open Library lists it. Its ebook can be fetched, and its audiobook is searched for once AudiobookDB lists it.
 
 **Added with a series**:
 A work that came into a user's library when they saved a series or added a work from it, as opposed to one added on its own or from Hardcover's shelves. Only these are offered for removal together with the series.
@@ -87,16 +90,16 @@ _Avoid_: Download status, availability
 Why Sonder is not trying to acquire a missing work for now: it is unreleased, or the last search found nothing. It stays until an acquisition for the work is ready or the user retries.
 _Avoid_: Block, skip reason
 
-**Hardcover match**:
-The link between a work and its book on Hardcover, through which a user's shelf, lists and progress sync. It is the same for every user of the server, so only the administrator makes or changes it.
-_Avoid_: Hardcover link, linked book
+**Catalogue match**:
+The link between a work and its book in the catalogue: AudiobookDB for an audiobook, Open Library for a book without one (#721). A recording may also link to an AudiobookDB release (narrator, length, ASIN). It is the same for every user of the server, so only the administrator makes or changes it, on the book's match page. It replaces the Hardcover match, which went with Hardcover's sync (#721 part d).
+_Avoid_: Hardcover match, linked book
 
-**Hardcover edition**:
-The audio edition on Hardcover that a user's place in one recording is sent to. It is automatic (the edition of the user's current read there, or the one with the same narrator) until the user chooses one.
-_Avoid_: Recording edition, Hardcover audio edition
+**Want to read**:
+Sonder's own shelf of works a user means to read or listen to, per user, in their library. Reading and Finished are not shelves kept beside it: they come from the user's own progress. At the switch from Hardcover each user's Hardcover Want to read shelf was copied into it once.
+_Avoid_: Hardcover shelf, wishlist
 
 **Hardcover book**:
-A book in Hardcover's catalogue, as Discover finds it. One that no work on the server is matched to opens as a book not in the library under the work id it will get (`work-hc-<id>`, ADR 0022), and becomes a work when someone adds it or gets a file for it.
+A book in Hardcover's catalogue, as Discover finds it until #721 part c2 moves Discover to AudiobookDB and Open Library. One that no work on the server is matched to opens as a book not in the library under the work id it will get (`work-hc-<id>`, ADR 0022), and becomes a work when someone adds it or gets a file for it.
 _Avoid_: Hardcover result, catalogue entry, external book
 
 ## Screens
@@ -114,7 +117,7 @@ A full-screen task opened over a page, such as Get. Going back closes it and ret
 _Avoid_: Modal, dialog, popup
 
 **Picker**:
-A short list of choices that opens over a page from its bottom edge, such as the Library's Sort and view or a book's Hardcover shelf. It has no address: a choice applies at once, Done or a tap outside closes it, and Back leaves the page under it, as for a tooltip.
+A short list of choices that opens over a page from its bottom edge, such as the Library's Sort and view or its Shelf. It has no address: a choice applies at once, Done or a tap outside closes it, and Back leaves the page under it, as for a tooltip.
 _Avoid_: Dropdown, menu, popover, select
 
 **Old name**:
@@ -248,11 +251,11 @@ _Avoid_: Narration highlight (which marks the narrated sentence)
 ## Background work
 
 **Activity**:
-One unit of background work the administrator can see and act on, such as a copy to the server, an alignment job, a queue of changes waiting for Hardcover, or a worker host's current job.
+One unit of background work the administrator can see and act on, such as a copy to the server, an alignment job, a database backup, or a worker host's current job.
 _Avoid_: Job, task, download (when the general unit is meant)
 
 **Background process**:
-A recurring loop or standing service that produces activities, such as the queue refresh, the Hardcover sync, the alignment processor or an alignment worker.
+A recurring loop or standing service that produces activities, such as the queue refresh, the alignment processor or an alignment worker.
 _Avoid_: Ticker, daemon, service (when the owner-facing unit is meant)
 
 **Pause**:

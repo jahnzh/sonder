@@ -1,29 +1,34 @@
 {
   "owner GET /api/series": [
     {
-      "id": 51,
+      "id": "sr-tides",
       "name": "The Tides",
       "author": "Mara Coast",
       "count": 7
     }
   ],
-  "owner GET /api/series/51": {
-    "id": 51,
+  "owner GET /api/series/sr-tides": {
+    "id": "sr-tides",
     "name": "The Tides",
     "author": "Mara Coast",
     "count": 7,
+    "saved": true,
     "works": [
       {
-        "id": 201,
+        "id": "201",
         "title": "The First Tide",
         "position": 1,
-        "cover": "https://covers.test/201.jpg",
+        "positionLabel": "1",
+        "cover": "https://images.audiobookdb.org/201.jpg",
         "unreleased": false,
-        "workId": "work-hc-201",
+        "language": "en",
+        "releaseDate": "2001-01-01",
+        "workId": "work-abdb-201",
         "added": true,
         "introduced": true,
         "needsAdmin": false,
-        "editionId": "hc-201",
+        "audiobook": true,
+        "editionId": "placeholder-work-abdb-201",
         "finished": true,
         "completionOverride": "finished",
         "availability": {
@@ -31,7 +36,7 @@
             "server": false,
             "recordings": [
               {
-                "id": "recording-hc-201",
+                "id": "recording-placeholder-work-abdb-201",
                 "tracks": [],
                 "server": false,
                 "stream": false
@@ -46,7 +51,7 @@
         },
         "libraryOrigin": {
           "source": "series",
-          "seriesId": 51,
+          "seriesId": "sr-tides",
           "addedAt": "<time>"
         },
         "libraryOriginLabel": "Added through this series",
@@ -63,22 +68,26 @@
           "pending": 0
         },
         "new": false,
-        "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2001-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 211,
-        "title": "La Première Marée",
+        "id": "221",
+        "title": "The First Tide, Dramatized",
         "position": 1,
-        "cover": "https://covers.test/211.jpg",
+        "positionLabel": "1",
+        "cover": "https://images.audiobookdb.org/221.jpg",
         "unreleased": false,
+        "language": "en",
+        "releaseDate": "2003-01-01",
         "workId": null,
         "added": false,
         "introduced": false,
         "needsAdmin": false,
+        "audiobook": true,
         "editionId": null,
         "finished": false,
         "completionOverride": null,
@@ -97,22 +106,26 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
-        "language": "fr",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2003-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 202,
+        "id": "202",
         "title": "The Second Tide",
         "position": 2,
-        "cover": "https://covers.test/202.jpg",
+        "positionLabel": "2",
+        "cover": "https://images.audiobookdb.org/202.jpg",
         "unreleased": false,
+        "language": "en",
+        "releaseDate": "2002-01-01",
         "workId": null,
         "added": false,
         "introduced": false,
         "needsAdmin": false,
+        "audiobook": true,
         "editionId": null,
         "finished": false,
         "completionOverride": null,
@@ -131,23 +144,27 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
-        "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2002-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 212,
-        "title": "La Deuxième Marée",
+        "id": "222",
+        "title": "The Second Tide, Dramatized",
         "position": 2,
-        "cover": "https://covers.test/212.jpg",
+        "positionLabel": "2",
+        "cover": "https://images.audiobookdb.org/222.jpg",
         "unreleased": false,
-        "workId": "work-hc-212",
+        "language": "en",
+        "releaseDate": "2004-01-01",
+        "workId": "work-abdb-222",
         "added": true,
         "introduced": true,
         "needsAdmin": false,
-        "editionId": "hc-212",
+        "audiobook": true,
+        "editionId": "placeholder-work-abdb-222",
         "finished": false,
         "completionOverride": null,
         "availability": {
@@ -155,7 +172,7 @@
             "server": false,
             "recordings": [
               {
-                "id": "recording-hc-212",
+                "id": "recording-placeholder-work-abdb-222",
                 "tracks": [],
                 "server": false,
                 "stream": false
@@ -170,7 +187,7 @@
         },
         "libraryOrigin": {
           "source": "series",
-          "seriesId": 51,
+          "seriesId": "sr-tides",
           "addedAt": "<time>"
         },
         "libraryOriginLabel": "Added through this series",
@@ -187,22 +204,26 @@
           "pending": 0
         },
         "new": false,
-        "language": "fr",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2004-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 203,
+        "id": "203",
         "title": "The Third Tide",
         "position": 3,
-        "cover": "https://covers.test/203.jpg",
+        "positionLabel": "3",
+        "cover": "https://images.audiobookdb.org/203.jpg",
         "unreleased": false,
-        "workId": "work-hc-203",
+        "language": "en",
+        "releaseDate": "2005-01-01",
+        "workId": "work-abdb-203",
         "added": false,
         "introduced": false,
         "needsAdmin": false,
+        "audiobook": true,
         "editionId": null,
         "finished": false,
         "completionOverride": null,
@@ -221,22 +242,26 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
-        "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2005-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 204,
+        "id": "204",
         "title": "The Last Tide",
         "position": 4,
-        "cover": "https://covers.test/204.jpg",
+        "positionLabel": "4",
+        "cover": "https://images.audiobookdb.org/204.jpg",
         "unreleased": true,
+        "language": "en",
+        "releaseDate": "2999-01-01",
         "workId": null,
         "added": false,
         "introduced": false,
         "needsAdmin": false,
+        "audiobook": true,
         "editionId": null,
         "finished": false,
         "completionOverride": null,
@@ -255,23 +280,27 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
-        "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2999-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 205,
+        "id": "205",
         "title": "Tide Charts",
         "position": null,
-        "cover": "https://covers.test/205.jpg",
+        "positionLabel": null,
+        "cover": "https://images.audiobookdb.org/205.jpg",
         "unreleased": false,
-        "workId": "work-hc-205",
+        "language": "en",
+        "releaseDate": "2006-01-01",
+        "workId": "work-abdb-205",
         "added": true,
         "introduced": true,
         "needsAdmin": false,
-        "editionId": "hc-205",
+        "audiobook": true,
+        "editionId": "placeholder-work-abdb-205",
         "finished": true,
         "completionOverride": "finished",
         "availability": {
@@ -279,7 +308,7 @@
             "server": false,
             "recordings": [
               {
-                "id": "recording-hc-205",
+                "id": "recording-placeholder-work-abdb-205",
                 "tracks": [],
                 "server": false,
                 "stream": false
@@ -294,7 +323,7 @@
         },
         "libraryOrigin": {
           "source": "series",
-          "seriesId": 51,
+          "seriesId": "sr-tides",
           "addedAt": "<time>"
         },
         "libraryOriginLabel": "Added through this series",
@@ -311,10 +340,10 @@
           "pending": 0
         },
         "new": false,
-        "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2006-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       }
     ],
@@ -322,26 +351,31 @@
     "completion": {
       "finished": 2,
       "total": 6,
-      "nextBookId": 211
+      "nextBookId": "221"
     }
   },
-  "owner GET /api/series/51?language=fr": {
-    "id": 51,
+  "owner GET /api/series/sr-tides?language=fr": {
+    "id": "sr-tides",
     "name": "The Tides",
     "author": "Mara Coast",
     "count": 7,
+    "saved": true,
     "works": [
       {
-        "id": 201,
+        "id": "201",
         "title": "The First Tide",
         "position": 1,
-        "cover": "https://covers.test/201.jpg",
+        "positionLabel": "1",
+        "cover": "https://images.audiobookdb.org/201.jpg",
         "unreleased": false,
-        "workId": "work-hc-201",
+        "language": "en",
+        "releaseDate": "2001-01-01",
+        "workId": "work-abdb-201",
         "added": true,
         "introduced": true,
         "needsAdmin": false,
-        "editionId": "hc-201",
+        "audiobook": true,
+        "editionId": "placeholder-work-abdb-201",
         "finished": true,
         "completionOverride": "finished",
         "availability": {
@@ -349,7 +383,7 @@
             "server": false,
             "recordings": [
               {
-                "id": "recording-hc-201",
+                "id": "recording-placeholder-work-abdb-201",
                 "tracks": [],
                 "server": false,
                 "stream": false
@@ -364,7 +398,7 @@
         },
         "libraryOrigin": {
           "source": "series",
-          "seriesId": 51,
+          "seriesId": "sr-tides",
           "addedAt": "<time>"
         },
         "libraryOriginLabel": "Added through this series",
@@ -381,22 +415,26 @@
           "pending": 0
         },
         "new": false,
-        "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2001-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 211,
-        "title": "La Première Marée",
+        "id": "221",
+        "title": "The First Tide, Dramatized",
         "position": 1,
-        "cover": "https://covers.test/211.jpg",
+        "positionLabel": "1",
+        "cover": "https://images.audiobookdb.org/221.jpg",
         "unreleased": false,
+        "language": "en",
+        "releaseDate": "2003-01-01",
         "workId": null,
         "added": false,
         "introduced": false,
         "needsAdmin": false,
+        "audiobook": true,
         "editionId": null,
         "finished": false,
         "completionOverride": null,
@@ -415,22 +453,26 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
-        "language": "fr",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2003-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 202,
+        "id": "202",
         "title": "The Second Tide",
         "position": 2,
-        "cover": "https://covers.test/202.jpg",
+        "positionLabel": "2",
+        "cover": "https://images.audiobookdb.org/202.jpg",
         "unreleased": false,
+        "language": "en",
+        "releaseDate": "2002-01-01",
         "workId": null,
         "added": false,
         "introduced": false,
         "needsAdmin": false,
+        "audiobook": true,
         "editionId": null,
         "finished": false,
         "completionOverride": null,
@@ -449,23 +491,27 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
-        "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2002-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 212,
-        "title": "La Deuxième Marée",
+        "id": "222",
+        "title": "The Second Tide, Dramatized",
         "position": 2,
-        "cover": "https://covers.test/212.jpg",
+        "positionLabel": "2",
+        "cover": "https://images.audiobookdb.org/222.jpg",
         "unreleased": false,
-        "workId": "work-hc-212",
+        "language": "en",
+        "releaseDate": "2004-01-01",
+        "workId": "work-abdb-222",
         "added": true,
         "introduced": true,
         "needsAdmin": false,
-        "editionId": "hc-212",
+        "audiobook": true,
+        "editionId": "placeholder-work-abdb-222",
         "finished": false,
         "completionOverride": null,
         "availability": {
@@ -473,7 +519,7 @@
             "server": false,
             "recordings": [
               {
-                "id": "recording-hc-212",
+                "id": "recording-placeholder-work-abdb-222",
                 "tracks": [],
                 "server": false,
                 "stream": false
@@ -488,7 +534,7 @@
         },
         "libraryOrigin": {
           "source": "series",
-          "seriesId": 51,
+          "seriesId": "sr-tides",
           "addedAt": "<time>"
         },
         "libraryOriginLabel": "Added through this series",
@@ -505,22 +551,26 @@
           "pending": 0
         },
         "new": false,
-        "language": "fr",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2004-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 203,
+        "id": "203",
         "title": "The Third Tide",
         "position": 3,
-        "cover": "https://covers.test/203.jpg",
+        "positionLabel": "3",
+        "cover": "https://images.audiobookdb.org/203.jpg",
         "unreleased": false,
-        "workId": "work-hc-203",
+        "language": "en",
+        "releaseDate": "2005-01-01",
+        "workId": "work-abdb-203",
         "added": false,
         "introduced": false,
         "needsAdmin": false,
+        "audiobook": true,
         "editionId": null,
         "finished": false,
         "completionOverride": null,
@@ -539,22 +589,26 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
-        "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2005-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 204,
+        "id": "204",
         "title": "The Last Tide",
         "position": 4,
-        "cover": "https://covers.test/204.jpg",
+        "positionLabel": "4",
+        "cover": "https://images.audiobookdb.org/204.jpg",
         "unreleased": true,
+        "language": "en",
+        "releaseDate": "2999-01-01",
         "workId": null,
         "added": false,
         "introduced": false,
         "needsAdmin": false,
+        "audiobook": true,
         "editionId": null,
         "finished": false,
         "completionOverride": null,
@@ -573,23 +627,27 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
-        "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2999-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 205,
+        "id": "205",
         "title": "Tide Charts",
         "position": null,
-        "cover": "https://covers.test/205.jpg",
+        "positionLabel": null,
+        "cover": "https://images.audiobookdb.org/205.jpg",
         "unreleased": false,
-        "workId": "work-hc-205",
+        "language": "en",
+        "releaseDate": "2006-01-01",
+        "workId": "work-abdb-205",
         "added": true,
         "introduced": true,
         "needsAdmin": false,
-        "editionId": "hc-205",
+        "audiobook": true,
+        "editionId": "placeholder-work-abdb-205",
         "finished": true,
         "completionOverride": "finished",
         "availability": {
@@ -597,7 +655,7 @@
             "server": false,
             "recordings": [
               {
-                "id": "recording-hc-205",
+                "id": "recording-placeholder-work-abdb-205",
                 "tracks": [],
                 "server": false,
                 "stream": false
@@ -612,7 +670,7 @@
         },
         "libraryOrigin": {
           "source": "series",
-          "seriesId": 51,
+          "seriesId": "sr-tides",
           "addedAt": "<time>"
         },
         "libraryOriginLabel": "Added through this series",
@@ -629,10 +687,10 @@
           "pending": 0
         },
         "new": false,
-        "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2006-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       }
     ],
@@ -640,230 +698,288 @@
     "completion": {
       "finished": 2,
       "total": 6,
-      "nextBookId": 211
+      "nextBookId": "221"
     }
   },
-  "owner GET /api/hardcover/series/51": {
-    "id": 51,
+  "owner GET /api/hardcover/series/sr-tides": {
+    "id": "sr-tides",
     "name": "The Tides",
     "author": "Mara Coast",
     "count": 7,
+    "saved": true,
     "works": [
       {
-        "id": 201,
+        "id": "201",
         "title": "The First Tide",
         "position": 1,
-        "cover": "https://covers.test/201.jpg",
-        "workId": "work-hc-201",
+        "positionLabel": "1",
+        "cover": "https://images.audiobookdb.org/201.jpg",
+        "workId": "work-abdb-201",
         "owned": true,
         "unreleased": false,
         "needsAdmin": false,
+        "audiobook": true,
         "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2001-01-01",
         "selected": true
       },
       {
-        "id": 211,
-        "title": "La Première Marée",
+        "id": "221",
+        "title": "The First Tide, Dramatized",
         "position": 1,
-        "cover": "https://covers.test/211.jpg",
+        "positionLabel": "1",
+        "cover": "https://images.audiobookdb.org/221.jpg",
         "workId": null,
         "owned": false,
         "unreleased": false,
         "needsAdmin": false,
-        "language": "fr",
-        "editionLanguages": [],
-        "popularity": 10,
+        "audiobook": true,
+        "language": "en",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2003-01-01",
         "selected": false
       },
       {
-        "id": 202,
+        "id": "202",
         "title": "The Second Tide",
         "position": 2,
-        "cover": "https://covers.test/202.jpg",
+        "positionLabel": "2",
+        "cover": "https://images.audiobookdb.org/202.jpg",
         "workId": null,
         "owned": false,
         "unreleased": false,
         "needsAdmin": false,
+        "audiobook": true,
         "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2002-01-01",
         "selected": false
       },
       {
-        "id": 212,
-        "title": "La Deuxième Marée",
+        "id": "222",
+        "title": "The Second Tide, Dramatized",
         "position": 2,
-        "cover": "https://covers.test/212.jpg",
-        "workId": "work-hc-212",
+        "positionLabel": "2",
+        "cover": "https://images.audiobookdb.org/222.jpg",
+        "workId": "work-abdb-222",
         "owned": true,
         "unreleased": false,
         "needsAdmin": false,
-        "language": "fr",
-        "editionLanguages": [],
-        "popularity": 10,
+        "audiobook": true,
+        "language": "en",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2004-01-01",
         "selected": true
       },
       {
-        "id": 203,
+        "id": "203",
         "title": "The Third Tide",
         "position": 3,
-        "cover": "https://covers.test/203.jpg",
-        "workId": "work-hc-203",
+        "positionLabel": "3",
+        "cover": "https://images.audiobookdb.org/203.jpg",
+        "workId": "work-abdb-203",
         "owned": false,
         "unreleased": false,
         "needsAdmin": false,
+        "audiobook": true,
         "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2005-01-01",
         "selected": true
       },
       {
-        "id": 204,
+        "id": "204",
         "title": "The Last Tide",
         "position": 4,
-        "cover": "https://covers.test/204.jpg",
+        "positionLabel": "4",
+        "cover": "https://images.audiobookdb.org/204.jpg",
         "workId": null,
         "owned": false,
         "unreleased": true,
         "needsAdmin": false,
+        "audiobook": true,
         "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2999-01-01",
         "selected": false
       },
       {
-        "id": 205,
+        "id": "205",
         "title": "Tide Charts",
         "position": null,
-        "cover": "https://covers.test/205.jpg",
-        "workId": "work-hc-205",
+        "positionLabel": null,
+        "cover": "https://images.audiobookdb.org/205.jpg",
+        "workId": "work-abdb-205",
         "owned": true,
         "unreleased": false,
         "needsAdmin": false,
+        "audiobook": true,
         "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2006-01-01",
         "selected": false
       }
     ]
   },
-  "owner GET /api/hardcover/series/51?language=fr": {
-    "id": 51,
+  "owner GET /api/hardcover/series/sr-tides?language=fr": {
+    "id": "sr-tides",
     "name": "The Tides",
     "author": "Mara Coast",
     "count": 7,
+    "saved": true,
     "works": [
       {
-        "id": 201,
+        "id": "201",
         "title": "The First Tide",
         "position": 1,
-        "cover": "https://covers.test/201.jpg",
-        "workId": "work-hc-201",
+        "positionLabel": "1",
+        "cover": "https://images.audiobookdb.org/201.jpg",
+        "workId": "work-abdb-201",
         "owned": true,
         "unreleased": false,
         "needsAdmin": false,
+        "audiobook": true,
         "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2001-01-01",
         "selected": true
       },
       {
-        "id": 211,
-        "title": "La Première Marée",
+        "id": "221",
+        "title": "The First Tide, Dramatized",
         "position": 1,
-        "cover": "https://covers.test/211.jpg",
+        "positionLabel": "1",
+        "cover": "https://images.audiobookdb.org/221.jpg",
         "workId": null,
         "owned": false,
         "unreleased": false,
         "needsAdmin": false,
-        "language": "fr",
-        "editionLanguages": [],
-        "popularity": 10,
+        "audiobook": true,
+        "language": "en",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2003-01-01",
         "selected": false
       },
       {
-        "id": 202,
+        "id": "202",
         "title": "The Second Tide",
         "position": 2,
-        "cover": "https://covers.test/202.jpg",
+        "positionLabel": "2",
+        "cover": "https://images.audiobookdb.org/202.jpg",
         "workId": null,
         "owned": false,
         "unreleased": false,
         "needsAdmin": false,
+        "audiobook": true,
         "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2002-01-01",
         "selected": false
       },
       {
-        "id": 212,
-        "title": "La Deuxième Marée",
+        "id": "222",
+        "title": "The Second Tide, Dramatized",
         "position": 2,
-        "cover": "https://covers.test/212.jpg",
-        "workId": "work-hc-212",
+        "positionLabel": "2",
+        "cover": "https://images.audiobookdb.org/222.jpg",
+        "workId": "work-abdb-222",
         "owned": true,
         "unreleased": false,
         "needsAdmin": false,
-        "language": "fr",
-        "editionLanguages": [],
-        "popularity": 10,
+        "audiobook": true,
+        "language": "en",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2004-01-01",
         "selected": true
       },
       {
-        "id": 203,
+        "id": "203",
         "title": "The Third Tide",
         "position": 3,
-        "cover": "https://covers.test/203.jpg",
-        "workId": "work-hc-203",
+        "positionLabel": "3",
+        "cover": "https://images.audiobookdb.org/203.jpg",
+        "workId": "work-abdb-203",
         "owned": false,
         "unreleased": false,
         "needsAdmin": false,
+        "audiobook": true,
         "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2005-01-01",
         "selected": true
       },
       {
-        "id": 204,
+        "id": "204",
         "title": "The Last Tide",
         "position": 4,
-        "cover": "https://covers.test/204.jpg",
+        "positionLabel": "4",
+        "cover": "https://images.audiobookdb.org/204.jpg",
         "workId": null,
         "owned": false,
         "unreleased": true,
         "needsAdmin": false,
+        "audiobook": true,
         "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2999-01-01",
         "selected": false
       },
       {
-        "id": 205,
+        "id": "205",
         "title": "Tide Charts",
         "position": null,
-        "cover": "https://covers.test/205.jpg",
-        "workId": "work-hc-205",
+        "positionLabel": null,
+        "cover": "https://images.audiobookdb.org/205.jpg",
+        "workId": "work-abdb-205",
         "owned": true,
         "unreleased": false,
         "needsAdmin": false,
+        "audiobook": true,
         "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2006-01-01",
         "selected": false
       }
@@ -871,28 +987,33 @@
   },
   "sam GET /api/series": [
     {
-      "id": 51,
+      "id": "sr-tides",
       "name": "The Tides",
       "author": "Mara Coast",
       "count": 7
     }
   ],
-  "sam GET /api/series/51": {
-    "id": 51,
+  "sam GET /api/series/sr-tides": {
+    "id": "sr-tides",
     "name": "The Tides",
     "author": "Mara Coast",
     "count": 7,
+    "saved": true,
     "works": [
       {
-        "id": 201,
+        "id": "201",
         "title": "The First Tide",
         "position": 1,
-        "cover": "https://covers.test/201.jpg",
+        "positionLabel": "1",
+        "cover": "https://images.audiobookdb.org/201.jpg",
         "unreleased": false,
-        "workId": "work-hc-201",
+        "language": "en",
+        "releaseDate": "2001-01-01",
+        "workId": "work-abdb-201",
         "added": false,
         "introduced": false,
         "needsAdmin": false,
+        "audiobook": true,
         "editionId": null,
         "finished": false,
         "completionOverride": null,
@@ -911,22 +1032,26 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
-        "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2001-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 211,
-        "title": "La Première Marée",
+        "id": "221",
+        "title": "The First Tide, Dramatized",
         "position": 1,
-        "cover": "https://covers.test/211.jpg",
+        "positionLabel": "1",
+        "cover": "https://images.audiobookdb.org/221.jpg",
         "unreleased": false,
+        "language": "en",
+        "releaseDate": "2003-01-01",
         "workId": null,
         "added": false,
         "introduced": false,
         "needsAdmin": false,
+        "audiobook": true,
         "editionId": null,
         "finished": false,
         "completionOverride": null,
@@ -945,22 +1070,26 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
-        "language": "fr",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2003-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 202,
+        "id": "202",
         "title": "The Second Tide",
         "position": 2,
-        "cover": "https://covers.test/202.jpg",
+        "positionLabel": "2",
+        "cover": "https://images.audiobookdb.org/202.jpg",
         "unreleased": false,
+        "language": "en",
+        "releaseDate": "2002-01-01",
         "workId": null,
         "added": false,
         "introduced": false,
         "needsAdmin": false,
+        "audiobook": true,
         "editionId": null,
         "finished": false,
         "completionOverride": null,
@@ -979,22 +1108,26 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
-        "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2002-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 212,
-        "title": "La Deuxième Marée",
+        "id": "222",
+        "title": "The Second Tide, Dramatized",
         "position": 2,
-        "cover": "https://covers.test/212.jpg",
+        "positionLabel": "2",
+        "cover": "https://images.audiobookdb.org/222.jpg",
         "unreleased": false,
-        "workId": "work-hc-212",
+        "language": "en",
+        "releaseDate": "2004-01-01",
+        "workId": "work-abdb-222",
         "added": false,
         "introduced": false,
         "needsAdmin": false,
+        "audiobook": true,
         "editionId": null,
         "finished": false,
         "completionOverride": null,
@@ -1013,23 +1146,27 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
-        "language": "fr",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2004-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 203,
+        "id": "203",
         "title": "The Third Tide",
         "position": 3,
-        "cover": "https://covers.test/203.jpg",
+        "positionLabel": "3",
+        "cover": "https://images.audiobookdb.org/203.jpg",
         "unreleased": false,
-        "workId": "work-hc-203",
+        "language": "en",
+        "releaseDate": "2005-01-01",
+        "workId": "work-abdb-203",
         "added": true,
         "introduced": true,
         "needsAdmin": false,
-        "editionId": "hc-203",
+        "audiobook": true,
+        "editionId": "placeholder-work-abdb-203",
         "finished": true,
         "completionOverride": "finished",
         "availability": {
@@ -1037,7 +1174,7 @@
             "server": false,
             "recordings": [
               {
-                "id": "recording-hc-203",
+                "id": "recording-placeholder-work-abdb-203",
                 "tracks": [],
                 "server": false,
                 "stream": false
@@ -1052,7 +1189,7 @@
         },
         "libraryOrigin": {
           "source": "series",
-          "seriesId": 51,
+          "seriesId": "sr-tides",
           "addedAt": "<time>"
         },
         "libraryOriginLabel": "Added through this series",
@@ -1069,22 +1206,26 @@
           "pending": 0
         },
         "new": false,
-        "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2005-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 204,
+        "id": "204",
         "title": "The Last Tide",
         "position": 4,
-        "cover": "https://covers.test/204.jpg",
+        "positionLabel": "4",
+        "cover": "https://images.audiobookdb.org/204.jpg",
         "unreleased": true,
+        "language": "en",
+        "releaseDate": "2999-01-01",
         "workId": null,
         "added": false,
         "introduced": false,
         "needsAdmin": false,
+        "audiobook": true,
         "editionId": null,
         "finished": false,
         "completionOverride": null,
@@ -1103,22 +1244,26 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
-        "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2999-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 205,
+        "id": "205",
         "title": "Tide Charts",
         "position": null,
-        "cover": "https://covers.test/205.jpg",
+        "positionLabel": null,
+        "cover": "https://images.audiobookdb.org/205.jpg",
         "unreleased": false,
-        "workId": "work-hc-205",
+        "language": "en",
+        "releaseDate": "2006-01-01",
+        "workId": "work-abdb-205",
         "added": false,
         "introduced": false,
         "needsAdmin": false,
+        "audiobook": true,
         "editionId": null,
         "finished": false,
         "completionOverride": null,
@@ -1137,10 +1282,10 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
-        "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2006-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       }
     ],
@@ -1148,25 +1293,30 @@
     "completion": {
       "finished": 1,
       "total": 6,
-      "nextBookId": 201
+      "nextBookId": "201"
     }
   },
-  "sam GET /api/series/51?language=fr": {
-    "id": 51,
+  "sam GET /api/series/sr-tides?language=fr": {
+    "id": "sr-tides",
     "name": "The Tides",
     "author": "Mara Coast",
     "count": 7,
+    "saved": true,
     "works": [
       {
-        "id": 201,
+        "id": "201",
         "title": "The First Tide",
         "position": 1,
-        "cover": "https://covers.test/201.jpg",
+        "positionLabel": "1",
+        "cover": "https://images.audiobookdb.org/201.jpg",
         "unreleased": false,
-        "workId": "work-hc-201",
+        "language": "en",
+        "releaseDate": "2001-01-01",
+        "workId": "work-abdb-201",
         "added": false,
         "introduced": false,
         "needsAdmin": false,
+        "audiobook": true,
         "editionId": null,
         "finished": false,
         "completionOverride": null,
@@ -1185,22 +1335,26 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
-        "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2001-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 211,
-        "title": "La Première Marée",
+        "id": "221",
+        "title": "The First Tide, Dramatized",
         "position": 1,
-        "cover": "https://covers.test/211.jpg",
+        "positionLabel": "1",
+        "cover": "https://images.audiobookdb.org/221.jpg",
         "unreleased": false,
+        "language": "en",
+        "releaseDate": "2003-01-01",
         "workId": null,
         "added": false,
         "introduced": false,
         "needsAdmin": false,
+        "audiobook": true,
         "editionId": null,
         "finished": false,
         "completionOverride": null,
@@ -1219,22 +1373,26 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
-        "language": "fr",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2003-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 202,
+        "id": "202",
         "title": "The Second Tide",
         "position": 2,
-        "cover": "https://covers.test/202.jpg",
+        "positionLabel": "2",
+        "cover": "https://images.audiobookdb.org/202.jpg",
         "unreleased": false,
+        "language": "en",
+        "releaseDate": "2002-01-01",
         "workId": null,
         "added": false,
         "introduced": false,
         "needsAdmin": false,
+        "audiobook": true,
         "editionId": null,
         "finished": false,
         "completionOverride": null,
@@ -1253,22 +1411,26 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
-        "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2002-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 212,
-        "title": "La Deuxième Marée",
+        "id": "222",
+        "title": "The Second Tide, Dramatized",
         "position": 2,
-        "cover": "https://covers.test/212.jpg",
+        "positionLabel": "2",
+        "cover": "https://images.audiobookdb.org/222.jpg",
         "unreleased": false,
-        "workId": "work-hc-212",
+        "language": "en",
+        "releaseDate": "2004-01-01",
+        "workId": "work-abdb-222",
         "added": false,
         "introduced": false,
         "needsAdmin": false,
+        "audiobook": true,
         "editionId": null,
         "finished": false,
         "completionOverride": null,
@@ -1287,23 +1449,27 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
-        "language": "fr",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2004-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 203,
+        "id": "203",
         "title": "The Third Tide",
         "position": 3,
-        "cover": "https://covers.test/203.jpg",
+        "positionLabel": "3",
+        "cover": "https://images.audiobookdb.org/203.jpg",
         "unreleased": false,
-        "workId": "work-hc-203",
+        "language": "en",
+        "releaseDate": "2005-01-01",
+        "workId": "work-abdb-203",
         "added": true,
         "introduced": true,
         "needsAdmin": false,
-        "editionId": "hc-203",
+        "audiobook": true,
+        "editionId": "placeholder-work-abdb-203",
         "finished": true,
         "completionOverride": "finished",
         "availability": {
@@ -1311,7 +1477,7 @@
             "server": false,
             "recordings": [
               {
-                "id": "recording-hc-203",
+                "id": "recording-placeholder-work-abdb-203",
                 "tracks": [],
                 "server": false,
                 "stream": false
@@ -1326,7 +1492,7 @@
         },
         "libraryOrigin": {
           "source": "series",
-          "seriesId": 51,
+          "seriesId": "sr-tides",
           "addedAt": "<time>"
         },
         "libraryOriginLabel": "Added through this series",
@@ -1343,22 +1509,26 @@
           "pending": 0
         },
         "new": false,
-        "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2005-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 204,
+        "id": "204",
         "title": "The Last Tide",
         "position": 4,
-        "cover": "https://covers.test/204.jpg",
+        "positionLabel": "4",
+        "cover": "https://images.audiobookdb.org/204.jpg",
         "unreleased": true,
+        "language": "en",
+        "releaseDate": "2999-01-01",
         "workId": null,
         "added": false,
         "introduced": false,
         "needsAdmin": false,
+        "audiobook": true,
         "editionId": null,
         "finished": false,
         "completionOverride": null,
@@ -1377,22 +1547,26 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
-        "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2999-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       },
       {
-        "id": 205,
+        "id": "205",
         "title": "Tide Charts",
         "position": null,
-        "cover": "https://covers.test/205.jpg",
+        "positionLabel": null,
+        "cover": "https://images.audiobookdb.org/205.jpg",
         "unreleased": false,
-        "workId": "work-hc-205",
+        "language": "en",
+        "releaseDate": "2006-01-01",
+        "workId": "work-abdb-205",
         "added": false,
         "introduced": false,
         "needsAdmin": false,
+        "audiobook": true,
         "editionId": null,
         "finished": false,
         "completionOverride": null,
@@ -1411,10 +1585,10 @@
         "acquisition": null,
         "ebookSet": null,
         "new": false,
-        "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
-        "releaseDate": "2006-01-01",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "selected": false
       }
     ],
@@ -1422,230 +1596,288 @@
     "completion": {
       "finished": 1,
       "total": 6,
-      "nextBookId": 201
+      "nextBookId": "201"
     }
   },
-  "sam GET /api/hardcover/series/51": {
-    "id": 51,
+  "sam GET /api/hardcover/series/sr-tides": {
+    "id": "sr-tides",
     "name": "The Tides",
     "author": "Mara Coast",
     "count": 7,
+    "saved": true,
     "works": [
       {
-        "id": 201,
+        "id": "201",
         "title": "The First Tide",
         "position": 1,
-        "cover": "https://covers.test/201.jpg",
-        "workId": "work-hc-201",
+        "positionLabel": "1",
+        "cover": "https://images.audiobookdb.org/201.jpg",
+        "workId": "work-abdb-201",
         "owned": false,
         "unreleased": false,
         "needsAdmin": false,
+        "audiobook": true,
         "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2001-01-01",
         "selected": true
       },
       {
-        "id": 211,
-        "title": "La Première Marée",
+        "id": "221",
+        "title": "The First Tide, Dramatized",
         "position": 1,
-        "cover": "https://covers.test/211.jpg",
+        "positionLabel": "1",
+        "cover": "https://images.audiobookdb.org/221.jpg",
         "workId": null,
         "owned": false,
         "unreleased": false,
         "needsAdmin": false,
-        "language": "fr",
-        "editionLanguages": [],
-        "popularity": 10,
+        "audiobook": true,
+        "language": "en",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2003-01-01",
         "selected": false
       },
       {
-        "id": 202,
+        "id": "202",
         "title": "The Second Tide",
         "position": 2,
-        "cover": "https://covers.test/202.jpg",
+        "positionLabel": "2",
+        "cover": "https://images.audiobookdb.org/202.jpg",
         "workId": null,
         "owned": false,
         "unreleased": false,
         "needsAdmin": false,
+        "audiobook": true,
         "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2002-01-01",
         "selected": false
       },
       {
-        "id": 212,
-        "title": "La Deuxième Marée",
+        "id": "222",
+        "title": "The Second Tide, Dramatized",
         "position": 2,
-        "cover": "https://covers.test/212.jpg",
-        "workId": "work-hc-212",
+        "positionLabel": "2",
+        "cover": "https://images.audiobookdb.org/222.jpg",
+        "workId": "work-abdb-222",
         "owned": false,
         "unreleased": false,
         "needsAdmin": false,
-        "language": "fr",
-        "editionLanguages": [],
-        "popularity": 10,
+        "audiobook": true,
+        "language": "en",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2004-01-01",
         "selected": true
       },
       {
-        "id": 203,
+        "id": "203",
         "title": "The Third Tide",
         "position": 3,
-        "cover": "https://covers.test/203.jpg",
-        "workId": "work-hc-203",
+        "positionLabel": "3",
+        "cover": "https://images.audiobookdb.org/203.jpg",
+        "workId": "work-abdb-203",
         "owned": true,
         "unreleased": false,
         "needsAdmin": false,
+        "audiobook": true,
         "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2005-01-01",
         "selected": true
       },
       {
-        "id": 204,
+        "id": "204",
         "title": "The Last Tide",
         "position": 4,
-        "cover": "https://covers.test/204.jpg",
+        "positionLabel": "4",
+        "cover": "https://images.audiobookdb.org/204.jpg",
         "workId": null,
         "owned": false,
         "unreleased": true,
         "needsAdmin": false,
+        "audiobook": true,
         "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2999-01-01",
         "selected": false
       },
       {
-        "id": 205,
+        "id": "205",
         "title": "Tide Charts",
         "position": null,
-        "cover": "https://covers.test/205.jpg",
-        "workId": "work-hc-205",
+        "positionLabel": null,
+        "cover": "https://images.audiobookdb.org/205.jpg",
+        "workId": "work-abdb-205",
         "owned": false,
         "unreleased": false,
         "needsAdmin": false,
+        "audiobook": true,
         "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2006-01-01",
         "selected": false
       }
     ]
   },
-  "sam GET /api/hardcover/series/51?language=fr": {
-    "id": 51,
+  "sam GET /api/hardcover/series/sr-tides?language=fr": {
+    "id": "sr-tides",
     "name": "The Tides",
     "author": "Mara Coast",
     "count": 7,
+    "saved": true,
     "works": [
       {
-        "id": 201,
+        "id": "201",
         "title": "The First Tide",
         "position": 1,
-        "cover": "https://covers.test/201.jpg",
-        "workId": "work-hc-201",
+        "positionLabel": "1",
+        "cover": "https://images.audiobookdb.org/201.jpg",
+        "workId": "work-abdb-201",
         "owned": false,
         "unreleased": false,
         "needsAdmin": false,
+        "audiobook": true,
         "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2001-01-01",
         "selected": true
       },
       {
-        "id": 211,
-        "title": "La Première Marée",
+        "id": "221",
+        "title": "The First Tide, Dramatized",
         "position": 1,
-        "cover": "https://covers.test/211.jpg",
+        "positionLabel": "1",
+        "cover": "https://images.audiobookdb.org/221.jpg",
         "workId": null,
         "owned": false,
         "unreleased": false,
         "needsAdmin": false,
-        "language": "fr",
-        "editionLanguages": [],
-        "popularity": 10,
+        "audiobook": true,
+        "language": "en",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2003-01-01",
         "selected": false
       },
       {
-        "id": 202,
+        "id": "202",
         "title": "The Second Tide",
         "position": 2,
-        "cover": "https://covers.test/202.jpg",
+        "positionLabel": "2",
+        "cover": "https://images.audiobookdb.org/202.jpg",
         "workId": null,
         "owned": false,
         "unreleased": false,
         "needsAdmin": false,
+        "audiobook": true,
         "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2002-01-01",
         "selected": false
       },
       {
-        "id": 212,
-        "title": "La Deuxième Marée",
+        "id": "222",
+        "title": "The Second Tide, Dramatized",
         "position": 2,
-        "cover": "https://covers.test/212.jpg",
-        "workId": "work-hc-212",
+        "positionLabel": "2",
+        "cover": "https://images.audiobookdb.org/222.jpg",
+        "workId": "work-abdb-222",
         "owned": false,
         "unreleased": false,
         "needsAdmin": false,
-        "language": "fr",
-        "editionLanguages": [],
-        "popularity": 10,
+        "audiobook": true,
+        "language": "en",
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2004-01-01",
         "selected": true
       },
       {
-        "id": 203,
+        "id": "203",
         "title": "The Third Tide",
         "position": 3,
-        "cover": "https://covers.test/203.jpg",
-        "workId": "work-hc-203",
+        "positionLabel": "3",
+        "cover": "https://images.audiobookdb.org/203.jpg",
+        "workId": "work-abdb-203",
         "owned": true,
         "unreleased": false,
         "needsAdmin": false,
+        "audiobook": true,
         "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2005-01-01",
         "selected": true
       },
       {
-        "id": 204,
+        "id": "204",
         "title": "The Last Tide",
         "position": 4,
-        "cover": "https://covers.test/204.jpg",
+        "positionLabel": "4",
+        "cover": "https://images.audiobookdb.org/204.jpg",
         "workId": null,
         "owned": false,
         "unreleased": true,
         "needsAdmin": false,
+        "audiobook": true,
         "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2999-01-01",
         "selected": false
       },
       {
-        "id": 205,
+        "id": "205",
         "title": "Tide Charts",
         "position": null,
-        "cover": "https://covers.test/205.jpg",
-        "workId": "work-hc-205",
+        "positionLabel": null,
+        "cover": "https://images.audiobookdb.org/205.jpg",
+        "workId": "work-abdb-205",
         "owned": false,
         "unreleased": false,
         "needsAdmin": false,
+        "audiobook": true,
         "language": "en",
-        "editionLanguages": [],
-        "popularity": 10,
+        "editionLanguages": [
+          "en"
+        ],
+        "popularity": null,
         "releaseDate": "2006-01-01",
         "selected": false
       }

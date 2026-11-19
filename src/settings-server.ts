@@ -1,8 +1,7 @@
 // The lines of the Server pages of Settings (#580; spec #572 "Connections", "Users", "Library and storage"; boards
 // DesktopSettings.dc.html, SettingsUsers.dc.html, SettingsLibrary.dc.html). Pure: plain data in, words out, for the
 // unit tests.
-import { NOT_SYNCED_YET, syncedAt } from "./hardcover-page-model";
-import type { HardcoverState, Settings } from "./types";
+import type { Settings } from "./types";
 
 type Storage = NonNullable<Settings["storage"]>;
 
@@ -52,20 +51,6 @@ export function usedShare(storage: Storage): number | null {
 
 export const MEDIA_DRIVE_CONNECTED = "Connected";
 export const MEDIA_DRIVE_NOT_CONNECTED = "Not connected";
-
-/** Hardcover's Sync row: "N changes waiting" while changes wait to be sent, else when it last synced. */
-export function hardcoverSyncLine(state: Pick<HardcoverState, "pending" | "lastSync"> | null, now: number): string {
-  if (!state) return "";
-  if (state.pending > 0) return `${state.pending} ${state.pending === 1 ? "change" : "changes"} waiting`;
-  if (!state.lastSync) return NOT_SYNCED_YET;
-  return `Last synced ${syncedAt(state.lastSync, now)}`;
-}
-
-export const SYNC_MODES = [
-  { value: "off", label: "Off" },
-  { value: "import", label: "Import only" },
-  { value: "two-way", label: "Two-way" },
-] as const satisfies readonly { value: HardcoverState["mode"]; label: string }[];
 
 /** How long ago an account request was sent: "just now", "5 minutes ago", "2 hours ago", "3 days ago", or its day. */
 export function requestAge(createdAt: number, now: number): string {

@@ -40,15 +40,15 @@ export function wantToReadWorks(userId: number, workIds?: readonly string[]): Se
 
 /**
  * Puts the work on the user's Want to read, after adding it to their library when it is not there
- * (`addWorkToLibrary`; `tellHardcover` as there). A work already on it keeps its first mark.
+ * (`addWorkToLibrary`). A work already on it keeps its first mark.
  */
 export function addToWantToRead(
   userId: number,
   workId: string,
-  options: { source?: WantToReadSource; tellHardcover?: boolean } = {},
+  options: { source?: WantToReadSource } = {},
 ) {
   sqlite.transaction(() => {
-    if (!workInLibrary(userId, workId)) addWorkToLibrary(userId, workId, { tellHardcover: options.tellHardcover });
+    if (!workInLibrary(userId, workId)) addWorkToLibrary(userId, workId);
     sqlite
       .prepare("INSERT INTO user_want_to_read(user_id,work_id,source,added_at) VALUES(?,?,?,?) ON CONFLICT DO NOTHING")
       .run(userId, workId, options.source ?? "manual", Date.now());
@@ -115,7 +115,7 @@ export function hardcoverCopyResult(userId: number): HardcoverCopy | null {
 
 /**
  * Once per user: every Hardcover book on their stored Want to read shelf whose work is on the server
- * goes on Sonder's Want to read (`addToWantToRead`, source "hardcover", Hardcover not told); the
+ * goes on Sonder's Want to read (`addToWantToRead`, source "hardcover"); the
  * books with no work are listed as unmatched. Hardcover lists are not copied. A second call answers
  * the first one's result with `ran: false`.
  */
@@ -135,7 +135,7 @@ export function copyHardcoverWantToRead(userId: number): HardcoverCopy & { ran: 
         if (!result.already.includes(workId) && !result.added.includes(workId)) result.already.push(workId);
         continue;
       }
-      addToWantToRead(userId, workId, { source: "hardcover", tellHardcover: false });
+      addToWantToRead(userId, workId, { source: "hardcover" });
       on.add(workId);
       result.added.push(workId);
     }

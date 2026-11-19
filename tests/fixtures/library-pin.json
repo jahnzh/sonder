@@ -202,14 +202,7 @@
           "chosenEbookId": null,
           "ebooks": [],
           "readingSync": [],
-          "series": [
-            {
-              "id": 77,
-              "name": "Pair Saga",
-              "position": 1,
-              "saved": false
-            }
-          ],
+          "series": [],
           "mediaState": null,
           "hardcover": {
             "id": 9001,
@@ -597,14 +590,7 @@
         "chosenEbookId": null,
         "ebooks": [],
         "readingSync": [],
-        "series": [
-          {
-            "id": 77,
-            "name": "Pair Saga",
-            "position": 1,
-            "saved": false
-          }
-        ],
+        "series": [],
         "mediaState": null,
         "hardcover": {
           "id": 9001,
@@ -958,14 +944,7 @@
         "chosenEbookId": null,
         "ebooks": [],
         "readingSync": [],
-        "series": [
-          {
-            "id": 77,
-            "name": "Pair Saga",
-            "position": 1,
-            "saved": false
-          }
-        ],
+        "series": [],
         "mediaState": null,
         "hardcover": {
           "id": 9001,
@@ -1074,14 +1053,7 @@
           "chosenEbookId": null,
           "ebooks": [],
           "readingSync": [],
-          "series": [
-            {
-              "id": 77,
-              "name": "Pair Saga",
-              "position": 1,
-              "saved": false
-            }
-          ],
+          "series": [],
           "mediaState": null,
           "hardcover": {
             "id": 9001,
@@ -1235,14 +1207,7 @@
         "chosenEbookId": null,
         "ebooks": [],
         "readingSync": [],
-        "series": [
-          {
-            "id": 77,
-            "name": "Pair Saga",
-            "position": 1,
-            "saved": false
-          }
-        ],
+        "series": [],
         "mediaState": null,
         "hardcover": {
           "id": 9001,
@@ -1442,14 +1407,7 @@
         "chosenEbookId": null,
         "ebooks": [],
         "readingSync": [],
-        "series": [
-          {
-            "id": 77,
-            "name": "Pair Saga",
-            "position": 1,
-            "saved": false
-          }
-        ],
+        "series": [],
         "mediaState": null,
         "hardcover": {
           "id": 9001,

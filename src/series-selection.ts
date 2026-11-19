@@ -1,6 +1,7 @@
 /** Information needed to choose one default candidate at each series position. */
 export type SeriesCandidate = {
-  id: number;
+  /** The book's AudiobookDB id (`openlibrary:<work>` for one with no audiobook yet, #721). */
+  id: string;
   position: number | null;
   workId?: string | null;
   owned?: boolean;
@@ -11,6 +12,11 @@ export type SeriesCandidate = {
   popularity?: number | null;
   releaseDate?: string | null;
 };
+
+/** The last tie-break: the ids in code-unit order, the same on the server and every browser. */
+export function compareSeriesIds(a: string, b: string) {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
 
 export function normalizeSeriesLanguage(language: string) {
   return language.trim().toLowerCase().split(/[-_]/)[0];
@@ -27,7 +33,7 @@ function compareByLanguage(a: SeriesCandidate, b: SeriesCandidate, preferredLang
   return Number(matchesLanguage(b, preferredLanguage)) - Number(matchesLanguage(a, preferredLanguage)) ||
     (b.popularity ?? 0) - (a.popularity ?? 0) ||
     (a.releaseDate || "9999").localeCompare(b.releaseDate || "9999") ||
-    a.id - b.id;
+    compareSeriesIds(a.id, b.id);
 }
 
 /** Rank linked/owned works first, then language, popularity, release and id. */
@@ -72,7 +78,7 @@ export type SeriesBooks<T extends SeriesBookCandidate> = {
  */
 export function seriesBooks<T extends SeriesBookCandidate>(
   works: readonly T[],
-  inLibrary: ReadonlySet<number>,
+  inLibrary: ReadonlySet<string>,
   preferredLanguage: string,
 ): SeriesBooks<T> {
   const related: T[] = [];

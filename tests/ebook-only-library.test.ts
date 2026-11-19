@@ -408,28 +408,28 @@ test("audio arriving for an ebook-only work another user asked for moves every p
   assert.deepEqual(libraryRows(KIM, "w-arrive2"), []);
 });
 
-test("audio arriving for a matched work runs the Hardcover part: the user's own Hardcover shelf status", async () => {
+test("audio arriving for a matched work keeps the placeholder's status: Hardcover's stored shelf no longer applies (#721 part d)", async () => {
   work("w-arrive-hc", "Arriving Matched");
   run("INSERT INTO hardcover_links(work_id,book_id,slug,series) VALUES('w-arrive-hc',4260,'arriving','[]')");
   assert.equal((await app.inject({ method: "PUT", url: "/api/works/w-arrive-hc/library", cookies: as(OWNER) })).statusCode, 200);
   assert.deepEqual(libraryRows(OWNER, "w-arrive-hc"), [{ id: "hc-4260", status: "unread" }]);
-  // The owner's Hardcover shelf has the book as Read.
+  // The owner's stored Hardcover shelf has the book as Read; it stays unused.
   run("INSERT INTO user_hardcover_links(user_id,book_id,user_book_id,status_id,remote_updated_at,synced_at) VALUES(?,4260,90,3,0,0)", OWNER);
   await audioArrives("w-arrive-hc", 503, OWNER);
-  assert.deepEqual(libraryRows(OWNER, "w-arrive-hc"), [{ id: "torbox-503", status: "finished" }]);
+  assert.deepEqual(libraryRows(OWNER, "w-arrive-hc"), [{ id: "torbox-503", status: "unread" }]);
 });
 
 test("the series removal hides the work's placeholder through ensurePlaceholder, never making a second", async () => {
-  const { ensureHardcoverSyncSuppressed } = await import("../server/series-removal.ts");
+  const { keepRemovedWorkHidden } = await import("../server/series-removal.ts");
   // w-race got matched on Hardcover after its placeholder was made: the placeholder it has is hidden.
   run("INSERT INTO hardcover_links(work_id,book_id,slug,series) VALUES('w-race',4270,'race','[]')");
-  ensureHardcoverSyncSuppressed(KIM, "w-race");
+  keepRemovedWorkHidden(KIM, "w-race");
   assert.deepEqual(editionsOf("w-race").map((edition) => edition.id), ["placeholder-w-race"]);
   assert.deepEqual(hiddenRows(KIM, "w-race"), ["placeholder-w-race"]);
   // A matched work with no edition gets hc-<book id>, hidden.
   work("w-series", "Series Member");
   run("INSERT INTO hardcover_links(work_id,book_id,slug,series) VALUES('w-series',4271,'series-member','[]')");
-  ensureHardcoverSyncSuppressed(KIM, "w-series");
+  keepRemovedWorkHidden(KIM, "w-series");
   assert.deepEqual(editionsOf("w-series").map((edition) => [edition.id, edition.narrator]), [["hc-4271", "Audio not added"]]);
   assert.deepEqual(hiddenRows(KIM, "w-series"), ["hc-4271"]);
 });
@@ -481,23 +481,3 @@ test("an upload of audio for an ebook-only work claims its placeholder rows", as
   assert.deepEqual(libraryRows(OWNER, "w-upload"), [{ id, status: "unread" }]);
 });
 
-test("the Hardcover import makes its placeholder through ensurePlaceholder with Hardcover's cover", async () => {
-  const { applyHardcoverCatalogBook } = await import("../server/hardcover.ts");
-  applyHardcoverCatalogBook(KIM, {
-    id: 4290,
-    title: "Shelved On Hardcover",
-    slug: "shelved-on-hardcover",
-    pages: 100,
-    description: "About it.",
-    release_year: 2001,
-    cached_image: { url: "https://assets.hardcover.app/4290.jpg" },
-    contributions: [{ contribution: "author", author: { name: "Someone" } }],
-    book_series: [],
-    default_audio_edition: null,
-    editions: [],
-  } as never);
-  assert.deepEqual(editionsOf("work-hc-4290"), [
-    { id: "hc-4290", narrator: "Audio not added", cover: "https://assets.hardcover.app/4290.jpg", recordings: "recording-hc-4290" },
-  ]);
-  assert.deepEqual(libraryRows(KIM, "work-hc-4290"), [{ id: "hc-4290", status: "unread" }]);
-});

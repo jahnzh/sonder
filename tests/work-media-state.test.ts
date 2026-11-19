@@ -489,7 +489,7 @@ test("a throwing logger does not stop the series audio flow from tracking the wo
 
 // --- Presence after removing a work with its saved series ---------------------------------
 
-const { removeSavedHardcoverSeries } = await import("../server/series-removal.ts");
+const { removeSavedSeries } = await import("../server/series-removal.ts");
 
 test("removing a work with its series leaves the work tracked as missing", async () => {
   addWork("w-removed");
@@ -497,20 +497,20 @@ test("removing a work with its series leaves the work tracked as missing", async
   db.insert(s.userLibrary)
     .values({ userId: 1, bookId: "hc-removed", status: "unread", addedAt: 1 })
     .run();
-  sqlite.prepare("INSERT INTO series_catalogue(id,name,author,book_count) VALUES(92,'Gone','Author',1)").run();
+  sqlite.prepare("INSERT INTO series_catalogue(id,name,author,book_count) VALUES('sr-gone','Gone','Author',1)").run();
   sqlite
     .prepare(
-      "INSERT INTO series_catalogue_works(series_id,book_id,work_id,title,position,unreleased) VALUES(92,9201,'w-removed','Gone 1',1,0)",
+      "INSERT INTO series_catalogue_works(series_id,book_id,work_id,title,position,unreleased) VALUES('sr-gone','bk-gone-1','w-removed','Gone 1',1,0)",
     )
     .run();
-  sqlite.prepare("INSERT INTO user_saved_series(user_id,series_id,saved_at) VALUES(1,92,1)").run();
+  sqlite.prepare("INSERT INTO user_saved_series(user_id,series_id,saved_at) VALUES(1,'sr-gone',1)").run();
   sqlite
     .prepare(
-      "INSERT INTO user_saved_series_works(user_id,series_id,book_id,work_id,introduced) VALUES(1,92,9201,'w-removed',1)",
+      "INSERT INTO user_saved_series_works(user_id,series_id,book_id,work_id,introduced) VALUES(1,'sr-gone','bk-gone-1','w-removed',1)",
     )
     .run();
   assert.equal(getWorkMediaState(1, "w-removed"), null);
-  await removeSavedHardcoverSeries(1, 92, [9201]);
+  await removeSavedSeries(1, "sr-gone", ["bk-gone-1"]);
   assert.deepEqual(pick(getWorkMediaState(1, "w-removed")), {
     state: "missing",
     holdReason: null,

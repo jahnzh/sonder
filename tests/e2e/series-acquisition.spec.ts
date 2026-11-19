@@ -1,13 +1,13 @@
 import { test, expect } from "@playwright/test";
 import { openSavedSeries } from "./library-series";
-import { saveSeriesOnPage, saveSheet, unsaveSeries, viewSeriesFromDiscover } from "./series-save";
+import { connectAudiobookDb, listCrossingThree, saveSeriesOnPage, saveSheet, unsaveSeries, viewSeriesFromDiscover } from "./series-save";
 
 test("series save opt-ins, ebook failure, and retry show specific progress", async ({
   page,
 }) => {
   // The test saves The Crossing (#701) with Crossing Companion. At the end it puts the series and the library back as
   // it found them, so a repeat on the same server saves the series anew and its ebook search fails and recovers again.
-  type SeriesView = { works: { id: number; title: string; added: boolean }[] };
+  type SeriesView = { works: { id: string; title: string; added: boolean }[] };
   const crossing = async () => (await (await page.request.get("/api/series/701")).json()) as SeriesView;
   const libraryTitles = async () =>
     new Set(
@@ -16,16 +16,16 @@ test("series save opt-ins, ebook failure, and retry show specific progress", asy
         .map((book) => book.title),
     );
   const before = await libraryTitles();
-  const savedBefore = ((await (await page.request.get("/api/series")).json()) as { id: number }[]).some(
-    (series) => series.id === 701,
+  await connectAudiobookDb(page);
+  const savedBefore = ((await (await page.request.get("/api/series")).json()) as { id: string }[]).some(
+    (series) => series.id === "701",
   );
   // Another spec on the server may have saved it already (series-followups does).
   const addedBefore = savedBefore ? (await crossing()).works.filter((work) => work.added).map((work) => work.id) : [];
-  await page.request.put("/api/hardcover/token", {
-    data: { token: "series-browser-token" },
-  });
   // Saved through its page (#564): the administrator's sheet offers Get the audiobooks and Get the ebooks.
-  await unsaveSeries(page, 701);
+  await unsaveSeries(page, "701");
+  // AudiobookDB lists The Crossing's four first works.
+  await listCrossingThree(page, false);
   await viewSeriesFromDiscover(page, "Crossing", "The Crossing", "Ada North");
   await page.getByRole("region", { name: "Series", exact: true }).getByRole("button", { name: "Save series", exact: true }).click();
   const sheet = saveSheet(page);
@@ -35,7 +35,7 @@ test("series save opt-ins, ebook failure, and retry show specific progress", asy
   await expect(sheet).toHaveCount(0);
   const posted = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/series");
   await saveSeriesOnPage(page, { get: ["audiobooks", "ebooks"], toggle: ["Crossing Two Book 2", "Crossing Companion Related work"] });
-  const body = (await posted).postDataJSON() as { bookIds: number[]; searchAudio: boolean; searchEbooks: boolean };
+  const body = (await posted).postDataJSON() as { bookIds: string[]; searchAudio: boolean; searchEbooks: boolean };
   expect(body.searchAudio).toBe(true);
   expect(body.searchEbooks).toBe(true);
   // A chosen book that already has audio is skipped: Alice, linked with the series as a book of the library.
@@ -90,6 +90,6 @@ test("series save opt-ins, ebook failure, and retry show specific progress", asy
     (await page.request.delete("/api/series/701", { data: { bookIds: added.map((work) => work.id) } })).ok(),
   ).toBe(true);
   if (savedBefore)
-    expect((await page.request.post("/api/series", { data: { id: 701, bookIds: addedBefore } })).ok()).toBe(true);
+    expect((await page.request.post("/api/series", { data: { id: "701", bookIds: addedBefore } })).ok()).toBe(true);
   expect(await libraryTitles()).toEqual(before);
 });
