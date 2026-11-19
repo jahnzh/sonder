@@ -150,6 +150,35 @@ test.describe("on a stream",()=>{
   expect((await audio(page)).paused).toBe(true);
  });
 
+ // The live check's exact path (#730 second round): Now playing's Read face prepares the load paused, and the
+ // check seeks the first subclassed Audio with a src right after the face opens, while the TorBox stream's metadata
+ // has not arrived. The load's own seek to the saved place, made from `loadedmetadata`, must not undo that seek.
+ test("a paused seek made before the stream's metadata arrives moves the highlight",async({page})=>{
+  test.setTimeout(120_000);
+  await instrument(page);
+  const {book,saved,backwards,forwards}=await fixture(page,"Paused seek early");
+  let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
+  await page.route(/\/api\/media\/[^/?]+(\?.*)?$/,async route=>{await gate;await route.continue().catch(()=>{});});
+  await savePlace(page,book,middle(saved));
+  await page.goto("/");
+  await openRead(page);
+  await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
+  await expect.poll(async()=>(await audio(page)).src).toContain("/api/media/");
+  // One element plays: the check's find(a=>a.src) is the player's element, not a stale one.
+  expect(await page.evaluate(()=>((window as any).__audio as HTMLAudioElement[]).filter(a=>!!a.src).length)).toBe(1);
+  const early=await page.evaluate(position=>{const a=((window as any).__audio as HTMLAudioElement[]).find(a=>!!a.src)!;const ready=a.readyState;a.currentTime=position;return ready;},middle(backwards));
+  expect(early).toBe(0);
+  release();
+  await expect(room(page)).toHaveAttribute("data-current-passage",backwards.paragraphId,{timeout:READER_WAIT_MS.followHighlight});
+  await expect.poll(async()=>(await audio(page)).position).toBeCloseTo(middle(backwards),0);
+  await page.waitForTimeout(1000);
+  await expect(room(page)).toHaveAttribute("data-current-passage",backwards.paragraphId);
+  expect((await audio(page)).paused).toBe(true);
+  await seekTo(page,forwards);
+  await seekTo(page,backwards);
+  await seekTo(page,saved);
+ });
+
  test("paused seeks move the highlight once the load's seek has landed",async({page})=>{
   await instrument(page);
   const {book,saved,backwards,forwards}=await fixture(page,"Paused seek landed");

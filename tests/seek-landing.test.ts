@@ -6,6 +6,7 @@ import {
   heldPosition,
   landingSought,
   landingStep,
+  pendingSought,
   LANDING_TOLERANCE,
   LANDING_TRIES,
   LANDING_WAIT_MS,
@@ -89,4 +90,13 @@ test("a seek with no landing held, an older load's landing, or no number holds n
   assert.equal(landingSought(older, 4, 95, 9_000), older);
   const held = landing();
   assert.equal(landingSought(held, 4, Number.NaN, 9_000), held);
+});
+
+test("a seek made before a load's metadata arrives is the place the load seeks to (#730 second round)", () => {
+  assert.equal(pendingSought(160, 40), 40);
+  assert.equal(pendingSought(40, 160), 160);
+  assert.equal(pendingSought(160, -3), 0);
+  assert.equal(pendingSought(160, Number.NaN), 160);
+  // No load waiting: the element's own seek is the place, nothing is pending.
+  assert.equal(pendingSought(null, 40), null);
 });
