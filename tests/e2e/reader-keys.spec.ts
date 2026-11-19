@@ -7,6 +7,7 @@ import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
 import {highlightShown,textShown} from "./reader-view";
 import {appearancePanel,openAppearance} from "./reader-appearance";
 import {openRead} from "./now-playing";
+import { gotoRead } from "./read-face";
 // `F` returns to the narration only when the reader has the keyboard (#501 review): not behind a sheet or a dialog
 // above the reader, not while typing in a field (also one inside the book's pages), not with a modifier and not
 // without the book's narration in the player. A focused button does not take it.
@@ -175,8 +176,8 @@ test("F right after a desktop page button returns to the narration's page",async
 
 test("F does nothing in the reader without the book's narration in the player",async({page})=>{
  const {ebook}=await fixture(page,`Keys unlinked ${test.info().repeatEachIndex}`,{link:false});
- await page.goto(`/#reader/${ebook}`);
- const reader=page.getByRole("dialog",{name:"Reader"});
+ await gotoRead(page, ebook);
+ const reader=page.getByRole("dialog", { name: "Now playing", exact: true });
  const room=reader.locator(".reader-room");
  await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
  await pageAway(page,room);
