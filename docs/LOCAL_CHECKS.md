@@ -174,6 +174,17 @@ The script prints the exact rollback command on failure and at the end of a succ
 
 ## Live verification
 
+Which checks run where:
+
+| Check | Run by |
+| --- | --- |
+| `scripts/verify-integrated-reader.mjs` | `scripts/deploy.sh` after every deploy, and by hand |
+| `scripts/verify-multi-user.mjs` | `scripts/deploy.sh` after every deploy, and by hand |
+| `scripts/verify-playback-workflow.mjs` | by hand |
+| `scripts/verify-reading-sync.mjs` | by hand (needs an ebook id and a recording id with a finished map) |
+
+`SONDER_DEPLOY_LIVE_CHECKS` replaces the deploy's list and `--skip-live-checks` skips it. `scripts/verify-multi-user-snapshot.mjs` is not a check: it is the multi-user check's comparison of the administrator's library (`tests/verify-multi-user-snapshot.test.ts`). None of them runs on a CI or build host, and `npm run check` runs none: they need the owner's real books. To try a changed check, run it against a local test server (`SONDER_VERIFY_URL` on loopback, not port 3001), such as `tests/browser-server.ts` after `npm run build` (`PLAYWRIGHT_PORT` sets its port; the multi-user check needs a password, so start that server with `PLAYWRIGHT_AUTH=1 APP_PASSWORD=<any>` and give the check the same `APP_PASSWORD`). Every check names only screens, classes and controls the app has, and none of the removed ones (`tests/live-check-locators.test.mjs`, `scripts/live-check-locators.mjs`). The multi-user check recognises a placeholder by the rule of #483 (an audio edition whose recordings have no track), never by its id (`tests/verify-multi-user-placeholders.test.ts`).
+
 The playback, reader and reading-sync verification scripts share a browser-write guard. Expected progress, bookmark and preference writes are handled locally; unexpected mutations fail the check. Protection remains installed until the browser context closes. Unload beacons and mutating keepalive requests are suppressed in-page because they can bypass browser routing. Counts and error telemetry for suppressed requests may be incomplete while a document is being destroyed.
 
 How the playback and reader checks choose their recording, and the exact rule, is in `README.md` (the paragraph on `verify-playback-workflow.mjs`); the rule lives in `scripts/live-check-recording.mjs` (reader, and the request handling) and `scripts/live-check-playback.mjs` (playback), with tests in `tests/live-check-recording.test.mjs` and `tests/live-check-playback.test.mjs`. When no recording qualifies, the check exits 3 before it opens a page, so no browser write can be sent. Only a listing read successfully with no qualifying candidate, or a map answering 404 or 410, leads there; any other failed request during selection exits 1 and names the request, so a broken endpoint is never reported as skipped. A selected recording that then fails the check is a failure: the check does not try another recording.
