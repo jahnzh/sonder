@@ -3,7 +3,8 @@
 // without a connection the reader opens the EPUB and follows the narration with the kept map. An ebook arriving for a
 // kept audiobook and a map becoming ready (routed library answers) are saved without a tap. Opening an EPUB does not
 // call `persist()`.
-import { test, expect, type Page } from "@playwright/test";
+// Saves to this device: in WebKit each test needs a persistent context to store a Blob in IndexedDB (#523, #596).
+import { test, expect, type Page } from "./device-store";
 import { mkdirSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";

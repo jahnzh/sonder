@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+// Saves to this device: in WebKit each test needs a persistent context to store a Blob in IndexedDB (#523, #596).
+import { test, expect, type Page } from "./device-store";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { parseRange } from "../../server/range";
@@ -191,9 +192,8 @@ test("player downloads retain verified sections after connection failure and res
       .join("");
   });
   expect(checksum).toBe(createHash("sha256").update(media).digest("hex"));
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
-    390,
-  );
+  // No overflow: against the window, which is 393 wide with the iPhone profile (#596).
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(page.viewportSize()!.width);
   await page.screenshot({
     path: "artifacts/player-device-download-mobile.png",
   });

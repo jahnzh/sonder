@@ -7,6 +7,9 @@ import {highlightShown} from "./reader-view";
 import {openRead,nowPlaying} from "./now-playing";
 import { playFromLibrary } from "./library-play";
 test.afterEach(async({page})=>{await page.unrouteAll({behavior:"wait"});});
+// The tests route the reader's answers (a refused map, a restarting server): once a service worker controls the page,
+// WebKit's requests no longer pass page.route (#523), so it is blocked, as in the other reader specs (#596).
+test.use({serviceWorkers:"block"});
 // Imports a book whose title is unique to this run, so a repeat on the same server finds exactly one
 // "Play <title>" button and its own EPUB; returns that title.
 async function fixture(page:Page,name:string,language="en-US"){
