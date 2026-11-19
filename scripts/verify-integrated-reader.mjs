@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import {protectBrowserMutations, closeProtectedBrowser} from './verification-safety.mjs';
 import {chromium,expect as baseExpect} from '@playwright/test';
-import {createReaderControls,narratedOnPage,waitForBox} from './live-reader-controls.mjs';
+import {createReaderControls,narratedOnPage,narratedPressPoint,waitForBox} from './live-reader-controls.mjs';
 import {verifyBaseURL} from './live-check-target.mjs';
 import {selectReaderRecording,requestFrom,getJSON,NoSuitableRecording,NO_SUITABLE_RECORDING_EXIT,FOLLOW_WAIT_SECONDS} from './live-check-recording.mjs';
 const expect=baseExpect.configure({timeout:25000});
@@ -95,7 +95,7 @@ try {
  await expect(page.getByRole('group',{name:'Reading mode',exact:true})).toHaveCount(0);
  for(const name of ['Page','Lyrics','Word'])await expect(full.getByRole('button',{name,exact:true})).toHaveCount(0);
  // Following the narration, Back to narration has nothing to return to.
- await expect(room.getByRole('button',{name:'Back to narration',exact:true})).toBeDisabled();
+ await expect(room.getByRole('button',{name:'Back to narration',exact:true}),`Back to narration is on: the reader follows nothing of map ${pick.job.id} (EPUB ${ebook.id}, status ${pick.job.status})`).toBeDisabled();
  await page.screenshot({path:'artifacts/live-reader-options-mobile.png'});
  report.checks.push({name:'Now playing opens its Read face with the EPUB; the head has no More, there is no view switch, Back to narration is off while following',ebookId:ebook.id});
  // Sample the audio element directly and check that Page mode follows.
@@ -136,15 +136,18 @@ try {
  await expect(room).toHaveAttribute('data-current-passage',middle.paragraphId);
  // Long-press plays the narration from that sentence; Undo returns to where it was.
  const before=(await actual()).position;
- // Press in the middle of the visible page, clear of the top bar and the player.
  await controls.hide();
  // Press the sentence being narrated: it is mapped and on screen. A fixed point on the page can land on an image or an unmapped passage (#146).
  const target=page.locator('.inline-reader .reader-viewport .sonder-follow').first();
  await expect(target,`no narrated-sentence highlight at ${(await actual()).position.toFixed(1)} s on the loaded file (mapped sample ${middle.paragraphId} at ${middle.middle.toFixed(1)} s)`).toBeVisible();
- const pressBox=await waitForBox(target,{description:'narrated-sentence highlight'});
- await page.mouse.move(pressBox.x+Math.min(pressBox.width/2,80),pressBox.y+Math.min(pressBox.height/2,10));await page.mouse.down();await page.waitForTimeout(800);await page.mouse.up();
+ // Inside one of the highlight's own lines on this page, not near the edge of its bounding box: a sentence that starts
+ // mid-line has a box from the text's left edge, where the sentence before it is, unmapped on a partly mapped edition (#742).
+ let pressAt=null,lastPoint=null;
+ await expect.poll(async()=>{const point=await narratedPressPoint(room),stable=!!point&&!!lastPoint&&Math.abs(point.x-lastPoint.x)<0.5&&Math.abs(point.y-lastPoint.y)<0.5;lastPoint=point;if(stable)pressAt=point;return stable;},{message:`the narrated sentence ${middle.paragraphId} has no stable line on the page to press`}).toBe(true);
+ await page.mouse.move(pressAt.x,pressAt.y);await page.mouse.down();await page.waitForTimeout(800);await page.mouse.up();
  const toast=room.getByRole('status').filter({hasText:'Listening from here'});
- await expect(toast).toBeVisible();
+ // A press that reached a sentence the map does not cover says so in the foot ("Prepare a matching audiobook map..."): name it.
+ await expect(toast).toBeVisible().catch(async error=>{const said=await room.locator('.reader-message').first().textContent({timeout:1000}).catch(()=>null);throw Error(`no 'Listening from here' after the long press at ${pressAt.x.toFixed(0)},${pressAt.y.toFixed(0)} on ${middle.paragraphId}${said?`; the foot says: ${said.trim()}`:''}: ${error.message}`);});
  await expect.poll(async()=>!(await actual()).paused,{timeout:20000}).toBe(true);
  await page.screenshot({path:'artifacts/live-reader-listen-from-here-mobile.png'});
  // Undo is the foot's message action (#591).

@@ -119,12 +119,29 @@ export function readerSequence(intervals, book) {
   return { start: { trackId: track.id, position: start.position }, trackId: track.id, samples, middle, follow };
 }
 
-// A finished, non-projected map with intervals for an available EPUB of the book's work.
+/**
+ * Whether a job, as GET /api/alignments or its /map lists it, is a finished map the reader follows (#742): a ready map,
+ * or a partial one, which is published as it is. The listing shows a kept map (#277) in front of a rebuild with the
+ * kept map's own status, so a map in use whose rebuild was cancelled still counts, and a job that was cancelled,
+ * paused, failed or is still running, with no published map, does not: the reader has nothing to follow there, and
+ * the check failed on such a job at "Back to narration is off while following" (The Butcher's Masquerade, cancelled
+ * at 20%). A map not at progress 1, a projection (an ebook set's) and a map without intervals do not count either.
+ */
+export function finishedMap(job) {
+  return (job?.status === "ready" || job?.status === "partial") && job.progress === 1 && job.origin !== "projected" && !!job.intervals?.length;
+}
+
+// The finished maps (finishedMap) of the book's recording for an available EPUB of its work.
 function readerJobs(book, ebooks, jobs) {
   const epubs = new Set(ebooks.filter((e) => e.workId === book.workId && e.format === "epub" && e.available).map((e) => e.id));
-  return jobs
-    .filter((j) => j.recordingId === book.recordingId && epubs.has(j.ebookId) && j.progress === 1 && j.intervals?.length && j.origin !== "projected")
-    .sort(jobOrder);
+  return jobs.filter((j) => j.recordingId === book.recordingId && epubs.has(j.ebookId) && finishedMap(j)).sort(jobOrder);
+}
+
+// Why a recording's jobs gave no finished map, naming each job of the recording and what it is (#742).
+function unfinishedReason(book, jobs) {
+  const own = jobs.filter((j) => j.recordingId === book.recordingId);
+  const what = (j) => (j.origin === "projected" ? "projected" : finishedMap(j) ? "finished, for an EPUB Read cannot open" : j.intervals?.length ? j.status : `${j.status} without intervals`);
+  return own.length ? `no finished EPUB alignment map (${own.map((j) => `map ${j.id} of EPUB ${j.ebookId}: ${what(j)}`).join("; ")})` : "no finished EPUB alignment map";
 }
 
 /**
@@ -168,7 +185,7 @@ export function readerPairs({ books, ebooks, jobs, works = [] }, { preferred = n
     }
     const finished = readerJobs(book, ebooks, jobs);
     if (!finished.length) {
-      if (book.recordingId === preferred) rejected.push({ recordingId: book.recordingId, reason: "no finished EPUB alignment map" });
+      if (book.recordingId === preferred) rejected.push({ recordingId: book.recordingId, reason: unfinishedReason(book, jobs) });
       continue;
     }
     aligned.add(book.recordingId);
@@ -299,6 +316,11 @@ export async function selectReaderRecording(get, { preferred = null } = {}) {
     const answer = readMapAnswer(path, await get(path), job);
     if (answer.excluded) {
       rejected.push({ recordingId: book.recordingId, jobId: job.id, reason: answer.excluded });
+      continue;
+    }
+    // The map as served now: a job cancelled or failed since the listing was read is no finished map (#742).
+    if (!finishedMap({ ...answer.map, origin: job.origin })) {
+      rejected.push({ recordingId: book.recordingId, jobId: job.id, reason: `its map is ${answer.map.status ?? "without a status"}, not a finished map` });
       continue;
     }
     const sequence = readerSequence(answer.map.intervals, book);

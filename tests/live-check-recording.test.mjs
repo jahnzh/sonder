@@ -491,3 +491,90 @@ test("#730: the reader check stops when Read opened another EPUB than the sample
   assert.match(source, /room\.getAttribute\('data-ebook'\)/);
   assert.match(source, /if\(opened!==ebook\.id\)throw Error/);
 });
+
+// #742: the check picked The Butcher's Masquerade's job a5807734, whose reading sync was cancelled at 20% with no
+// published map, and failed at "Back to narration is off while following". Only a finished map counts: ready, or
+// partial (published as it is), as the listing serves it.
+const UNFINISHED = ["queued", "copying", "processing", "paused", "cancelled", "error"];
+
+test("#742: a job that is not a finished map (cancelled, paused, failed, running) is rejected even with intervals at progress 1", async () => {
+  for (const status of UNFINISHED) {
+    const b = book(`status-${status}`);
+    const listing = listingOf([{ book: b, jobs: [job(b, { status, progress: 1 })] }]);
+    assert.equal(rec.finishedMap(listing.jobs[0]), false, status);
+    assert.deepEqual(rec.readerPairs(listing).pairs, [], status);
+    await assert.rejects(select(listing), (error) => error instanceof NoSuitableRecording && error.reason === "no aligned recording(s) in the library", status);
+    // Named, it says which map and what it is.
+    const named = rec.readerPairs(listing, { preferred: b.recordingId }).rejected;
+    assert.deepEqual(named.map((r) => r.reason), [`no finished EPUB alignment map (map ${listing.jobs[0].id} of EPUB upload-${b.id}: ${status})`], status);
+  }
+  for (const status of ["ready", "partial"]) {
+    const b = book(`status-${status}`);
+    assert.equal(rec.finishedMap(job(b, { status })), true, status);
+    assert.equal((await select(listingOf([{ book: b, jobs: [job(b, { status })] }]))).job.status, status);
+  }
+});
+
+test("#742 incident: the cancelled job of The Butcher's Masquerade is passed over for Consider Phlebas's partial map of its shared default", async () => {
+  const butcher = book("torbox-135287188", { progress: { position: 300 } });
+  const phlebas = book("torbox-139759793", { tracks: [{ id: "torbox-139759793-1", duration: 29377.84 }, { id: "torbox-139759793-0", duration: 29739.33 }], progress: { track: 1, position: 300 } });
+  // The cancelled job is newer and has the intervals it made before it was cancelled (a listing that showed them).
+  const cancelled = job(butcher, { ebookId: "libgen-1dafeaa8", id: "a5807734", status: "cancelled", progress: 0.2, updatedAt: 1794748753999, intervals: sentences(butcher.tracks[0].id, 0, 600) });
+  const cancelledAtOne = { ...cancelled, progress: 1 };
+  const partial = job(phlebas, { ebookId: "libgen-9719e452", status: "partial", updatedAt: 1794748752000, intervals: sentences("torbox-139759793-0", 0, 600) });
+  for (const butcherJob of [cancelled, cancelledAtOne]) {
+    const listing = {
+      ...listingOf([
+        { book: butcher, ebooks: [ebook(butcher, { id: "libgen-1dafeaa8" })], jobs: [butcherJob] },
+        { book: phlebas, ebooks: [ebook(phlebas, { id: "libgen-9719e452" }), ebook(phlebas, { id: "libgen-4ee6dc25" })], jobs: [partial] },
+      ]),
+      works: [
+        work(butcher, { chosenEbookId: "libgen-1dafeaa8", ebooks: [edition("libgen-1dafeaa8")] }),
+        work(phlebas, { chosenEbookId: "libgen-9719e452", ebooks: [edition("libgen-9719e452"), edition("libgen-4ee6dc25")] }),
+      ],
+    };
+    const { get, requests } = server(listing);
+    const pick = await rec.selectReaderRecording(get);
+    assert.equal(pick.recordingId, phlebas.recordingId);
+    assert.equal(pick.ebook.id, "libgen-9719e452");
+    // The cancelled job's map is not even asked for.
+    assert.ok(!requests.includes(mapPath(butcherJob)));
+    // Named, the cancelled recording is rejected and the check falls back to the other one, saying why.
+    const preferred = await rec.selectReaderRecording(get, { preferred: butcher.recordingId });
+    assert.equal(preferred.recordingId, phlebas.recordingId);
+    assert.equal(preferred.preferred.reason, "no finished EPUB alignment map (map a5807734 of EPUB libgen-1dafeaa8: cancelled)");
+  }
+});
+
+test("#742: a shared default whose only map of the recording is cancelled rejects the recording, though another edition has a ready map", async () => {
+  const b = book("shared-cancelled");
+  const other = job(b, { ebookId: "libgen-other", status: "ready", intervals: sentences(b.tracks[0].id, 0, 600) });
+  const shared = job(b, { ebookId: "libgen-shared", status: "cancelled", intervals: sentences(b.tracks[0].id, 0, 600) });
+  const listing = {
+    ...listingOf([{ book: b, ebooks: [ebook(b, { id: "libgen-other" }), ebook(b, { id: "libgen-shared" })], jobs: [other, shared] }]),
+    works: [work(b, { chosenEbookId: "libgen-shared", ebooks: [edition("libgen-other"), edition("libgen-shared")] })],
+  };
+  const result = rec.readerPairs(listing);
+  assert.deepEqual(result.pairs, []);
+  assert.deepEqual(result.rejected.map((r) => r.reason), ["Read opens the shared default EPUB libgen-shared, which has no finished map of this recording"]);
+  await assert.rejects(select(listing), (error) => error instanceof NoSuitableRecording && /libgen-shared/.test(error.message));
+  // Without the shared default the device's choice (the ready map) is the check's.
+  assert.equal((await select({ ...listing, works: [] })).job.id, other.id);
+});
+
+test("#742: a map in use whose rebuild was cancelled is listed with its own status and qualifies", async () => {
+  const b = book("kept-map");
+  const kept = { ...job(b, { status: "ready", intervals: sentences(b.tracks[0].id, 0, 600) }), rebuild: { status: "cancelled", progress: 0.2, engine: "ctc", error: null } };
+  assert.equal(rec.finishedMap(kept), true);
+  assert.equal((await select(listingOf([{ book: b, jobs: [kept] }]))).job.id, kept.id);
+});
+
+test("#742: a map the listing showed finished but that is no longer finished when read is excluded; the next map is tried", async () => {
+  const first = book("cancelled-since"), second = book("still-ready");
+  const a = job(first, { status: "ready", updatedAt: 900, intervals: sentences(first.tracks[0].id, 0, 600) });
+  const c = job(second, { status: "partial", updatedAt: 100, intervals: sentences(second.tracks[0].id, 0, 600) });
+  const listing = listingOf([{ book: first, jobs: [a] }, { book: second, jobs: [c] }]);
+  const pick = await select(listing, {}, { [mapPath(a)]: { ...a, status: "cancelled" } });
+  assert.equal(pick.job.id, c.id);
+  await assert.rejects(select(listingOf([{ book: first, jobs: [a] }]), {}, { [mapPath(a)]: { ...a, status: "error" } }), (error) => error instanceof NoSuitableRecording && /its map is error, not a finished map/.test(error.message));
+});

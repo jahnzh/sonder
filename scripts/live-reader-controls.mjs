@@ -158,3 +158,41 @@ export function narratedOnPage(room) {
     return false;
   });
 }
+
+/**
+ * Where a long press may land on the narrated sentence (#742), from the highlight's own rectangles (`rects`, each
+ * {left, top, right, bottom} in the page's coordinates, one per line of the sentence) and the reader viewport
+ * (`bounds`). Each line's part on the page the reader shows gives one point, its centre, the widest line first.
+ *
+ * Not the highlight's bounding box: a sentence that starts in the middle of a line and runs on to the next has a box
+ * from the left edge of the text, so a point near its left edge is on the sentence before, which on a partly mapped
+ * edition may be unmapped (then the press asks for a map instead of listening from here). A sentence that crosses a
+ * page also has lines on the pages beside this one, outside the viewport.
+ */
+export function narratedPressPoints(rects, bounds, { minWidth = 8, minHeight = 4 } = {}) {
+  const lines = [];
+  for (const rect of rects) {
+    const left = Math.max(bounds.left, rect.left), right = Math.min(bounds.right, rect.right);
+    const top = Math.max(bounds.top, rect.top), bottom = Math.min(bounds.bottom, rect.bottom);
+    if (right - left >= minWidth && bottom - top >= minHeight) lines.push({ x: (left + right) / 2, y: (top + bottom) / 2, width: right - left });
+  }
+  return lines.sort((a, b) => b.width - a.width).map(({ x, y }) => ({ x, y }));
+}
+
+/**
+ * A point on the narrated sentence where a press reaches the EPUB frame, or null (`room` is a `.reader-room`):
+ * narratedPressPoints over the highlight's rectangles, the first whose spot on the page is the frame itself, not a
+ * control drawn over it. The highlight is drawn over the frame and lets the pointer through.
+ */
+export async function narratedPressPoint(room) {
+  const { rects, bounds } = await room.locator(".reader-viewport").evaluate((host) => {
+    const box = host.getBoundingClientRect();
+    const mark = host.querySelector(".sonder-follow");
+    const rects = mark ? [...mark.querySelectorAll("rect")].map((r) => { const b = r.getBoundingClientRect(); return { left: b.left, top: b.top, right: b.right, bottom: b.bottom }; }) : [];
+    return { rects, bounds: { left: box.left, top: box.top, right: box.right, bottom: box.bottom } };
+  });
+  const points = narratedPressPoints(rects, bounds);
+  if (!points.length) return null;
+  const hits = await room.page().evaluate((points) => points.map(({ x, y }) => document.elementFromPoint(x, y)?.tagName === "IFRAME"), points);
+  return points.find((_, index) => hits[index]) ?? null;
+}
