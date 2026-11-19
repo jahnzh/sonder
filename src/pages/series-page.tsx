@@ -24,6 +24,7 @@ import { openAddSheet, openSaveSheet, SeriesAddSheet } from "./series-add-sheet"
 import { SeriesRemoveDialog } from "./series-remove-dialog";
 import type { SeriesAddSeries } from "./series-add-model";
 import { DISMISS_LABEL, NEW_CARD_LINE, NEW_MARK, seriesPageModel, withoutNew, type SeriesPageSeries, type SeriesRow } from "./series-model";
+import { MATCH_SERIES_AUTOMATICALLY, seriesMatchLine, type SeriesMatchStatus } from "./metadata-compare-model";
 import "./series-page.css";
 
 /** The preferred language of a series' books, under the key the series dialog of an older build keeps it. */
@@ -371,6 +372,8 @@ export function SeriesPage({ id, admin, online, books, revision, onSaved, onRemo
       )}
       {model && model.related.length > 0 && <Group caption={`Related works · ${model.related.length}`}>{model.related.map(renderRow)}</Group>}
 
+      {admin && saved && model && model.books.some((book) => !!book.workId) && <SeriesMatch seriesId={seriesId} onDone={() => void refreshLibraryWorks()} />}
+
       {model?.removable && (
         <div className="series-page-remove">
           <Group label="Series">
@@ -427,5 +430,46 @@ export function SeriesPage({ id, admin, online, books, revision, onSaved, onRemo
         />
       )}
     </section>
+  );
+}
+
+/**
+ * The administrator's 'Match all automatically' (#719 part b): each book of the series in the library is matched in
+ * the background (a sure match only, missing fields only); the line counts them, and Activity lists each with its reason.
+ */
+function SeriesMatch({ seriesId, onDone }: { seriesId: string; onDone: () => void }) {
+  const [status, setStatus] = useState<SeriesMatchStatus | null>(null);
+  const [error, setError] = useState("");
+  const path = `/series/${encodeURIComponent(seriesId)}/metadata/auto`;
+  useEffect(() => {
+    if (!status?.waiting) return;
+    const timer = window.setTimeout(() => {
+      void api<SeriesMatchStatus>(path)
+        .then((next) => {
+          setStatus(next);
+          if (!next.waiting) onDone();
+        })
+        .catch((reason: Error) => setError(reason.message));
+    }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [status, path, onDone]);
+  const start = () => {
+    setError("");
+    void api<SeriesMatchStatus>(path, { method: "POST", body: JSON.stringify({}) })
+      .then(setStatus)
+      .catch((reason: Error) => setError(reason.message));
+  };
+  const line = status ? seriesMatchLine(status) : null;
+  return (
+    <div className="series-page-remove" data-testid="series-match">
+      <Group label="Match">
+        <Row label={MATCH_SERIES_AUTOMATICALLY} value={line ?? undefined} disabled={!!status?.waiting} onClick={start} />
+      </Group>
+      {error && (
+        <p className="series-page-error type-label" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }

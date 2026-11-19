@@ -31,8 +31,11 @@ import {
   type SearchGroup,
   type WorkCatalogue,
 } from "../catalogue-page-model";
+import { COMPARE } from "./metadata-compare-model";
+import { MetadataCompare } from "./metadata-compare";
 import "./settings/settings.css";
 import "./match-page.css";
+import "./edit-page.css";
 
 type Props = { workId: string; admin: boolean; onChanged: () => void };
 type Line = { text: string; failed: boolean } | null;
@@ -51,6 +54,7 @@ export function MatchPage({ workId, admin, onChanged }: Props) {
   const [line, setLine] = useState<Line>(null);
   const [busy, setBusy] = useState("");
   const [releaseFor, setReleaseFor] = useState<string | null>(null);
+  const [comparing, setComparing] = useState<{ provider: CatalogueProvider; id: string } | null>(null);
   useEffect(() => {
     if (!admin) return;
     let live = true;
@@ -137,7 +141,26 @@ export function MatchPage({ workId, admin, onChanged }: Props) {
             </div>
           )}
           <LineText line={line} />
-          <MatchSearch key={`${workId}:${currentChoices(answer).join(",")}`} answer={answer} busy={!!busy} onMatch={(provider, id, author) => void act("match", `/works/${encodeURIComponent(workId)}/catalogue`, "PUT", { provider, id, author })} />
+          <MatchSearch
+            key={`${workId}:${currentChoices(answer).join(",")}`}
+            answer={answer}
+            busy={!!busy}
+            onMatch={(provider, id, author) => void act("match", `/works/${encodeURIComponent(workId)}/catalogue`, "PUT", { provider, id, author })}
+            onCompare={(provider, id) => setComparing({ provider, id })}
+          />
+          {comparing && (
+            <MetadataCompare
+              key={`${comparing.provider}:${comparing.id}`}
+              workId={workId}
+              provider={comparing.provider}
+              id={comparing.id}
+              onApplied={() => {
+                onChanged();
+                window.dispatchEvent(new Event("sonder:library-changed"));
+              }}
+              onClose={() => setComparing(null)}
+            />
+          )}
           {picking && (
             <Picker
               open
@@ -181,7 +204,19 @@ function ProviderLinkRows({ other, busy, onUnlink }: { other: NonNullable<WorkCa
  * The four providers searched at once, filled with the title and author: one request each, so a group shows as soon
  * as its provider answers, with its results or its own failure line. One result is picked across all four, then Match.
  */
-function MatchSearch({ answer, busy, onMatch }: { answer: WorkCatalogue; busy: boolean; onMatch: (provider: CatalogueProvider, id: string, author: string) => void }) {
+export function MatchSearch({
+  answer,
+  busy,
+  onMatch,
+  onCompare,
+}: {
+  answer: WorkCatalogue;
+  busy: boolean;
+  /** Absent on the Edit page: there a result is only compared, never linked. */
+  onMatch?: (provider: CatalogueProvider, id: string, author: string) => void;
+  /** The per-field comparison with the result picked (#719 part b). */
+  onCompare?: (provider: CatalogueProvider, id: string) => void;
+}) {
   const [query, setQuery] = useState(answer.query);
   const [found, setFound] = useState<CatalogueSearch | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
@@ -204,9 +239,10 @@ function MatchSearch({ answer, busy, onMatch }: { answer: WorkCatalogue; busy: b
         });
     }
   };
-  // A book not matched yet is searched at once; a matched one only when asked (matching never repeats by itself).
+  // A book not matched yet is searched at once; a matched one only when asked (matching never repeats by itself). The
+  // Edit page's search (compare only) is opened by asking, so it searches at once.
   useEffect(() => {
-    if (!answer.link && !answer.links?.length) search();
+    if (!onMatch || (!answer.link && !answer.links?.length)) search();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const current = currentChoices(answer);
   const pick = () => {
@@ -214,7 +250,12 @@ function MatchSearch({ answer, busy, onMatch }: { answer: WorkCatalogue; busy: b
     const [provider, ...rest] = chosen.split(":") as [CatalogueProvider, ...string[]];
     const id = rest.join(":");
     const result = found[provider]?.results.find((entry) => entry.id === id);
-    onMatch(provider, id, result?.authors.join(", ") ?? "");
+    onMatch?.(provider, id, result?.authors.join(", ") ?? "");
+  };
+  const compare = () => {
+    if (!chosen) return;
+    const [provider, ...rest] = chosen.split(":") as [CatalogueProvider, ...string[]];
+    onCompare?.(provider, rest.join(":"));
   };
   return (
     <>
@@ -261,9 +302,18 @@ function MatchSearch({ answer, busy, onMatch }: { answer: WorkCatalogue; busy: b
             </div>
           );
         })}
-      <Button kind="primary" className="hardcover-match-button" disabled={!chosen || busy || current.includes(chosen)} onClick={pick}>
-        Match
-      </Button>
+      <div className="edit-actions hardcover-match-button">
+        {onCompare && (
+          <Button kind={onMatch ? "secondary" : "primary"} disabled={!chosen || busy} onClick={compare}>
+            {COMPARE}
+          </Button>
+        )}
+        {onMatch && (
+          <Button kind="primary" disabled={!chosen || busy || current.includes(chosen)} onClick={pick}>
+            Match
+          </Button>
+        )}
+      </div>
     </>
   );
 }

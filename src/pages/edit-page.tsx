@@ -9,8 +9,11 @@ import { Group } from "../parts/Group";
 import { Row } from "../parts/Row";
 import { Button } from "../parts/Button";
 import { Switch } from "../parts/Switch";
-import type { SeriesEntry, WorkField, WorkMetadata } from "../types";
-import { SEARCH_PROVIDERS, PROVIDER_NAMES, type CatalogueSearch } from "../catalogue-page-model";
+import type { MetadataApplied, MetadataProvider, SeriesEntry, WorkField, WorkMetadata } from "../types";
+import { SEARCH_PROVIDERS, PROVIDER_NAMES, type CatalogueSearch, type WorkCatalogue } from "../catalogue-page-model";
+import { MatchSearch } from "./match-page";
+import { MetadataCompare } from "./metadata-compare";
+import { FROM_PROVIDER, MATCHING, MATCH_AUTOMATICALLY, appliedLine, fromLabel } from "./metadata-compare-model";
 import {
   ADD_SERIES,
   ADMIN_EDITS_LINE,
@@ -55,12 +58,13 @@ const path = (workId: string) => `/works/${encodeURIComponent(workId)}/metadata`
 /** A field's row: its label (Edited when it is), the control, and under an edited field the source's value and Revert. */
 function Field({ field, answer, onRevert, busy, children }: { field: WorkField; answer: WorkMetadata; onRevert: (field: WorkField) => void; busy: boolean; children: ReactNode }) {
   const edited = isEdited(answer, field);
+  const from = answer.from?.[field];
   return (
-    <li className="part-row-item settings-field edit-field" data-testid={`edit-${field}`} data-edited={edited ? "" : undefined}>
+    <li className="part-row-item settings-field edit-field" data-testid={`edit-${field}`} data-edited={edited ? "" : undefined} data-from={from}>
       <label>
         <span className="edit-field-name type-body">
           {FIELD_LABELS[field]}
-          {edited && <span className="edit-field-mark type-label">{EDITED}</span>}
+          {edited && <span className="edit-field-mark type-label">{from ? fromLabel(from) : EDITED}</span>}
         </span>
         {children}
       </label>
@@ -146,6 +150,11 @@ export function EditPage({ workId, admin, onChanged }: Props) {
       body.append("file", file);
       return api<WorkMetadata>(`/works/${encodeURIComponent(workId)}/cover`, { method: "POST", body });
     });
+  const matched = (value: WorkMetadata | null) => {
+    if (value) show(value);
+    onChanged();
+    window.dispatchEvent(new Event("sonder:library-changed"));
+  };
   const set = <K extends keyof Draft>(field: K, value: Draft[K]) => setDraft((previous) => (previous ? { ...previous, [field]: value } : previous));
 
   return (
@@ -163,6 +172,9 @@ export function EditPage({ workId, admin, onChanged }: Props) {
           </p>
         )
       ) : (
+        <div className="edit-form">
+        {/* Outside the form: the provider search is a form of its own. */}
+        <MatchGroup workId={workId} busy={busy} onMatched={matched} />
         <form className="edit-form" onSubmit={save}>
           <Group caption="Details">
             {TEXT_FIELDS.map((field) => (
@@ -192,7 +204,7 @@ export function EditPage({ workId, admin, onChanged }: Props) {
                   <label>
                     <span className="edit-field-name type-body">
                       {recording.label}
-                      {recording.edited && <span className="edit-field-mark type-label">{EDITED}</span>}
+                      {recording.edited && <span className="edit-field-mark type-label">{recording.from ? fromLabel(recording.from) : EDITED}</span>}
                     </span>
                     <input className="edit-input type-body" value={narrators[recording.recordingId] ?? ""} maxLength={1000} onChange={(event) => setNarrators((previous) => ({ ...previous, [recording.recordingId]: event.target.value }))} />
                   </label>
@@ -228,6 +240,7 @@ export function EditPage({ workId, admin, onChanged }: Props) {
             )}
           </div>
         </form>
+        </div>
       )}
     </div>
   );
@@ -270,7 +283,7 @@ function SeriesGroup({ answer, series, busy, onChange, onRevert }: { answer: Wor
   };
   return (
     <div className="hardcover-page-group" data-testid="edit-series" data-edited={edited ? "" : undefined}>
-      <Group caption={edited ? `Series · ${EDITED}` : "Series"}>
+      <Group caption={edited ? `Series · ${answer.from?.series ? fromLabel(answer.from.series) : EDITED}` : "Series"}>
         {series.map((item, index) => (
           <Row
             key={`${item.id ?? item.name}:${index}`}
@@ -378,7 +391,7 @@ function CoverGroup({ answer, draft, busy, onAddress, onUpload, onRevert }: { an
   };
   return (
     <div className="hardcover-page-group" data-testid="edit-cover" data-edited={edited ? "" : undefined}>
-      <Group caption={edited ? `Cover · ${EDITED}` : "Cover"}>
+      <Group caption={edited ? `Cover · ${answer.from?.cover ? fromLabel(answer.from.cover) : EDITED}` : "Cover"}>
         <li className="part-row-item settings-field edit-cover-row">
           {draft.cover ? <img className="edit-cover" src={draft.cover} alt="Cover" /> : <span className="edit-cover edit-cover-blank" aria-hidden="true" />}
           <label className="edit-cover-address">
@@ -414,6 +427,60 @@ function CoverGroup({ answer, draft, busy, onAddress, onUpload, onRevert }: { an
         </ul>
       )}
       {covers && !covers.length && !looking && <p className="hardcover-page-line type-label">{NO_COVERS}</p>}
+    </div>
+  );
+}
+
+/**
+ * Match (#719 part b): Match automatically (a sure match only, missing fields only), and Match from a provider: the
+ * four providers searched with the title and author, a result picked, then the per-field comparison and Apply.
+ */
+function MatchGroup({ workId, busy, onMatched }: { workId: string; busy: boolean; onMatched: (metadata: WorkMetadata | null) => void }) {
+  const [line, setLine] = useState<Line>(null);
+  const [working, setWorking] = useState(false);
+  const [catalogue, setCatalogue] = useState<WorkCatalogue | null>(null);
+  const [comparing, setComparing] = useState<{ provider: MetadataProvider; id: string } | null>(null);
+  const auto = async () => {
+    setWorking(true);
+    setLine({ text: MATCHING, failed: false });
+    try {
+      const result = await api<MetadataApplied>(`/works/${encodeURIComponent(workId)}/metadata/auto`, { method: "POST", body: JSON.stringify({}) });
+      setLine(appliedLine(result));
+      onMatched(result.metadata);
+    } catch (error) {
+      setLine({ text: (error as Error).message, failed: true });
+    } finally {
+      setWorking(false);
+    }
+  };
+  const open = () => {
+    setLine(null);
+    void api<WorkCatalogue>(`/works/${encodeURIComponent(workId)}/catalogue`)
+      .then(setCatalogue)
+      .catch((error: Error) => setLine({ text: error.message, failed: true }));
+  };
+  return (
+    <div className="hardcover-page-group edit-match" data-testid="edit-match">
+      <Group caption="Match">
+        <Row label={MATCH_AUTOMATICALLY} disabled={busy || working} onClick={() => void auto()} />
+        {!catalogue && <Row label={FROM_PROVIDER} disabled={busy || working} onClick={open} />}
+      </Group>
+      {line && (
+        <p className="hardcover-page-line type-label" data-failed={line.failed ? "" : undefined} role={line.failed ? "alert" : "status"}>
+          {line.text}
+        </p>
+      )}
+      {catalogue && <MatchSearch answer={catalogue} busy={busy || working} onCompare={(provider, id) => setComparing({ provider, id })} />}
+      {comparing && (
+        <MetadataCompare
+          key={`${comparing.provider}:${comparing.id}`}
+          workId={workId}
+          provider={comparing.provider}
+          id={comparing.id}
+          onApplied={(metadata) => onMatched(metadata)}
+          onClose={() => setComparing(null)}
+        />
+      )}
     </div>
   );
 }
