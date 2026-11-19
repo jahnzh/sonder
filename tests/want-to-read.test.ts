@@ -240,6 +240,15 @@ test("a book that leaves the library leaves Want to read; added again it is not 
   assert.equal((await oneWork(OWNER, "w-kept")).inLibrary, true);
 });
 
+test("a mark left on a work outside the library (written by an earlier build or by hand) does not count", async () => {
+  run("INSERT INTO user_want_to_read(user_id,work_id,source,added_at) VALUES(3,'w-audio','manual',?)", T0);
+  const work = await oneWork(KIM, "w-audio");
+  assert.equal(work.inLibrary, false);
+  assert.equal(work.wantToRead, false);
+  assert.equal((await found(KIM, "matter")).find((w) => w.workId === "w-audio")?.wantToRead, false);
+  run("DELETE FROM user_want_to_read WHERE user_id=3 AND work_id='w-audio'");
+});
+
 test("a work the user may not see answers 404, and so does a Hardcover book without Hardcover connected", async () => {
   // Sam's placeholder-only work is hidden from Kim.
   assert.equal((await want(KIM, "w-sam", true)).statusCode, 404);
