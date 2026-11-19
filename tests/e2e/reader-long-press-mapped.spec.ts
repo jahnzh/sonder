@@ -116,6 +116,7 @@ test("the live check's long-press lands on the narrated sentence of a partly map
  await longPressAt(page,point!);
  const message=room.locator(".reader-player > .reader-message");
  await expect(message.getByRole("status")).toHaveText("Listening from here");
+ await page.screenshot({path:`artifacts/reader-long-press-listening-390-${test.info().project.name}.png`});
  await expect.poll(()=>position(page)).toBeGreaterThanOrEqual(narrated.start-0.5);
  await message.getByRole("button",{name:"Undo",exact:true}).click();
  await expect(message).toHaveCount(0);
@@ -128,4 +129,8 @@ test("the live check's long-press lands on the narrated sentence of a partly map
  await expect(message.getByRole("alert")).toHaveText("Prepare a matching audiobook map for this passage first.");
  await expect(message.getByRole("status")).toHaveCount(0);
  expect(Math.abs((await position(page))-before)).toBeLessThan(1);
+ await page.screenshot({path:`artifacts/reader-long-press-unmapped-390-${test.info().project.name}.png`});
+ await page.setViewportSize({width:1280,height:900});
+ await expect(message.getByRole("alert")).toHaveText("Prepare a matching audiobook map for this passage first.");
+ await page.screenshot({path:`artifacts/reader-long-press-unmapped-1280-${test.info().project.name}.png`});
 });
