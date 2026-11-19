@@ -95,14 +95,14 @@ function searchBooks(q: string) {
 }
 
 const OPEN_LIBRARY_DOCS = [
-  { key: "/works/OL27448W", title: "The Quiet Shelf", author_name: ["Nora Reader"], first_publish_year: 1999, cover_i: 12345, language: ["eng"] },
+  { key: "/works/OL27448W", title: "The Quiet Shelf", author_name: ["Nora Reader"], author_key: ["OL302A"], first_publish_year: 1999, cover_i: 12345, language: ["eng"] },
   { key: "/works/OL1000W", title: "Quiet Harbour", author_name: ["Mira Sand"], first_publish_year: 2021, language: ["eng"] },
   { key: "/works/OL2000W", title: "Wilde Götter", author_name: ["Mira Sand"], first_publish_year: 2022, language: ["ger"] },
   // Discover's "banks" (#721 part c2): a book without an audiobook, and Excession, which AudiobookDB has too.
   { key: "/works/OL3000W", title: "The Bridge", author_name: ["Iain Banks"], author_key: ["OL300A"], first_publish_year: 1986, cover_i: 30000, language: ["eng"] },
   { key: "/works/OL3001W", title: "Excession", author_name: ["Iain M. Banks"], author_key: ["OL301A"], first_publish_year: 1996, language: ["eng"] },
 ];
-const OPEN_LIBRARY_AUTHORS: Record<string, string> = { OL300A: "Iain Banks", OL301A: "Iain M. Banks" };
+const OPEN_LIBRARY_AUTHORS: Record<string, string> = { OL300A: "Iain Banks", OL301A: "Iain M. Banks", OL302A: "Nora Reader" };
 
 export function createControl(): FixtureControl {
   return { calls: [], failNext: [], offline: false, remaining: 39, gone: new Set() };

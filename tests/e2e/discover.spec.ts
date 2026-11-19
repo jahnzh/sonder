@@ -403,16 +403,24 @@ test("without a connection: Searching needs a connection.", async ({ page, conte
 });
 
 // Want to read on a catalogue row (#721 parts c1 and c2): the row's own action makes the provider book's work through
-// its placeholder and puts it on Want to read; a second tap takes it off the work the first one made.
+// its placeholder and puts it on Want to read; a second tap takes it off the work the first one made. The row is found
+// in whichever group lists it: an earlier run (the other browser, or a Hardcover spec's import of the same title) leaves
+// the book on the server, and then it is the server's row; the action is the same.
 for (const [words, title, author, groupName] of [
   ["leviathan wakes", "Leviathan Wakes", "James S. A. Corey", "From AudiobookDB"],
   ["quiet shelf", "The Quiet Shelf", "Nora Reader", "From Open Library"],
 ] as const)
   test(`${groupName}: a row's Want to read action makes the book's work, puts it on Want to read and takes it off`, async ({ page }) => {
+    const shot = groupName === "From AudiobookDB" ? "audiobookdb" : "openlibrary";
     await page.goto("/#discover");
     await search(page, words);
-    const row = group(page, groupName).getByRole("listitem").filter({ hasText: title });
+    // A Book row of the title (the administrator's recording row repeats the words).
+    const bookRow = (within: ReturnType<typeof discover>) => within.getByRole("listitem").filter({ hasText: title, has: page.locator(".part-book-row-status") });
+    const row = bookRow(discover(page));
     await expect(row).toHaveCount(1);
+    const status = row.locator(".part-book-row-status");
+    const wasInLibrary = (await status.textContent())!.endsWith("In your library");
+    const fromProvider = (await bookRow(group(page, groupName)).count()) === 1;
     const add = row.getByRole("button", { name: `Add ${title} to Want to read`, exact: true });
     await expect(add).toHaveAttribute("aria-pressed", "false");
     const put = page.waitForResponse((response) => response.request().method() === "PUT" && /\/want-to-read$/.test(new URL(response.url()).pathname));
@@ -422,14 +430,14 @@ for (const [words, title, author, groupName] of [
     await expect(page.getByText("Added to Want to read", { exact: true })).toBeVisible();
     const remove = row.getByRole("button", { name: `Remove ${title} from Want to read`, exact: true });
     await expect(remove).toHaveAttribute("aria-pressed", "true");
-    await expect(row.locator(".part-book-row-status")).toHaveText(`${author} · Want to read`);
+    await expect(status).toHaveText(`${author} · Want to read`);
     const made = await (await page.request.get(`/api/works/${encodeURIComponent(answer.workId)}`)).json();
-    expect([made.inLibrary, made.wantToRead, made.catalogue, made.recordings]).toEqual([true, true, undefined, []]);
+    expect([made.title, made.author, made.inLibrary, made.wantToRead, made.catalogue]).toEqual([title, author, true, true, undefined]);
     await noOverflow(page);
-    if (test.info().project.name === "chromium") await page.screenshot({ path: `${OUT}/discover-want-to-read-${groupName === "From AudiobookDB" ? "audiobookdb" : "openlibrary"}-phone.png` });
+    if (fromProvider && test.info().project.name === "chromium") await page.screenshot({ path: `${OUT}/discover-want-to-read-${shot}-phone.png` });
     await page.setViewportSize(DESKTOP);
     await noOverflow(page);
-    if (test.info().project.name === "chromium") await page.screenshot({ path: `${OUT}/discover-want-to-read-${groupName === "From AudiobookDB" ? "audiobookdb" : "openlibrary"}-desktop.png` });
+    if (fromProvider && test.info().project.name === "chromium") await page.screenshot({ path: `${OUT}/discover-want-to-read-${shot}-desktop.png` });
 
     const deleted = page.waitForResponse((response) => response.request().method() === "DELETE" && /\/want-to-read$/.test(new URL(response.url()).pathname));
     await remove.click();
@@ -438,12 +446,12 @@ for (const [words, title, author, groupName] of [
     expect(new URL(off.url()).pathname).toBe(`/api/works/${encodeURIComponent(answer.workId)}/want-to-read`);
     await expect(page.getByText("Removed from Want to read", { exact: true })).toBeVisible();
     await expect(add).toHaveAttribute("aria-pressed", "false");
-    await expect(row.locator(".part-book-row-status")).toHaveText(`${author} · In your library`);
+    await expect(status).toHaveText(`${author} · In your library`);
     const after = await (await page.request.get(`/api/works/${encodeURIComponent(answer.workId)}`)).json();
     expect([after.inLibrary, after.wantToRead]).toEqual([true, false]);
-    // Read again, the book is the server's, in the library.
+    // Read again, the book is the server's, in the library, and not the provider's row as well.
     await search(page, words);
-    await onlyRow(rowsOf(page, "On the server"), `${title} ${author} · In your library`);
-    await expect(group(page, groupName)).toHaveCount(0);
-    expect((await page.request.delete(`/api/works/${encodeURIComponent(answer.workId)}/library`)).ok()).toBe(true);
+    await expect(rowsOf(page, "On the server").filter({ hasText: title })).toHaveAccessibleName(`${title} ${author} · In your library`);
+    await expect(bookRow(discover(page))).toHaveCount(1);
+    if (!wasInLibrary) expect((await page.request.delete(`/api/works/${encodeURIComponent(answer.workId)}/library`)).ok()).toBe(true);
   });
