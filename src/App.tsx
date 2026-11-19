@@ -277,12 +277,9 @@ function LibraryApp({
   const sideBySide = useSideBySide();
   // An address of a worker the server does not report shows Server, in the address too (#520).
   const showServer = useCallback(() => address.navigate({ name: "activity", part: "server" }, { replace: true }), [address.navigate]);
-  // The search field searches the page it is on. The Library's search is one of its filters and is remembered
-  // with them (#455); Discover's goes with its results when the page is left.
-  const [queries, setQueries] = useState({ library: "", discover: "", other: "" });
-  const queryOf = page === "library" || page === "discover" ? page : "other";
-  const query = queries[queryOf];
-  const setQuery = (value: string) => setQueries((q) => ({ ...q, [queryOf]: value }));
+  // The Library's search is one of its filters and is remembered with them (#455); Discover keeps its own query in
+  // its history entry (#575). The top bar's search field that searched the page it was on is gone (#581).
+  const [libraryQuery, setLibraryQuery] = useState("");
   // The Library's chip, remembered on this device for this account (#577; #455: not in the address).
   const chipKey = () => userStorageKey(LIBRARY_CHIP_KEY);
   const [filter, setFilter] = useState<LibraryChip>(() => readChip(localStorage.getItem(chipKey())));
@@ -526,7 +523,6 @@ function LibraryApp({
   // The Library's shelf, list, Favorites, status filter and search are remembered when it is left (#455), so the
   // list Back returns to is the one its scroll position belongs to.
   const leavePage = (p: Page) => {
-    setQueries((q) => ({ library: q.library, discover: "", other: "" }));
     if (p === "library" || p === "discover") void refresh();
   };
   // Back (or any traversal) that changes the page closes the shell's dialogs and confirms nothing: they belonged
@@ -707,10 +703,6 @@ function LibraryApp({
     b.tracks.every((t) => downloads.some((d) => d.trackId === t.id));
   // The Library's On device chip (#552, #577): Keep on and complete, every needed file here.
   const keptComplete = new Set(keptWorks.filter((k) => k.needs.complete).map((k) => k.workId));
-  // Discover's shelf of the server's books (the Library reads the library by work, #577).
-  const visible = books.filter(
-    (b) => !query || `${b.title} ${b.author} ${b.genre}`.toLowerCase().includes(query.toLowerCase()),
-  );
   // Get ebook (#604): the sheet over the page it is opened from, the administrator's.
   const findEbook = (workId: string) => address.navigate({ name: "get", workId, kind: "ebook" });
   // Get audiobook (#601): the sheet over the page it is opened from, the administrator's.
@@ -867,8 +859,8 @@ function LibraryApp({
                 works={libraryWorks}
                 stored={worksStored}
                 books={books}
-                query={queries.library}
-                setQuery={(value) => setQueries((q) => ({ ...q, library: value }))}
+                query={libraryQuery}
+                setQuery={setLibraryQuery}
                 filter={filter}
                 setFilter={setFilter}
                 view={view}

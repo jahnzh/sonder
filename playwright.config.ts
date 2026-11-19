@@ -47,6 +47,15 @@ const activitySpecs = /(^|\/)(activity(-[a-z]+)?|device-save-records|torrent-hea
 const activityIphone = existsSync(webkit.executablePath())
   ? [{ name: "webkit-iphone-activity", testMatch: activitySpecs, use: { ...devices["iPhone 15"], serviceWorkers: "block" as const, launchOptions: {} } }]
   : [];
+// Every browser spec that slice 13's tickets (#573 to #582: Library, Discover, Settings and the shell) added or changed,
+// the slice's final check (#583): also in WebKit with the iPhone profile, and in Firefox (the line in its list below).
+// pwa-shortcut runs only on the Android emulator with Firefox; join.spec.ts went with #582 (Join is
+// in sign-in.spec.ts).
+const slice13Specs =
+  /(^|\/)(account-requests|activity-(device|dot|navigation|now|worker)|app|audiobook-page|book-page(-states)?|device-reset|device-save-records|discover|discovery|ebook-only-library|gallery(-picker|-tooltip)?|get-recording|hardcover(-book-look|-sync-form)?|integrated-reader|keep-not-complete|keep-saver|library-(picker|redesign|series)|media-controls|navigation|now-playing-layout|offline-restart|one-reading-view|playback-speed(-rate)?|playback-workflow|position-history|prowlarr|reader-cache-not-kept|reader-foot-setting|reader-messages|reader-theme|reliability|series-(acquisition|discovery|followups|page|removal)|settings-(pages|server)|shell|sign-in|source-progress|stalled-seek|torrent-health|users|works-gallery)\.spec\.ts$/;
+const slice13Iphone = existsSync(webkit.executablePath())
+  ? [{ name: "webkit-iphone-slice13", testMatch: slice13Specs, use: { ...devices["iPhone 15"], launchOptions: {} } }]
+  : [];
 const desktopProjects = [
   { name: "chromium" },
   // Layout checks also run in Firefox/WebKit when those browsers are installed.
@@ -187,12 +196,15 @@ const desktopProjects = [
               /(^|\/)reader-long-press-mapped\.spec\.ts$/,
               // The live check opens the EPUB of the map it sampled, for a work with no shared default (#742 second round).
               /(^|\/)reader-check-edition\.spec\.ts$/,
+              // The rest of slice 13's specs (Library, Discover, Settings and the shell), its final check (#583).
+              slice13Specs,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },
     })),
   ...pageTurnIphone,
   ...activityIphone,
+  ...slice13Iphone,
 ];
 export default defineConfig({
   testDir: "./tests/e2e",
