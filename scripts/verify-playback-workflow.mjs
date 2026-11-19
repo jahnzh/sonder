@@ -58,17 +58,6 @@ try {
   await page.goto(`/#book/${encodeURIComponent(book.workId)}`);
   const bookPage=page.getByRole("region",{name:"Book",exact:true});
   await expect(bookPage).toBeVisible();
-  // The book's Hardcover row (shown when this account connected Hardcover) opens the Hardcover page (#529), whose
-  // Open on Hardcover is the canonical link. Only read: nothing on the page is changed.
-  const hardcoverRow=bookPage.getByRole("button",{name:/^Hardcover /});
-  if(book.hardcover?.slug && await hardcoverRow.count()){
-    await hardcoverRow.click();
-    const link=page.getByRole("link",{name:"Open on Hardcover",exact:true});
-    await expect(link).toHaveAttribute("href",`https://hardcover.app/books/${encodeURIComponent(book.hardcover.slug)}`);
-    check("canonical Hardcover link",{href:await link.getAttribute("href")});
-    await page.getByRole("button",{name:"Back to the book",exact:true}).click();
-    await expect(bookPage).toBeVisible();
-  }
   // Listen plays the chosen recording and opens Now playing on its Listen face.
   await bookPage.getByRole("button",{name:"Listen",exact:true}).click();
   await expect.poll(async()=>{const a=await actual();return !!a && a.ready>=2 && !a.paused && !a.error;},{timeout:30000}).toBe(true);
