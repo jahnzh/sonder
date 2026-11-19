@@ -17,7 +17,7 @@ import {
   relativeSeekTarget,
   absoluteSeekTarget,
 } from "./chapters";
-import { heldPosition, landingSought, landingStep, LANDING_RECHECK_MS, type Landing } from "./seek-landing";
+import { heldPosition, landingSought, landingStep, pendingSought, LANDING_RECHECK_MS, type Landing } from "./seek-landing";
 import type { Book, Track, Progress, PlaybackSourceChoice } from "./types";
 import {
   deviceFault,
@@ -801,7 +801,12 @@ export function PlayerProvider({
       configurable: true,
       get: () => Reflect.get(HTMLMediaElement.prototype, "currentTime", el) as number,
       set: (value: number) => {
-        landing.current = landingSought(landing.current, generation.current, Number(value), Date.now());
+        // Before `loadedmetadata` the load's seek to its saved place is still to come (#730 second round): the live
+        // check seeks right after Read opens, while a TorBox stream's metadata is on its way. That seek is then the
+        // place the load seeks to; kept apart, `loaded` sought back to the saved place over it.
+        const sought = Number(value);
+        pendingSeek.current = pendingSought(pendingSeek.current, sought);
+        landing.current = landingSought(landing.current, generation.current, sought, Date.now());
         Reflect.set(HTMLMediaElement.prototype, "currentTime", value, el);
       },
     });
@@ -882,9 +887,10 @@ export function PlayerProvider({
           pendingSeek.current,
           Math.max(0, el.duration - 0.1),
         );
+        // Cleared before the write, which is the load's own seek and not one that replaces it.
+        pendingSeek.current = null;
         el.currentTime = target;
         landing.current = { generation: generation.current, target, tries: 0, since: Date.now() };
-        pendingSeek.current = null;
       }
       const switched = sourceSwitch.current;
       sourceSwitch.current = null;

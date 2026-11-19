@@ -66,3 +66,14 @@ export function landingSought(landing: Landing | null, generation: number, sough
   if (Math.abs(soughtTo - landing.target) <= LANDING_TOLERANCE) return landing;
   return { generation, target: soughtTo, tries: 0, since: now };
 }
+
+/**
+ * The place a load still waiting for `loadedmetadata` seeks to once it can (#730 second round). A seek made on the
+ * element before then (the live check seeks right after Read opens, while a TorBox stream's metadata is on its way)
+ * is that place: the element keeps it only until the load's own seek replaces it with the saved place. With no load
+ * waiting, nothing changes.
+ */
+export function pendingSought(pending: number | null, soughtTo: number): number | null {
+  if (pending === null || !Number.isFinite(soughtTo)) return pending;
+  return Math.max(0, soughtTo);
+}
