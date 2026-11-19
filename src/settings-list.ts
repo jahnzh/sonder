@@ -32,6 +32,7 @@ export const PAGE_TITLES: Record<SettingsPage, string> = {
   users: "Users",
   library: "Library and storage",
   app: "App",
+  keyboard: "Keyboard shortcuts",
 };
 
 export const PRESET_NAMES: Record<Appearance["preset"], string> = {
