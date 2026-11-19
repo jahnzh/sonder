@@ -44,6 +44,7 @@ import { listServedAlignmentSummaries, type slimAlignmentJob } from "./alignment
 import { getWorkMediaStates } from "./work-media-state.ts";
 import { addWorkToLibrary, removeWorkFromLibrary, workVisibleByRule, workVisibleTo } from "./work-library.ts";
 import { keepOffOnEveryDevice } from "./device-keep.ts";
+import { catalogueWorkOrLook, catalogueWorkToAdd } from "./discover-catalogue.ts";
 import { addToWantToRead, copyHardcoverWantToRead, hardcoverCopyResult, removeFromWantToRead, wantToReadWorks } from "./want-to-read.ts";
 import type {
   Book,
@@ -492,6 +493,9 @@ async function hardcoverLook(userId: number, bookId: number): Promise<LibraryWor
 async function workOrLook(userId: number, workId: string) {
   const work = libraryWork(userId, workId);
   if (work) return work;
+  // A catalogue book (#721): the work linked to it, else the provider's answer.
+  const catalogue = await catalogueWorkOrLook(userId, workId);
+  if (catalogue) return "look" in catalogue ? catalogue.look : libraryWork(userId, catalogue.workId);
   const bookId = hardcoverWorkBook(workId);
   if (bookId === null) return null;
   const matched = hardcoverBookWorks(userId, [bookId]).get(bookId)!;
@@ -507,6 +511,8 @@ async function workOrLook(userId: number, workId: string) {
  */
 async function workToAdd(userId: number, workId: string): Promise<string | null> {
   if (workVisibleTo(userId, workId)) return workId;
+  const catalogue = await catalogueWorkToAdd(userId, workId);
+  if (catalogue) return catalogue;
   const bookId = hardcoverWorkBook(workId);
   if (bookId === null) return null;
   const matched = hardcoverBookWorks(userId, [bookId]).get(bookId)!;

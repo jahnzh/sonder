@@ -53,7 +53,8 @@ export function placeholderIdFor(workId: string, hardcoverBookId: number | null)
  * - the work's placeholder when it has one (the first, by row order);
  * - else `hc-<book id>` for a work matched on Hardcover, else `placeholder-<workId>`, written as an
  *   audio edition "Audio not added" with the recording `recording-<edition id>` and no track, and
- *   `cover` when it is an https address (the Hardcover cover), else `/covers/meditations.svg`.
+ *   `cover` when it is an https address (the Hardcover cover), else `/covers/meditations.svg`; its source label is
+ *   `sourceLabel` when given (a catalogue book's provider, #721), else "Hardcover library" or "Ebook".
  *
  * The rows are written with "do nothing on conflict" inside one transaction, so two requests for
  * the same work cannot make two placeholders. When the `hc-<book id>` id is taken by an edition that
@@ -61,7 +62,7 @@ export function placeholderIdFor(workId: string, hardcoverBookId: number | null)
  * the work gets `placeholder-<workId>` instead, so no other edition is ever answered as its
  * placeholder. Opens no database itself: the handle is the caller's, as for `isPlaceholderEdition`.
  */
-export function ensurePlaceholder(database: Database, workId: string, options: { cover?: string | null } = {}): string {
+export function ensurePlaceholder(database: Database, workId: string, options: { cover?: string | null; sourceLabel?: string } = {}): string {
   return database.transaction((): string => {
     const existing = database
       .prepare(`SELECT e.id FROM audio_editions e WHERE e.work_id=? AND ${placeholderEditionSql("e.id")} ORDER BY e.rowid LIMIT 1`)
@@ -79,7 +80,7 @@ export function ensurePlaceholder(database: Database, workId: string, options: {
         `INSERT INTO audio_editions(id,work_id,cover,narrator,language,release_title,rating,source_label)
          VALUES(?,?,?,'Audio not added',NULL,NULL,0,?) ON CONFLICT DO NOTHING`,
       )
-      .run(id, workId, cover, bookId == null ? "Ebook" : "Hardcover library");
+      .run(id, workId, cover, options.sourceLabel ?? (bookId == null ? "Ebook" : "Hardcover library"));
     database.prepare("INSERT INTO recordings(id,edition_id) VALUES(?,?) ON CONFLICT DO NOTHING").run(`recording-${id}`, id);
     return id;
   })();
