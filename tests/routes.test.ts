@@ -338,13 +338,17 @@ test("#discover/get/<query> (#576): a query with a slash is one part of the addr
 // #614: Keyboard shortcuts is a Settings page whose parent is Playback, so its back button reads "Back to Playback".
 test("#settings/keyboard reads, writes, is everyone's, and has Playback as its parent", async () => {
   const { backName } = await import("../src/parts/back-name.ts");
+  const { keyboardBackNamed } = await import("../src/settings-list.ts");
   const route = readAddress("#settings/keyboard");
   assert.deepEqual(route, { name: "settings-page", page: "keyboard" });
   assert.equal(writeAddress(route), "#settings/keyboard");
   assert.equal(writeAddress({ name: "settings-page", page: "keyboard" }), "#settings/keyboard");
   assert.equal(placeOf(route), "settings");
   assert.deepEqual(parentOf(route), { name: "settings-page", page: "playback" });
-  assert.equal(backName(parentOf(route)!), "Back to Playback");
+  // The page names its parent (keyboardBackNamed in src/settings-list.ts): "Back to Playback".
+  assert.equal(backName(parentOf(route)!, keyboardBackNamed), "Back to Playback");
+  // Any other page that lands on Playback keeps the generic name.
+  assert.equal(backName(parentOf(route)!), "Back to Settings");
   // Playback's own back button still goes to the list.
   assert.deepEqual(parentOf(readAddress("#settings/playback")), { name: "settings" });
   assert.equal(backName(parentOf(readAddress("#settings/playback"))!), "Back to Settings");

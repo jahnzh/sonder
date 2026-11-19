@@ -17,9 +17,8 @@ export function pageName(route: Route): string {
       return "the worker";
     case "settings":
       return "Settings";
-    // Keyboard shortcuts goes back to Playback (#614); the list's own pages go back to Settings.
     case "settings-page":
-      return route.page === "playback" ? "Playback" : "Settings";
+      return "Settings";
     case "book-page":
       // Details goes back to Reading sync (#540); the book's other pages go back to the book.
       return route.page === "sync" ? "Reading sync" : "the book";

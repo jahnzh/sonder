@@ -12,7 +12,7 @@ import { Group } from "../parts/Group";
 import { PageHeader } from "../parts/PageHeader";
 import { Row } from "../parts/Row";
 import { isSettingsPage, parentOf, type SettingsPage as PageName } from "../routes";
-import { PAGE_TITLES, settingsList } from "../settings-list";
+import { keyboardBackNamed, PAGE_TITLES, settingsList } from "../settings-list";
 import type { Settings as SettingsData } from "../types";
 import { AccountPage } from "./settings/account";
 import { AppPage, runsInstalled } from "./settings/app";
@@ -97,7 +97,14 @@ export function SettingsPage(props: Props) {
         {page && (
           <section className="settings-split-page" aria-labelledby="settings-page-title" data-page={shown}>
             {shown === "keyboard" ? (
-              <PageHeader title={PAGE_TITLES.keyboard} back parent={parentOf(route) ?? undefined} level={2} titleId="settings-page-title" />
+              <PageHeader
+                title={PAGE_TITLES.keyboard}
+                back
+                parent={parentOf(route) ?? undefined}
+                named={keyboardBackNamed}
+                level={2}
+                titleId="settings-page-title"
+              />
             ) : (
               <h2 id="settings-page-title" className="type-title settings-page-title">
                 {PAGE_TITLES[shown!]}
@@ -117,7 +124,12 @@ export function SettingsPage(props: Props) {
     );
   return (
     <div className="settings-phone" data-page={shown}>
-      <PageHeader title={PAGE_TITLES[shown]} back parent={parentOf(route) ?? { name: "settings" }} />
+      <PageHeader
+        title={PAGE_TITLES[shown]}
+        back
+        parent={parentOf(route) ?? { name: "settings" }}
+        named={shown === "keyboard" ? keyboardBackNamed : undefined}
+      />
       <div className="settings-page-body">{page}</div>
     </div>
   );
