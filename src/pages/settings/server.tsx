@@ -285,7 +285,10 @@ function CatalogueConnections({ settings, onSaved, notify, save }: Omit<Props, "
             )}
           </ActionsRow>
         )}
-        {configured && <Row label="Match library" disabled={running} onClick={() => void read("POST").then(onSaved)} />}
+        {configured && <Row label="Match library" disabled={running} onClick={() => void read("POST")} />}
+      </Group>
+      <Group caption="Open Library">
+        <Row label="API key" value={KEY_NOT_NEEDED} />
       </Group>
       {batch && batch.unmatched.length > 0 && (
         <Group caption="Not matched">
@@ -294,9 +297,6 @@ function CatalogueConnections({ settings, onSaved, notify, save }: Omit<Props, "
           ))}
         </Group>
       )}
-      <Group caption="Open Library">
-        <Row label="API key" value={KEY_NOT_NEEDED} />
-      </Group>
       <p className="part-group-note settings-page-note">
         <a href="https://audiobookdb.org" target="_blank" rel="noopener noreferrer">
           {CREDIT}

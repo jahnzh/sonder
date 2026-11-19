@@ -100,6 +100,9 @@ test("the matcher: exact normalised title and author, ASINs in file names, and t
   const releases = [release("en", 72_060_000, "en", "B004GJ4ZPU"), release("short", 28_800_000, "en"), release("de", 72_000_000, "German")];
   assert.deepEqual(links.pickRelease({ durationMs: 72_030_000, asin: null }, releases), { release: releases[0], by: "length" });
   assert.equal(links.pickRelease({ durationMs: 1_000_000, asin: null }, releases), null);
+  // Five minutes apart on a 20-hour book is another release, not this one.
+  assert.equal(links.pickRelease({ durationMs: 72_030_000, asin: null }, [release("other", 72_330_000, "en")]), null);
+  assert.equal(links.pickRelease({ durationMs: 72_030_000, asin: null }, [release("close", 72_080_000, "en")])?.release.id, "close");
   assert.deepEqual(links.pickRelease({ durationMs: 0, asin: "B004GJ4ZPU" }, releases), { release: releases[0], by: "asin" });
   // Two English releases of about the same length: not sure.
   assert.equal(links.pickRelease({ durationMs: 72_030_000, asin: null }, [...releases, release("en2", 72_040_000, "English")]), null);
