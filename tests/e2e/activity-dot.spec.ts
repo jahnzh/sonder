@@ -52,7 +52,7 @@ const attention = (): ActivityResponse => {
   };
 };
 
-const tabBar = (page: Page) => page.getByRole("navigation", { name: "Mobile navigation" });
+const tabBar = (page: Page) => page.getByRole("navigation", { name: "Main", exact: true });
 const activityTab = (page: Page) => tabBar(page).getByRole("button", { name: "Activity", exact: true });
 const dot = (page: Page) => activityTab(page).getByRole("img", { name: DOT });
 
@@ -128,7 +128,8 @@ test("a failed save on this device lights the dot for someone who is not the adm
   await expect(activityTab(page)).toHaveAccessibleDescription(DOT);
 
   await context.setOffline(true);
-  await expect(page.locator(".status-dot.offline").first()).toBeAttached();
+  // The shell knows it is offline: its offline line (#581) in place of the old rail footer's offline dot.
+  await expect(page.locator(".offline-line")).toBeVisible();
   await expect(dot(page)).toBeVisible();
   // It stays after a reload, from the device's own record.
   await context.setOffline(false);

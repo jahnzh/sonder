@@ -235,7 +235,7 @@ export function LibraryPage({
                   Clear filters
                 </Button>
               ) : (
-                <Button kind="primary" onClick={() => navigate("discover")}>
+                <Button kind="primary" onClick={findBook}>
                   Find a book
                 </Button>
               )}

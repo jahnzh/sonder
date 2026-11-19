@@ -569,14 +569,14 @@ test("Use Hardcover position can be undone through the normal progress path", as
   await page.getByRole("button", { name: "Save sync preferences", exact: true }).click();
   await page.getByRole("button", { name: "Sync now", exact: true }).click();
   await expect(page.getByText(/Synced/)).toBeVisible();
-  await page.locator(".mobile-nav").getByRole("button", { name: "My library", exact: true }).click();
+  await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button", { name: "Library", exact: true }).click();
   const book = (await (await page.request.get("/api/books")).json()).find((item: any) => item.id === "alice");
   const uploaded = await page.request.post(`/api/ebooks/import?workId=${book.workId}`, {
     multipart: { file: { name: "Companion.epub", mimeType: "application/epub+zip", buffer: await readerFixture() } },
   });
   expect(uploaded.ok()).toBe(true);
   await page.reload();
-  await page.locator(".mobile-nav").getByRole("button", { name: "My library", exact: true }).click();
+  await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button", { name: "Library", exact: true }).click();
   await startPaused(page, book.title);
   await setPosition(page, 70.25);
   await page.getByRole("button", { name: `About ${book.title}`, exact: true }).click();

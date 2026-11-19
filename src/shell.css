@@ -1,0 +1,249 @@
+/* The shell (#581, spec #572 "The shell"): the tab bar under the mini player on a phone (Library.dc.html), the rail
+   from 760 px (DesktopLibrary.dc.html, DesktopSettings.dc.html), the offline line (LibraryOffline.dc.html) and the
+   toast. Built from the tokens; the colours are appearance.css's variables.
+
+   The foot of a phone is a stack from the bottom: the tab bar, the mini player when there is one, the offline line
+   while there is no connection. Each part's height is a variable on .app-shell, so the page's padding, the offline
+   line and the toast sit above whatever is shown. */
+.app-shell {
+  --rail-width: 220px;
+  --shell-tab-bar: calc(var(--height-bar) + env(safe-area-inset-bottom));
+  --shell-player: 0px;
+  --shell-offline: 0px;
+  min-height: 100vh;
+  padding-bottom: calc(var(--shell-tab-bar) + var(--shell-player) + var(--shell-offline));
+}
+.app-shell:has(.player-dock) {
+  --shell-player: var(--player-height);
+}
+.app-shell[data-offline] {
+  --shell-offline: var(--height-control);
+}
+.main-shell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* The tab bar. */
+.shell-nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 61;
+  box-sizing: border-box;
+  height: var(--shell-tab-bar);
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+}
+.shell-name {
+  display: none;
+}
+.shell-places {
+  height: 100%;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.shell-place {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-family: var(--font-body);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+}
+.shell-place[aria-current="page"] {
+  color: var(--text);
+  font-weight: 600;
+}
+.shell-place[aria-current="page"] svg {
+  stroke: var(--accent);
+}
+.shell-place:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -4px;
+}
+.shell-place-icon {
+  position: relative;
+  display: flex;
+}
+.shell-dot {
+  position: absolute;
+  top: -2px;
+  right: -6px;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--corner-round);
+  background: var(--accent);
+}
+
+/* The mini player stands on the tab bar (player.css places it; only its foot is the shell's). */
+@media (max-width: 759px) {
+  .app-shell .player-dock {
+    bottom: var(--shell-tab-bar);
+  }
+}
+
+/* The offline line: above the mini player, or above the tab bar without one. Nothing in it is tapped. */
+.offline-line {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--shell-tab-bar) + var(--shell-player));
+  z-index: 61;
+  box-sizing: border-box;
+  height: var(--height-control);
+  padding: 0 var(--space-16);
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+}
+.offline-line > svg {
+  flex: none;
+}
+.offline-line-text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.offline-line-lead {
+  color: var(--text);
+}
+
+/* Messages outside the reader: above the mini player and the offline line. */
+.toast {
+  position: fixed;
+  z-index: 100;
+  left: 50%;
+  bottom: calc(var(--shell-tab-bar) + var(--shell-player) + var(--shell-offline) + var(--space-16));
+  transform: translateX(-50%);
+  box-sizing: border-box;
+  width: max-content;
+  max-width: calc(100% - 2 * var(--space-16));
+  min-height: var(--height-control);
+  padding: 0 0 0 var(--space-16);
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--corner-group);
+  color: var(--text);
+  animation: fade-in 0.2s;
+}
+.toast.error {
+  color: var(--danger);
+}
+.toast-text {
+  min-width: 0;
+  padding: var(--space-12) 0;
+}
+.toast-dismiss {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--corner-group);
+  background: none;
+  color: inherit;
+}
+
+/* The rail: "Sonder", the four places and the dot; the offline line is its last line. No top bar. */
+@media (min-width: 760px) {
+  .app-shell {
+    --shell-tab-bar: 0px;
+    --shell-offline: 0px;
+  }
+  .main-shell {
+    margin-left: var(--rail-width);
+  }
+  .shell-nav {
+    top: 0;
+    right: auto;
+    bottom: var(--shell-player);
+    width: var(--rail-width);
+    height: auto;
+    padding: var(--space-32) var(--space-16);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-24);
+    border-top: 0;
+    border-right: 1px solid var(--border);
+  }
+  .shell-name {
+    display: block;
+    padding: 0 var(--space-12);
+    color: var(--text);
+  }
+  .shell-places {
+    height: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+  .shell-place {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: var(--space-12);
+    height: var(--height-control);
+    padding: 0 var(--space-12);
+    border-radius: var(--corner-control);
+    font-size: 14px;
+    line-height: 20px;
+  }
+  .shell-place[aria-current="page"] {
+    background: var(--raised);
+  }
+  .shell-place:hover {
+    background: var(--raised);
+  }
+  .shell-place-icon svg {
+    width: 20px;
+    height: 20px;
+  }
+  .shell-place-icon {
+    position: static;
+  }
+  .shell-place-label {
+    flex: 1;
+    text-align: left;
+  }
+  .shell-place {
+    position: relative;
+  }
+  .shell-dot {
+    top: calc(50% - 4px);
+    right: var(--space-12);
+  }
+  .offline-line {
+    right: auto;
+    width: var(--rail-width);
+    bottom: var(--shell-player);
+    z-index: 62;
+    border-right: 1px solid var(--border);
+  }
+  .toast {
+    left: calc(var(--rail-width) + (100% - var(--rail-width)) / 2);
+    max-width: calc(100% - var(--rail-width) - 2 * var(--space-16));
+  }
+}

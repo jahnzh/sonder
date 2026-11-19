@@ -240,7 +240,7 @@ test.describe("on a desktop", () => {
 
     // Something of the app behind the Library: Back from the series lands there.
     await page.goto("/#discover");
-    await page.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: "Library" }).click();
+    await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button", { name: "Library" }).click();
     await expect(page).toHaveURL(/#library$/);
     await showSavedSeries(page);
     const historyBefore = await page.evaluate(() => history.length);
