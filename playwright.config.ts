@@ -231,6 +231,8 @@ const desktopProjects = [
               nowPlayingSpecs,
               // Sonder's own Want to read on the Book page, Discover's rows and the Library's Shelf (#721 part c1).
               /(^|\/)want-to-read\.spec\.ts$/,
+              // Read on a desktop: two pages side by side when the text area is wide enough (#762).
+              /(^|\/)reader-two-pages\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },
