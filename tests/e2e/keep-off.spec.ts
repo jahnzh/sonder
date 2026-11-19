@@ -163,6 +163,32 @@ async function held(page: Page, recordingIds: string[], ebookId: string | null) 
   );
 }
 
+/** The state of a save's record on this device (`device-save:<id>`), or null when there is none. */
+async function saveState(page: Page, saveId: string) {
+  return page.evaluate(async (key) => {
+    for (const { name } of await indexedDB.databases()) {
+      if (!name?.startsWith("sonder")) continue;
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const open = indexedDB.open(name);
+        open.onsuccess = () => resolve(open.result);
+        open.onerror = () => reject(open.error);
+      });
+      if (!db.objectStoreNames.contains("preferences")) {
+        db.close();
+        continue;
+      }
+      const row = await new Promise<{ value?: { state?: string } } | undefined>((resolve, reject) => {
+        const get = db.transaction("preferences").objectStore("preferences").get(key);
+        get.onsuccess = () => resolve(get.result);
+        get.onerror = () => reject(get.error);
+      });
+      db.close();
+      if (row?.value?.state) return row.value.state;
+    }
+    return null;
+  }, `device-save:${saveId}`);
+}
+
 /** The complete files of one recording on this device. */
 const files = async (page: Page, recordingId: string) => (await held(page, [recordingId], null)).downloads;
 
@@ -259,13 +285,16 @@ test("with nothing on the device, Off turns off without asking", async ({ page }
   await keep(page).click();
   await expect(keep(page)).toHaveAttribute("aria-checked", "true");
   await expect(line(page)).toHaveText("Not complete · 0 of 1 files", { timeout: 20_000 });
+  // The line reads so before the save has started too: wait for the refusal's record (#707).
+  await expect.poll(() => saveState(page, book.recordingId), { timeout: 20_000 }).toBe("failed");
   const nothing = await held(page, [book.recordingId], null);
-  expect(nothing.downloads + nothing.parts + nothing.chunks + nothing.opfs).toBe(0);
+  // No byte of it: the save's empty section row (written before its first range) holds none.
+  expect(nothing.downloads + nothing.chunks + nothing.opfs).toBe(0);
   await keep(page).click();
   await expect(keep(page)).toHaveAttribute("aria-checked", "false");
   await expect(offQuestion(page)).toHaveCount(0);
-  // Its failed save record goes with it.
-  await expect.poll(() => held(page, [book.recordingId], null).then((h) => h.records)).toBe(0);
+  // Its failed save record goes with it, and the empty section row.
+  await expect.poll(() => held(page, [book.recordingId], null).then((h) => h.records + h.parts)).toBe(0);
 });
 
 // #707: under load, a run that had read the Keep records before Off (here a library read that changed, which tries a
@@ -275,13 +304,16 @@ test("Off while a run waits for the server: the run saves nothing, writes no rec
   const book = await fixture(page, unique("Off during a run"));
   let refused = 0;
   await page.route(new RegExp(`/api/media/${book.trackId}(\\?|$)`), (route) => {
-    refused++;
+    if (route.request().headers()["x-sonder-download"]) refused++;
     return route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ error: "Refused." }) });
   });
   await page.goto(address(book.workId));
   await keep(page).click();
   await expect(line(page)).toHaveText("Not complete · 0 of 1 files", { timeout: 20_000 });
+  // The line reads so before the save has started too: wait for the refusal's record.
+  await expect.poll(() => saveState(page, book.recordingId), { timeout: 20_000 }).toBe("failed");
   const before = refused;
+  expect(before).toBeGreaterThan(0);
   // The next run reads the device (Keep on, the failed save) and waits for GET /api/device/keep.
   let release = () => {};
   const released = new Promise<void>((resolve) => (release = resolve));
