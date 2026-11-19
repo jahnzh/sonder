@@ -160,6 +160,10 @@ test.describe("on a stream",()=>{
   await expect.poll(async()=>(await audio(page)).position).toBeCloseTo(middle(saved),0);
   await seekTo(page,backwards);
   await seekTo(page,forwards);
+  await page.screenshot({path:`artifacts/reader-paused-seek-390-${test.info().project.name}.png`});
+  await page.setViewportSize({width:1280,height:800});
+  await seekTo(page,backwards);
+  await page.screenshot({path:`artifacts/reader-paused-seek-1280-${test.info().project.name}.png`});
   await seekTo(page,saved);
  });
 });
