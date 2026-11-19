@@ -21,7 +21,7 @@ test.afterEach(async ({ request }) => {
     data: { prowlarr: "", prowlarrUrl: "" },
   });
 });
-test("Prowlarr is configured in Settings and merges with AudioBookBay, isolating a failing source", async ({
+test("Prowlarr is configured on Connections and merges with AudioBookBay, isolating a failing source", async ({
   page,
 }) => {
   let abbFails = false;
@@ -47,17 +47,23 @@ test("Prowlarr is configured in Settings and merges with AudioBookBay, isolating
     });
   });
 
+  // Connections (#580): the address and the key, each with its own Save; Test once both are saved.
   await page.goto("/#settings/connections");
-  await page.getByRole("textbox", { name: "Prowlarr address" }).fill(prowlarrFixtureUrl);
-  await page.getByLabel("Prowlarr API key").fill("wrong-key");
-  await page.getByRole("button", { name: "Save Prowlarr", exact: true }).click();
-  await expect(page.locator(".prowlarr-settings-form .connection-tag")).toHaveText("Connected");
-  await page.getByRole("button", { name: "Test Prowlarr", exact: true }).click();
+  const main = page.locator("main");
+  await main.getByRole("textbox", { name: "Prowlarr address", exact: true }).fill(prowlarrFixtureUrl);
+  await main.getByRole("button", { name: "Save Prowlarr address", exact: true }).click();
+  const prowlarr = main.getByRole("list", { name: "Prowlarr", exact: true });
+  await expect(prowlarr.getByRole("listitem", { name: "Status Not connected", exact: true })).toBeVisible();
+  await main.getByRole("textbox", { name: "Prowlarr API key", exact: true }).fill("wrong-key");
+  await main.getByRole("button", { name: "Save Prowlarr API key", exact: true }).click();
+  await expect(prowlarr.getByRole("listitem", { name: "Status Connected", exact: true })).toBeVisible();
+  await main.getByRole("button", { name: "Test Prowlarr", exact: true }).click();
   await expect(page.locator(".toast")).toContainText("rejected the API key");
-  await page.getByLabel("Prowlarr API key").fill("fixture-prowlarr-key");
-  await page.getByRole("button", { name: "Save Prowlarr", exact: true }).click();
-  await expect(page.getByLabel("Prowlarr API key")).toHaveValue("");
-  await page.getByRole("button", { name: "Test Prowlarr", exact: true }).click();
+  await main.getByRole("textbox", { name: "Prowlarr API key", exact: true }).fill("fixture-prowlarr-key");
+  await main.getByRole("button", { name: "Save Prowlarr API key", exact: true }).click();
+  await expect(main.getByRole("textbox", { name: "Prowlarr API key", exact: true })).toHaveValue("");
+  await expect(main.getByRole("textbox", { name: "Prowlarr API key", exact: true })).toHaveAttribute("placeholder", "Saved");
+  await main.getByRole("button", { name: "Test Prowlarr", exact: true }).click();
   await expect(page.locator(".toast")).toContainText(
     "Prowlarr fixture is connected with 1 torrent indexer.",
   );

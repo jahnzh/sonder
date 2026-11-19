@@ -12,6 +12,7 @@ import { PageHeader } from "../parts/PageHeader";
 import { Segmented } from "../parts/Segmented";
 import { api } from "../lib";
 import { pageData, setPageData } from "../navigation";
+import { writeAddress } from "../routes";
 import type { WorkResult } from "../types";
 import {
   bookResults,
@@ -111,7 +112,10 @@ export function DiscoverPage({
   }, []);
 
   // The entry keeps the query, the segment and the answers (#455): Back to it shows them as they were left.
+  // Only while Discover's own entry is the current one: under the Get sheet without a book after a reload (#576) the
+  // current entry is the sheet's, whose kept search this would replace.
   useEffect(() => {
+    if (location.hash !== writeAddress({ name: "discover" })) return;
     const done = <T,>(answer: Answer<T>) => (answer.state === "done" ? answer.value : undefined);
     setPageData({
       discover: { segment, text, searched, works: done(state.works), hits: done(state.hits), series: done(state.series) },

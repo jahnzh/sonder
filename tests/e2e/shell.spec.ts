@@ -244,3 +244,81 @@ for (const size of [PHONE, DESKTOP]) {
     await page.screenshot({ path: `${OUT}/shell-toast-${size === PHONE ? "mobile" : "desktop"}.png` });
   });
 }
+
+// The update notice (#733): a message of the shell like the toast. It stands above the mini player and the offline
+// line, never over the page's content or the tab bar, keeps its text and Reload, and stays away on Settings › App,
+// whose Updates row has its own Reload.
+for (const size of [PHONE, DESKTOP]) {
+  test(`the update notice stands above the mini player and the offline line, never over the page (${size.width} wide)`, async ({ page, context }) => {
+    await page.setViewportSize(size);
+    await importAudio(page, `Shell update ${size.width} ${Date.now()}`);
+    let newer = false;
+    await page.route("**/build.json", (route) => (newer ? route.fulfill({ json: { id: "a-newer-build" } }) : route.continue()));
+    const phone = size === PHONE;
+    await page.goto("/#settings");
+    await expect(page.locator(".player-dock")).toBeVisible();
+    // A build published after this tab opened: the next check (here, the window gaining focus) finds it.
+    newer = true;
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    const notice = page.getByRole("status").filter({ hasText: "An app update is ready" });
+    await expect(notice).toBeVisible();
+    await expect(notice).toContainText("Reload for the latest fixes. Your listening position and downloads are kept.");
+    await expect(notice.getByRole("button", { name: "Reload app", exact: true })).toBeVisible();
+
+    /** The notice above the mini player (and the tab bar on a phone), and the page's content, scrolled to its end, above the notice. */
+    const standsClear = async () => {
+      const message = (await notice.boundingBox())!;
+      const player = await box(page, ".player-dock");
+      expect(message.y + message.height).toBeLessThanOrEqual(player.y);
+      if (phone) {
+        const tabs = await box(page, ".shell-nav");
+        expect(message.y + message.height).toBeLessThanOrEqual(tabs.y);
+      } else {
+        const rail = await box(page, ".shell-nav");
+        expect(message.x).toBeGreaterThanOrEqual(rail.x + rail.width);
+      }
+      await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+      const content = await page.evaluate(() => {
+        // The lowest box drawn inside the page.
+        let bottom = 0;
+        for (const element of document.querySelectorAll("main *")) {
+          const rect = element.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) bottom = Math.max(bottom, rect.bottom);
+        }
+        return bottom;
+      });
+      expect(content).toBeLessThanOrEqual((await notice.boundingBox())!.y);
+      return message;
+    };
+    await standsClear();
+    await page.screenshot({ path: `${OUT}/shell-update-${phone ? "mobile" : "desktop"}.png` });
+
+    // A page whose last row is a button: tapping it reaches the button, not the notice.
+    await page.goto("/#settings/playback");
+    await expect(notice).toBeVisible();
+    await standsClear();
+
+    if (phone) {
+      // On a phone the offline line lifts it too.
+      await context.setOffline(true);
+      await expect(line(page)).toBeVisible();
+      const offline = await box(page, ".offline-line");
+      const lifted = await standsClear();
+      expect(lifted.y + lifted.height).toBeLessThanOrEqual(offline.y);
+      await page.screenshot({ path: `${OUT}/shell-update-offline-mobile.png` });
+      await context.setOffline(false);
+      await expect(line(page)).toHaveCount(0);
+    }
+
+    // Settings › App shows its own Updates row with Reload: one Reload on screen.
+    await page.goto("/#settings/app");
+    const updates = page.getByRole("list", { name: "This app", exact: true }).getByRole("listitem").filter({ hasText: "Updates" });
+    await expect(updates).toContainText("An update is ready");
+    await expect(page.locator(".app-update")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^Reload/ })).toHaveCount(1);
+    // Leaving the page gives the notice back.
+    await page.goto("/#library");
+    await expect(notice).toBeVisible();
+    await standsClear();
+  });
+}

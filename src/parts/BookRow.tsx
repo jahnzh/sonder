@@ -38,16 +38,30 @@ export type BookRowProps = {
   /** The row stands out on the raised fill (the Series page's book to continue). */
   raised?: boolean;
   /**
+   * Which files the book has, as muted 12 px marks on the right edge in place of the chevron (the Library's list,
+   * LibraryList.dc.html); read out after the status line, by their own name ("Reading sync ready") or the kind's.
+   */
+  edgeMarks?: { kind: FileKind; name?: string }[];
+  /**
    * The status line wraps instead of ending in an ellipsis, and the row grows past 64 to hold it (Now's failed series
    * search, whose line says why it failed, #717).
    */
   wrap?: boolean;
 };
 
-export function BookRow({ title, status, lead, cover, number, marks = [], progress, onClick, action, failed, trailing, coverIcon, raised, wrap }: BookRowProps) {
+export function BookRow({ title, status, lead, cover, number, marks = [], progress, onClick, action, failed, trailing, coverIcon, raised, edgeMarks, wrap }: BookRowProps) {
   const id = useId();
   const numbered = number != null && number !== "";
-  const names = [numbered && `${id}-number`, `${id}-title`, ...marks.map((_, index) => `${id}-mark-${index}`), `${id}-status`, trailing && !action && `${id}-trailing`].filter(Boolean).join(" ");
+  const names = [
+    numbered && `${id}-number`,
+    `${id}-title`,
+    ...marks.map((_, index) => `${id}-mark-${index}`),
+    `${id}-status`,
+    trailing && !action && `${id}-trailing`,
+    ...(edgeMarks ?? []).map((_, index) => `${id}-edge-${index}`),
+  ]
+    .filter(Boolean)
+    .join(" ");
   const body = (
     <>
       {numbered && (
@@ -85,6 +99,15 @@ export function BookRow({ title, status, lead, cover, number, marks = [], progre
           {trailing}
         </span>
       )}
+      {edgeMarks && (
+        <span className="part-book-row-edge-marks">
+          {edgeMarks.map((mark, index) => (
+            <span key={`${mark.kind}-${index}`} id={`${id}-edge-${index}`}>
+              <FileIcon kind={mark.kind} size={12} name={mark.name ?? fileKindName[mark.kind]} />
+            </span>
+          ))}
+        </span>
+      )}
     </>
   );
   const data = {
@@ -114,7 +137,7 @@ export function BookRow({ title, status, lead, cover, number, marks = [], progre
       <li className="part-book-row-item">
         <button type="button" className="part-book-row" {...data} aria-labelledby={names} onClick={onClick}>
           {body}
-          {!trailing && (
+          {!trailing && !edgeMarks && (
             <span className="part-book-row-end">
               <Chevron />
             </span>

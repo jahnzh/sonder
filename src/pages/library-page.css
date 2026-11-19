@@ -172,13 +172,54 @@
   margin: 0;
   color: var(--text);
 }
-.library-shelf-controls {
+/* The sort-and-view control (LibraryShelf.dc.html): "Recent · Grid" and a chevron, muted, 44 high, no fill. */
+.library-control {
+  height: var(--height-control);
+  padding: 0 var(--space-12);
+  border: 0;
+  border-radius: var(--corner-control);
+  background: transparent;
+  color: var(--muted);
   display: flex;
   align-items: center;
   gap: var(--space-8);
+  cursor: pointer;
+  white-space: nowrap;
 }
-.library-shelf-controls .view-toggle {
+.library-control:hover {
+  color: var(--text);
+}
+.library-control:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* A Hardcover filter in use: a raised chip with its name and a cross, 44 high, under the heading. */
+.library-hardcover-chips {
   display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+}
+.library-hardcover-chip {
+  height: var(--height-control);
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 0 var(--space-12) 0 var(--space-16);
+  border: 0;
+  border-radius: var(--corner-round);
+  background: var(--raised);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  cursor: pointer;
+}
+.library-hardcover-chip svg {
+  flex: none;
+  color: var(--muted);
+}
+.library-hardcover-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* Grid: three columns on a phone, as many of 140 as fit on a desktop. */
@@ -270,68 +311,9 @@
 }
 
 /* List: Book rows without a chevron, the marks muted on the right edge. */
+/* List: Book rows on one Group card (the part's own card and lines). */
 .library-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  border-radius: var(--corner-group);
-  background: var(--surface);
-  overflow: hidden;
-}
-.library-row + .library-row {
-  border-top: 1px solid var(--border);
-}
-.library-row-open {
-  width: 100%;
-  min-height: var(--height-bar);
-  box-sizing: border-box;
-  padding: var(--space-12) var(--space-16);
-  display: flex;
-  align-items: center;
-  gap: var(--space-12);
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-}
-.library-row-cover {
-  width: 40px;
-  height: 40px;
-  flex: none;
-  border-radius: var(--corner-control);
-  overflow: hidden;
-  background: var(--raised);
-}
-.library-row-cover img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.library-row-text {
-  flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-.library-row-title {
-  font-weight: 500;
-}
-.library-row-title,
-.library-row-line {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.library-row-line {
-  color: var(--muted);
-}
-.library-row-marks {
-  flex: none;
-  display: flex;
-  gap: var(--space-4);
-  color: var(--muted);
 }
 
 .library-empty {

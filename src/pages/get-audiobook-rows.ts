@@ -66,6 +66,13 @@ function bitrateText(bitrate: string | null | undefined): string | null {
   return match ? `${match[1]} kbps` : text;
 }
 
+/** What a row's second line says the recording is: format, bitrate, size, each when the source names it. */
+function rowFacts(release: AudiobookRelease): string[] {
+  return [release.format?.trim() || null, bitrateText(release.bitrate), release.size?.trim() || null].filter(
+    (fact): fact is string => !!fact,
+  );
+}
+
 /** Whether the release's title is the book's own (ignoring case, punctuation and words such as "Unabridged"). */
 export function isBooksTitle(releaseTitle: string, bookTitle: string): boolean {
   const release = normalizeTitle(releaseTitle);
@@ -83,17 +90,24 @@ export function rowEdge(release: Pick<AudiobookRelease, "cached" | "seeders">): 
   return { text: `${seeders} seeders`, now: false };
 }
 
-export function recordingRow(release: AudiobookRelease, bookTitle: string, language = GET_LANGUAGE): RecordingRow {
+/**
+ * `titleFirst` (the sheet without a book, #576): the release's own title is the first line and the narrator starts
+ * the second, as there is no book's title for it to differ from.
+ */
+export function recordingRow(release: AudiobookRelease, bookTitle: string, language = GET_LANGUAGE, titleFirst = false): RecordingRow {
   const narrator = release.narrator?.trim();
+  if (titleFirst) {
+    const named = language === ALL_LANGUAGES ? [release.language?.trim() || UNKNOWN_LANGUAGE] : [];
+    const second = [...named, ...(narrator ? [narrator] : []), ...rowFacts(release)].join(" · ");
+    return { id: release.id, first: release.title, second, edge: rowEdge(release), release };
+  }
   const first = narrator || release.title;
-  const facts = [release.format?.trim() || null, bitrateText(release.bitrate), release.size?.trim() || null].filter(
-    (fact): fact is string => !!fact,
-  );
+  const facts = rowFacts(release);
   // The title is already the first line when the source names no narrator.
-  const titleFirst = !!narrator && !isBooksTitle(release.title, bookTitle);
+  const titleSecond = !!narrator && !isBooksTitle(release.title, bookTitle);
   // With All languages the row says its language first.
   const named = language === ALL_LANGUAGES ? [release.language?.trim() || UNKNOWN_LANGUAGE] : [];
-  const second = [...named, ...(titleFirst ? [release.title] : []), ...facts].join(" · ");
+  const second = [...named, ...(titleSecond ? [release.title] : []), ...facts].join(" · ");
   return { id: release.id, first, second, edge: rowEdge(release), release };
 }
 
@@ -102,12 +116,12 @@ export function recordingRow(release: AudiobookRelease, bookTitle: string, langu
  * seeders), only the ones in the language (and those whose source names none; every row with All languages),
  * the book's own title and TorBox's copies first, then by seeders.
  */
-export function recordingRows(releases: AudiobookRelease[], bookTitle: string, language = GET_LANGUAGE): RecordingRow[] {
+export function recordingRows(releases: AudiobookRelease[], bookTitle: string, language = GET_LANGUAGE, titleFirst = false): RecordingRow[] {
   const merged = mergeReleases(releases);
   return sortReleases(
     merged.filter((release) => inLanguage(release, language)),
     bookTitle,
-  ).map((release) => recordingRow(release, bookTitle, language));
+  ).map((release) => recordingRow(release, bookTitle, language, titleFirst));
 }
 
 /** What the line under Get this recording says, and whether the add is sent with `replaceActive: true`. */

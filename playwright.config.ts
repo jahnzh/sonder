@@ -75,6 +75,8 @@ const desktopProjects = [
               /(^|\/)reader-page-turn\.spec\.ts$/,
               // Activity › Server (#519).
               /(^|\/)activity-server\.spec\.ts$/,
+              // The Get sheet without a book (#576).
+              /(^|\/)get-recording\.spec\.ts$/,
               // The attention dot from Now's builder (#521).
               /(^|\/)activity-dot\.spec\.ts$/,
               // Settings as a list with pages (#579).
@@ -157,6 +159,10 @@ const desktopProjects = [
               /(^|\/)(reader-more-gone|back-to-narration)\.spec\.ts$/,
               // A device whose browser cleared Sonder's files saves its kept books again (#554).
               /(^|\/)keep-cleared\.spec\.ts$/,
+              // The Library's sort-and-view control with the Hardcover shelf and list (#578).
+              /(^|\/)library-picker\.spec\.ts$/,
+              // The Server pages of Settings: Connections, Users, Library and storage, and their rewritten guards (#580).
+              /(^|\/)(settings-server|hardcover-sync-form|users)\.spec\.ts$/,
               // A series that is not saved opens its page with Save series; the specs that saved through the dialog (#564).
               /(^|\/)series-(not-saved|discovery|acquisition)\.spec\.ts$/,
               // A Hardcover book opens its Book page before it is a work on the server (#574).
@@ -171,6 +177,8 @@ const desktopProjects = [
               /(^|\/)activity-cancel\.spec\.ts$/,
               // Now playing on a desktop: Read and Listen side by side as the boards draw them (#595).
               /(^|\/)now-playing-desktop\.spec\.ts$/,
+              // A paused seek moves the reader's highlight, on a stream and a device copy (#730).
+              /(^|\/)reader-paused-seek\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },
