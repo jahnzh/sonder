@@ -36,6 +36,11 @@ export type ActivityDeps = {
    */
   controlAcquisition: (id: string, action: "retry" | "resume", userId: number) => Promise<unknown>;
   /**
+   * Put a failed series search back in its queue (`retrySeriesAcquisitionJob`, #717); answers at once, and the queue's
+   * own failure goes to `onQueueError`. Absent where a test does not need it.
+   */
+  retrySeriesSearch?: (jobId: string, onQueueError: (error: unknown) => void) => Record<string, unknown>;
+  /**
    * What the local torrent client says of these torrents (#716), to name why a download is stuck. Absent where a test
    * does not need it; a hash the client does not have is absent from the answer. Throws a `TransmissionError`.
    */

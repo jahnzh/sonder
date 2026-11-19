@@ -220,6 +220,15 @@ export function readingSyncLine({ hasEbook, hasRecording, job, mapInUse }: Readi
   return shown ? jobLine(shown) : null;
 }
 
+/**
+ * The line of a book's syncs of its spare editions (#718): EPUBs nobody reads, queued by themselves. One reads
+ * "Checking another edition"; several are one line with the one being checked ("Checking 4 other editions · 1 of 4").
+ */
+export function spareEditionsLine({ total, current }: { total: number; current: number }): string {
+  if (total <= 1) return "Checking another edition";
+  return `Checking ${total} other editions${DOT}${Math.min(Math.max(current, 1), total)} of ${total}`;
+}
+
 /** A book's files on this device. */
 export type DeviceSaveFacts = {
   /** Keep on this device is on. */
@@ -311,21 +320,46 @@ export const WORKER_OFF_LINE = "Not in use";
 export type SeriesSearchFacts = {
   status: "pending" | "searching" | "done" | "failed";
   search: "audiobook" | "ebook";
+  /** A waiting search's place in the series queue (1 is the search running now); null or absent when unknown. */
+  place?: number | null;
+  /** A waiting search the queue put back by itself, after its source could not be reached, waits to try again. */
+  retrying?: boolean;
+  /** The stored reason of a failure, or of the last try of a search that waits to try again. */
+  reason?: string | null;
 };
+
+/** 1st, 2nd, 3rd, 4th, … 11th, 12th, 13th, 21st. */
+export function ordinal(n: number): string {
+  const tens = n % 100;
+  if (tens >= 11 && tens <= 13) return `${n}th`;
+  return `${n}${({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[n % 10] ?? "th"}`;
+}
+
+/**
+ * The reason of a series search as a line shows it: the stored error's first sentence, without its full stop
+ * ("Library Genesis could not be reached. Try another mirror …" reads "Library Genesis could not be reached").
+ */
+export function searchReason(reason: string | null | undefined): string {
+  const text = (reason ?? "").trim();
+  return (text.split(/(?<=[.!?])\s+/)[0] ?? "").replace(/\.$/, "");
+}
 
 /**
  * A series search's line. A finished search for the audiobook has none: the download it starts takes over the row.
+ * A failure names the search and its reason; a waiting search says where it is in the queue (#717).
  */
-export function seriesSearchLine({ status, search }: SeriesSearchFacts): string | null {
+export function seriesSearchLine({ status, search, place, retrying, reason }: SeriesSearchFacts): string | null {
+  const file = search === "ebook" ? "Ebook" : "Audiobook";
   switch (status) {
     case "pending":
-      return "Waiting for series search";
+      if (retrying) return withReason("Waiting to try again", searchReason(reason));
+      return place && place > 0 ? `Waiting${DOT}${ordinal(place)} in line` : "Waiting for series search";
     case "searching":
       return search === "ebook" ? "Searching for the ebook" : "Searching for the audiobook";
     case "done":
       return search === "ebook" ? "Ebook on server" : null;
     case "failed":
-      return "Series search failed";
+      return withReason(`${file} search failed`, searchReason(reason));
     default:
       return null;
   }

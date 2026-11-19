@@ -8,7 +8,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   NOT_IN_LIBRARY_LINE, QUEUE_OFF_LINE, WORKER_OFF_LINE, ALREADY_HAS_COPY_LINE,
-  deviceSaveLine, downloadLine, ebookCheckLine, readingSyncLine, serverCopyLine, withReason,
+  deviceSaveLine, downloadLine, ebookCheckLine, readingSyncLine, serverCopyLine, spareEditionsLine, withReason,
   type EbookCheckFacts, type ReadingSyncJobFacts,
 } from "../src/status-lines.ts";
 import { ALIGNMENT_OUTCOMES, ALIGNMENT_STATUSES } from "../src/reading-types.ts";
@@ -204,7 +204,7 @@ test("Now's lines: a series search, and the finished and failed forms with their
   assert.equal(seriesSearchLine({ status: "searching", search: "ebook" }), "Searching for the ebook");
   assert.equal(seriesSearchLine({ status: "done", search: "audiobook" }), null, "the download it starts takes over the row");
   assert.equal(seriesSearchLine({ status: "done", search: "ebook" }), "Ebook on server");
-  assert.equal(seriesSearchLine({ status: "failed", search: "ebook" }), "Series search failed");
+  assert.equal(seriesSearchLine({ status: "failed", search: "ebook" }), "Ebook search failed");
 
   assert.equal(finishedLine({ entry: "download", backend: "local" }), "Audiobook on server");
   assert.equal(finishedLine({ entry: "download", backend: "torbox" }), "Audiobook streams from TorBox");
@@ -301,6 +301,33 @@ test("the Reading sync page's lines (#540): states, notes, steps, and the lines 
   // The step lines are the stage lines a reading sync's row shows elsewhere.
   for (const [stage, step] of [["decoding", "decoding"], ["encoding", "encoding"], ["anchoring", "anchoring"], ["aligning", "aligning"], ["finishing", "saving"]] as const)
     assert.equal(reading(book("processing", { stage })), lines.SYNC_STEP_LINES[step], stage);
+});
+
+// #717: a failed series search says which search failed and why; a waiting one says where it is in the queue.
+test("a series search's failure names the search and its reason, and a waiting one its place in line (#717)", async () => {
+  const { seriesSearchLine, ordinal, searchReason } = await import("../src/status-lines.ts");
+  const libgen = "Library Genesis could not be reached. Try another mirror in Settings or open the source website.";
+  assert.equal(seriesSearchLine({ status: "failed", search: "ebook", reason: libgen }), "Ebook search failed · Library Genesis could not be reached");
+  assert.equal(seriesSearchLine({ status: "failed", search: "audiobook", reason: "No release found" }), "Audiobook search failed · No release found");
+  assert.equal(seriesSearchLine({ status: "failed", search: "audiobook", reason: null }), "Audiobook search failed", "no stored reason: the search alone");
+  assert.equal(seriesSearchLine({ status: "pending", search: "ebook", place: 2 }), "Waiting · 2nd in line");
+  assert.equal(seriesSearchLine({ status: "pending", search: "audiobook", place: 1 }), "Waiting · 1st in line", "next, while no search runs");
+  assert.equal(seriesSearchLine({ status: "pending", search: "audiobook", place: 13 }), "Waiting · 13th in line");
+  assert.equal(seriesSearchLine({ status: "pending", search: "audiobook", place: null }), "Waiting for series search", "an older server sends no place");
+  assert.equal(seriesSearchLine({ status: "pending", search: "ebook", retrying: true, reason: libgen }), "Waiting to try again · Library Genesis could not be reached");
+  assert.equal(seriesSearchLine({ status: "searching", search: "ebook", place: 1 }), "Searching for the ebook");
+  assert.deepEqual([1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 101, 111].map(ordinal),
+    ["1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "23rd", "101st", "111th"]);
+  assert.equal(searchReason("Prowlarr did not answer in time."), "Prowlarr did not answer in time");
+  assert.equal(searchReason("  "), "");
+  assert.equal(searchReason(undefined), "");
+});
+
+test("the syncs of a book's spare editions: one line, with the one being checked (#718)", () => {
+  assert.equal(spareEditionsLine({ total: 1, current: 1 }), "Checking another edition");
+  assert.equal(spareEditionsLine({ total: 4, current: 1 }), "Checking 4 other editions · 1 of 4");
+  assert.equal(spareEditionsLine({ total: 5, current: 3 }), "Checking 5 other editions · 3 of 5");
+  assert.equal(spareEditionsLine({ total: 4, current: 9 }), "Checking 4 other editions · 4 of 4", "never past the last");
 });
 
 test("a stalled download of a book that already has a copy: the line leads with it (#716)", () => {
