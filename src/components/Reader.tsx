@@ -1065,13 +1065,18 @@ export function ReaderView({
     node: Element,
     fragment: { text: string; start: number },
     view: Rendition,
+    onFontsLoading?: (fonts: FontFaceSet) => void,
   ) => {
     if (currentFlow.current !== "paginated") return null;
     const player = playerRef.current,
       interval = following.highlightedSentence(mapRef.current, placeOf(player.book, player.track?.id, player.position));
     const recordingId = mapRef.current?.recordingId;
     if (!interval || interval.paragraphId !== paragraphId || !recordingId) return null;
-    if (content.document.fonts && content.document.fonts.status !== "loaded") return null;
+    // Fonts still loading: not measured now; the caller waits for them to load and follows the sentence again (#664).
+    if (content.document.fonts && content.document.fonts.status !== "loaded") {
+      onFontsLoading?.(content.document.fonts);
+      return null;
+    }
     const step = pageStep(view);
     if (!step) return null;
     const generation = layoutGeneration.current;
@@ -1182,6 +1187,10 @@ export function ReaderView({
     let content = shown(),
       node: Element | undefined,
       cfi = "";
+    // In WebKit the section's fonts can report loading again after their `loadingdone` (another face starts as the
+    // jump lays the text out) and then finish with no event the content hook hears, so nothing would measure the
+    // sentence and its page would never turn inside it (#664). This jump waits for that load itself instead.
+    let fontsLoading = null as FontFaceSet | null;
     const opening = !content;
     if (opening) hidePages(1);
     try {
@@ -1197,7 +1206,7 @@ export function ReaderView({
       // being narrated (also after Back to narration inside a crossing sentence). Any other place is
       // shown where its sentence starts. Nothing is awaited in between: a wait here would let a newer
       // jump replace this one while the pages of a section being opened are hidden.
-      const measured = measureNarrated(paragraphId, content, node, fragment, view);
+      const measured = measureNarrated(paragraphId, content, node, fragment, view, (fonts) => { fontsLoading = fonts; });
       const target = measured && measured.page !== measured.words[0]!.page ? wordCfi(measured, measured.first, measured.character) : cfi;
       await displayAutomatically(view, target);
       if (measured && jump.current()) {
@@ -1234,6 +1243,12 @@ export function ReaderView({
       "fill-opacity": "0.2",
     });
     highlight.current = full;
+    // Measured once the fonts have loaded: the sentence is followed again, and that jump measures it (#664).
+    const pending = fontsLoading;
+    if (pending)
+      void pending.ready.then(() => {
+        if (jump.current() && rendition.current === view && !pagedSentence.current) redrawHighlight();
+      }, () => {});
     return true;
   };
   jumpRef.current = showFragment;
