@@ -102,7 +102,8 @@ test("an unknown work-hc-<n> answers Hardcover's book, not in the library, and w
     chosenEbookId: null,
     ebooks: [],
     readingSync: [],
-    series: [{ id: 701, name: "The Crossing", position: 1, saved: false }],
+    // A work's series are AudiobookDB's (#721 part b); the Hardcover book's series stay in its Hardcover block.
+    series: [],
     mediaState: { state: "missing", holdReason: null, acquisition: null },
     hardcover: {
       id: 501,

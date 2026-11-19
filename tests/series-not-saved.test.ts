@@ -46,7 +46,7 @@ function libraryWork(workId: string, parts: Partial<LibraryWork> = {}): LibraryW
   };
 }
 const book = (id: number, position: number | null, parts: Partial<SeriesAddWork> = {}): SeriesAddWork => ({
-  id,
+  id: String(id),
   position,
   title: `Book ${id}`,
   cover: `https://covers.test/${id}.jpg`,
@@ -57,11 +57,11 @@ const book = (id: number, position: number | null, parts: Partial<SeriesAddWork>
 });
 
 /**
- * The Hainish Cycle as `GET /api/hardcover/series/<id>` answers it: 4 is in the library (and finished), 2 is listed
+ * The Hainish Cycle as `GET /api/discover/series/<id>` answers it: 4 is in the library (and finished), 2 is listed
  * in English and French, 6 waits for the administrator, 7 is not released yet, and a related work.
  */
 const hainish: SeriesPageSeries & { works: SeriesAddWork[] } = {
-  id: 1001,
+  id: "sr-hainish",
   name: "Hainish Cycle",
   author: "Ursula K. Le Guin",
   works: [
@@ -138,7 +138,7 @@ test("the not-saved page: no New card or marks, no refresh error, no Remove seri
 test("the not-saved page: the book to continue is raised with play, as on a saved series", () => {
   const unfinished = new Map([["w4", libraryWork("w4", { recordings: [recording("r4")] })]]);
   const model = seriesPageModel(hainish, pageFacts({ library: unfinished }));
-  assert.deepEqual(model.continueWith, { bookId: 4, workId: "w4" });
+  assert.deepEqual(model.continueWith, { bookId: "4", workId: "w4" });
   assert.deepEqual(model.books[3].action, { kind: "play" });
 });
 
@@ -199,21 +199,21 @@ test("the Save series sheet's button: Save series and add N books, or Save serie
 
 test("the Save series request: the chosen books, plus every book already in the library, and the switches", () => {
   const model = seriesAddModel(hainish, sheetFacts({ manual: { "n:3": false, "b:9": true }, getAudio: true }));
-  assert.deepEqual(model.body, { id: 1001, bookIds: [1, 21, 5, 9, 4], searchAudio: true, searchEbooks: false });
+  assert.deepEqual(model.body, { id: "sr-hainish", bookIds: ["1", "21", "5", "9", "4"], searchAudio: true, searchEbooks: false });
   // With nothing chosen the request still links the book in the library.
   const none = { "n:1": false, "n:2": false, "n:3": false, "n:5": false };
-  assert.deepEqual(seriesAddModel(hainish, sheetFacts({ manual: none })).body.bookIds, [4]);
+  assert.deepEqual(seriesAddModel(hainish, sheetFacts({ manual: none })).body.bookIds, ["4"]);
   // A book the server says is in this account's library but this device has not read yet is linked too.
   // (This device lists it as a choice, unticked here: the request still links it.)
   const unread = seriesAddModel(hainish, sheetFacts({ manual: { ...none, "n:4": false }, library: new Map() }));
-  assert.ok(unread.choices.some((choice) => choice.bookId === 4 && !choice.chosen));
-  assert.deepEqual(unread.body.bookIds, [4]);
+  assert.ok(unread.choices.some((choice) => choice.bookId === "4" && !choice.chosen));
+  assert.deepEqual(unread.body.bookIds, ["4"]);
   // Every work in the library, translations at one number too, is linked once.
   const both = new Map([...library, ["w22", libraryWork("w22")]]);
-  const translated = { ...hainish, works: hainish.works.map((work) => (work.id === 22 ? { ...work, workId: "w22" } : work)) };
-  assert.deepEqual(seriesAddModel(translated, sheetFacts({ manual: none, library: both })).body.bookIds, [22, 4]);
+  const translated = { ...hainish, works: hainish.works.map((work) => (work.id === "22" ? { ...work, workId: "w22" } : work)) };
+  assert.deepEqual(seriesAddModel(translated, sheetFacts({ manual: none, library: both })).body.bookIds, ["22", "4"]);
   // A saved series' Add sends only the chosen books.
-  assert.deepEqual(seriesAddModel(hainish, sheetFacts({ saved: true, opening: { from: "row", bookId: 3 } })).body.bookIds, [3]);
+  assert.deepEqual(seriesAddModel(hainish, sheetFacts({ saved: true, opening: { from: "row", bookId: "3" } })).body.bookIds, ["3"]);
 });
 
 test("the Save series sheet for someone who is not the administrator: no Get switches, and the request asks for none", () => {
@@ -225,6 +225,6 @@ test("the Save series sheet for someone who is not the administrator: no Get swi
 });
 
 test("from a row's Add on a saved series the sheet keeps choosing that book (the not-saved page has no Add)", () => {
-  const model = seriesAddModel(hainish, sheetFacts({ saved: true, opening: { from: "row", bookId: 7 } }));
+  const model = seriesAddModel(hainish, sheetFacts({ saved: true, opening: { from: "row", bookId: "7" } }));
   assert.deepEqual(model.choices.filter((choice) => choice.chosen).map((choice) => choice.title), ["The Telling"]);
 });

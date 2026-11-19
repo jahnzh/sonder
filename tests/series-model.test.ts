@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { NEW_MARK, seriesPageModel, withoutNew, type SeriesPageSeries, type SeriesPageWork } from "../src/pages/series-model.ts";
 import {
   NEEDS_ADMIN_LINE,
+  NO_AUDIOBOOK_LINE,
   NO_CONNECTION_LINE,
   NOT_IN_LIBRARY_LINE,
   NOT_RELEASED_LINE,
@@ -72,7 +73,7 @@ function libraryWork(workId: string, parts: Partial<LibraryWork> = {}): LibraryW
     ...parts,
   };
 }
-const book = (id: number, position: number | null, parts: Partial<SeriesPageWork> = {}): SeriesPageWork => ({
+const book = (id: string, position: number | null, parts: Partial<SeriesPageWork> = {}): SeriesPageWork => ({
   id,
   position,
   title: `Book ${id}`,
@@ -82,7 +83,7 @@ const book = (id: number, position: number | null, parts: Partial<SeriesPageWork
   ...parts,
 });
 const series = (works: SeriesPageWork[], parts: Partial<SeriesPageSeries> = {}): SeriesPageSeries => ({
-  id: 7,
+  id: "7",
   name: "The Culture",
   author: "Iain M. Banks",
   works,
@@ -94,7 +95,7 @@ const failed = (kind: "audio" | "ebook", error: string | null = null): SeriesWor
   ({ kind, status: "failed", error }) as SeriesWorkAcquisition;
 
 test("the intro line counts finished books in the library over the books in the library or released", () => {
-  const works = [book(1, 1), book(2, 2), book(3, 3), book(4, 4, { unreleased: true }), book(5, null)];
+  const works = [book("1", 1), book("2", 2), book("3", 3), book("4", 4, { unreleased: true }), book("5", null)];
   const library = libraryOf(libraryWork("work-1", { finished: true }), libraryWork("work-2"));
   const model = seriesPageModel(series(works), facts(library));
   // 1 (finished), 2 (in the library), 3 (released): three counted; 4 is not out and not held; 5 is a related work.
@@ -104,27 +105,27 @@ test("the intro line counts finished books in the library over the books in the 
   assert.equal(seriesPageModel(series(works, { author: null }), facts(library)).intro, "1 of 3 finished");
   // A place saved on this device at the end counts as finished before the server has it.
   const atEnd = libraryOf(libraryWork("work-1", { recordings: [recording("work-1-rec", place("work-1-rec", 3, 600))] }));
-  assert.equal(seriesPageModel(series([book(1, 1)]), facts(atEnd)).intro, "Iain M. Banks · 1 of 1 finished");
+  assert.equal(seriesPageModel(series([book("1", 1)]), facts(atEnd)).intro, "Iain M. Banks · 1 of 1 finished");
 });
 
 test("one row per number: the book in the library stands at its number", () => {
-  const works = [book(1, 1), book(11, 1, { title: "Other edition" }), book(2, 2)];
+  const works = [book("1", 1), book("11", 1, { title: "Other edition" }), book("2", 2)];
   const library = libraryOf(libraryWork("work-11"));
   const model = seriesPageModel(series(works), facts(library));
-  assert.deepEqual(model.books.map((row) => [row.number, row.bookId]), [[1, 11], [2, 2]]);
+  assert.deepEqual(model.books.map((row) => [row.number, row.bookId]), [[1, "11"], [2, "2"]]);
 });
 
 test("each row's line: a failure first, then a place, then a book on its way, else Not started", () => {
   const inProgress = recording("work-1-rec", place("work-1-rec", 2, 100));
   const works = [
     // A failed series search wins over a place.
-    book(1, 1, { acquisition: { audio: failed("audio"), ebook: null } }),
-    book(2, 2),
-    book(3, 3),
-    book(4, 4),
-    book(5, 5),
-    book(6, 6),
-    book(7, 7),
+    book("1", 1, { acquisition: { audio: failed("audio"), ebook: null } }),
+    book("2", 2),
+    book("3", 3),
+    book("4", 4),
+    book("5", 5),
+    book("6", 6),
+    book("7", 7),
   ];
   const library = libraryOf(
     libraryWork("work-1", { recordings: [inProgress] }),
@@ -163,15 +164,25 @@ test("a series search on its way names itself", () => {
   const pending = { kind: "audio", status: "pending" } as SeriesWorkAcquisition;
   const library = libraryOf(libraryWork("work-1", { recordings: [] }), libraryWork("work-2", { recordings: [] }));
   const rows = seriesPageModel(
-    series([book(1, 1, { acquisition: { audio: null, ebook: searching } }), book(2, 2, { acquisition: { audio: pending, ebook: null } })]),
+    series([book("1", 1, { acquisition: { audio: null, ebook: searching } }), book("2", 2, { acquisition: { audio: pending, ebook: null } })]),
     facts(library),
   ).books;
   assert.deepEqual(rows.map((row) => row.line), ["Searching for the ebook", "Waiting for series search"]);
 });
 
+test("a book with no audiobook yet reads No audiobook yet with Add; a row's label is the work's positionLabel", () => {
+  const rows = seriesPageModel(
+    series([book("1", 1), book("2", 2, { audiobook: false, positionLabel: "1.5" })]),
+    facts(libraryOf(), true),
+  ).books;
+  assert.equal(NO_AUDIOBOOK_LINE, "No audiobook yet");
+  assert.deepEqual(rows.map((row) => [row.line, row.label]), [[NOT_IN_LIBRARY_LINE, "1"], [NO_AUDIOBOOK_LINE, "1.5"]]);
+  for (const row of rows) assert.deepEqual(row.action, { kind: "add" });
+});
+
 test("a book not in the library: Not in your library or Not released yet, with Add; New in front of a new one", () => {
   const rows = seriesPageModel(
-    series([book(1, 1), book(2, 2, { unreleased: true }), book(3, 3, { new: true })]),
+    series([book("1", 1), book("2", 2, { unreleased: true }), book("3", 3, { new: true })]),
     facts(libraryOf()),
   ).books;
   assert.deepEqual(rows.map((row) => row.line), [NOT_IN_LIBRARY_LINE, NOT_RELEASED_LINE, `${NEW_MARK} · ${NOT_IN_LIBRARY_LINE}`]);
@@ -183,11 +194,11 @@ test("a book not in the library: Not in your library or Not released yet, with A
   }
   // A work another account holds, or one outside this account's library, is not a link for this account.
   const elsewhere = libraryOf(libraryWork("work-1", { inLibrary: false }));
-  assert.equal(seriesPageModel(series([book(1, 1)]), facts(elsewhere)).books[0].workId, null);
+  assert.equal(seriesPageModel(series([book("1", 1)]), facts(elsewhere)).books[0].workId, null);
 });
 
 test("needs the administrator: its line for each role, and no Add", () => {
-  const works = [book(1, 1, { needsAdmin: true })];
+  const works = [book("1", 1, { needsAdmin: true })];
   const member = seriesPageModel(series(works), facts(libraryOf(), false)).books[0];
   const admin = seriesPageModel(series(works), facts(libraryOf(), true)).books[0];
   assert.equal(member.line, NEEDS_ADMIN_LINE);
@@ -199,12 +210,12 @@ test("needs the administrator: its line for each role, and no Add", () => {
 
 test("Retry: each failed series search kind, or the download; the chevron only on a link without a button", () => {
   const works = [
-    book(1, 1, { acquisition: { audio: failed("audio"), ebook: failed("ebook") } }),
-    book(2, 2, { acquisition: { audio: null, ebook: failed("ebook") } }),
+    book("1", 1, { acquisition: { audio: failed("audio"), ebook: failed("ebook") } }),
+    book("2", 2, { acquisition: { audio: null, ebook: failed("ebook") } }),
     // An ebook search refused for the account cannot be run again.
-    book(3, 3, { acquisition: { audio: null, ebook: failed("ebook", "no_permission") } }),
-    book(4, 4),
-    book(5, 5),
+    book("3", 3, { acquisition: { audio: null, ebook: failed("ebook", "no_permission") } }),
+    book("4", 4),
+    book("5", 5),
   ];
   const library = libraryOf(
     libraryWork("work-1"),
@@ -229,7 +240,7 @@ test("Retry: each failed series search kind, or the download; the chevron only o
 });
 
 test("the book to continue: the one in progress, else the first unfinished in the library with a recording, else none", () => {
-  const works = [book(1, 1), book(2, 2), book(3, 3), book(4, 4)];
+  const works = [book("1", 1), book("2", 2), book("3", 3), book("4", 4)];
   // In progress: book 3 (listened to last of the two in progress).
   const inProgress = libraryOf(
     libraryWork("work-1", { finished: true }),
@@ -238,14 +249,14 @@ test("the book to continue: the one in progress, else the first unfinished in th
     libraryWork("work-4"),
   );
   const model = seriesPageModel(series(works), facts(inProgress));
-  assert.deepEqual(model.continueWith, { bookId: 3, workId: "work-3" });
+  assert.deepEqual(model.continueWith, { bookId: "3", workId: "work-3" });
   assert.deepEqual(model.books[2].action, { kind: "play" });
   assert.equal(model.books[2].chevron, false);
   assert.equal(model.books.filter((row) => row.action?.kind === "play").length, 1);
 
   // None in progress: the first unfinished book in the library with a recording (book 2 has none, book 3 is not held).
   const unfinished = libraryOf(libraryWork("work-1", { finished: true }), libraryWork("work-2", { recordings: [] }), libraryWork("work-4"));
-  assert.deepEqual(seriesPageModel(series(works), facts(unfinished)).continueWith, { bookId: 4, workId: "work-4" });
+  assert.deepEqual(seriesPageModel(series(works), facts(unfinished)).continueWith, { bookId: "4", workId: "work-4" });
 
   // Everything finished, or nothing with a recording: none.
   const done = libraryOf(libraryWork("work-1", { finished: true }), libraryWork("work-2", { recordings: [] }));
@@ -254,19 +265,19 @@ test("the book to continue: the one in progress, else the first unfinished in th
   // A book that needs a Retry is not the one to continue.
   const failing = libraryOf(libraryWork("work-1"));
   assert.equal(
-    seriesPageModel(series([book(1, 1, { acquisition: { audio: failed("audio"), ebook: null } })]), facts(failing)).continueWith,
+    seriesPageModel(series([book("1", 1, { acquisition: { audio: failed("audio"), ebook: null } })]), facts(failing)).continueWith,
     null,
   );
 });
 
 test("related works: listed apart as rows without a number, not counted", () => {
-  const works = [book(1, 1), book(8, null, { title: "Companion" }), book(9, null, { title: "Notes", new: true })];
+  const works = [book("1", 1), book("8", null, { title: "Companion" }), book("9", null, { title: "Notes", new: true })];
   const library = libraryOf(libraryWork("work-8", { finished: true }));
   const model = seriesPageModel(series(works), facts(library));
-  assert.deepEqual(model.books.map((row) => row.bookId), [1]);
+  assert.deepEqual(model.books.map((row) => row.bookId), ["1"]);
   assert.deepEqual(model.related.map((row) => [row.bookId, row.number, row.line]), [
-    [8, null, "Finished"],
-    [9, null, `${NEW_MARK} · ${NOT_IN_LIBRARY_LINE}`],
+    ["8", null, "Finished"],
+    ["9", null, `${NEW_MARK} · ${NOT_IN_LIBRARY_LINE}`],
   ]);
   assert.equal(model.related[0].workId, "work-8");
   // Finished related work does not count: 0 of 1.
@@ -279,13 +290,13 @@ test("the marks of a book in the library", () => {
       ebooks: [{ id: "e1", format: "epub", size: 1, available: true, check: null, place: null }],
     }),
   );
-  assert.deepEqual(seriesPageModel(series([book(1, 1)]), facts(library)).books[0].marks, ["audiobook", "ebook"]);
+  assert.deepEqual(seriesPageModel(series([book("1", 1)]), facts(library)).books[0].marks, ["audiobook", "ebook"]);
 });
 
 test("the refresh error", () => {
-  assert.equal(seriesPageModel(series([book(1, 1)]), facts(libraryOf())).refreshError, null);
+  assert.equal(seriesPageModel(series([book("1", 1)]), facts(libraryOf())).refreshError, null);
   const message = "Add your Hardcover API token in Settings, then retry.";
-  const model = seriesPageModel(series([book(1, 1)], { refreshError: message }), facts(libraryOf()));
+  const model = seriesPageModel(series([book("1", 1)], { refreshError: message }), facts(libraryOf()));
   assert.equal(model.refreshError, message);
   // The last saved list is still shown.
   assert.equal(model.books.length, 1);
@@ -303,11 +314,11 @@ test("the Series page's words in the status-line module (#494)", () => {
 
 test("the New line: New leads the line of every work the answer marks new, numbered or related, in the library or not", () => {
   const works = [
-    book(1, 1),
-    book(2, 2, { new: true }),
-    book(3, 3, { new: true, unreleased: true }),
-    book(4, 4, { new: true }),
-    book(9, null, { title: "Drawings", new: true }),
+    book("1", 1),
+    book("2", 2, { new: true }),
+    book("3", 3, { new: true, unreleased: true }),
+    book("4", 4, { new: true }),
+    book("9", null, { title: "Drawings", new: true }),
   ];
   const model = seriesPageModel(series(works), facts(libraryOf(libraryWork("work-4"))));
   assert.deepEqual(
@@ -327,34 +338,34 @@ test("the New line: New leads the line of every work the answer marks new, numbe
 
 test("the New card: the new titles in reading order, comma-separated, and every new work for Dismiss", () => {
   const works = [
-    book(9, null, { title: "The Culture: The Drawings", new: true }),
-    book(4, 4, { title: "The State of the Art", new: true }),
-    book(1, 1, { title: "Consider Phlebas" }),
-    book(10, 10, { title: "The Hydrogen Sonata", new: true }),
+    book("9", null, { title: "The Culture: The Drawings", new: true }),
+    book("4", 4, { title: "The State of the Art", new: true }),
+    book("1", 1, { title: "Consider Phlebas" }),
+    book("10", 10, { title: "The Hydrogen Sonata", new: true }),
   ];
   const card = seriesPageModel(series(works), facts(libraryOf())).newCard;
   assert.deepEqual(card, {
     titles: "The State of the Art, The Hydrogen Sonata, The Culture: The Drawings",
-    bookIds: [9, 4, 10],
+    bookIds: ["9", "4", "10"],
   });
 });
 
 test("the New card acknowledges a new translation that stands at no row, and names only the rows", () => {
   const works = [
-    book(1, 1, { title: "English first", language: "en", new: true }),
-    book(2, 1, { title: "Premier", language: "fr", new: true }),
+    book("1", 1, { title: "English first", language: "en", new: true }),
+    book("2", 1, { title: "Premier", language: "fr", new: true }),
   ];
   const card = seriesPageModel(series(works), facts(libraryOf())).newCard;
   assert.equal(card?.titles, "English first");
-  assert.deepEqual(card?.bookIds, [1, 2]);
+  assert.deepEqual(card?.bookIds, ["1", "2"]);
 });
 
 test("no card without new works; Dismiss clears the card and the marks", () => {
-  assert.equal(seriesPageModel(series([book(1, 1), book(2, null)]), facts(libraryOf())).newCard, null);
+  assert.equal(seriesPageModel(series([book("1", 1), book("2", null)]), facts(libraryOf())).newCard, null);
   // A new translation that stands at no row alone: no row is marked, so no card.
-  const hidden = [book(1, 1, { title: "English first", language: "en" }), book(2, 1, { title: "Premier", language: "fr", new: true })];
+  const hidden = [book("1", 1, { title: "English first", language: "en" }), book("2", 1, { title: "Premier", language: "fr", new: true })];
   assert.equal(seriesPageModel(series(hidden), facts(libraryOf())).newCard, null);
-  const answer = series([book(1, 1, { new: true }), book(9, null, { new: true })]);
+  const answer = series([book("1", 1, { new: true }), book("9", null, { new: true })]);
   const cleared = seriesPageModel(withoutNew(answer), facts(libraryOf()));
   assert.equal(cleared.newCard, null);
   assert.deepEqual([...cleared.books, ...cleared.related].map((row) => [row.line, row.isNew]), [
@@ -368,10 +379,10 @@ test("no card without new works; Dismiss clears the card and the marks", () => {
 // #568 (spec #560 "Without a connection"): the series this device kept, shown without a connection.
 test("no connection: the No connection card where the refresh error would stand; Add, Retry, Dismiss and Remove series off", () => {
   const works = [
-    book(1, 1, { title: "In progress" }),
-    book(2, 2, { title: "Failed search", acquisition: { audio: null, ebook: failed("ebook") } }),
-    book(3, 3, { title: "Missing", workId: null, new: true }),
-    book(4, null, { title: "Companion", workId: null }),
+    book("1", 1, { title: "In progress" }),
+    book("2", 2, { title: "Failed search", acquisition: { audio: null, ebook: failed("ebook") } }),
+    book("3", 3, { title: "Missing", workId: null, new: true }),
+    book("4", null, { title: "Companion", workId: null }),
   ];
   const library = libraryOf(
     libraryWork("work-1", { recordings: [recording("work-1-rec", place("work-1-rec", 2, 100))] }),
@@ -413,6 +424,6 @@ test("no connection: the No connection card where the refresh error would stand;
   assert.equal(offline.intro, online.intro);
   assert.deepEqual(offline.newCard, online.newCard);
   // A row without a button keeps its chevron; nothing is off that has no button.
-  const plain = seriesPageModel(series([book(5, 1)]), { ...facts(libraryOf(libraryWork("work-5", { recordings: [] }))), offline: true });
+  const plain = seriesPageModel(series([book("5", 1)]), { ...facts(libraryOf(libraryWork("work-5", { recordings: [] }))), offline: true });
   assert.deepEqual(plain.books.map((row) => [row.chevron, row.actionOff]), [[true, false]]);
 });

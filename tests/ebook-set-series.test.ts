@@ -376,14 +376,14 @@ test("retryWorkMediaAcquisition re-queues a failed acquisition", async () => {
 // #325 review round 1, MEDIUM 2: a pending member is counted in the series summary.
 test("the series summary counts a pending ebook-set member", async () => {
   const { sqlite } = await import("../server/db.ts");
-  const { savedHardcoverSeries } = await import("../server/hardcover.ts");
+  const { savedCatalogueSeries } = await import("../server/series-catalogue.ts");
   const workId = `work-${randomUUID()}`;
   db.insert(schema.works).values({ id: workId, title: "Pending Volume", author: "Ada Author", description: "", genre: "", year: 2026 }).run();
-  sqlite.prepare("INSERT INTO series_catalogue(id,name,author,book_count) VALUES(9325,'Pending Series','Ada Author',1)").run();
-  sqlite.prepare("INSERT INTO series_catalogue_works(series_id,book_id,work_id,title,position) VALUES(9325,93251,?,'Pending Volume',1)").run(workId);
-  sqlite.prepare("INSERT INTO user_saved_series(user_id,series_id,saved_at) VALUES(1,9325,?)").run(Date.now());
-  sqlite.prepare("INSERT INTO user_saved_series_works(user_id,series_id,book_id,work_id,introduced) VALUES(1,9325,93251,?,0)").run(workId);
-  const summary = () => savedHardcoverSeries(1, 9325).works.find((w) => w.workId === workId)?.ebookSet;
+  sqlite.prepare("INSERT INTO series_catalogue(id,name,author,book_count) VALUES('sr-pending','Pending Series','Ada Author',1)").run();
+  sqlite.prepare("INSERT INTO series_catalogue_works(series_id,book_id,work_id,title,position) VALUES('sr-pending','bk-pending',?,'Pending Volume',1)").run(workId);
+  sqlite.prepare("INSERT INTO user_saved_series(user_id,series_id,saved_at) VALUES(1,'sr-pending',?)").run(Date.now());
+  sqlite.prepare("INSERT INTO user_saved_series_works(user_id,series_id,book_id,work_id,introduced) VALUES(1,'sr-pending','bk-pending',?,0)").run(workId);
+  const summary = () => savedCatalogueSeries(1, "sr-pending").works.find((w) => w.workId === workId)?.ebookSet;
   assert.deepEqual(summary(), { held: 0, accepted: 0, rejected: 0, pending: 0 });
   const ebookId = `libgen-${randomUUID()}`;
   db.insert(schema.ebookEditions).values({ id: ebookId, workId, format: "epub", source: join(temp, "pending.epub") }).run();

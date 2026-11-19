@@ -1,17 +1,49 @@
-import { test, after, beforeEach } from "node:test";
+// The release search and pick of a saved series' book (#205, #223), on AudiobookDB's text ids (#721 part b): the
+// series comes from the recorded answers (tests/audiobookdb-fixture.ts), and every release source, magnet and acquire
+// is a fake, so nothing reaches AudioBookBay, Prowlarr, TorBox or a provider.
+import { test, after, afterEach, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
+import { tempDir } from "./temp-dir.ts";
 
-const temp = mkdtempSync(join(tmpdir(), "sonder-series-release-"));
+const temp = tempDir("sonder-series-release-");
 process.env.DATA_DIR = join(temp, "db");
 process.env.MEDIA_ROOT = join(temp, "media");
 process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
+process.env.AUDIOBOOKDB_API_KEY = "env-key";
 delete process.env.APP_PASSWORD;
+
+const originalFetch = globalThis.fetch;
+// Any request the fixtures do not answer is a defect in the test.
+const refuse: typeof fetch = async (input) => {
+  throw new Error(`Unexpected external request: ${String(input instanceof Request ? input.url : input)}`);
+};
+globalThis.fetch = refuse;
+const { createControl, fixtureFetch, seriesMember } = await import("./audiobookdb-fixture.ts");
+const control = createControl();
+// The series of these tests: two books by Ada Author, nothing from Open Library.
+const SERIES = "sr-test-saga";
+const FIRST = "bk-first";
+control.series.set(SERIES, {
+  id: SERIES,
+  name: "Test Saga",
+  people: [{ name: "Ada Author", role: { name: "Author" } }],
+  books: [
+    seriesMember(FIRST, "First volume", "Ada Author", "1", 1, { releaseDate: "2020-01-01" }),
+    seriesMember("bk-second", "Second volume", "Ada Author", "2", 2, { releaseDate: "2021-01-01" }),
+  ],
+});
+control.openLibrarySeries.set("test saga", []);
+let now = Date.parse("2026-11-19T12:00:00Z");
+const clock = { now: () => now, sleep: async (ms: number) => void (now += ms) };
+const abdb = await import("../server/audiobookdb.ts");
+const ol = await import("../server/openlibrary.ts");
+abdb.configureAudiobookDbForTests({ fetch: fixtureFetch(control, refuse), clock });
+ol.configureOpenLibraryForTests({ fetch: fixtureFetch(control, refuse), clock });
 
 const { createApp } = await import("../server/app.ts");
 const { sqlite, db } = await import("../server/db.ts");
@@ -33,54 +65,44 @@ const {
 type SeriesAcquisitionDeps = import("../server/series-acquisition.ts").SeriesAcquisitionDeps;
 const { encrypt } = await import("../server/security.ts");
 
-// The series loop never ticks on its own here; the tests call tickSeriesAcquisition themselves.
+// The series loop never ticks on its own here. Save series with searchAudio starts the series search at once
+// (enqueueSeriesAcquisition); its fakes below are in place before every save.
 const app = await createApp({ background: { manual: ["series-acquisition"] } });
-const originalFetch = globalThis.fetch;
 
-const books = [
-  { id: 201, title: "First volume", release_year: 2020, release_date: "2020-01-01" },
-  { id: 202, title: "Second volume", release_year: 2021, release_date: "2021-01-01" },
-].map((book) => ({
-  ...book,
-  slug: null,
-  description: null,
-  cached_image: null,
-  contributions: [{ contribution: "author", author: { name: "Ada Author" } }],
-  book_series: [{ position: book.id - 200, series: { id: 31, name: "Test Saga" } }],
-  editions: [],
-}));
-
-globalThis.fetch = async (input, init) => {
-  const url = String(input);
-  if (url.startsWith("https://api.hardcover.app/")) {
-    const { query, variables } = JSON.parse(String(init?.body));
-    if (query.includes("SonderSeriesPreview"))
-      return Response.json({
-        data: {
-          series_by_pk: {
-            id: 31,
-            name: "Test Saga",
-            books_count: 2,
-            author: { name: "Ada Author" },
-            book_series: books.map((book) => ({
-              position: book.id - 200,
-              book,
-            })),
-          },
-        },
-      });
-    if (query.includes("SonderBook("))
-      return Response.json({
-        data: { books_by_pk: books.find((book) => book.id === variables.id) ?? null },
-      });
-    return Response.json({ errors: [{ message: "Unexpected Hardcover query" }] });
-  }
-  throw new Error(`Unexpected external request: ${url}`);
-};
+const releasesUrl = `/api/series/${SERIES}/works/${FIRST}/releases`;
+const AUTO_RESULT = { id: "abb-auto", title: "First volume M4B", format: "M4B", narrator: "Reader" };
+// The series search's own AudioBookBay search waits on this gate (opened after each test), so a job a save starts
+// stays "searching" while the test runs; once open it offers one candidate for the first volume.
+let openAutoSearch!: () => void;
+let autoSearchGate: Promise<void>;
+let autoAcquireCalls = 0;
+const gatedSeriesAudioDeps = (): NonNullable<SeriesAcquisitionDeps["seriesAudioDeps"]> => ({
+  abbSearch: async () => {
+    await autoSearchGate;
+    return { results: [AUTO_RESULT], page: 1, nextPage: null };
+  },
+  prowlarrSearch: async () => ({ results: [], page: 1, nextPage: null }),
+  abbMagnetLink: async () => "magnet:?xt=urn:btih:dddddddddddddddddddddddddddddddddddddddd&dn=Auto",
+  prowlarrMagnetLink: async () => "",
+  cachedHashes: async () => new Set<string>(),
+  log: () => {},
+});
 
 beforeEach(() => {
   resetSeriesAcquisitionDeps();
   resetSeriesReleaseSearchDeps();
+  autoSearchGate = new Promise<void>((resolve) => {
+    openAutoSearch = resolve;
+  });
+  autoAcquireCalls = 0;
+  setSeriesAcquisitionDeps({
+    seriesAudioDeps: gatedSeriesAudioDeps(),
+    fetchEbooks: async () => ({ downloaded: [], skipped: null, failures: [] }),
+    acquire: (async () => {
+      autoAcquireCalls++;
+      throw new Error("auto acquire should not run");
+    }) as SeriesAcquisitionDeps["acquire"],
+  });
   sqlite.exec("DELETE FROM series_acquisition_jobs");
   sqlite.exec("DELETE FROM user_series_seen_works");
   sqlite.exec("DELETE FROM user_saved_series_works");
@@ -213,32 +235,57 @@ beforeEach(() => {
   });
 });
 
+afterEach(async () => {
+  // Let a series search the test left waiting finish before the next test resets the tables.
+  openAutoSearch();
+  await tickSeriesAcquisition();
+});
+
 after(async () => {
   globalThis.fetch = originalFetch;
   resetSeriesReleaseSearchDeps();
   await app.close();
-  sqlite.close();
-  rmSync(temp, { recursive: true, force: true });
 });
 
 async function saveSeries(
-  bookIds: number[],
+  bookIds: string[],
   options?: { searchAudio?: boolean; searchEbooks?: boolean },
 ) {
-  await app.inject({ method: "PUT", url: "/api/hardcover/token", payload: { token: "fixture-token" } });
-  return app.inject({
+  const saved = await app.inject({
     method: "POST",
     url: "/api/series",
-    payload: { id: 31, bookIds, ...options },
+    payload: { id: SERIES, bookIds, ...options },
   });
+  assert.equal(saved.statusCode, 200, saved.body);
+  return saved;
 }
 
-async function seedAbbSearch(bookId = 201, query = "First volume Ada") {
+async function firstWork() {
+  const page = await app.inject(`/api/series/${SERIES}`);
+  assert.equal(page.statusCode, 200, page.body);
+  return page.json().works.find((w: { id: string }) => w.id === FIRST);
+}
+
+async function firstWorkId(): Promise<string> {
+  const workId = (await firstWork())?.workId;
+  assert.equal(workId, `work-abdb-${FIRST}`);
+  return workId;
+}
+
+async function seedAbbSearch(bookId = FIRST, query = "First volume Ada") {
   const search = await app.inject(
-    `/api/series/31/works/${bookId}/releases/search?q=${encodeURIComponent(query)}`,
+    `/api/series/${SERIES}/works/${bookId}/releases/search?q=${encodeURIComponent(query)}`,
   );
   assert.equal(search.statusCode, 200, search.body);
 }
+
+async function waitFor(check: () => boolean) {
+  for (let attempt = 0; attempt < 100 && !check(); attempt++)
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.ok(check());
+}
+
+const jobStatus = () => db.select().from(schema.seriesAcquisitionJobs).get()?.status;
 
 test("defaultReleaseSearchQuery combines title and author", () => {
   assert.equal(defaultReleaseSearchQuery("Vol 1", "Ada Author"), "Vol 1 Ada Author");
@@ -246,10 +293,10 @@ test("defaultReleaseSearchQuery combines title and author", () => {
 });
 
 test("release search returns configured sources and partial source failure", async () => {
-  const saved = await saveSeries([201]);
+  const saved = await saveSeries([FIRST]);
   assert.equal(saved.statusCode, 200, saved.body);
   const ok = await app.inject(
-    "/api/series/31/works/201/releases/search?q=First%20volume%20Ada",
+    `${releasesUrl}/search?q=First%20volume%20Ada`,
   );
   assert.equal(ok.statusCode, 200, ok.body);
   const body = ok.json();
@@ -258,7 +305,7 @@ test("release search returns configured sources and partial source failure", asy
   assert.ok(body.results.some((r: { source: string }) => r.source === "prowlarr"));
 
   const partial = await app.inject(
-    "/api/series/31/works/201/releases/search?q=fail-abb%20still",
+    `${releasesUrl}/search?q=fail-abb%20still`,
   );
   assert.equal(partial.statusCode, 200, partial.body);
   const partialBody = partial.json();
@@ -268,15 +315,13 @@ test("release search returns configured sources and partial source failure", asy
 });
 
 test("selecting a release queues download for the saved work", async () => {
-  const saved = await saveSeries([201]);
+  const saved = await saveSeries([FIRST]);
   assert.equal(saved.statusCode, 200, saved.body);
-  const workId = (await app.inject("/api/series/31")).json().works.find(
-    (w: { id: number }) => w.id === 201,
-  ).workId;
+  const workId = (await firstWorkId());
   await seedAbbSearch();
   const select = await app.inject({
     method: "POST",
-    url: "/api/series/31/works/201/releases/select",
+    url: `${releasesUrl}/select`,
     payload: { source: "abb", id: "abb-first" },
   });
   assert.equal(select.statusCode, 200, select.body);
@@ -285,11 +330,9 @@ test("selecting a release queues download for the saved work", async () => {
 });
 
 test("active download requires replacement before a new selection", async () => {
-  const saved = await saveSeries([201]);
+  const saved = await saveSeries([FIRST]);
   assert.equal(saved.statusCode, 200, saved.body);
-  const workId = (await app.inject("/api/series/31")).json().works.find(
-    (w: { id: number }) => w.id === 201,
-  ).workId;
+  const workId = (await firstWorkId());
   const firstId = randomUUID();
   const magnet =
     "magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&dn=First";
@@ -319,7 +362,7 @@ test("active download requires replacement before a new selection", async () => 
   await seedAbbSearch();
   const blocked = await app.inject({
     method: "POST",
-    url: "/api/series/31/works/201/releases/select",
+    url: `${releasesUrl}/select`,
     payload: { source: "abb", id: "abb-first" },
   });
   assert.equal(blocked.statusCode, 409, blocked.body);
@@ -328,7 +371,7 @@ test("active download requires replacement before a new selection", async () => 
   await seedAbbSearch();
   const replaced = await app.inject({
     method: "POST",
-    url: "/api/series/31/works/201/releases/select",
+    url: `${releasesUrl}/select`,
     payload: { source: "abb", id: "abb-first", replaceActive: true },
   });
   assert.equal(replaced.statusCode, 200, replaced.body);
@@ -341,11 +384,9 @@ test("active download requires replacement before a new selection", async () => 
 });
 
 test("existing playable audio requires confirmation before another download", async () => {
-  const saved = await saveSeries([201]);
+  const saved = await saveSeries([FIRST]);
   assert.equal(saved.statusCode, 200, saved.body);
-  const workId = (await app.inject("/api/series/31")).json().works.find(
-    (w: { id: number }) => w.id === 201,
-  ).workId;
+  const workId = (await firstWorkId());
   const audioPath = join(temp, "existing.mp3");
   writeFileSync(audioPath, "audio");
   db.insert(schema.editions)
@@ -378,16 +419,16 @@ test("existing playable audio requires confirmation before another download", as
 
   const blocked = await app.inject({
     method: "POST",
-    url: "/api/series/31/works/201/releases/select",
+    url: `${releasesUrl}/select`,
     payload: { source: "abb", id: "abb-first" },
   });
   assert.equal(blocked.statusCode, 409, blocked.body);
   assert.equal(blocked.json().code, "existing_audio");
 
-  await seedAbbSearch(201);
+  await seedAbbSearch(FIRST);
   const confirmed = await app.inject({
     method: "POST",
-    url: "/api/series/31/works/201/releases/select",
+    url: `${releasesUrl}/select`,
     payload: {
       source: "abb",
       id: "abb-first",
@@ -405,28 +446,26 @@ test("existing playable audio requires confirmation before another download", as
 
 test("release search without Prowlarr secret skips Prowlarr", async () => {
   sqlite.prepare("DELETE FROM settings WHERE key='prowlarr'").run();
-  await saveSeries([201]);
+  await saveSeries([FIRST]);
   const body = (
-    await app.inject("/api/series/31/works/201/releases/search?q=First%20volume")
+    await app.inject(`${releasesUrl}/search?q=First%20volume`)
   ).json();
   assert.equal(body.results.length, 1);
   assert.equal(body.sourceErrors.length, 0);
 });
 
 test("release search reports every source failure", async () => {
-  await saveSeries([201]);
+  await saveSeries([FIRST]);
   const body = (
-    await app.inject("/api/series/31/works/201/releases/search?q=fail-all%20fail-abb")
+    await app.inject(`${releasesUrl}/search?q=fail-all%20fail-abb`)
   ).json();
   assert.equal(body.results.length, 0);
   assert.equal(body.sourceErrors.length, 2);
 });
 
 test("failed release metadata leaves an active download unchanged", async () => {
-  await saveSeries([201]);
-  const workId = (await app.inject("/api/series/31")).json().works.find(
-    (w: { id: number }) => w.id === 201,
-  ).workId;
+  await saveSeries([FIRST]);
+  const workId = (await firstWorkId());
   const firstId = randomUUID();
   const magnet =
     "magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&dn=First";
@@ -460,7 +499,7 @@ test("failed release metadata leaves an active download unchanged", async () => 
   await seedAbbSearch();
   const failed = await app.inject({
     method: "POST",
-    url: "/api/series/31/works/201/releases/select",
+    url: `${releasesUrl}/select`,
     payload: { source: "abb", id: "abb-first", replaceActive: true },
   });
   assert.notEqual(failed.statusCode, 200);
@@ -472,9 +511,10 @@ test("failed release metadata leaves an active download unchanged", async () => 
 });
 
 test("failed release lookup leaves inflight auto-acquire unchanged", async () => {
-  await saveSeries([201], { searchAudio: true });
+  await saveSeries([FIRST], { searchAudio: true });
+  // The series search the save started waits on its AudioBookBay search.
+  await waitFor(() => jobStatus() === "searching");
   const jobBefore = db.select().from(schema.seriesAcquisitionJobs).get();
-  assert.ok(jobBefore?.status === "pending" || jobBefore?.status === "searching");
   setSeriesReleaseSearchDeps({
     abbRelease: async () => {
       throw new Error("abb page gone");
@@ -483,20 +523,24 @@ test("failed release lookup leaves inflight auto-acquire unchanged", async () =>
   await seedAbbSearch();
   const failed = await app.inject({
     method: "POST",
-    url: "/api/series/31/works/201/releases/select",
+    url: `${releasesUrl}/select`,
     payload: { source: "abb", id: "abb-first" },
   });
   assert.notEqual(failed.statusCode, 200);
   const jobAfter = db.select().from(schema.seriesAcquisitionJobs).get();
   assert.equal(jobAfter?.status, jobBefore?.status);
   assert.notEqual(jobAfter?.error, SERIES_ACQUISITION_CANCELLED_ERROR);
+  // The series search goes on to its own pick.
+  openAutoSearch();
+  await tickSeriesAcquisition();
+  assert.equal(autoAcquireCalls, 1);
 });
 
 test("release search succeeds from AudioBookBay when Prowlarr fails", async () => {
-  await saveSeries([201]);
+  await saveSeries([FIRST]);
   const body = (
     await app.inject(
-      "/api/series/31/works/201/releases/search?q=fail-prowlarr%20First%20volume",
+      `${releasesUrl}/search?q=fail-prowlarr%20First%20volume`,
     )
   ).json();
   assert.equal(body.results.length, 1);
@@ -506,10 +550,8 @@ test("release search succeeds from AudioBookBay when Prowlarr fails", async () =
 });
 
 test("replacing a TorBox download returns a detach note", async () => {
-  await saveSeries([201]);
-  const workId = (await app.inject("/api/series/31")).json().works.find(
-    (w: { id: number }) => w.id === 201,
-  ).workId;
+  await saveSeries([FIRST]);
+  const workId = (await firstWorkId());
   const torboxId = randomUUID();
   const magnet =
     "magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&dn=First";
@@ -542,7 +584,7 @@ test("replacing a TorBox download returns a detach note", async () => {
   await seedAbbSearch();
   const replaced = await app.inject({
     method: "POST",
-    url: "/api/series/31/works/201/releases/select",
+    url: `${releasesUrl}/select`,
     payload: { source: "abb", id: "abb-first", replaceActive: true },
   });
   assert.equal(replaced.statusCode, 200, replaced.body);
@@ -552,10 +594,8 @@ test("replacing a TorBox download returns a detach note", async () => {
 });
 
 test("replacing with the same hash does not stop the active download", async () => {
-  await saveSeries([201]);
-  const workId = (await app.inject("/api/series/31")).json().works.find(
-    (w: { id: number }) => w.id === 201,
-  ).workId;
+  await saveSeries([FIRST]);
+  const workId = (await firstWorkId());
   const hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
   const firstId = randomUUID();
   const magnet = `magnet:?xt=urn:btih:${hash}&dn=First`;
@@ -584,7 +624,7 @@ test("replacing with the same hash does not stop the active download", async () 
   await seedAbbSearch();
   const replaced = await app.inject({
     method: "POST",
-    url: "/api/series/31/works/201/releases/select",
+    url: `${releasesUrl}/select`,
     payload: { source: "abb", id: "abb-first", replaceActive: true },
   });
   assert.equal(replaced.statusCode, 200, replaced.body);
@@ -597,10 +637,8 @@ test("replacing with the same hash does not stop the active download", async () 
 });
 
 test("shared active acquisition detaches this user without stopping the job", async () => {
-  await saveSeries([201]);
-  const workId = (await app.inject("/api/series/31")).json().works.find(
-    (w: { id: number }) => w.id === 201,
-  ).workId;
+  await saveSeries([FIRST]);
+  const workId = (await firstWorkId());
   sqlite.prepare("INSERT INTO users(id,username,role,password_hash,created_at) VALUES(2,'other','user','x',?)").run(Date.now());
   const sharedId = randomUUID();
   const magnet =
@@ -635,7 +673,7 @@ test("shared active acquisition detaches this user without stopping the job", as
   await seedAbbSearch();
   const replaced = await app.inject({
     method: "POST",
-    url: "/api/series/31/works/201/releases/select",
+    url: `${releasesUrl}/select`,
     payload: { source: "abb", id: "abb-first", replaceActive: true },
   });
   assert.equal(replaced.statusCode, 200, replaced.body);
@@ -660,129 +698,48 @@ test("shared active acquisition detaches this user without stopping the job", as
 });
 
 test("manual select cancels inflight auto-acquire before the ticker runs", async () => {
-  await saveSeries([201], { searchAudio: true });
-  let autoAcquireCalls = 0;
-  setSeriesAcquisitionDeps({
-    acquire: (async () => {
-      autoAcquireCalls++;
-      throw new Error("auto should not run");
-    }) as SeriesAcquisitionDeps["acquire"],
-  });
+  await saveSeries([FIRST], { searchAudio: true });
+  await waitFor(() => jobStatus() === "searching");
   await seedAbbSearch();
   const selected = await app.inject({
     method: "POST",
-    url: "/api/series/31/works/201/releases/select",
+    url: `${releasesUrl}/select`,
     payload: { source: "abb", id: "abb-first" },
   });
   assert.equal(selected.statusCode, 200, selected.body);
-  const view = (await app.inject("/api/series/31")).json().works.find(
-    (w: { id: number }) => w.id === 201,
-  );
+  const view = await firstWork();
   assert.equal(view.acquisition?.audio?.status, "done");
   assert.equal(view.acquisition?.audio?.error, null);
+  // The series search's candidate arrives after the pick: it is not acquired.
+  openAutoSearch();
   await tickSeriesAcquisition();
   assert.equal(autoAcquireCalls, 0);
+  assert.equal(jobStatus(), "done");
 });
 
 test("manual select wins over searching auto-acquire mid-flight", async () => {
-  await saveSeries([201], { searchAudio: true });
-  let unblockSearch!: () => void;
-  const searchBlocked = new Promise<void>((resolve) => {
-    unblockSearch = resolve;
-  });
-  let autoAcquireAttempted = false;
-  setSeriesAcquisitionDeps({
-    acquire: (async () => {
-      autoAcquireAttempted = true;
-      throw new Error("auto acquire should not run");
-    }) as SeriesAcquisitionDeps["acquire"],
-    seriesAudioDeps: {
-      abbSearch: async () => {
-        await searchBlocked;
-        return {
-          results: [
-            {
-              id: "abb-auto",
-              title: "First volume M4B",
-              format: "M4B",
-              narrator: "Reader",
-            },
-          ],
-          page: 1,
-          nextPage: null,
-        };
-      },
-      prowlarrSearch: async () => ({ results: [], page: 1, nextPage: null }),
-      abbMagnetLink: async () =>
-        "magnet:?xt=urn:btih:cccccccccccccccccccccccccccccccccccccccc&dn=First",
-      prowlarrMagnetLink: async () => "",
-      cachedHashes: async () => new Set<string>(),
-      log: () => {},
-    },
-  });
+  await saveSeries([FIRST], { searchAudio: true });
   const tickRunning = tickSeriesAcquisition();
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (db.select().from(schema.seriesAcquisitionJobs).get()?.status === "searching") break;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  assert.equal(
-    db.select().from(schema.seriesAcquisitionJobs).get()?.status,
-    "searching",
-  );
+  await waitFor(() => jobStatus() === "searching");
   await seedAbbSearch();
   const selected = await app.inject({
     method: "POST",
-    url: "/api/series/31/works/201/releases/select",
+    url: `${releasesUrl}/select`,
     payload: { source: "abb", id: "abb-first" },
   });
   assert.equal(selected.statusCode, 200, selected.body);
-  unblockSearch();
+  openAutoSearch();
   await tickRunning;
-  assert.equal(autoAcquireAttempted, false);
-  assert.equal(db.select().from(schema.seriesAcquisitionJobs).get()?.status, "done");
+  assert.equal(autoAcquireCalls, 0);
+  assert.equal(jobStatus(), "done");
 });
 
 test("manual select claim blocks ticker while manual acquire is pending", async () => {
-  await saveSeries([201], { searchAudio: true });
-  let unblockSearch!: () => void;
-  const searchBlocked = new Promise<void>((resolve) => {
-    unblockSearch = resolve;
-  });
   let unblockManualAcquire!: () => void;
   const manualAcquireBlocked = new Promise<void>((resolve) => {
     unblockManualAcquire = resolve;
   });
-  let autoAcquireCalls = 0;
   let manualAcquireCalls = 0;
-  setSeriesAcquisitionDeps({
-    acquire: (async () => {
-      autoAcquireCalls++;
-      throw new Error("auto acquire should not run");
-    }) as SeriesAcquisitionDeps["acquire"],
-    seriesAudioDeps: {
-      abbSearch: async () => {
-        await searchBlocked;
-        return {
-          results: [
-            {
-              id: "abb-auto",
-              title: "First volume M4B",
-              format: "M4B",
-              narrator: "Reader",
-            },
-          ],
-          page: 1,
-          nextPage: null,
-        };
-      },
-      prowlarrSearch: async () => ({ results: [], page: 1, nextPage: null }),
-      abbMagnetLink: async () =>
-        "magnet:?xt=urn:btih:cccccccccccccccccccccccccccccccccccccccc&dn=First",
-      prowlarrMagnetLink: async () => "",
-      cachedHashes: async () => new Set<string>(),
-      log: () => {},
-    },
-  });
   setSeriesReleaseSearchDeps({
     acquire: (async (magnet, metadata) => {
       manualAcquireCalls++;
@@ -816,19 +773,19 @@ test("manual select claim blocks ticker while manual acquire is pending", async 
       return db.select().from(schema.acquisitions).where(eq(schema.acquisitions.id, id)).get()!;
     }) as SeriesReleaseSearchDeps["acquire"],
   });
+  await saveSeries([FIRST], { searchAudio: true });
   const tickRunning = tickSeriesAcquisition();
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (db.select().from(schema.seriesAcquisitionJobs).get()?.status === "searching") break;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
+  await waitFor(() => jobStatus() === "searching");
   await seedAbbSearch();
   const selectRunning = app.inject({
     method: "POST",
-    url: "/api/series/31/works/201/releases/select",
+    url: `${releasesUrl}/select`,
     payload: { source: "abb", id: "abb-first" },
   });
+  await waitFor(() => manualAcquireCalls === 1);
+  // The series search finishes while the manual acquire is still pending.
+  openAutoSearch();
   await new Promise((resolve) => setTimeout(resolve, 50));
-  unblockSearch();
   unblockManualAcquire();
   const selected = await selectRunning;
   assert.equal(selected.statusCode, 200, selected.body);
@@ -842,10 +799,9 @@ test("manual select claim blocks ticker while manual acquire is pending", async 
 });
 
 test("replace failure after acquire finalizes claim and does not reopen auto-acquire", async () => {
-  await saveSeries([201], { searchAudio: true });
-  const workId = (await app.inject("/api/series/31")).json().works.find(
-    (w: { id: number }) => w.id === 201,
-  ).workId;
+  await saveSeries([FIRST], { searchAudio: true });
+  await waitFor(() => jobStatus() === "searching");
+  const workId = (await firstWorkId());
   const hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
   const firstId = randomUUID();
   const magnet = `magnet:?xt=urn:btih:${hash}&dn=First`;
@@ -879,27 +835,19 @@ test("replace failure after acquire finalizes claim and does not reopen auto-acq
   await seedAbbSearch();
   const selected = await app.inject({
     method: "POST",
-    url: "/api/series/31/works/201/releases/select",
+    url: `${releasesUrl}/select`,
     payload: { source: "abb", id: "abb-first", replaceActive: true },
   });
   assert.notEqual(selected.statusCode, 200);
-  assert.equal(
-    db.select().from(schema.seriesAcquisitionJobs).get()?.status,
-    "done",
-  );
-  let autoAcquireCalls = 0;
-  setSeriesAcquisitionDeps({
-    acquire: (async () => {
-      autoAcquireCalls++;
-      throw new Error("auto should not run");
-    }) as SeriesAcquisitionDeps["acquire"],
-  });
+  assert.equal(jobStatus(), "done");
+  openAutoSearch();
   await tickSeriesAcquisition();
   assert.equal(autoAcquireCalls, 0);
+  assert.equal(jobStatus(), "done");
 });
 
 test("concurrent manual selects for the same work are mutually exclusive", async () => {
-  await saveSeries([201]);
+  await saveSeries([FIRST]);
   let unblockManualAcquire!: () => void;
   const manualAcquireBlocked = new Promise<void>((resolve) => {
     unblockManualAcquire = resolve;
@@ -940,13 +888,13 @@ test("concurrent manual selects for the same work are mutually exclusive", async
   await seedAbbSearch();
   const first = app.inject({
     method: "POST",
-    url: "/api/series/31/works/201/releases/select",
+    url: `${releasesUrl}/select`,
     payload: { source: "abb", id: "abb-first" },
   });
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  await waitFor(() => manualAcquireCalls === 1);
   const second = await app.inject({
     method: "POST",
-    url: "/api/series/31/works/201/releases/select",
+    url: `${releasesUrl}/select`,
     payload: { source: "abb", id: "abb-first" },
   });
   assert.equal(second.statusCode, 409);
@@ -958,15 +906,10 @@ test("concurrent manual selects for the same work are mutually exclusive", async
 });
 
 test("manual select is rejected while ticker auto-acquire is in flight for the same work", async () => {
-  let unblockAutoSearch!: () => void;
-  const autoSearchBlocked = new Promise<void>((resolve) => {
-    unblockAutoSearch = resolve;
-  });
   let unblockAutoAcquire!: () => void;
   const autoAcquireBlocked = new Promise<void>((resolve) => {
     unblockAutoAcquire = resolve;
   });
-  let autoAcquireCalls = 0;
   let manualAcquireCalls = 0;
   setSeriesAcquisitionDeps({
     acquire: (async () => {
@@ -974,29 +917,6 @@ test("manual select is rejected while ticker auto-acquire is in flight for the s
       await autoAcquireBlocked;
       throw new Error("auto acquire stub");
     }) as SeriesAcquisitionDeps["acquire"],
-    seriesAudioDeps: {
-      abbSearch: async () => {
-        await autoSearchBlocked;
-        return {
-          results: [
-            {
-              id: "abb-auto",
-              title: "First volume M4B",
-              format: "M4B",
-              narrator: "Reader",
-            },
-          ],
-          page: 1,
-          nextPage: null,
-        };
-      },
-      prowlarrSearch: async () => ({ results: [], page: 1, nextPage: null }),
-      abbMagnetLink: async () =>
-        "magnet:?xt=urn:btih:dddddddddddddddddddddddddddddddddddddddd&dn=Auto",
-      prowlarrMagnetLink: async () => "",
-      cachedHashes: async () => new Set<string>(),
-      log: () => {},
-    },
   });
   setSeriesReleaseSearchDeps({
     acquire: (async () => {
@@ -1004,25 +924,16 @@ test("manual select is rejected while ticker auto-acquire is in flight for the s
       throw new Error("manual acquire stub");
     }) as SeriesReleaseSearchDeps["acquire"],
   });
-  await saveSeries([201], { searchAudio: true });
-  db.update(schema.seriesAcquisitionJobs)
-    .set({ status: "pending", error: null, updatedAt: Date.now() })
-    .run();
+  await saveSeries([FIRST], { searchAudio: true });
   const tickRunning = tickSeriesAcquisition();
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (db.select().from(schema.seriesAcquisitionJobs).get()?.status === "searching") break;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  unblockAutoSearch();
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (autoAcquireCalls > 0) break;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
+  await waitFor(() => jobStatus() === "searching");
+  openAutoSearch();
+  await waitFor(() => autoAcquireCalls > 0);
   assert.equal(autoAcquireCalls, 1);
   await seedAbbSearch();
   const manual = await app.inject({
     method: "POST",
-    url: "/api/series/31/works/201/releases/select",
+    url: `${releasesUrl}/select`,
     payload: { source: "abb", id: "abb-first" },
   });
   assert.equal(manual.statusCode, 409);
@@ -1033,7 +944,7 @@ test("manual select is rejected while ticker auto-acquire is in flight for the s
 });
 
 test("a failed magnet fetch does not block a later manual select", async () => {
-  await saveSeries([201]);
+  await saveSeries([FIRST]);
   let magnetCalls = 0;
   setSeriesReleaseSearchDeps({
     abbMagnet: async () => {
@@ -1045,14 +956,14 @@ test("a failed magnet fetch does not block a later manual select", async () => {
   await seedAbbSearch();
   const failed = await app.inject({
     method: "POST",
-    url: "/api/series/31/works/201/releases/select",
+    url: `${releasesUrl}/select`,
     payload: { source: "abb", id: "abb-first" },
   });
   assert.notEqual(failed.statusCode, 200);
   await seedAbbSearch();
   const retry = await app.inject({
     method: "POST",
-    url: "/api/series/31/works/201/releases/select",
+    url: `${releasesUrl}/select`,
     payload: { source: "abb", id: "abb-first" },
   });
   assert.equal(retry.statusCode, 200, retry.body);

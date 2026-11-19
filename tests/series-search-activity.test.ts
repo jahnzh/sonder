@@ -40,17 +40,17 @@ const readerId = (sqlite.prepare("SELECT id FROM users WHERE username='reader'")
 const LIBGEN_DOWN = "Library Genesis could not be reached. Try another mirror in Settings or open the source website.";
 const NOW = Date.now();
 const run = (sql: string, ...args: unknown[]) => sqlite.prepare(sql).run(...args);
-run("INSERT INTO series_catalogue(id,name,author,book_count) VALUES(12717,'Dungeon Crawler Carl','Dinniman',7)");
+run("INSERT INTO series_catalogue(id,name,author,book_count) VALUES('sr-dcc','Dungeon Crawler Carl','Dinniman',7)");
 const works = ["butcher", "gate", "dungeon", "fist", "eye", "bard", "march"];
 works.forEach((id, index) => {
   run("INSERT INTO works(id,title,author,description,genre,year) VALUES(?,?,'Dinniman','','',2020)", `w-${id}`, `Book ${id}`);
-  run("INSERT INTO series_catalogue_works(series_id,book_id,title,position,unreleased) VALUES(12717,?,?,?,0)", 700 + index, `Book ${id}`, index + 1);
+  run("INSERT INTO series_catalogue_works(series_id,book_id,title,position,unreleased) VALUES('sr-dcc',?,?,?,0)", `bk-${700 + index}`, `Book ${id}`, index + 1);
 });
 /** Jobs in the queue's order: rows are inserted oldest first, as the series adds them. */
 const job = (id: string, user: number, kind: "audio" | "ebook", status: string, error: string | null, retryAt: number | null = null) =>
-  run("INSERT INTO series_acquisition_jobs(id,user_id,series_id,book_id,work_id,kind,status,error,updated_at,retry_at) VALUES(?,?,12717,?,?,?,?,?,?,?)",
-    `job-${id}`, user, 700 + works.indexOf(id), `w-${id}`, kind, status, error, NOW - 60_000, retryAt);
-// The owner's case (series 12717): the first book's ebook search failed on Library Genesis, the next one runs, four wait.
+  run("INSERT INTO series_acquisition_jobs(id,user_id,series_id,book_id,work_id,kind,status,error,updated_at,retry_at) VALUES(?,?,'sr-dcc',?,?,?,?,?,?,?)",
+    `job-${id}`, user, `bk-${700 + works.indexOf(id)}`, `w-${id}`, kind, status, error, NOW - 60_000, retryAt);
+// The owner's case (series sr-dcc): the first book's ebook search failed on Library Genesis, the next one runs, four wait.
 job("butcher", 1, "ebook", "failed", LIBGEN_DOWN);
 job("gate", 1, "ebook", "searching", null);
 job("dungeon", 1, "audio", "pending", null);
@@ -157,9 +157,9 @@ test("a failed search whose work has the file by now, by any route, is not liste
   assert.equal(rowOf(nowOf(body), "butcher"), null, "Activity's item goes");
 
   // The Series page: the same rule, for the job's own user only.
-  assert.deepEqual(seriesWorkAcquisitions(1, 12717, 700, "w-butcher", false).ebook, { kind: "ebook", status: "skipped", error: null, skipReason: "has_ebook" });
-  assert.deepEqual(seriesWorkAcquisitions(1, 12717, 706, "w-march", false).audio, { kind: "audio", status: "skipped", error: null, skipReason: "has_audio" });
-  assert.equal(seriesWorkAcquisitions(readerId, 12717, 700, "w-butcher", false).ebook, null, "the second user does not see the administrator's job");
-  assert.equal(seriesWorkAcquisitions(readerId, 12717, 704, "w-eye", false).ebook?.status, "failed", "and their own failure is theirs");
-  assert.equal(seriesWorkAcquisitions(1, 12717, 704, "w-eye", false).ebook, null);
+  assert.deepEqual(seriesWorkAcquisitions(1, "sr-dcc", "bk-700", "w-butcher", false).ebook, { kind: "ebook", status: "skipped", error: null, skipReason: "has_ebook" });
+  assert.deepEqual(seriesWorkAcquisitions(1, "sr-dcc", "bk-706", "w-march", false).audio, { kind: "audio", status: "skipped", error: null, skipReason: "has_audio" });
+  assert.equal(seriesWorkAcquisitions(readerId, "sr-dcc", "bk-700", "w-butcher", false).ebook, null, "the second user does not see the administrator's job");
+  assert.equal(seriesWorkAcquisitions(readerId, "sr-dcc", "bk-704", "w-eye", false).ebook?.status, "failed", "and their own failure is theirs");
+  assert.equal(seriesWorkAcquisitions(1, "sr-dcc", "bk-704", "w-eye", false).ebook, null);
 });

@@ -19,6 +19,27 @@ process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
 process.env.APP_PASSWORD = "admin-password";
 
+process.env.SONDER_SKIP_SERIES_ACQUISITION = "1";
+process.env.AUDIOBOOKDB_API_KEY = "env-key";
+// The series is AudiobookDB's (#721 part b), from recorded answers (tests/audiobookdb-fixture.ts).
+const { createControl, fixtureFetch, seriesMember } = await import("./audiobookdb-fixture.ts");
+const control = createControl();
+const author = "Pin Author";
+control.series.set("61", {
+  id: "61",
+  name: "Pinned Saga",
+  people: [{ name: author, role: { name: "Author" } }],
+  books: [401, 402].map((id) => seriesMember(String(id), `Pinned volume ${id}`, author, String(id - 400), id - 400, { releaseDate: "2020-01-01" })),
+});
+const refuse: typeof fetch = async (input) => {
+  throw new Error(`Unexpected external request: ${String(input)}`);
+};
+const realFetch = globalThis.fetch;
+globalThis.fetch = refuse;
+const clock = { now: () => Date.now(), sleep: async () => {} };
+(await import("../server/audiobookdb.ts")).configureAudiobookDbForTests({ fetch: fixtureFetch(control, refuse), clock });
+(await import("../server/openlibrary.ts")).configureOpenLibraryForTests({ fetch: fixtureFetch(control, refuse), clock });
+
 const { createApp } = await import("../server/app.ts");
 const { sqlite, db } = await import("../server/db.ts");
 const s = await import("../server/schema.ts");
@@ -30,7 +51,7 @@ const { deriveWorkMediaStates, playableWorks } = await import(
 );
 const app = await createApp({ background: { manual: ["series-acquisition"] } });
 
-const author = "Pin Author";
+/** A Hardcover book as the Hardcover import reads it. */
 const catalogBook = (id: number, title = `Pinned volume ${id}`) => ({
   id,
   title,
@@ -40,34 +61,9 @@ const catalogBook = (id: number, title = `Pinned volume ${id}`) => ({
   release_date: "2020-01-01",
   cached_image: null,
   contributions: [{ contribution: "author", author: { name: author } }],
-  book_series: [{ position: id - 400, series: { id: 61, name: "Pinned Saga" } }],
+  book_series: [],
   editions: [],
 });
-const seriesBooks = [401, 402].map((id) => catalogBook(id));
-
-const realFetch = globalThis.fetch;
-globalThis.fetch = async (input, init) => {
-  if (!String(input).startsWith("https://api.hardcover.app/"))
-    throw new Error(`Unexpected external request: ${String(input)}`);
-  const { query, variables } = JSON.parse(String(init?.body));
-  if (query.includes("SonderSeriesPreview"))
-    return Response.json({
-      data: {
-        series_by_pk: {
-          id: 61,
-          name: "Pinned Saga",
-          books_count: seriesBooks.length,
-          author: { name: author },
-          book_series: seriesBooks.map((book) => ({ position: book.id - 400, book })),
-        },
-      },
-    });
-  if (query.includes("SonderBook("))
-    return Response.json({
-      data: { books_by_pk: seriesBooks.find((book) => book.id === variables.id) ?? null },
-    });
-  return Response.json({ errors: [{ message: "Unexpected Hardcover query" }] });
-};
 
 after(async () => {
   globalThis.fetch = realFetch;
@@ -176,14 +172,8 @@ function editionExists(editionId: string) {
   return !!sqlite.prepare("SELECT 1 FROM audio_editions WHERE id=?").get(editionId);
 }
 
-async function saveSeries(bookIds: number[]) {
+async function saveSeries(bookIds: string[]) {
   const cookie = await adminCookie();
-  await app.inject({
-    method: "PUT",
-    url: "/api/hardcover/token",
-    cookies: { sonder_session: cookie },
-    payload: { token: "fixture-token" },
-  });
   const saved = await app.inject({
     method: "POST",
     url: "/api/series",
@@ -194,16 +184,16 @@ async function saveSeries(bookIds: number[]) {
   const view = (
     await app.inject({ url: "/api/series/61", cookies: { sonder_session: cookie } })
   ).json();
-  return (bookId: number) =>
-    view.works.find((work: { id: number }) => work.id === bookId).workId as string;
+  return (bookId: string) =>
+    view.works.find((work: { id: string }) => work.id === bookId).workId as string;
 }
 
 // --- Series removal (server/series-removal.ts) -------------------------------------------
 
 test("series removal preview lists a work's real audio editions and not its placeholder", async () => {
-  const workOf = await saveSeries([401]);
-  const workId = workOf(401);
-  assert.ok(editionExists("hc-401"), "saving the series made the Hardcover placeholder");
+  const workOf = await saveSeries(["401"]);
+  const workId = workOf("401");
+  assert.ok(editionExists(`placeholder-${workId}`), "saving the series made the work's placeholder");
   addEdition(workId, "real-401", 1);
   shelve(1, "real-401");
 
@@ -212,7 +202,7 @@ test("series removal preview lists a work's real audio editions and not its plac
     cookies: { sonder_session: await adminCookie() },
   });
   assert.equal(preview.statusCode, 200, preview.body);
-  const work = preview.json().works.find((w: { bookId: number }) => w.bookId === 401);
+  const work = preview.json().works.find((w: { bookId: string }) => w.bookId === "401");
   assert.deepEqual(
     work.audioEditions.map((edition: { editionId: string }) => edition.editionId),
     ["real-401"],
@@ -228,9 +218,10 @@ test("series removal preview lists a work's real audio editions and not its plac
 });
 
 test("removing a work with its series deletes its real audio edition and keeps its placeholder", async () => {
-  const workOf = await saveSeries([402]);
-  const workId = workOf(402);
-  assert.ok(editionExists("hc-402"));
+  const workOf = await saveSeries(["402"]);
+  const workId = workOf("402");
+  const placeholder = `placeholder-${workId}`;
+  assert.ok(editionExists(placeholder));
   addEdition(workId, "real-402", 1);
   shelve(1, "real-402");
 
@@ -238,7 +229,7 @@ test("removing a work with its series deletes its real audio edition and keeps i
     method: "DELETE",
     url: "/api/series/61",
     cookies: { sonder_session: await adminCookie() },
-    payload: { bookIds: [402] },
+    payload: { bookIds: ["402"] },
   });
   assert.equal(removed.statusCode, 200, removed.body);
   assert.deepEqual(
@@ -249,11 +240,11 @@ test("removing a work with its series deletes its real audio edition and keeps i
     [["real-402", true]],
   );
   assert.equal(editionExists("real-402"), false);
-  assert.equal(editionExists("hc-402"), true);
+  assert.equal(editionExists(placeholder), true);
   assert.ok(
     sqlite
-      .prepare("SELECT 1 FROM user_hidden_library WHERE user_id=1 AND book_id='hc-402'")
-      .get(),
+      .prepare("SELECT 1 FROM user_hidden_library WHERE user_id=1 AND book_id=?")
+      .get(placeholder),
     "the placeholder keeps the Hardcover sync from adding the work back",
   );
 });

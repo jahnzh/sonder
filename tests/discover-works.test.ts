@@ -120,8 +120,8 @@ const { CONSENSUS_EBOOK_PREFIX } = await import("../server/ebook-set-consensus.t
   for (let n = 1; n <= 35; n++) work(`w-limit-${n}`, `Limit Book ${n}`, "Limit Author");
   work("w-new", "Transition", "Iain Banks", 2009);
   audio("ed-new", "w-new");
-  run("INSERT INTO series_catalogue(id,name,author,book_count) VALUES(5501,'Culture','Iain M. Banks',10)");
-  run("INSERT INTO user_saved_series(user_id,series_id,saved_at) VALUES(2,5501,?)", T0);
+  run("INSERT INTO series_catalogue(id,name,author,book_count) VALUES('sr-culture','Culture','Iain M. Banks',10)");
+  run("INSERT INTO user_saved_series(user_id,series_id,saved_at) VALUES(2,'sr-culture',?)", T0);
 }
 
 // Hardcover, answered from the recorded search in `tests/fixtures/hardcover-search-banks.json`.
@@ -135,18 +135,21 @@ globalThis.fetch = async (input, init) => {
       data: { books: recordedSearch.hits.map((hit: { document: { id: string; slug: string } }) => ({ id: Number(hit.document.id), slug: hit.document.slug })) },
     });
   if (query.includes("SonderSearch(")) return Response.json({ data: { search: { results: structuredClone(recordedSearch) } } });
-  if (query.includes("SonderSeriesSearchDetails"))
-    return Response.json({
-      data: {
-        series: [
-          { id: 5502, name: "Culture", books_count: 2, author: { name: "Someone Else" }, book_series: [] },
-          { id: 5501, name: "Culture", books_count: 10, author: { name: "Iain M. Banks" }, book_series: [] },
-        ],
-      },
-    });
-  if (query.includes("SonderSeriesSearch")) return Response.json({ data: { search: { ids: [5501, 5502] } } });
   return Response.json({ errors: [{ message: "Unexpected Hardcover query" }] });
 };
+
+// Series come from AudiobookDB (#721 part b), answered from the recorded answers in `tests/audiobookdb-fixture.ts`.
+process.env.AUDIOBOOKDB_API_KEY = "env-key";
+const { createControl, fixtureFetch } = await import("./audiobookdb-fixture.ts");
+const control = createControl();
+const refuse: typeof fetch = async (input) => {
+  throw new Error(`Unexpected external request: ${String(input)}`);
+};
+const clock = { now: () => Date.now(), sleep: async () => {} };
+(await import("../server/audiobookdb.ts")).configureAudiobookDbForTests({ fetch: fixtureFetch(control, refuse), clock });
+(await import("../server/openlibrary.ts")).configureOpenLibraryForTests({ fetch: fixtureFetch(control, refuse), clock });
+control.series.set("sr-culture", { id: "sr-culture", name: "Culture", people: [{ name: "Iain M. Banks", role: { name: "Author" } }], bookCount: 10, books: [] });
+control.series.set("sr-culture-other", { id: "sr-culture-other", name: "Culture", people: [{ name: "Someone Else", role: { name: "Author" } }], bookCount: 2, books: [] });
 
 // The fixture is a library after the one-off start step (#555) ran: its ebook-only works outside the
 // owner's library stay outside it, so the step is marked done before the server starts.
@@ -347,19 +350,17 @@ test("Hardcover's hits name the work they open and whether it is on the server",
 });
 
 test("series search says which series the user saved", async () => {
-  for (const token of [SAM, KIM])
-    assert.equal((await request(token, "/api/hardcover/token", "PUT", { token: `hc-${token}` })).statusCode, 200);
   const series = async (token: string) => {
     const response = await request(token, "/api/discover/series?q=culture");
     assert.equal(response.statusCode, 200, response.body);
-    return (response.json() as { id: number; saved: boolean }[]).map((entry) => [entry.id, entry.saved]);
+    return (response.json() as { id: string; saved: boolean }[]).map((entry) => [entry.id, entry.saved]);
   };
   assert.deepEqual(await series(SAM), [
-    [5501, true],
-    [5502, false],
+    ["sr-culture", true],
+    ["sr-culture-other", false],
   ]);
   assert.deepEqual(await series(KIM), [
-    [5501, false],
-    [5502, false],
+    ["sr-culture", false],
+    ["sr-culture-other", false],
   ], "Sam's saved series are not Kim's");
 });
