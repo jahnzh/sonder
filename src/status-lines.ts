@@ -377,6 +377,21 @@ export function seriesSearchLine({ status, search, place, retrying, reason }: Se
  */
 export const SERIES_NOT_SAVED_AGAIN_LINE = "Series not saved again";
 export const SERIES_SAVED_AGAIN_LINE = "Series saved again";
+/** A book of a series' 'Match automatically' (#719 part b), by the row's status; the reason follows where there is one. */
+export function metadataMatchLine(status: string, reason: string | null): string {
+  switch (status) {
+    case "pending":
+      return "Waiting to match details";
+    case "running":
+      return "Matching details";
+    case "done":
+      return "Details matched";
+    case "unsure":
+      return withReason("No sure match", reason);
+    default:
+      return withReason("Match failed", reason);
+  }
+}
 
 /** What a finished entry of Now concerns, with the facts its line is written from. */
 export type FinishedFacts =

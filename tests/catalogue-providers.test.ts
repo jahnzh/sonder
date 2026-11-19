@@ -102,6 +102,10 @@ test("Google Books: the volumes search with the app's User-Agent and no key, Eng
       series: [],
       releaseIds: [],
       description: null,
+      // The comparison's fields (#719 part b).
+      genres: ["Fiction"],
+      publisher: "Harbour Press",
+      isbn: "9781000000002",
     },
   ]);
   assert.equal(provider.isEnglish("en"), true);
@@ -189,6 +193,7 @@ test("iTunes: the audiobook search in the US store with the app's User-Agent and
       series: [],
       releaseIds: [],
       description: null,
+      genres: ["Sci-Fi & Fantasy"],
     },
   ]);
 });

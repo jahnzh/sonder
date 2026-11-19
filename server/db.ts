@@ -227,6 +227,14 @@ CREATE TABLE IF NOT EXISTS work_metadata_overrides(work_id TEXT NOT NULL,field T
 CREATE TABLE IF NOT EXISTS recording_metadata_overrides(recording_id TEXT NOT NULL,field TEXT NOT NULL,value TEXT NOT NULL,edited_at INTEGER NOT NULL,PRIMARY KEY(recording_id,field));
 CREATE TABLE IF NOT EXISTS local_series(id TEXT PRIMARY KEY,name TEXT NOT NULL,created_at INTEGER NOT NULL);
 `);
+// #719 part b: the provider a field was taken from by a match (`audiobookdb`, `openlibrary`, `googlebooks`, `itunes`);
+// null for a field edited by hand. And the series batch of 'Match automatically', one row per work, shown in Activity.
+for (const table of ["work_metadata_overrides", "recording_metadata_overrides"])
+  if (!(sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some((c) => c.name === "source"))
+    sqlite.exec(`ALTER TABLE ${table} ADD COLUMN source TEXT`);
+sqlite.exec(`
+CREATE TABLE IF NOT EXISTS metadata_match_jobs(work_id TEXT PRIMARY KEY,series_id TEXT NOT NULL,user_id INTEGER NOT NULL,status TEXT NOT NULL CHECK(status IN ('pending','running','done','unsure','failed')),provider TEXT,fields TEXT NOT NULL DEFAULT '[]',reason TEXT,updated_at INTEGER NOT NULL);
+`);
 sqlite.exec(SERIES_RESAVE_TABLE);
 // A work a series brought into the library names that series by its AudiobookDB id (#721); `series_id` keeps the
 // Hardcover id of older rows, unused.

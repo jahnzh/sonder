@@ -196,6 +196,11 @@ function descriptionOf(entry: Json): string | null {
   return found ? found.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || null : null;
 }
 
+/** The genres where the answer names them (#719 part b's comparison); absent otherwise. */
+function extraOf(entry: Json): { genres?: string[] } {
+  const genres = [...new Set(arrayOf(entry.genres ?? entry.categories).map(nameOf).filter((name): name is string => !!name))];
+  return genres.length ? { genres } : {};
+}
 /** A book from a search result or a detail answer. */
 export function readBook(value: unknown): CatalogueBook | null {
   const entry = isObject(value) && isObject(value.book) ? value.book : value;
@@ -218,6 +223,7 @@ export function readBook(value: unknown): CatalogueBook | null {
     series: seriesOf(entry),
     releaseIds: releases.map(idOf).filter((v): v is string => !!v),
     description: descriptionOf(entry),
+    ...extraOf(entry),
   };
 }
 /** The results list of a search answer, wherever the answer puts it (`books`, `results.books`, `data`, …). */

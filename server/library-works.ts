@@ -642,7 +642,7 @@ function matchesTag(header: string | string[] | undefined, tag: string) {
  * The Edit page's answer (#719) for the administrator: each field's value, the source's and the edited ones; null when
  * the work does not exist or they may not see it.
  */
-function workMetadata(userId: number, workId: string) {
+export function workMetadata(userId: number, workId: string) {
   const hidden = hiddenHardcoverPlaceholders(userId);
   if (!workVisibleTo(userId, workId, hidden)) return null;
   const raw = buildWorks(userId, [workId], hidden, [], { edits: false })[0];

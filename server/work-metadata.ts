@@ -20,6 +20,7 @@ import { sqlite } from "./db.ts";
 import { mediaMountProblem, mediaRoot } from "./storage.ts";
 import { currentUserId, requireAdmin } from "./users.ts";
 import { idList } from "./work-cover.ts";
+import { CATALOGUE_PROVIDERS, type CatalogueProviderName } from "./catalogue-provider.ts";
 import {
   WORK_FIELDS,
   type LibraryWork,
@@ -70,6 +71,26 @@ export function workOverrides(workIds: string[]): Overrides {
     byWork.set(row.workId, entry);
   }
   return byWork;
+}
+
+const providerName = (value: unknown): CatalogueProviderName | null =>
+  typeof value === "string" && (CATALOGUE_PROVIDERS as readonly string[]).includes(value) ? (value as CatalogueProviderName) : null;
+/** The provider each edited field of a work was taken from by a match (#719 part b); a field edited by hand is absent. */
+export function overrideSources(workId: string): Partial<Record<WorkField, CatalogueProviderName>> {
+  const rows = sqlite.prepare("SELECT field,source FROM work_metadata_overrides WHERE work_id=? AND source IS NOT NULL").all(workId) as { field: string; source: string }[];
+  const out: Partial<Record<WorkField, CatalogueProviderName>> = {};
+  for (const row of rows) {
+    const name = providerName(row.source);
+    if (name && (WORK_FIELDS as readonly string[]).includes(row.field)) out[row.field as WorkField] = name;
+  }
+  return out;
+}
+function narratorSources(recordingIds: string[]): Map<string, CatalogueProviderName> {
+  if (!recordingIds.length) return new Map();
+  const rows = sqlite
+    .prepare("SELECT recording_id AS recordingId,source FROM recording_metadata_overrides WHERE field='narrators' AND source IS NOT NULL AND recording_id IN (SELECT value FROM json_each(?))")
+    .all(idList(recordingIds)) as { recordingId: string; source: string }[];
+  return new Map(rows.flatMap((row) => (providerName(row.source) ? [[row.recordingId, providerName(row.source)!] as const] : [])));
 }
 
 /** The edited narrators of `recordingIds`, by recording. */
@@ -215,12 +236,17 @@ export function applyWorkEdits(works: LibraryWork[], saved: Set<string>): Librar
 export function metadataOf(raw: LibraryWork, saved: Set<string>): WorkMetadata {
   const source = sourceValues(raw, extraSources([raw.workId]).get(raw.workId));
   const { values, edited } = editedValues(source, workOverrides([raw.workId]).get(raw.workId), saved);
-  const narrators = recordingNarrators(raw.recordings.map((recording) => recording.recordingId));
+  const recordingIds = raw.recordings.map((recording) => recording.recordingId);
+  const narrators = recordingNarrators(recordingIds);
+  const takenFrom = narratorSources(recordingIds);
+  const from = overrideSources(raw.workId);
   return {
     workId: raw.workId,
     values,
     source,
     edited,
+    // Only the fields still edited: a field whose edit went has no provider to name.
+    from: Object.fromEntries(Object.entries(from).filter(([field]) => edited.includes(field as WorkField))),
     recordings: raw.recordings.map((recording) => {
       const own = splitNames(recording.narrator);
       const names = narrators.get(recording.recordingId);
@@ -230,6 +256,7 @@ export function metadataOf(raw: LibraryWork, saved: Set<string>): WorkMetadata {
         narrators: names ?? own,
         source: own,
         edited: !!names,
+        from: names ? takenFrom.get(recording.recordingId) ?? null : null,
       };
     }),
   };
@@ -317,10 +344,11 @@ const sameValue = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringi
  * Writes the edits of one work: each field of `values` is kept as edited unless it equals the source's value, in
  * which case its edit goes; each field of `revert` loses its edit. Returns the fields written.
  */
-export function writeWorkEdits(workId: string, source: WorkFieldValues, values: Record<string, unknown>, revert: WorkField[]) {
+export function writeWorkEdits(workId: string, source: WorkFieldValues, values: Record<string, unknown>, revert: WorkField[], from: CatalogueProviderName | null = null) {
   const now = Date.now();
+  // `from`: the provider a match took the values from (#719 part b); null for an edit by hand.
   const put = sqlite.prepare(
-    "INSERT INTO work_metadata_overrides(work_id,field,value,edited_at) VALUES(?,?,?,?) ON CONFLICT(work_id,field) DO UPDATE SET value=excluded.value,edited_at=excluded.edited_at",
+    "INSERT INTO work_metadata_overrides(work_id,field,value,edited_at,source) VALUES(?,?,?,?,?) ON CONFLICT(work_id,field) DO UPDATE SET value=excluded.value,edited_at=excluded.edited_at,source=excluded.source",
   );
   const drop = sqlite.prepare("DELETE FROM work_metadata_overrides WHERE work_id=? AND field=?");
   sqlite.transaction(() => {
@@ -332,21 +360,21 @@ export function writeWorkEdits(workId: string, source: WorkFieldValues, values: 
       const compared = field === "series" ? (value as SeriesEntry[]).map(({ id, position }) => ({ id, position })) : value;
       const sourced = field === "series" ? source.series.map(({ id, position }) => ({ id, position })) : source[field];
       if (sameValue(compared, sourced)) drop.run(workId, field);
-      else put.run(workId, field, JSON.stringify(value), now);
+      else put.run(workId, field, JSON.stringify(value), now, from);
     }
   })();
 }
 
 /** Writes or reverts (null) a recording's narrators; the source's narrators are not kept as an edit. */
-export function writeNarrators(recordingId: string, source: string[], narrators: string[] | null) {
+export function writeNarrators(recordingId: string, source: string[], narrators: string[] | null, from: CatalogueProviderName | null = null) {
   if (narrators === null || sameValue(narrators, source))
     sqlite.prepare("DELETE FROM recording_metadata_overrides WHERE recording_id=? AND field='narrators'").run(recordingId);
   else
     sqlite
       .prepare(
-        "INSERT INTO recording_metadata_overrides(recording_id,field,value,edited_at) VALUES(?,'narrators',?,?) ON CONFLICT(recording_id,field) DO UPDATE SET value=excluded.value,edited_at=excluded.edited_at",
+        "INSERT INTO recording_metadata_overrides(recording_id,field,value,edited_at,source) VALUES(?,'narrators',?,?,?) ON CONFLICT(recording_id,field) DO UPDATE SET value=excluded.value,edited_at=excluded.edited_at,source=excluded.source",
       )
-      .run(recordingId, JSON.stringify(narrators), Date.now());
+      .run(recordingId, JSON.stringify(narrators), Date.now(), from);
 }
 
 // ---- Local series on the Series pages ----

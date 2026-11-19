@@ -97,6 +97,16 @@ function coverOf(info: Json): string | null {
   return url.replace(/^http:\/\//, "https://").replace(/&edge=curl/g, "");
 }
 
+/** The ISBN-13 of `industryIdentifiers`, else the ISBN-10. */
+function isbnOf(info: Json): string | null {
+  const ids = (Array.isArray(info.industryIdentifiers) ? info.industryIdentifiers : []).filter(isObject);
+  for (const type of ["ISBN_13", "ISBN_10"]) {
+    const found = ids.find((entry) => entry.type === type);
+    const value = found ? text(found.identifier) : null;
+    if (value && /^[0-9Xx-]{10,17}$/.test(value)) return value;
+  }
+  return null;
+}
 /** A volume (a search item or a volume answer). The description only where the answer has one. */
 export function readGoogleBooksVolume(value: unknown): CatalogueBook | null {
   if (!isObject(value) || !isObject(value.volumeInfo)) return null;
@@ -119,6 +129,10 @@ export function readGoogleBooksVolume(value: unknown): CatalogueBook | null {
     series: [],
     releaseIds: [],
     description: plainDescription(text(info.description)),
+    // The comparison's fields (#719 part b), where the volume names them.
+    ...(strings(info.categories).length ? { genres: strings(info.categories) } : {}),
+    ...(text(info.publisher) ? { publisher: text(info.publisher) } : {}),
+    ...(isbnOf(info) ? { isbn: isbnOf(info) } : {}),
   };
 }
 

@@ -218,7 +218,36 @@ export type WorkMetadata = {
   values: WorkFieldValues;
   source: WorkFieldValues;
   edited: WorkField[];
-  recordings: { recordingId: string; label: string; narrators: string[]; source: string[]; edited: boolean }[];
+  /** The provider an edited field was taken from by a match (#719 part b); absent for a field edited by hand, and from an older server. */
+  from?: Partial<Record<WorkField, MetadataProvider>>;
+  recordings: { recordingId: string; label: string; narrators: string[]; source: string[]; edited: boolean; from?: MetadataProvider | null }[];
+};
+/** The providers a book's details are matched from (#719 part b, #721's four). */
+export type MetadataProvider = "audiobookdb" | "openlibrary" | "googlebooks" | "itunes";
+/** The fields of the comparison (#719 part b): the work's, and `narrators` (a recording's, one row per recording). */
+export const MATCH_FIELDS = ["title", "subtitle", "authors", "series", "genres", "publisher", "year", "language", "isbn", "asin", "description", "cover"] as const satisfies readonly WorkField[];
+export type MatchField = (typeof MATCH_FIELDS)[number];
+/** One row of the comparison: the value now, the provider's (null when it gives none), and whether it is ticked by default. */
+export type MatchRow<T = unknown> = { current: T; found: T | null; ticked: boolean; same: boolean };
+/**
+ * `GET /api/works/<workId>/metadata/match?provider=&id=` (the administrator's): the per-field comparison of the work
+ * with one provider's book. Ticked by default: the fields the work has no value for and the provider has.
+ */
+export type MetadataComparison = {
+  workId: string;
+  provider: MetadataProvider;
+  id: string;
+  title: string;
+  fields: Record<MatchField, MatchRow>;
+  recordings: ({ recordingId: string; label: string } & MatchRow<string[]>)[];
+};
+/** What `POST /api/works/<workId>/metadata/match` and `/metadata/auto` wrote (or why nothing). */
+export type MetadataApplied = {
+  outcome: "applied" | "nothing" | "unsure" | "missing" | "failed";
+  provider: MetadataProvider | null;
+  fields: string[];
+  reason: string | null;
+  metadata: WorkMetadata | null;
 };
 export type WorkMediaState = {
   state: "missing" | "queued" | "failed" | "available";
@@ -489,6 +518,11 @@ export type ActivityFacts =
        * the series name and the error the reason; an older client reads it as a failed audiobook search.
        */
       saveAgain?: true;
+      /**
+       * Not a search: a book of a series' 'Match automatically' (#719 part b). `status` is the row's own (`pending`,
+       * `running`, `done`, `unsure`, `failed`); the error is the reason. An older client reads it as a series search.
+       */
+      metadataMatch?: true;
     }
   | {
       kind: "alignment";
