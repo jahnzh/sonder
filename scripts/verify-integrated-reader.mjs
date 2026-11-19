@@ -95,12 +95,11 @@ try {
  const surface=await room.evaluate(el=>getComputedStyle(el).backgroundColor);
  await expect(page.frameLocator('.inline-reader .reader-viewport iframe').locator('body')).toHaveCSS('background-color',surface);
  const readerBox=await waitForBox(room.locator('.reader-viewport'),{description:'reader viewport'});if(readerBox.height<844*.65)throw Error('Reader is too small on mobile');
- // The More sheet is gone (#592): its entries are the long-press, Back to narration, the Bookmarks page, the Book
- // page's Reading sync row and Appearance's Follow the narration. The head holds no More.
+ // The head has no More button (#592): what it held is the long-press, Back to narration, the Bookmarks page, the
+ // Book page's Reading sync row and Appearance's Follow the narration.
  const head=room.locator('.reader-topbar');
  await controls.show(head.getByRole('button',{name:'Close reader',exact:true}),'Close reader');
  await expect(head.getByRole('button',{name:'More',exact:true})).toHaveCount(0);
- await expect(room.locator('.reader-more')).toHaveCount(0);
  // The reader shows the book's own text only: there is no switch between views (ADR 0017). Appearance is closed
  // here, so no "Reading mode" group may be on the page.
  await expect(page.getByRole('group',{name:'Reading mode',exact:true})).toHaveCount(0);
