@@ -86,3 +86,12 @@ button.part-row:focus-visible {
 .part-row-stack > .part-row-label {
   flex: none;
 }
+/* A row with a line under its label (Row's detail, #614): at least 52 high, the two lines 8 from its edges. */
+.part-row[data-detail] {
+  height: auto;
+  min-height: var(--height-row);
+  padding: var(--space-8) var(--space-16);
+}
+.part-row-detail {
+  color: var(--muted);
+}

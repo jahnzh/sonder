@@ -1267,11 +1267,5 @@ input[type="range"]::-moz-range-thumb {
     max-width: 145px;
   }
 }
-.keyboard-shortcuts { display: grid; gap: 10px; margin: 0; }
-.keyboard-shortcuts > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.keyboard-shortcuts dt { display: flex; gap: 6px; }
-.keyboard-shortcuts dd { margin: 0; text-align: right; }
-.keyboard-shortcuts dd small { display: block; }
-.keyboard-shortcuts kbd { min-width: 28px; padding: 3px 8px; border: 1px solid var(--line, currentColor); border-radius: 6px; font: inherit; text-align: center; }
 
 /* Activity rows hold long reasons and errors: wrap instead of widening the page. */
