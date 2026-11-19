@@ -65,6 +65,8 @@ const desktopProjects = [
               /(^|\/)(sign-in|account-requests)\.spec\.ts$/,
               // Activity's This device (#518).
               /(^|\/)activity-device\.spec\.ts$/,
+              // A series search's failure and place in line on Activity's Now (#717).
+              /(^|\/)activity-series-search\.spec\.ts$/,
               // The reader's own EPUB copy is not kept on This device (#671).
               /(^|\/)reader-cache-not-kept\.spec\.ts$/,
               // An account switch during a library write (#528 review finding 1).
@@ -167,6 +169,8 @@ const desktopProjects = [
               /(^|\/)now-playing-ebook-only\.spec\.ts$/,
               // Discover finds books (#575).
               /(^|\/)discover\.spec\.ts$/,
+              // The shell: the tab bar, the rail and the offline line (#581).
+              /(^|\/)shell\.spec\.ts$/,
               // A stuck download says why and offers Cancel (#716).
               /(^|\/)activity-cancel\.spec\.ts$/,
             ]

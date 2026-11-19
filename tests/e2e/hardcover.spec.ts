@@ -39,8 +39,8 @@ test("mobile Hardcover connection, shelves, custom lists, edition selection and 
   await page.getByRole("button", { name: "Sync now", exact: true }).click();
   await expect(page.getByText(new RegExp(`Synced ${imported} new books`))).toBeVisible();
   await page
-    .locator(".mobile-nav")
-    .getByRole("button", { name: "My library", exact: true })
+    .getByRole("navigation", { name: "Main", exact: true })
+    .getByRole("button", { name: "Library", exact: true })
     .click();
   // The Library half of guard 15 (spec #572) in its new form (#578): the shelf and list are in the sort-and-view
   // picker, each its own list inside it, and each filter in use is a chip under the heading that clears it.

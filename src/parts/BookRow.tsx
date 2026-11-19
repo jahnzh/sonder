@@ -42,9 +42,14 @@ export type BookRowProps = {
    * LibraryList.dc.html); read out after the status line, by their own name ("Reading sync ready") or the kind's.
    */
   edgeMarks?: { kind: FileKind; name?: string }[];
+  /**
+   * The status line wraps instead of ending in an ellipsis, and the row grows past 64 to hold it (Now's failed series
+   * search, whose line says why it failed, #717).
+   */
+  wrap?: boolean;
 };
 
-export function BookRow({ title, status, lead, cover, number, marks = [], progress, onClick, action, failed, trailing, coverIcon, raised, edgeMarks }: BookRowProps) {
+export function BookRow({ title, status, lead, cover, number, marks = [], progress, onClick, action, failed, trailing, coverIcon, raised, edgeMarks, wrap }: BookRowProps) {
   const id = useId();
   const numbered = number != null && number !== "";
   const names = [
@@ -109,6 +114,7 @@ export function BookRow({ title, status, lead, cover, number, marks = [], progre
     "data-numbered": numbered ? "" : undefined,
     "data-moving": progress != null ? "" : undefined,
     "data-failed": failed ? "" : undefined,
+    "data-wrap": wrap ? "" : undefined,
   };
   if (action) {
     return (

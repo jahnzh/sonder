@@ -178,8 +178,9 @@ test("every line of the table: finished and failed forms of each entry, with the
   assert.equal(done({ kind: "server-copy", status: "ready" }).line, "Audiobook on server");
   assert.equal(failed({ kind: "server-copy", status: "error" }).line, "Copy to server failed");
   assert.equal(done({ kind: "series-acquisition", status: "done", search: "ebook" }).line, "Ebook on server");
-  assert.equal(failed({ kind: "series-acquisition", status: "failed", search: "audiobook" }).line, "Series search failed");
-  assert.equal(failed({ kind: "series-acquisition", status: "failed", search: "ebook" }).line, "Series search failed");
+  // A failed series search names which search failed (#717); with a stored reason, it says why (its own test below).
+  assert.equal(failed({ kind: "series-acquisition", status: "failed", search: "audiobook" }).line, "Audiobook search failed");
+  assert.equal(failed({ kind: "series-acquisition", status: "failed", search: "ebook" }).line, "Ebook search failed");
   assert.equal(done({ kind: "ebook-set", status: "accepted", holdReason: null }).line, "Ebook matches the narration");
   assert.equal(done({ kind: "ebook-set", status: "rejected", holdReason: null }).line, "Ebook does not match the narration");
   assert.equal(failed({ kind: "ebook-set", status: "held", holdReason: "evaluation_failed" }).line, "Check failed");
@@ -443,6 +444,44 @@ test("a series search's line has the icon of the file it looks for (#522)", () =
   assert.equal(row(now, "work:w2").line, "Searching for the audiobook");
   assert.equal(row(now, "work:w2").icon, "audiobook");
   assert.equal(row(now, "work:w3").icon, "ebook");
+});
+
+// #717: the series queue on Now. The search running now is In progress; the waiting ones say their place and are listed
+// in the queue's order after the other waiting work; a failure names its search and reason, with Retry.
+test("a series queue: places in line in the queue's order, the running search In progress, a failure with its reason and Retry (#717)", () => {
+  const series = (id: string, state: ActivityItem["state"], status: string, search: "audiobook" | "ebook", over: Partial<ActivityItem> = {},
+    facts: { place?: number | null; retryAt?: number | null } = {}) =>
+    item(`series-acquisition:${id}`, {
+      workId: `w-${id}`, bookId: null, cover: null, title: `Book ${id}`, state,
+      facts: { kind: "series-acquisition", status, search, place: facts.place ?? null, retryAt: facts.retryAt ?? null }, ...over,
+    });
+  const now = build({
+    activity: answer([
+      series("butcher", "failed", "failed", "ebook", {
+        attention: true, actions: ["retry"],
+        error: "Library Genesis could not be reached. Try another mirror in Settings or open the source website.",
+      }),
+      series("gate", "running", "searching", "ebook"),
+      // Newest change first would put these in the wrong order: the queue's order wins.
+      series("bard", "queued", "pending", "audiobook", { updatedAt: NOW - MINUTE }, { place: 4 }),
+      series("eye", "queued", "pending", "ebook", { updatedAt: NOW - 2 * MINUTE }, { place: 3 }),
+      series("dungeon", "queued", "pending", "audiobook", { updatedAt: NOW - 3 * MINUTE }, { place: 2 }),
+      series("fist", "queued", "pending", "ebook", { updatedAt: NOW - 10 * MINUTE, error: "Prowlarr did not answer in time." }, { retryAt: NOW + 5 * MINUTE }),
+      download("acq-wait", "w-other", { state: "queued", progress: null, updatedAt: NOW - 20 * MINUTE }),
+    ]),
+  });
+  assert.deepEqual(group(now, "attention").map((r) => [r.key, r.line]), [["work:w-butcher", "Ebook search failed · Library Genesis could not be reached"]]);
+  assert.deepEqual(row(now, "work:w-butcher").button, { action: "retry", source: "server", itemId: "series-acquisition:butcher" });
+  assert.equal(row(now, "work:w-butcher").icon, "ebook");
+  assert.deepEqual(group(now, "progress").map((r) => [r.key, r.line]), [["work:w-gate", "Searching for the ebook"]]);
+  assert.deepEqual(group(now, "waiting").map((r) => [r.key, r.line]), [
+    ["work:w-fist", "Waiting to try again · Prowlarr did not answer in time"],
+    ["work:w-other", "Downloading to server · 0%"],
+    ["work:w-dungeon", "Waiting · 2nd in line"],
+    ["work:w-eye", "Waiting · 3rd in line"],
+    ["work:w-bard", "Waiting · 4th in line"],
+  ]);
+  assert.equal("place" in row(now, "work:w-dungeon"), false, "the place orders the rows and is not a field of the row");
 });
 
 // #718: a sync of a spare edition (an EPUB nobody reads, queued by itself) is not the book being synced again.

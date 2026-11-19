@@ -1,7 +1,6 @@
 import { isHeld } from "./activity-pause.ts";
 import type { BackgroundProcess } from "./background-runner.ts";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
 import { and, eq } from "drizzle-orm";
 import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
@@ -11,7 +10,7 @@ import {
   seriesVolumeRefs,
   type SeriesAudioSearchDeps,
 } from "./series-audio.ts";
-import { fetchTopKIntoEbookSet, listEbookSetMembers } from "./ebook-set.ts";
+import { fetchTopKIntoEbookSet } from "./ebook-set.ts";
 import { retryWorkMediaAcquisition } from "./series-membership.ts";
 import {
   clearWorkMediaHold,
@@ -22,9 +21,22 @@ import {
   workHasPlayableAudio,
 } from "./work-media-state.ts";
 import { userIsAdmin } from "./users.ts";
+import { worksWithEbook, worksWithFile } from "./work-files.ts";
 
 export const SERIES_ACQUISITION_TICK_MS = 30_000;
 export const SERIES_ACQUISITION_SEARCH_STALE_MS = 120_000;
+/** A search that could not reach its source goes back in the queue by itself this many times (#717)… */
+export const SERIES_SOURCE_AUTO_RETRIES = 3;
+/** …each time this much later than the last (5, 10, 15 min), then through the queue's own 30 s spacing. */
+export const SERIES_SOURCE_RETRY_STEP_MS = 5 * 60_000;
+
+/**
+ * A failure about reaching a source (it could not be reached, did not answer, timed out), which a later try may not
+ * have. Any other failure (no release found, a volume that does not match) waits for the owner's Retry.
+ */
+export function isSourceReachFailure(message: string | null | undefined) {
+  return !!message && /could not be reached|did not answer|timed? ?out|is unavailable|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|fetch failed|socket hang up/i.test(message);
+}
 
 export type SeriesAcquisitionKind = "audio" | "ebook";
 export type SeriesAcquisitionJobStatus =
@@ -69,6 +81,8 @@ export function setSeriesAcquisitionDeps(overrides: SeriesAcquisitionDeps) {
 export function resetSeriesAcquisitionDeps() {
   deps = {};
   seriesWorkAcquireInFlight.clear();
+  // A test's own clock (`deps.now`) must not leave the next search's time behind for the next test.
+  nextAcquisitionAt = 0;
 }
 
 const seriesWorkAcquireInFlight = new Set<string>();
@@ -216,19 +230,7 @@ export function seriesAudioJobStillSearching(jobId: string) {
 }
 
 export function workHasAppropriateEbook(workId: string) {
-  if (
-    listEbookSetMembers(workId).some((member) => member.status === "accepted")
-  )
-    return true;
-  return db
-    .select()
-    .from(s.ebookEditions)
-    .where(eq(s.ebookEditions.workId, workId))
-    .all()
-    .some(
-      (ebook) =>
-        !ebook.id.startsWith("set-consensus:") && existsSync(ebook.source),
-    );
+  return worksWithEbook(sqlite, [workId]).has(workId);
 }
 
 function jobRow(
@@ -299,6 +301,9 @@ function upsertJob(input: {
         status: input.status,
         error: input.error ?? null,
         updatedAt: now,
+        // A search set again (a Retry, the series added again) starts with its own tries again.
+        autoRetries: 0,
+        retryAt: null,
       })
       .where(eq(s.seriesAcquisitionJobs.id, existing.id))
       .run();
@@ -481,6 +486,20 @@ function presentationForJob(
   workUnreleased: boolean,
 ): SeriesWorkAcquisitionState | null {
   if (!row) return null;
+  // A failed search whose work has the file by now, by any route, is skipped as if the work had it then (#717).
+  if (
+    row.status === "failed" &&
+    row.error !== "no_permission" &&
+    row.error !== SERIES_ACQUISITION_CANCELLED_ERROR &&
+    worksWithFile(sqlite, kind, [row.workId]).has(row.workId)
+  ) {
+    return {
+      kind,
+      status: "skipped",
+      error: null,
+      skipReason: kind === "audio" ? "has_audio" : "has_ebook",
+    };
+  }
   if (row.status === "failed" && row.error === "no_permission") {
     return {
       kind,
@@ -549,6 +568,24 @@ export function seriesWorkAcquisitions(
   };
 }
 
+/**
+ * The queue's order (ADR 0010): the pending jobs one at a time, oldest row first; a job put back by itself after a
+ * source could not be reached waits until its `retry_at`. Activity's places in line read the same order.
+ */
+export const SERIES_QUEUE_ORDER = "rowid";
+
+function nextPendingSeriesJob(now: number) {
+  const row = sqlite
+    .prepare(
+      `SELECT id FROM series_acquisition_jobs
+       WHERE status='pending' AND (retry_at IS NULL OR retry_at <= ?)
+       ORDER BY ${SERIES_QUEUE_ORDER} LIMIT 1`,
+    )
+    .get(now) as { id: string } | undefined;
+  if (!row) return undefined;
+  return db.select().from(s.seriesAcquisitionJobs).where(eq(s.seriesAcquisitionJobs.id, row.id)).get();
+}
+
 let tickQueue: Promise<void> | null = null;
 let nextAcquisitionAt = 0;
 
@@ -559,13 +596,9 @@ export async function tickSeriesAcquisition(
   const run = async () => {
     resetStaleSeriesAcquisitionJobs();
     for (;;) {
-      const pending = db
-        .select()
-        .from(s.seriesAcquisitionJobs)
-        .where(eq(s.seriesAcquisitionJobs.status, "pending"))
-        .get();
-      if (!pending) break;
       const now = deps.now ?? Date.now;
+      const pending = nextPendingSeriesJob(now());
+      if (!pending) break;
       const delay = Math.max(0, nextAcquisitionAt - now());
       if (delay) await (deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))))(delay);
       await processJob(pending, acquire).catch(() => {});
@@ -603,7 +636,7 @@ async function processJob(
 ) {
   const claimed = sqlite
     .prepare(
-      `UPDATE series_acquisition_jobs SET status='searching', error=NULL, updated_at=?
+      `UPDATE series_acquisition_jobs SET status='searching', error=NULL, retry_at=NULL, updated_at=?
        WHERE id=? AND status='pending'`,
     )
     .run(Date.now(), job.id);
@@ -624,6 +657,7 @@ async function processJob(
         status: "done",
         error: partialError,
         updatedAt: Date.now(),
+        autoRetries: 0,
       })
       .where(
         and(
@@ -634,11 +668,18 @@ async function processJob(
       .run();
   } catch (error) {
     if (!seriesJobStillActive(job.id)) return;
+    const message = (error as Error).message;
+    const now = (deps.now ?? Date.now)();
+    // A source that could not be reached is tried again by itself, a bounded number of times (#717). The job waits
+    // in the queue with the reason, and the owner's Retry is not needed for it.
+    const tries = job.autoRetries ?? 0;
+    const again = isSourceReachFailure(message) && tries < SERIES_SOURCE_AUTO_RETRIES;
     db.update(s.seriesAcquisitionJobs)
       .set({
-        status: "failed",
-        error: (error as Error).message,
+        status: again ? "pending" : "failed",
+        error: message,
         updatedAt: Date.now(),
+        ...(again ? { autoRetries: tries + 1, retryAt: now + (tries + 1) * SERIES_SOURCE_RETRY_STEP_MS } : {}),
       })
       .where(
         and(
@@ -840,4 +881,31 @@ export async function retrySeriesWorkAcquisition(
   setJobState(userId, seriesId, bookId, workId, "ebook", "pending");
   await tickSeriesAcquisition(acquire);
   return seriesWorkAcquisitions(userId, seriesId, bookId, workId, false);
+}
+
+/**
+ * Activity's Retry on a failed series search (#717): the job goes back in the queue, as the Series page's Retry
+ * does (`retrySeriesWorkAcquisition`), whichever user's series it is; the administrator asks. The answer does not
+ * wait for the queue, which spaces its searches 30 s apart. A job that has not failed is refused (409), so an
+ * Activity page older than the row cannot set a running search again.
+ */
+export function retrySeriesAcquisitionJob(jobId: string, onQueueError: (error: unknown) => void) {
+  const job = db
+    .select()
+    .from(s.seriesAcquisitionJobs)
+    .where(eq(s.seriesAcquisitionJobs.id, jobId))
+    .get();
+  if (!job)
+    throw Object.assign(new Error("This series search could not be found."), { statusCode: 404 });
+  if (
+    job.status !== "failed" ||
+    job.error === "no_permission" ||
+    job.error === SERIES_ACQUISITION_CANCELLED_ERROR
+  )
+    throw Object.assign(new Error("This series search has not failed."), { statusCode: 409 });
+  const kind = job.kind as SeriesAcquisitionKind;
+  if (kind === "audio") clearWorkMediaHold(job.userId, job.workId);
+  setJobState(job.userId, job.seriesId, job.bookId, job.workId, kind, "pending");
+  tickSeriesAcquisition().catch(onQueueError);
+  return { id: job.id, status: "pending" as const };
 }

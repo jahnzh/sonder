@@ -147,7 +147,7 @@ test("accounts keep libraries and offline queues separate", async ({ page }) => 
     };
     open.onerror = () => reject(open.error);
   }), { recordingId: book.recordingId });
-  await page.getByRole("button", { name: "My library", exact: true }).last().click();
+  await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button", { name: "Library", exact: true }).click();
   await playFromLibrary(page, book.title);
   await expect.poll(() => page.evaluate((recordingId) => new Promise<boolean>(resolve => {
     const open = indexedDB.open("sonder");
@@ -259,7 +259,7 @@ test("one account's position history is not shown to or undoable by another", as
     return ebooks.some((ebook: { workId: string; format: string; available: boolean }) =>
       ebook.workId === book.workId && ebook.format === "epub" && ebook.available);
   }).toBe(true);
-  await page.getByRole("button", { name: "My library", exact: true }).last().click();
+  await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button", { name: "Library", exact: true }).click();
   let dialog = await openNowPlaying(book.title);
   await revealReaderControls(page);
   await dialog.getByRole("region", { name: "Player", exact: true }).getByRole("slider", { name: /^Seek in / }).fill("120");
@@ -277,7 +277,7 @@ test("one account's position history is not shown to or undoable by another", as
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.getByRole("button", { name: "Discover", exact: true }).last().click();
   await addFromDiscover(page, book.title);
-  await page.getByRole("button", { name: "My library", exact: true }).last().click();
+  await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button", { name: "Library", exact: true }).click();
   dialog = await openNowPlaying(book.title);
   // Same recording, other account: empty Position history and no row in either database.
   {

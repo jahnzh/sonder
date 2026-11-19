@@ -335,10 +335,10 @@ test("a reload keeps the child page and where its back button goes", async ({ pa
 
 test("nothing in the app links to the gallery", async ({ page }) => {
   await page.goto("/#library");
-  await expect(page.locator(".topbar")).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Main", exact: true })).toBeVisible();
   for (const address of ["#library", "#discover", "#settings"]) {
     await page.goto(`/${address}`);
-    await expect(page.locator(".topbar")).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Main", exact: true })).toBeVisible();
     expect(await page.locator('a[href*="gallery"]').count()).toBe(0);
     await expect(page.getByText("Gallery", { exact: true })).toHaveCount(0);
   }

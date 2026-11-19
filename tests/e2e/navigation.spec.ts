@@ -23,9 +23,10 @@ test.beforeEach(async ({ page }) => {
 });
 
 const unique = (label: string) => `${label} ${test.info().repeatEachIndex} ${randomBytes(3).toString("hex")}`;
-const shown = (page: Page) => page.locator(".topbar .breadcrumb strong");
+// The place shown: the tab or the rail's row marked current (the top bar's name went with #581).
+const shown = (page: Page) => page.getByRole("navigation", { name: "Main", exact: true }).locator('[aria-current="page"]');
 const tab = (page: Page, name: string) =>
-  page.getByRole("navigation", { name: "Mobile navigation" }).getByRole("button", { name, exact: true });
+  page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button", { name, exact: true });
 const hash = (page: Page) => page.evaluate(() => location.hash);
 
 // The works a test imports leave the library after it, so a book it played is not the latest played book that the
@@ -181,7 +182,7 @@ test("closing the reader goes back, and Back afterwards does not reopen it", asy
   const book = await importWithEbook(page, title);
   await page.goto("/#discover");
   await expect(shown(page)).toHaveText("Discover");
-  await tab(page, "My library").click();
+  await tab(page, "Library").click();
   await expect(shown(page)).toHaveText("Library");
   await page.getByRole("button", { name: `About ${title}`, exact: true }).click();
   // Read on the Book page (#532) opens the chosen EPUB; closing the reader goes back to the book.
@@ -240,7 +241,7 @@ test("the Library's filters are remembered when it is left, so the list Back ret
   const prefix = unique("Filtered list");
   for (let i = 0; i < 2; i++) await importAudio(page, `${prefix} ${i}`);
   await page.goto("/#discover");
-  await tab(page, "My library").click();
+  await tab(page, "Library").click();
   await expect(shown(page)).toHaveText("Library");
   // The chips (#577): toggle buttons in a group; Search opens its field in place of the Title.
   const filters = page.getByRole("group", { name: "Filter your library" });
@@ -253,7 +254,7 @@ test("the Library's filters are remembered when it is left, so the list Back ret
   await tab(page, "Discover").click();
   await expect(shown(page)).toHaveText("Discover");
   await expect(page.getByRole("searchbox", { name: "Search for a book" })).toHaveValue("");
-  await tab(page, "My library").click();
+  await tab(page, "Library").click();
   await expect(filters.getByRole("button", { name: "Not started", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(search).toHaveValue(prefix);
   // The Favorites chip (the drawer's favourites view is gone) is kept too; Back returns to it.
@@ -265,9 +266,8 @@ test("the Library's filters are remembered when it is left, so the list Back ret
   await page.goBack();
   await expect(page.getByRole("heading", { name: "Favorites", level: 2 })).toBeVisible();
   await expect(filters.getByRole("button", { name: "Favorites", exact: true })).toHaveAttribute("aria-pressed", "true");
-  // The Library's own item in the menu, on the Library, shows every book again.
-  await page.getByRole("button", { name: "Open navigation", exact: true }).click();
-  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: /^My library/ }).click();
+  // The Library's own tab, on the Library, shows every book again (the drawer's item did, before #581).
+  await tab(page, "Library").click();
   await expect(page.getByRole("heading", { name: "All books", level: 2 })).toBeVisible();
   await expect(filters.getByRole("button", { name: "All", exact: true })).toHaveAttribute("aria-pressed", "true");
 });
@@ -298,7 +298,7 @@ test("Now playing has an entry: Back closes it and leaves the page where it was,
   const title = unique("Now playing back");
   await importAudio(page, title);
   await page.goto("/#discover");
-  await tab(page, "My library").click();
+  await tab(page, "Library").click();
   await expect(shown(page)).toHaveText("Library");
   // Played from the Library's Continue card (#577), so no other page's entries stand ahead in the history.
   await playFromContinue(page, title);
@@ -345,7 +345,7 @@ test("Now playing has an entry: Back closes it and leaves the page where it was,
   }
 
   // Its address survives a reload (#593), and Back still closes it to the page it was opened over.
-  await tab(page, "My library").click();
+  await tab(page, "Library").click();
   await expect(shown(page)).toHaveText("Library");
   await dock.locator(".dock-book").click();
   await expect(nowPlaying).toBeVisible();
@@ -362,7 +362,7 @@ test("a dialog opened from Now playing closes with it on Back", async ({ page })
   const title = unique("Now playing dialog");
   await importAudio(page, title);
   await page.goto("/#discover");
-  await tab(page, "My library").click();
+  await tab(page, "Library").click();
   await expect(shown(page)).toHaveText("Library");
   await playFromContinue(page, title);
   const dock = page.locator(".player-dock");
@@ -500,15 +500,9 @@ test.describe("with answers from the test", () => {
   /** The Library, with Discover behind it, so Back leaves the page. */
   async function libraryOverDiscover(page: Page) {
     await page.goto("/#discover");
-    await tab(page, "My library").click();
+    await tab(page, "Library").click();
     await expect(shown(page)).toHaveText("Library");
   }
-  /** The import dialog: the navigation's Add an audiobook (the Library's plus opens Discover, #577). */
-  async function openImport(page: Page) {
-    await page.getByRole("button", { name: "Open navigation", exact: true }).click();
-    await page.getByRole("button", { name: "Add an audiobook", exact: true }).click();
-  }
-
   test("the Book page is an entry of its own: Back returns to the Library, and Back again leaves it", async ({ page }) => {
     const title = unique("Details back");
     await importAudio(page, title);
@@ -580,55 +574,6 @@ test.describe("with answers from the test", () => {
     await page.goForward();
     await expect(shown(page)).toHaveText("Library");
     await expect(manager).toBeHidden();
-  });
-
-  test("Back with the import dialog open leaves the page and closes it", async ({ page }) => {
-    await libraryOverDiscover(page);
-    await openImport(page);
-    const importDialog = page.getByRole("dialog", { name: "Add audiobook", exact: true });
-    await expect(importDialog).toBeVisible();
-    await page.goBack();
-    await expect(shown(page)).toHaveText("Discover");
-    await expect(importDialog).toBeHidden();
-  });
-
-  test("a magnet link sent before Back does not clear the dialog opened again, nor move the page", async ({ page }) => {
-    let answer!: () => void;
-    const held = new Promise<void>((resolve) => (answer = resolve));
-    let answered = false;
-    await page.route("**/api/acquire", async (route) => {
-      await held;
-      await route.fulfill({
-        json: { id: "acq-597", hash: "a".repeat(40), backend: "local", title: "Held", author: "QA", cover: "", status: "queued" },
-      });
-      answered = true;
-    });
-    await libraryOverDiscover(page);
-    const importDialog = page.getByRole("dialog", { name: "Add audiobook", exact: true });
-    const magnet = importDialog.getByRole("textbox", { name: "Magnet link" });
-    await openImport(page);
-    await importDialog.getByRole("button", { name: "Magnet link", exact: true }).click();
-    await magnet.fill(`magnet:?xt=urn:btih:${"a".repeat(40)}`);
-    await importDialog.locator("form.magnet-form").evaluate((form: HTMLFormElement) => form.requestSubmit());
-    await expect.poll(() => page.evaluate(() => !!document.querySelector(".magnet-form .spin"))).toBe(true);
-    // Back closes the dialog with the request still out; Forward, and the dialog opened again with a new draft.
-    await page.goBack();
-    await expect(shown(page)).toHaveText("Discover");
-    await expect(importDialog).toBeHidden();
-    await page.goForward();
-    await expect(shown(page)).toHaveText("Library");
-    await openImport(page);
-    await expect(importDialog).toBeVisible();
-    const draft = `magnet:?xt=urn:btih:${"b".repeat(40)}`;
-    await magnet.fill(draft);
-    answer();
-    await expect.poll(() => answered).toBe(true);
-    // The toast sits outside the open dialog, which hides the rest of the page from the accessibility tree.
-    await expect(page.locator(".toast").filter({ hasText: "Downloading to your home server’s HDD." })).toBeVisible();
-    await expect(importDialog).toBeVisible();
-    await expect(magnet).toHaveValue(draft);
-    expect(await hash(page)).toBe("#library");
-    await expect(shown(page)).toHaveText("Library");
   });
 
   test("a reader closed before its ebook's \"gone\" answer came leaves the page shown then alone", async ({ page }) => {
@@ -709,7 +654,7 @@ test("Back with the Audiobook page's removal confirmation open removes nothing",
   const title = unique("Removal back");
   await importAudio(page, title);
   await page.goto("/#discover");
-  await tab(page, "My library").click();
+  await tab(page, "Library").click();
   await expect(shown(page)).toHaveText("Library");
   const details = page.getByRole("region", { name: "Book", exact: true });
   const manager = page.getByRole("region", { name: "Audiobook", exact: true });
@@ -884,7 +829,7 @@ test.describe("with a password", () => {
     // The Library shown again starts from what was kept for the reader: nothing of the administrator's.
     await tab(page, "Discover").click();
     await expect(shown(page)).toHaveText("Discover");
-    await tab(page, "My library").click();
+    await tab(page, "Library").click();
     await expect(shown(page)).toHaveText("Library");
     // Nothing of the administrator's Hardcover: the sort-and-view picker has no Hardcover group for the reader (#578).
     await inSortPicker(page, async (picker) => {

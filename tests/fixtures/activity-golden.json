@@ -440,11 +440,15 @@
         "facts": {
           "kind": "series-acquisition",
           "status": "failed",
-          "search": "audiobook"
+          "search": "audiobook",
+          "place": null,
+          "retryAt": null
         },
         "error": "No release found",
         "permanent": false,
-        "actions": [],
+        "actions": [
+          "retry"
+        ],
         "stuck": null,
         "blockedBy": null,
         "attention": true
@@ -1045,7 +1049,9 @@
         "facts": {
           "kind": "series-acquisition",
           "status": "searching",
-          "search": "ebook"
+          "search": "ebook",
+          "place": null,
+          "retryAt": null
         },
         "error": null,
         "permanent": false,
@@ -1125,7 +1131,9 @@
         "facts": {
           "kind": "series-acquisition",
           "status": "pending",
-          "search": "audiobook"
+          "search": "audiobook",
+          "place": 2,
+          "retryAt": null
         },
         "error": null,
         "permanent": false,
@@ -1393,7 +1401,9 @@
         "facts": {
           "kind": "series-acquisition",
           "status": "done",
-          "search": "ebook"
+          "search": "ebook",
+          "place": null,
+          "retryAt": null
         },
         "error": "has_ebook",
         "permanent": false,
@@ -1479,7 +1489,9 @@
         "facts": {
           "kind": "series-acquisition",
           "status": "failed",
-          "search": "ebook"
+          "search": "ebook",
+          "place": null,
+          "retryAt": null
         },
         "error": null,
         "permanent": false,
@@ -1947,11 +1959,15 @@
         "facts": {
           "kind": "series-acquisition",
           "status": "failed",
-          "search": "audiobook"
+          "search": "audiobook",
+          "place": null,
+          "retryAt": null
         },
         "error": "No release found",
         "permanent": false,
-        "actions": [],
+        "actions": [
+          "retry"
+        ],
         "stuck": null,
         "blockedBy": null,
         "attention": true
@@ -2579,7 +2595,9 @@
         "facts": {
           "kind": "series-acquisition",
           "status": "searching",
-          "search": "ebook"
+          "search": "ebook",
+          "place": null,
+          "retryAt": null
         },
         "error": null,
         "permanent": false,
@@ -2746,7 +2764,9 @@
         "facts": {
           "kind": "series-acquisition",
           "status": "pending",
-          "search": "audiobook"
+          "search": "audiobook",
+          "place": 2,
+          "retryAt": null
         },
         "error": null,
         "permanent": false,
@@ -3014,7 +3034,9 @@
         "facts": {
           "kind": "series-acquisition",
           "status": "done",
-          "search": "ebook"
+          "search": "ebook",
+          "place": null,
+          "retryAt": null
         },
         "error": "has_ebook",
         "permanent": false,
@@ -3100,7 +3122,9 @@
         "facts": {
           "kind": "series-acquisition",
           "status": "failed",
-          "search": "ebook"
+          "search": "ebook",
+          "place": null,
+          "retryAt": null
         },
         "error": null,
         "permanent": false,
@@ -3549,11 +3573,15 @@
         "facts": {
           "kind": "series-acquisition",
           "status": "failed",
-          "search": "audiobook"
+          "search": "audiobook",
+          "place": null,
+          "retryAt": null
         },
         "error": "No release found",
         "permanent": false,
-        "actions": [],
+        "actions": [
+          "retry"
+        ],
         "stuck": null,
         "blockedBy": null,
         "attention": true
@@ -4181,7 +4209,9 @@
         "facts": {
           "kind": "series-acquisition",
           "status": "searching",
-          "search": "ebook"
+          "search": "ebook",
+          "place": null,
+          "retryAt": null
         },
         "error": null,
         "permanent": false,
@@ -4348,7 +4378,9 @@
         "facts": {
           "kind": "series-acquisition",
           "status": "pending",
-          "search": "audiobook"
+          "search": "audiobook",
+          "place": 2,
+          "retryAt": null
         },
         "error": null,
         "permanent": false,
@@ -4616,7 +4648,9 @@
         "facts": {
           "kind": "series-acquisition",
           "status": "done",
-          "search": "ebook"
+          "search": "ebook",
+          "place": null,
+          "retryAt": null
         },
         "error": "has_ebook",
         "permanent": false,
@@ -4702,7 +4736,9 @@
         "facts": {
           "kind": "series-acquisition",
           "status": "failed",
-          "search": "ebook"
+          "search": "ebook",
+          "place": null,
+          "retryAt": null
         },
         "error": null,
         "permanent": false,
