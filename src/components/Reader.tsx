@@ -21,9 +21,8 @@ import {
 } from "lucide-react";
 import literataNormal from "@fontsource-variable/literata/files/literata-latin-wght-normal.woff2?url";
 import literataItalic from "@fontsource-variable/literata/files/literata-latin-wght-italic.woff2?url";
-import { Dialog } from "./ui/dialog";
-import { goBackFrom, navigate as goTo, useAddress } from "../navigation";
-import { isReaderPage, openedFrom, onPlaceRequested, publishReader, takePlace, useOpenerAny, type LiveReader, type ReaderPage, type ReaderPlace } from "../reader-pages";
+import { navigate as goTo } from "../navigation";
+import { openedFrom, onPlaceRequested, publishReader, takePlace, type LiveReader, type ReaderPage, type ReaderPlace } from "../reader-pages";
 import { useAppearance } from "./Appearance";
 import { fontFamilies, paletteFor } from "../appearance";
 import { useReaderMap } from "../use-reader-map";
@@ -47,7 +46,7 @@ import { ReaderFootMessage, tappedControl, useReaderMessages, useReaderUpdate } 
 import { messageToShow, type ReaderError, type ReaderNotice } from "../reader-messages";
 import { dismissUpdate, reloadForUpdate } from "../app-update";
 import { usePlayer, type SeekTarget } from "../player";
-import { ApiError, api, forgetPositionHistory, localDB } from "../lib";
+import { api, forgetPositionHistory, localDB } from "../lib";
 import {
   loadReader,
   epubFile,
@@ -272,80 +271,15 @@ const pageStep = (view: Rendition) => {
 // has ended (the narrated sentence stays across the start of the next file until its first sentence).
 const positionIn = (interval: AlignmentInterval, trackId: string | undefined, position: number) =>
   trackId === interval.trackId ? position : Number.POSITIVE_INFINITY;
-export function ReaderHost({
-  books,
-  notify,
-}: {
-  books: Book[];
-  notify: (text: string, error?: boolean) => void;
-}) {
-  // The reader is open while the address names it (`#reader/<ebook id>`, an old name kept for good).
-  // Closing goes back, so Back afterwards does not reopen it.
-  const { route } = useAddress();
-  // Under one of its pages (Chapters, Bookmarks, Search, #590) the reader stays mounted, hidden, so Back finds it
-  // where it was and a row of the page can show a place in it.
-  const opener = useOpenerAny();
-  const under =
-    opener?.host === "reader" && route.name === "book-page" && isReaderPage(route.page) && route.workId === opener.workId
-      ? opener.ebookId
-      : null;
-  const open = route.name === "reader";
-  const id = open ? route.ebookId : under;
-  const [fromAudio, setFromAudio] = useState(false);
-  useEffect(() => {
-    const open = (event: Event) => setFromAudio(!!(event as CustomEvent).detail?.fromAudio);
-    window.addEventListener("sonder:open-reader", open);
-    return () => window.removeEventListener("sonder:open-reader", open);
-  }, []);
-  // Kept mounted, the dialog also hears of a focus outside it once the close's Back has landed and before this
-  // renders again; the page stack checks the entry it stands on, so that late close moves nothing (#590).
-  const close = () => {
-    if (route.name === "reader") goBackFrom(route);
-  };
-  if (!id) return null;
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(value) => {
-        if (!value) close();
-      }}
-      title="Reader"
-      className="reader-dialog"
-      forceMount
-    >
-      {id && (
-        <ReaderView
-          key={id}
-          id={id}
-          fromAudio={fromAudio}
-          books={books}
-          notify={notify}
-          onClose={close}
-          onGone={() => {
-            // An old link or bookmark to an ebook that is gone: the Library, in the reader's place (or the page
-            // the reader was opened over), rather than an empty reader.
-            notify("That ebook is no longer in your library.", true);
-            close();
-          }}
-        />
-      )}
-    </Dialog>
-  );
-}
 export function ReaderView({
   id,
-  fromAudio: initialFromAudio,
-  inline = false,
   recordingId,
   recording = true,
   books,
   onClose,
-  onGone,
   faceControl,
 }: {
   id: string;
-  fromAudio: boolean;
-  inline?: boolean;
   recordingId?: string;
   /**
    * Whether the work has a recording (#594). Without one (an ebook-only book, #555) the foot holds no narration: no
@@ -353,8 +287,6 @@ export function ReaderView({
    */
   recording?: boolean;
   onClose?: () => void;
-  /** The server says the ebook is gone and no copy of it is on this device. */
-  onGone?: () => void;
   /** Now playing's Listen or Read control (#593), in the head after Close, in the title's place. */
   faceControl?: ReactNode;
   books: Book[];
@@ -407,7 +339,6 @@ export function ReaderView({
     latest = useRef<TextLocator | null>(null),
     bookRef = useRef<ReaderBook | null>(null),
     currentFlow = useRef<string | null>(null),
-    fromListening = useRef(initialFromAudio),
     jumpRef = useRef<
       (id: string, save?: boolean, recordingId?: string) => Promise<boolean>
     >(async () => false),
@@ -538,11 +469,7 @@ export function ReaderView({
       const state = await readingState(id);
       setConflict(state?.conflict || null);
     } catch (error) {
-      // Only a confirmed "not found" means gone; offline, with no copy here, keeps the reader's message.
-      // A reader closed before the answer came leaves the page shown now alone.
-      if (error instanceof ApiError && error.status === 404 && onGone) {
-        if (mountedRef.current) onGone();
-      } else setError((error as Error).message);
+      setError((error as Error).message);
     } finally {
       setLoading(false);
     }
@@ -917,14 +844,8 @@ export function ReaderView({
           host.addEventListener(type, () => following.gesture(), { passive: true });
         (view as any).__observer = observer;
       } catch (error) {
-        // Details kept on this device for an ebook whose file the server confirms is gone: gone, as above.
         if (disposed) return;
-        if (error instanceof ApiError && error.status === 404 && onGone) {
-          if (mountedRef.current) onGone();
-        } else
-          setError(
-            (error as Error).message || "This EPUB could not be rendered.",
-          );
+        setError((error as Error).message || "This EPUB could not be rendered.");
       } finally {
         if (!disposed) setLoading(false);
       }
@@ -939,7 +860,7 @@ export function ReaderView({
       // epub.js throws when destroyed before its view finished initializing, so
       // releaseEpub never throws: an error thrown here would unmount the whole app.
       // The hidden Now Playing reader is torn down this way whenever the playing
-      // book changes, the standalone reader whenever it closes.
+      // book changes.
       releaseEpub(epub.current, rendition.current, opening);
       rendition.current = null;
       epub.current = null;
@@ -951,14 +872,9 @@ export function ReaderView({
     const palette = paletteFor(appearance);
     // Body text sits slightly below full contrast, as in the design.
     const app = { background: palette.background, text: mixHex(palette.text, palette.background, 0.94) };
-    const theme =
-      inline || preferences.theme === "app"
-        ? app
-        : preferences.theme === "dark"
-          ? { background: "#101510", text: "#e6eadf" }
-          : preferences.theme === "sepia"
-            ? { background: "#f2e6cd", text: "#362f24" }
-            : { background: "#ffffff", text: "#202820" };
+    // The text takes the app's colours (the reader's own theme choice went with the reader on its own, #613 part 2;
+    // the stored `reader.theme` an older build may still write is ignored).
+    const theme = app;
     settleAfterLayout(view);
     // The new theme lays the text out anew, so the measured breaks no longer hold. A change of the font, the
     // size, the line height or the margins after the first theme follows the narrated sentence again below,
@@ -1021,7 +937,7 @@ export function ReaderView({
         void displayAutomatically(view, restore).catch(() => {});
     }, 80);
     return () => clearTimeout(timer);
-  }, [themeKey, rendered, inline]);
+  }, [themeKey, rendered]);
   // Relocations caused by our own display() calls are not reader navigation.
   // Mark them automatic until the call settles: in a long book, opening
   // another chapter can take longer than any fixed window.
@@ -1302,12 +1218,6 @@ export function ReaderView({
       await recover(back, player);
     }
   };
-  useEffect(() => {
-    if (fromListening.current && rendered && map) {
-      fromListening.current = false;
-      fromAudio();
-    }
-  }, [map, rendered]);
   useEffect(() => { following.recordingChanged(); }, [map?.recordingId,p.book?.recordingId]);
   useEffect(() => {
     if (
@@ -1602,11 +1512,11 @@ export function ReaderView({
   const timing = currentInterval ? " · estimated timings" : "";
   // Chapters, Bookmarks and Search (#590): pages of the book, opened from here with an entry of their own. This
   // reader stays mounted under them and publishes what they list; a row asks it to show a place, paged away.
-  const host: LiveReader["host"] = inline ? "now-playing" : "reader";
+  const host: LiveReader["host"] = "now-playing";
   const narratedSecondsLeft = audio && narratedChapter ? Math.ceil(chapterTimeLeft(narratedChapter, p.position, p.speed) / 30) * 30 : 0;
   const shown = useRef<() => void>(() => {});
-  // Now playing's Read face (#593) is shown again at its own address; the reader on its own at the old one.
-  shown.current = () => (inline ? book && goTo({ name: "read", workId: book.workId }) : goTo({ name: "reader", ebookId: id }));
+  // Now playing's Read face (#593) is shown again at its own address.
+  shown.current = () => book && goTo({ name: "read", workId: book.workId });
   const removeShown = useRef(removeBookmark);
   removeShown.current = removeBookmark;
   useEffect(() => {
@@ -1709,7 +1619,7 @@ export function ReaderView({
     if (seen && tappedControl(event.target)) setTimeout(() => messages.tapped(seen), 0);
   };
   return (
-    <div className={`reader-room ${inline ? "inline-reader" : ""}`} data-controls-visible={controls} data-appearance={appearanceOpen ? "docked" : undefined} data-contents={showContents} data-ebook={id} data-current-passage={follow ? currentInterval?.paragraphId : undefined}>
+    <div className="reader-room inline-reader" data-controls-visible={controls} data-appearance={appearanceOpen ? "docked" : undefined} data-contents={showContents} data-ebook={id} data-current-passage={follow ? currentInterval?.paragraphId : undefined}>
       {loading && (
         <p className="reader-loading" role="status">
           <Loader2 className="spin" /> Opening your book…
@@ -1803,7 +1713,6 @@ export function ReaderView({
             onChange={editReader}
             follow={follow}
             onFollow={(on) => { if (on) following.backToNarration(); else following.pageAway(); }}
-            theme={!inline}
             onClose={() => setAppearanceOpen(false)}
           />
         )}

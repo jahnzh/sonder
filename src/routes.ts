@@ -34,12 +34,6 @@ export type Route =
   | { name: "series-add"; id: string }
   | { name: "listen"; workId: string }
   | { name: "read"; workId: string }
-  /**
-   * The reader on its own for one ebook edition: the Book page's Read of a narrated book that is not in the player
-   * opens it, and its theme choice lives only there. Spec #608 makes `#reader/<ebook id>` an old name for the Read
-   * face of that ebook's book (`OLD_NAMES`) once nothing opens this reader any more; until then it is a page.
-   */
-  | { name: "reader"; ebookId: string }
   /** The parts gallery (#486): an address of its own that no navigation links to, for the browser tests and builders. */
   | { name: "gallery" }
   /** The gallery's one child page, so the Page header's back button can be tried. */
@@ -72,20 +66,45 @@ export const OLD_NAMES: readonly {
   becomes: string;
   /** The route it reads as, from the parts after the head; null when those parts name nothing in `place`. */
   read: (rest: readonly string[]) => Route | null;
+  /**
+   * The ebook edition the old address names, when only the server knows its work: the route above is then the
+   * link's place (`place`'s first page) until `editionRoute` makes the Read face of the work from the answer.
+   */
+  edition?: (rest: readonly string[]) => string | null;
   place: Place;
 }[] = [
   // The Downloads page, which Activity replaced (#516): it opens Now.
-  // `#reader/<ebook id>` joins this table when the reader on its own is gone (see the `reader` route).
   { head: "downloads", becomes: "#activity", read: (rest) => (rest.length ? null : { name: "activity", part: "now" }), place: "activity" },
+  // The reader on its own (#613 part 2): Now playing's Read face of the ebook's book, with that edition (#596).
+  // The work is the server's to find; until it answers, and when the ebook is gone, the Library is in the link's place.
+  { head: "reader", becomes: "#read/<workId>", read: () => null, edition: readerEdition, place: "library" },
 ];
 
-/** An address as read: its route, and whether it was an old name that the history entry is to be replaced by. */
-export type ReadAddress = { route: Route; redirect: boolean };
+/** The ebook id of `#reader/<ebook id>`: today's reader read everything after "reader/" as the id, slashes too. */
+function readerEdition(rest: readonly string[]): string | null {
+  return rest.length ? decode(rest.join("/")) : null;
+}
+
+/**
+ * An address as read: its route, whether it was an old name that the history entry is to be replaced by, and the
+ * ebook edition an old reader link names, whose work the server is asked for (`editionRoute`).
+ */
+export type ReadAddress = { route: Route; redirect: boolean; edition?: string };
 
 /** Reads an address and says whether it was an old name (`OLD_NAMES`). Never throws. */
 export function readLink(hash: string): ReadAddress {
-  const head = (hash.startsWith("#") ? hash.slice(1) : hash).split("/")[0];
-  return { route: readAddress(hash), redirect: OLD_NAMES.some((entry) => entry.head === head) };
+  const [head, ...rest] = (hash.startsWith("#") ? hash.slice(1) : hash).split("/");
+  const old = OLD_NAMES.find((entry) => entry.head === head);
+  const edition = old?.edition?.(rest) ?? null;
+  return { route: readAddress(hash), redirect: !!old, ...(edition ? { edition } : {}) };
+}
+
+/**
+ * The route an old reader link becomes once the server named the edition's work: the Read face of that work. Null
+ * when the server knows no work for it (the ebook is gone): the link's place stays.
+ */
+export function editionRoute(answer: { workId?: string | null } | null): Extract<Route, { name: "read" }> | null {
+  return answer?.workId ? { name: "read", workId: answer.workId } : null;
 }
 
 /** Reads an address (`location.hash`, with or without its `#`). Never throws. An old name reads as its new route. */
@@ -153,11 +172,6 @@ export function readAddress(hash: string): Route {
       if (!rest.length) return { name: "gallery" };
       if (rest.length === 1 && rest[0] === "child") return { name: "gallery-child" };
       return rest.length === 1 && rest[0] === "sheet" ? { name: "gallery-sheet" } : nothing("library");
-    case "reader": {
-      // Today's reader read everything after "reader/" as the id, so an id with a slash keeps working.
-      const ebookId = rest.length ? decode(rest.join("/")) : null;
-      return ebookId ? { name: "reader", ebookId } : nothing("library");
-    }
     default:
       return nothing("library");
   }
@@ -197,8 +211,6 @@ export function writeAddress(route: Route): string {
     case "listen":
     case "read":
       return `#${route.name}/${part(route.workId)}`;
-    case "reader":
-      return `#reader/${part(route.ebookId)}`;
     case "gallery":
       return "#gallery";
     case "gallery-child":
@@ -248,7 +260,6 @@ export function parentOf(route: Route): Route | null {
       return { name: "book", workId: route.workId };
     case "book":
     case "series":
-    case "reader":
       return { name: "library" };
     case "series-add":
       return { name: "series", id: route.id };
@@ -272,9 +283,9 @@ export function parentOf(route: Route): Route | null {
   }
 }
 
-/** A sheet, Now playing or the reader: shown over a page rather than in place of it. */
+/** A sheet or Now playing (with its Read face): shown over a page rather than in place of it. */
 export function coversPage(route: Route): boolean {
-  return ["get", "get-magnet", "discover-get", "series-add", "listen", "read", "reader", "gallery-sheet"].includes(route.name);
+  return ["get", "get-magnet", "discover-get", "series-add", "listen", "read", "gallery-sheet"].includes(route.name);
 }
 
 /**
@@ -335,7 +346,6 @@ function built(route: Route): boolean {
     // The Get sheet without a book (#575, #576): the recording chosen makes the book.
     case "discover-get":
     case "settings":
-    case "reader":
     case "gallery":
     case "gallery-child":
     case "gallery-sheet":

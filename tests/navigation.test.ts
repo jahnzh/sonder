@@ -130,8 +130,8 @@ test("the tab of the current place adds no step on its first page, and goes back
   nav.goPlace("discover");
   assert.deepEqual(browser.hashes, ["#discover"]);
   nav.goPlace("library");
-  nav.navigate({ name: "reader", ebookId: "e1" });
-  assert.deepEqual(browser.hashes, ["#discover", "#library", "#reader/e1"]);
+  nav.navigate({ name: "read", workId: "w1" });
+  assert.deepEqual(browser.hashes, ["#discover", "#library", "#read/w1"]);
   // The reader is in the Library's place; its tab goes back to the Library instead of adding an entry.
   nav.goPlace("library");
   await until(() => browser.url.hash === "#library", "#library");
@@ -150,7 +150,7 @@ test("closing the reader goes back when an entry of the app lies behind, so Back
   const browser = new FakeBrowser("/#discover");
   const nav = await load(browser);
   nav.goPlace("library");
-  nav.navigate({ name: "reader", ebookId: "e1" });
+  nav.navigate({ name: "read", workId: "w1" });
   nav.goBack();
   await until(() => browser.url.hash === "#library", "#library");
   // The reader's entry is ahead now, not behind: Back goes to Discover.
@@ -159,12 +159,12 @@ test("closing the reader goes back when an entry of the app lies behind, so Back
 });
 
 test("a reader opened by a link closes to its parent in place, adding nothing behind", async () => {
-  const browser = new FakeBrowser("/#reader/e1");
+  const browser = new FakeBrowser("/#read/w1");
   const nav = await load(browser);
-  assert.deepEqual(browser.hashes, ["#reader/e1"]);
+  assert.deepEqual(browser.hashes, ["#read/w1"]);
   nav.goBack();
   await settle();
-  assert.deepEqual(browser.hashes, ["#library"]);
+  assert.deepEqual(browser.hashes, ["#book/w1"]);
   assert.equal(browser.index, 0);
 });
 
@@ -204,6 +204,65 @@ test("an old name is read in place: #downloads becomes #activity, an unknown wor
   const unknown = new FakeBrowser("/#nowhere");
   await load(unknown);
   assert.deepEqual(unknown.hashes, ["#library"]);
+});
+
+test("an old reader link (#613 part 2) is read in place as the Library, then becomes the Read face of the edition's work", async () => {
+  for (const admin of [true, false]) {
+    const browser = new FakeBrowser("/#reader/e1");
+    const nav = await load(browser, admin);
+    // The Library in the link's place while the server is asked; the entry is the link's, replaced.
+    assert.deepEqual(browser.hashes, ["#library"]);
+    const link = nav.shownEditionLink();
+    assert.equal(link?.ebookId, "e1");
+    nav.followEditionLink(link!.key, { name: "read", workId: "w1" });
+    // Replaced again, not added to: Back from the Read face leaves the app, as Back from the reader did.
+    assert.deepEqual(browser.hashes, ["#read/w1"]);
+    assert.equal(browser.index, 0);
+    assert.equal(nav.shownEditionLink(), null, "the link is followed once");
+    nav.followEditionLink(link!.key, { name: "read", workId: "w2" });
+    assert.deepEqual(browser.hashes, ["#read/w1"]);
+  }
+});
+
+test("an old reader link left before the server answered moves nothing; one typed later is followed in its own entry", async () => {
+  const browser = new FakeBrowser("/#reader/a%2Fb");
+  const nav = await load(browser);
+  const link = nav.shownEditionLink()!;
+  assert.equal(link.ebookId, "a/b");
+  nav.goPlace("discover");
+  assert.equal(nav.shownEditionLink(), null);
+  nav.followEditionLink(link.key, { name: "read", workId: "w1" });
+  assert.deepEqual(browser.hashes, ["#library", "#discover"]);
+  // A link followed from another site or typed: an entry of its own, read as the Library, then the Read face there.
+  browser.followHash("#reader/e2");
+  assert.deepEqual(browser.hashes, ["#library", "#discover", "#library"]);
+  const typed = nav.shownEditionLink()!;
+  assert.equal(typed.ebookId, "e2");
+  nav.followEditionLink(typed.key, { name: "read", workId: "w2" });
+  assert.deepEqual(browser.hashes, ["#library", "#discover", "#read/w2"]);
+  // A link answered with nothing (the ebook is gone): the Library stays in its place.
+  browser.followHash("#reader/gone");
+  const gone = nav.shownEditionLink()!;
+  nav.dropEditionLink(gone.key);
+  assert.equal(nav.shownEditionLink(), null);
+  nav.followEditionLink(gone.key, { name: "read", workId: "w3" });
+  assert.deepEqual(browser.hashes, ["#library", "#discover", "#read/w2", "#library"]);
+});
+
+test("an older build's reader entry reached by Back is an old reader link too", async () => {
+  const browser = browserWith([{ url: "/#reader/e1", state: null }, { url: "/#discover", state: null }]);
+  const nav = await load(browser);
+  assert.equal(nav.shownEditionLink(), null);
+  browser.traverse(-1);
+  await until(() => browser.index === 0 && browser.url.hash === "#library", "the old reader entry, read as the Library");
+  const link = nav.shownEditionLink()!;
+  assert.equal(link.ebookId, "e1");
+  nav.followEditionLink(link.key, { name: "read", workId: "w1" });
+  assert.deepEqual(browser.hashes, ["#read/w1", "#discover"]);
+  // Nothing of the app is known to lie behind it: Close shows the book in its place instead of leaving the app.
+  nav.goBack();
+  await settle();
+  assert.deepEqual(browser.hashes, ["#book/w1", "#discover"]);
 });
 
 test("Activity's Server for someone else shows Now, and survives for the administrator", async () => {
@@ -263,7 +322,7 @@ test("closing twice before the first Back lands goes back one step", async () =>
   const browser = new FakeBrowser("/#discover");
   const nav = await load(browser);
   nav.goPlace("library");
-  nav.navigate({ name: "reader", ebookId: "e1" });
+  nav.navigate({ name: "read", workId: "w1" });
   // The close button and Escape in the same moment.
   nav.goBack();
   nav.goBack();
@@ -277,7 +336,7 @@ test("a close heard after its Back has landed moves nothing: Back afterwards sti
   const browser = new FakeBrowser("/#discover");
   const nav = await load(browser);
   nav.goPlace("library");
-  const reader = { name: "reader", ebookId: "e1" } as const;
+  const reader = { name: "read", workId: "w1" } as const;
   nav.navigate(reader);
   nav.goBackFrom(reader);
   await until(() => browser.url.hash === "#library", "#library");
@@ -295,7 +354,7 @@ test("a close of the reader before its Back lands goes back one step, like goBac
   const browser = new FakeBrowser("/#discover");
   const nav = await load(browser);
   nav.goPlace("library");
-  const reader = { name: "reader", ebookId: "e1" } as const;
+  const reader = { name: "read", workId: "w1" } as const;
   nav.navigate(reader);
   nav.goBackFrom(reader);
   nav.goBackFrom(reader);
@@ -315,41 +374,41 @@ const state = (depth: number, key: string, extra: Record<string, unknown> = {}) 
 
 test("an old entry without the app's state reached by Back is not taken as one on top: its back button goes to its parent", async () => {
   // An older build: a reader opened by a link (another site behind it), closed forward to Discover; this build loads there.
-  const browser = browserWith([{ url: "/#reader/e1", state: null }, { url: "/#discover", state: null }]);
+  const browser = browserWith([{ url: "/#read/w1", state: null }, { url: "/#discover", state: null }]);
   const nav = await load(browser);
   browser.traverse(-1);
-  await until(() => browser.index === 0 && browser.url.hash === "#reader/e1", "the old reader entry");
+  await until(() => browser.index === 0 && browser.url.hash === "#read/w1", "the old reader entry");
   await settle();
   assert.equal((browser.entries[0].state as { sonderDepth: number }).sonderDepth, 0);
-  // Nothing of the app is known to lie behind it: Close shows the Library in its place instead of leaving the app.
+  // Nothing of the app is known to lie behind it: Close shows its parent, the book, in its place instead of leaving the app.
   nav.goBack();
   await settle();
-  assert.deepEqual(browser.hashes, ["#library", "#discover"]);
+  assert.deepEqual(browser.hashes, ["#book/w1", "#discover"]);
   assert.equal(browser.index, 0);
 });
 
 test("a back button whose Back lands nowhere goes to the page's parent, and counts from there", async () => {
   // The entries behind this reader were thrown away (Firefox keeps 50), but its state still says two lie behind.
-  const browser = browserWith([{ url: "/#reader/e1", state: state(2, "r") }]);
+  const browser = browserWith([{ url: "/#read/w1", state: state(2, "r") }]);
   const nav = await load(browser);
   nav.goBack();
   await settle();
-  assert.equal(browser.url.hash, "#reader/e1", "it waits for the Back first");
+  assert.equal(browser.url.hash, "#read/w1", "it waits for the Back first");
   const hash = () => browser.url.hash;
-  for (let i = 0; i < 100 && hash() !== "#library"; i++) await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.equal(browser.url.hash, "#library");
+  for (let i = 0; i < 100 && hash() !== "#book/w1"; i++) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(browser.url.hash, "#book/w1");
   assert.equal(browser.entries.length, 1);
   assert.equal((browser.entries[0].state as { sonderDepth: number }).sonderDepth, 0);
 });
 
 test("where the browser says there is nothing behind (the Navigation API), the back button goes to the parent at once", async () => {
-  const browser = browserWith([{ url: "/#reader/e1", state: state(3, "r") }]);
+  const browser = browserWith([{ url: "/#read/w1", state: state(3, "r") }]);
   const nav = await load(browser);
   const g = globalThis as Record<string, unknown>;
   g.navigation = { canGoBack: false };
   try {
     nav.goBack();
-    assert.equal(browser.url.hash, "#library");
+    assert.equal(browser.url.hash, "#book/w1");
   } finally {
     delete g.navigation;
   }
@@ -377,7 +436,7 @@ test("a scroll restoration that waits stops when the user scrolls, touches or ty
 test("a scroll restoration that waits never runs on a reader reached by Forward", async () => {
   const browser = browserWith([
     { url: "/#library", state: state(0, "l", { sonderRoot: 0, sonderScroll: 1200 }) },
-    { url: "/#reader/e1", state: state(1, "r", { sonderRoot: 0 }) },
+    { url: "/#read/w1", state: state(1, "r", { sonderRoot: 0 }) },
   ]);
   await load(browser);
   browser.scrollHeight = 1000;
@@ -385,7 +444,7 @@ test("a scroll restoration that waits never runs on a reader reached by Forward"
   await until(() => browser.url.hash === "#library", "#library");
   await settle();
   browser.traverse(1);
-  await until(() => browser.url.hash === "#reader/e1", "#reader/e1");
+  await until(() => browser.url.hash === "#read/w1", "#read/w1");
   browser.scrollHeight = 5000;
   await settle();
   await settle();
@@ -486,7 +545,7 @@ test("the shell hears of a page left by Back or Forward, not of its own moves or
   const heard: string[] = [];
   nav.onPageLeftByHistory((page) => heard.push(page.name));
   nav.goPlace("discover");
-  nav.navigate({ name: "reader", ebookId: "e1" });
+  nav.navigate({ name: "read", workId: "w1" });
   assert.deepEqual(heard, []);
   nav.goBack();
   await until(() => browser.url.hash === "#discover", "#discover");
@@ -520,21 +579,21 @@ test("a Back that lands after its fallback ran does not move the page a second t
   const browser = new FakeBrowser("/#discover");
   const nav = await load(browser);
   const { BACK_WAIT_MS } = nav;
-  nav.navigate({ name: "reader", ebookId: "e1" });
+  nav.navigate({ name: "read", workId: "w1" });
   const heard: string[] = [];
   nav.onPageLeftByHistory((page) => heard.push(page.name));
-  // The browser takes longer than the app waits: the fallback shows the reader's parent, the Library.
+  // The browser takes longer than the app waits: the fallback shows the Read face's parent, the book.
   browser.delay = BACK_WAIT_MS + 200;
   nav.goBack();
-  await until(() => browser.url.hash === "#library", "the fallback's #library");
-  assert.deepEqual(browser.hashes, ["#discover", "#library"]);
+  await until(() => browser.url.hash === "#book/w1", "the fallback's #book/w1");
+  assert.deepEqual(browser.hashes, ["#discover", "#book/w1"]);
   // Then the Back lands on Discover after all; the app returns to the entry it shows.
   browser.delay = 0;
   await until(() => browser.landed.length === 2, "the late Back, and the way back");
   await settle();
-  assert.deepEqual(browser.landed, ["#discover", "#library"]);
-  assert.equal(browser.url.hash, "#library");
-  assert.deepEqual(browser.hashes, ["#discover", "#library"]);
+  assert.deepEqual(browser.landed, ["#discover", "#book/w1"]);
+  assert.equal(browser.url.hash, "#book/w1");
+  assert.deepEqual(browser.hashes, ["#discover", "#book/w1"]);
   assert.deepEqual(heard, [], "the page did not move again");
   // The phone's Back from there is the user's own and moves the page.
   browser.traverse(-1);
@@ -547,20 +606,20 @@ test("a move queued behind a late Back runs once, and the late Back moves nothin
   const browser = new FakeBrowser("/#discover");
   const nav = await load(browser);
   const { BACK_WAIT_MS } = nav;
-  nav.navigate({ name: "reader", ebookId: "e1" });
+  nav.navigate({ name: "read", workId: "w1" });
   browser.delay = BACK_WAIT_MS + 200;
   nav.goBack();
   // A move asked for while the Back is on its way waits for it, and runs after the fallback.
   nav.goPlace("settings");
-  assert.deepEqual(browser.hashes, ["#discover", "#reader/e1"]);
+  assert.deepEqual(browser.hashes, ["#discover", "#read/w1"]);
   await until(() => browser.url.hash === "#settings", "the queued #settings");
-  assert.deepEqual(browser.hashes, ["#discover", "#library", "#settings"]);
+  assert.deepEqual(browser.hashes, ["#discover", "#book/w1", "#settings"]);
   browser.delay = 0;
   // The late Back lands on the Library, one entry behind Settings; the app returns to Settings.
   await until(() => browser.landed.length === 2, "the late Back, and the way back");
-  assert.deepEqual(browser.landed, ["#library", "#settings"]);
+  assert.deepEqual(browser.landed, ["#book/w1", "#settings"]);
   await new Promise((resolve) => setTimeout(resolve, BACK_WAIT_MS + 100));
-  assert.deepEqual(browser.hashes, ["#discover", "#library", "#settings"], "the queued move ran once");
+  assert.deepEqual(browser.hashes, ["#discover", "#book/w1", "#settings"], "the queued move ran once");
   assert.equal(browser.index, 2);
   assert.equal(browser.url.hash, "#settings");
 });
@@ -569,12 +628,12 @@ test("a Back long after a fallback ran is the user's own, and moves the page", a
   const browser = new FakeBrowser("/#discover");
   const nav = await load(browser);
   const { BACK_WAIT_MS, LATE_BACK_MS } = nav;
-  nav.navigate({ name: "reader", ebookId: "e1" });
-  // A Back the browser never makes: the traversal is lost, the fallback shows the Library.
+  nav.navigate({ name: "read", workId: "w1" });
+  // A Back the browser never makes: the traversal is lost, the fallback shows the book.
   const go = history.go;
   history.go = () => {};
   nav.goBack();
-  await until(() => browser.url.hash === "#library", "the fallback's #library");
+  await until(() => browser.url.hash === "#book/w1", "the fallback's #book/w1");
   history.go = go;
   await new Promise((resolve) => setTimeout(resolve, LATE_BACK_MS + 50));
   const heard: string[] = [];
@@ -590,7 +649,7 @@ test("when the way back from a late Back is late too, the entry the browser stan
   const browser = new FakeBrowser("/#discover");
   const nav = await load(browser);
   const { BACK_WAIT_MS } = nav;
-  nav.navigate({ name: "reader", ebookId: "e1" });
+  nav.navigate({ name: "read", workId: "w1" });
   const heard: string[] = [];
   nav.onPageLeftByHistory((page) => heard.push(page.name));
   // Every traversal takes longer than the app waits.
@@ -605,12 +664,12 @@ test("when the way back from a late Back is late too, the entry the browser stan
     assert.equal(browser.url.hash, "#discover");
     // t = 2200: the way back is late too, and its fallback writes the shown page into the entry the browser stands on.
     await wait(BACK_WAIT_MS);
-    assert.equal(browser.url.hash, "#library");
+    assert.equal(browser.url.hash, "#book/w1");
     // t = 2400: it lands, on an entry that shows the same page; it is not taken as a late Back to undo.
     await until(() => browser.landed.length === 2, "the late way back");
     await new Promise((resolve) => setTimeout(resolve, BACK_WAIT_MS + 400));
-    assert.deepEqual(browser.landed, ["#discover", "#library"]);
-    assert.equal(browser.url.hash, "#library");
+    assert.deepEqual(browser.landed, ["#discover", "#book/w1"]);
+    assert.equal(browser.url.hash, "#book/w1");
     assert.deepEqual(heard, []);
   } finally {
     live = null;

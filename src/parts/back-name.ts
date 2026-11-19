@@ -34,8 +34,6 @@ export function pageName(route: Route): string {
       return "the series";
     case "get-magnet":
       return "Get audiobook";
-    case "reader":
-      return "the reader";
     case "gallery":
       return "Gallery";
     case "gallery-child":

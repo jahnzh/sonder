@@ -139,8 +139,6 @@ function NowPlayingScreen({ workId, face, open, ...props }: NowPlayingProps & { 
           <ReaderView
             key={epub.id}
             id={epub.id}
-            fromAudio={false}
-            inline
             recordingId={recording?.recordingId}
             recording={facts.recording}
             books={props.books}
