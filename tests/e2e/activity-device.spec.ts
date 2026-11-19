@@ -102,7 +102,7 @@ async function save(page: Page, title: string) {
   await expect(page).toHaveURL(/#library$/);
 }
 
-const tabBar = (page: Page) => page.getByRole("navigation", { name: "Mobile navigation" });
+const tabBar = (page: Page) => page.getByRole("navigation", { name: "Main", exact: true });
 const parts = (page: Page) => page.getByRole("radiogroup", { name: "Activity" });
 const group = (page: Page, name: string) => page.getByRole("list", { name, exact: true });
 const kept = (page: Page) => group(page, "Kept on this device");
@@ -333,7 +333,7 @@ test("every name, row and button has a role and a name; each tooltip's text is t
 
 test("switching to This device and back adds no step to Back", async ({ page }) => {
   await page.goto("/#library");
-  await expect(page.locator(".topbar .breadcrumb strong")).toHaveText("Library");
+  await expect(page.getByRole("navigation", { name: "Main", exact: true }).locator('[aria-current="page"]')).toHaveText("Library");
   await tabBar(page).getByRole("button", { name: /^Activity/ }).click();
   await expect(page).toHaveURL(/#activity$/);
   const length = await page.evaluate(() => history.length);

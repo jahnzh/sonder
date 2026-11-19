@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { anchorResult, workerMetadata, type WorkerMetadata } from "./alignment-worker-contract.ts";
 import { db, sqlite } from "./db.ts";
+import { isSpareEdition } from "./ebook-chosen.ts";
 import * as s from "./schema.ts";
 import { extractBook, ebookRecord } from "./reader.ts";
 import { ensureMediaStorage, mediaRoot } from "./storage.ts";
@@ -442,7 +443,8 @@ type BackfillDecision =
   | "ready"
   | "inProgress"
   | "paused"
-  | "notEligible";
+  | "notEligible"
+  | "spare";
 async function backfillDecision(
   ebookId: string,
   recordingId: string,
@@ -459,6 +461,9 @@ async function backfillDecision(
     if (alignmentMapUsable(existing)) return "ready";
   }
   if (ebookSetCheckPending(ebookId)) return "notEligible";
+  // A spare edition (nobody reads it) is never synced whole by itself (#718, ADR 0024): its check against the
+  // narration was the probe, and an accepted one reads the set's consensus map. Prepare still syncs it on request.
+  if (isSpareEdition(sqlite, ebookId)) return "spare";
   return (await backfillEligibility(ebookId, recordingId)).eligible
     ? "queue"
     : "notEligible";
@@ -468,7 +473,7 @@ export async function runAlignmentBackfill() {
   const result = {
     queued: 0,
     failed: 0,
-    skipped: { ready: 0, inProgress: 0, paused: 0, notEligible: 0 },
+    skipped: { ready: 0, inProgress: 0, paused: 0, notEligible: 0, spare: 0 },
   };
   const pairs = db
     .select({ ebookId: s.ebookEditions.id, recordingId: s.recordings.id })
@@ -584,7 +589,10 @@ export async function queueEngineRebuilds(log: AutoQueueLog = console): Promise<
     if (!inFlight && !REBUILT_STATUSES.includes(old.status)) continue;
     // Nothing automatic queues an alignment for an ebook whose ebook-set check is pending (#325 review); a job
     // already in flight is only planned again. The next scan (at start) rebuilds the map once the check has ended.
-    if (!inFlight && ebookSetCheckPending(old.ebookId)) {
+    // A finished map the backfill made for a spare edition is not rebuilt either (#718): nobody reads it. Once someone
+    // does, the edition is read and the next scan rebuilds it. A map the administrator prepared is rebuilt as itself.
+    const spareBackfill = old.origin === "backfill" && isSpareEdition(sqlite, old.ebookId);
+    if (!inFlight && (ebookSetCheckPending(old.ebookId) || spareBackfill)) {
       result.skipped++;
       continue;
     }

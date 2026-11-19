@@ -181,7 +181,7 @@ async function save(page: Page, title: string) {
 
 // ---- What the page shows ---------------------------------------------------------------------------------------
 
-const tabBar = (page: Page) => page.getByRole("navigation", { name: "Mobile navigation" });
+const tabBar = (page: Page) => page.getByRole("navigation", { name: "Main", exact: true });
 const activityTab = (page: Page) => tabBar(page).getByRole("button", { name: "Activity", exact: true });
 const nowPart = (page: Page) => page.getByTestId("activity-now");
 const group = (page: Page, name: string) => page.getByRole("list", { name, exact: true });
@@ -474,7 +474,7 @@ test("Now reads the server every 15 seconds while it is visible, and every minut
   await expect.poll(() => asked).toBe(2);
   await page.clock.runFor(15_000);
   await expect.poll(() => asked).toBe(3);
-  await tabBar(page).getByRole("button", { name: "My library", exact: true }).click();
+  await tabBar(page).getByRole("button", { name: "Library", exact: true }).click();
   // Leaving Now reads once with the slower pace; then nothing for most of a minute.
   await expect.poll(() => asked).toBe(4);
   await page.clock.runFor(45_000);
@@ -534,7 +534,7 @@ test("measured against the boards at 390 by 844 and at desktop width: rows, grou
   await measure(page);
   // DesktopActivity.dc.html: the list beside the rail, under the header.
   const list = (await nowPart(page).boundingBox())!;
-  const rail = (await page.getByRole("navigation", { name: "Main navigation" }).boundingBox())!;
+  const rail = (await page.getByRole("navigation", { name: "Main", exact: true }).boundingBox())!;
   expect(list.x).toBeGreaterThanOrEqual(rail.x + rail.width);
 });
 

@@ -9,6 +9,7 @@ import {
   activityFailure, clamp01, defineSource, itemWork, offeredActions, stateFrom, withWorks,
   type ActivityAction, type ActivityActionContext, type ActivityService, type ItemWork,
 } from "./activity-source.ts";
+import { readEbookIdsByWork } from "./ebook-chosen.ts";
 
 const MINUTE = 60_000;
 
@@ -82,6 +83,8 @@ export type AlignmentRow = {
   data: string;
   updated_at: number;
   work?: ItemWork | null;
+  /** The job's EPUB is a spare edition of its work: nobody reads it (#718, `server/ebook-chosen.ts`). */
+  spare?: boolean;
 };
 
 type ParsedAlignment = {
@@ -101,6 +104,8 @@ type ParsedAlignment = {
   files: { done: number; total: number } | null;
   /** A member's map projected from its ebook set's consensus (#325). */
   projected: boolean;
+  /** Queued by itself (the backfill, an ebook-set check or new audio), not by a Prepare (#718). */
+  background: boolean;
   /** The record is not JSON. */
   unreadable: boolean;
 };
@@ -135,12 +140,12 @@ function parseAlignment(data: string, rowId: string): ParsedAlignment {
       hostId: typeof job.pool?.hostId === "string" ? job.pool.hostId : null,
       outcome: typeof job.outcome === "string" ? job.outcome : null,
       rebuild: !!job.rebuildOf,
-      projected: job.origin === "projected", unreadable: false,
+      projected: job.origin === "projected", background: job.origin === "backfill", unreadable: false,
     };
   } catch (error) {
     return {
       status: "error", progress: null, createdAt: null, hostId: null, outcome: null, rebuild: false,
-      coverage: null, wholeBook: false, stage: null, files: null, projected: false, unreadable: true,
+      coverage: null, wholeBook: false, stage: null, files: null, projected: false, background: false, unreadable: true,
       error: `The job record could not be read: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
@@ -192,16 +197,24 @@ export const alignmentSource = defineSource<AlignmentRow[], AlignmentProbe>({
   kind: "alignment",
   process: { id: "alignment", label: "Reading sync queue" },
   stuckAfterMs: 20 * MINUTE,
-  load: (sqlite, { userId }) =>
-    withWorks(
-      sqlite, userId,
-      sqlite.prepare(
-        `SELECT a.id, a.ebook_id, a.recording_id, w.title, a.data, a.updated_at, w.id AS work_id
-           FROM alignment_jobs a LEFT JOIN recordings r ON r.id = a.recording_id
-           LEFT JOIN audio_editions e ON e.id = r.edition_id LEFT JOIN works w ON w.id = e.work_id`,
-      ).all() as Array<Omit<AlignmentRow, "work"> & { work_id: string | null }>,
-      (row) => row.work_id,
-    ),
+  load: (sqlite, { userId }) => {
+    const rows = sqlite.prepare(
+      `SELECT a.id, a.ebook_id, a.recording_id, w.title, a.data, a.updated_at, w.id AS work_id,
+              b.work_id AS ebook_work_id, b.format AS ebook_format
+         FROM alignment_jobs a LEFT JOIN recordings r ON r.id = a.recording_id
+         LEFT JOIN audio_editions e ON e.id = r.edition_id LEFT JOIN works w ON w.id = e.work_id
+         LEFT JOIN ebook_editions b ON b.id = a.ebook_id`,
+    ).all() as Array<Omit<AlignmentRow, "work" | "spare"> & {
+      work_id: string | null; ebook_work_id: string | null; ebook_format: string | null;
+    }>;
+    const read = readEbookIdsByWork(sqlite, rows.flatMap((row) => row.ebook_work_id ?? []));
+    // The consensus text of an ebook set is no edition; an EPUB of a work that nobody reads is a spare one (#718).
+    const marked = rows.map(({ ebook_work_id: ebookWork, ebook_format: format, ...row }) => ({
+      ...row,
+      spare: !!ebookWork && format === "epub" && !row.ebook_id.startsWith("set-consensus:") && !read.get(ebookWork)?.has(row.ebook_id),
+    }));
+    return withWorks(sqlite, userId, marked, (row) => row.work_id);
+  },
   probe: async (deps): Promise<AlignmentProbe> => {
     const status = await deps.poolStatus();
     return { ...status, restarts: deps.workerHosts?.restarts() };
@@ -220,6 +233,8 @@ export const alignmentSource = defineSource<AlignmentRow[], AlignmentProbe>({
         facts: {
           kind: "alignment" as const, status: job.status, outcome: job.outcome, coverage: job.coverage, wholeBook: job.wholeBook,
           stage: job.stage, files: job.files,
+          // A projected map is the set's consensus read through this edition: no sync of the edition of its own.
+          spare: !!row.spare && !job.projected, background: job.background,
         },
         error: unknown ?? job.error, changedAt: row.updated_at, dependsOn: job.hostId ? hostId(job.hostId) : null,
         actions: readingSyncActions(job),

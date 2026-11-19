@@ -26,7 +26,7 @@ test("the default speed applies once chosen, chapter lengths stay real for a boo
   });
   await page.request.put("/api/appearance", { data: withSpeed(null) });
   const openPlayback = async () => {
-    await page.locator(".mobile-nav").getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button", { name: "Settings", exact: true }).click();
     await page.getByRole("button", { name: /^Playback\b/ }).click();
     return page.getByRole("spinbutton", { name: "Default speed", exact: true });
   };

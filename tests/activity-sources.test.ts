@@ -297,13 +297,19 @@ test("the pause switches import no feature, and the Activity modules do not open
     "series-acquisition-activity.ts", "alignment-activity.ts", "hardcover-activity.ts", "ebook-set-activity.ts", "backups-activity.ts"]) {
     const imports = runtimeImports(source(file));
     assert.ok(imports.every((path) => path === "./activity-source.ts" || path === "./activity-pause-model.ts" || path === "./activity-sources.ts"
-      || /^\.\/[a-z-]+-activity\.ts$/.test(path) || path === "fastify" || path === "./backup-schedule.ts" || path === "./work-cover.ts" || path === "../src/reading-types.ts"),
+      || /^\.\/[a-z-]+-activity\.ts$/.test(path) || path === "fastify" || path === "./backup-schedule.ts" || path === "./work-cover.ts" || path === "./work-files.ts" || path === "./ebook-chosen.ts" || path === "../src/reading-types.ts"),
       `${file} imports ${imports.join(", ")}`);
   }
   assert.deepEqual(runtimeImports(source("backup-schedule.ts")), [], "the backup rules are pure");
   // The cover rule takes the database it is given (#514): it opens none, so the sources stay free of the database.
   assert.deepEqual(runtimeImports(source("work-cover.ts")), ["./placeholder-edition.ts"]);
   assert.deepEqual(runtimeImports(source("placeholder-edition.ts")), []);
+  // Whether a work has a series search's file by now (#717) also takes the database it is given.
+  assert.deepEqual(runtimeImports(source("work-files.ts")), ["node:fs", "./work-media-derivation.ts"]);
+  assert.deepEqual(runtimeImports(source("work-media-derivation.ts")), ["./acquisition-vocabulary.ts", "./placeholder-edition.ts"]);
+  assert.deepEqual(runtimeImports(source("acquisition-vocabulary.ts")), []);
+  // The read-editions rule (#718) takes the database it is given as well.
+  assert.deepEqual(runtimeImports(source("ebook-chosen.ts")), []);
 });
 
 // Series acquisition reads its vocabulary from the CHECK constraint of a real database built here.
@@ -333,8 +339,11 @@ test("series acquisition: every status the CHECK constraint allows maps to its A
   const byStatus = Object.fromEntries(activity.items.map((item) => [item.id.replace("series-acquisition:job-", ""), item]));
   for (const status of allowed) {
     assert.equal(byStatus[status].state, expected[status as SeriesAcquisitionJobStatus], status);
-    assert.deepEqual(byStatus[status].facts, { kind: "series-acquisition", status, search: "audiobook" }, `${status}: the job's status word and kind`);
-    assert.deepEqual(byStatus[status].actions, [], `${status}: a series search offers no action on Activity`);
+    assert.deepEqual(byStatus[status].facts, {
+      kind: "series-acquisition", status, search: "audiobook", place: status === "pending" ? 2 : null, retryAt: null,
+    }, `${status}: the job's status word and kind; the waiting one is 2nd in line behind the search running now`);
+    // Retry for a search that failed (#717), as the Series page offers it; nothing else to act on.
+    assert.deepEqual(byStatus[status].actions, status === "failed" ? ["retry"] : [], `${status}: the actions it offers`);
   }
   assert.equal(byStatus.failed.error, "No release found", "the job's error text is shown");
   assert.equal(byStatus.failed.stuck, null, "an hour after it failed, a failed job is not stuck");

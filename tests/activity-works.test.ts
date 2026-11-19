@@ -186,9 +186,12 @@ test("a reading sync names its work and carries the worker's stage with its file
   assert.deepEqual(book("alignment:sync-encoding"), { workId: "w-real", bookId: "ed-real", cover: "/covers/real.jpg" });
   assert.deepEqual(item("alignment:sync-encoding").facts, {
     kind: "alignment", status: "processing", outcome: null, coverage: null, wholeBook: true, stage: "encoding", files: { done: 24, total: 43 },
+    spare: false, background: false,
   });
   assert.deepEqual(item("alignment:sync-partial").facts, {
     kind: "alignment", status: "partial", outcome: "partial", coverage: 0.61, wholeBook: true, stage: null, files: null,
+    // eb-2 is w-real's second EPUB and nobody reads it: a spare edition (#718), prepared, not queued by itself.
+    spare: true, background: false,
   });
   const decoding = item("alignment:sync-decoding").facts;
   assert.ok(decoding.kind === "alignment");
@@ -218,9 +221,9 @@ test("an ebook check names its work and carries its hold reason", () => {
 });
 
 test("a series search names its work and says whether it looks for the audiobook or the ebook", () => {
-  assert.deepEqual(item("series-acquisition:search-ebook").facts, { kind: "series-acquisition", status: "done", search: "ebook" });
+  assert.deepEqual(item("series-acquisition:search-ebook").facts, { kind: "series-acquisition", status: "done", search: "ebook", place: null, retryAt: null });
   assert.deepEqual(book("series-acquisition:search-ebook"), { workId: "w-real", bookId: "ed-real", cover: "/covers/real.jpg" });
-  assert.deepEqual(item("series-acquisition:search-audio").facts, { kind: "series-acquisition", status: "pending", search: "audiobook" });
+  assert.deepEqual(item("series-acquisition:search-audio").facts, { kind: "series-acquisition", status: "pending", search: "audiobook", place: 1, retryAt: null });
 });
 
 test("a work whose only audio edition is a placeholder lends its cover and no edition id", () => {

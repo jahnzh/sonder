@@ -161,6 +161,12 @@ CREATE TABLE IF NOT EXISTS series_acquisition_jobs(id TEXT PRIMARY KEY,user_id I
 CREATE UNIQUE INDEX IF NOT EXISTS series_acquisition_jobs_user_series_book_kind ON series_acquisition_jobs(user_id,series_id,book_id,kind);
 CREATE UNIQUE INDEX IF NOT EXISTS series_acquisition_jobs_user_work_kind ON series_acquisition_jobs(user_id,work_id,kind);
 `);
+// A series search that could not reach its source is tried again by itself (#717): how often it was, and not before when.
+{
+  const seriesJobColumns = new Set((sqlite.prepare("PRAGMA table_info(series_acquisition_jobs)").all() as { name: string }[]).map((c) => c.name));
+  for (const [column, type] of [["auto_retries", "INTEGER NOT NULL DEFAULT 0"], ["retry_at", "INTEGER"]] as const)
+    if (!seriesJobColumns.has(column)) sqlite.exec(`ALTER TABLE series_acquisition_jobs ADD COLUMN ${column} ${type}`);
+}
 // One-time copy of the single-account Hardcover key, state and queues to the admin (#15). The old rows stay for rollback.
 export function migrateHardcoverToUsers(): void {
   sqlite.transaction(() => {

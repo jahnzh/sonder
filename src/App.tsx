@@ -4,32 +4,10 @@ import {
   useCallback,
   useRef,
   useMemo,
-  type FormEvent,
 } from "react";
-import {
-  Library,
-  Compass,
-  Download,
-  Activity as ActivityIcon,
-  Settings,
-  Search,
-  Plus,
-  ArrowUpRight,
-  ArrowRight,
-  Headphones,
-  Check,
-  Upload,
-  Cloud,
-  WifiOff,
-  X,
-  Loader2,
-  FolderOpen,
-  Link2,
-  RefreshCw,
-  Music2,
-  Menu,
-} from "lucide-react";
 import { PlayerProvider } from "./player";
+import { OfflineLine, PlaceNav, Toast, useConnection } from "./shell";
+import { offlineLineShown } from "./connection";
 import { SeriesPage } from "./pages/series-page";
 import { REMOVED_TOAST as SERIES_REMOVED_TOAST } from "./pages/series-remove-model";
 import { useSavedSeries } from "./pages/library-series";
@@ -66,14 +44,13 @@ import type {
   DownloadPart,
   SavedEbook,
 } from "./types";
-import { Dialog } from "./components/ui/dialog";
 import { SignIn, type Account } from "./components/SignIn";
 import { Join } from "./components/Join";
 import { PlayerDock } from "./components/Player";
 import { NowPlaying } from "./pages/now-playing";
 import { AppUpdate } from "./components/AppUpdate";
 import { type HardcoverFilter } from "./components/Hardcover";
-import { type Page, Mark, Empty } from "./pages/shared";
+import { type Page, Mark } from "./pages/shared";
 import { LibraryPage } from "./pages/library-page";
 import { askDiscoverSearch, DiscoverPage } from "./pages/discover-page";
 import { RecordingSearchSheet } from "./pages/recording-search-sheet";
@@ -107,12 +84,6 @@ import { bookStatus, workProgress } from "./work-progress";
 import { classifyStop, type StopCause } from "./keep";
 import { activeSaves, claimRecording, keepSaver, pauseKeep, resumeKeep, keepOffAndRemove, onKeepJob, savesInOtherTabs, startKeepSaver, stopKeepSaver, useKeptWorks } from "./keep-runtime";
 type Notice = { text: string; error?: boolean };
-const nav = [
-  { id: "library", label: "My library", icon: Library },
-  { id: "discover", label: "Discover", icon: Compass },
-  // Activity took the Downloads slot, for everyone (#516).
-  { id: "activity", label: "Activity", icon: ActivityIcon },
-] as const;
 function App() {
   const [user, setUser] = useState<Account | null>(null);
   const [auth, setAuth] = useState<boolean | null>(null);
@@ -291,6 +262,8 @@ function LibraryApp({
     getSheet || getEbookSheet || recordingQuery !== null || nowPlaying
       ? (coveredPage() ?? (magnetSheet ? { name: "book", workId: magnetSheet } : parentOf(address.route)) ?? address.route)
       : address.route;
+  // The offline line (#581): while there is no connection, on a place or page that does not say so itself.
+  const offlineLine = offlineLineShown(useConnection(), pageRoute);
   // The Ebook page (#531) is shown in place of the page under it.
   const ebookPage = pageRoute.name === "book-page" && pageRoute.page === "ebook" ? pageRoute.workId : null;
   const [loading, setLoading] = useState(true);
@@ -345,7 +318,6 @@ function LibraryApp({
     askDiscoverSearch("books");
     navigate("discover");
   };
-  const [importOpen, setImportOpen] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
   const [savedEbooks, setSavedEbooks] = useState<SavedEbook[]>([]);
@@ -359,7 +331,6 @@ function LibraryApp({
     Record<string, { progress: number; chapter: number; total: number; loaded?: number; size?: number }>
   >({});
   const [saveRecords, setSaveRecords] = useState<DeviceSaveRecord[]>([]);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [installPrompt, setInstallPrompt] = useState<
     (Event & { prompt: () => Promise<void> }) | null
@@ -551,7 +522,6 @@ function LibraryApp({
   // list Back returns to is the one its scroll position belongs to.
   const leavePage = (p: Page) => {
     setQueries((q) => ({ library: q.library, discover: "", other: "" }));
-    setSidebarOpen(false);
     if (p === "library" || p === "discover") void refresh();
   };
   // Back (or any traversal) that changes the page closes the shell's dialogs and confirms nothing: they belonged
@@ -561,8 +531,6 @@ function LibraryApp({
     () =>
       onPageLeftByHistory(() => {
         leftByHistory.current++;
-        setImportOpen(false);
-        setSidebarOpen(false);
       }),
     [],
   );
@@ -585,12 +553,14 @@ function LibraryApp({
   // Every opener of a book opens its Book page (#532): a Library tile, a Discover result, the player's "Open title
   // page", This device's rows and Activity's rows (#522).
   const openBook = (workId: string) => {
-    setSidebarOpen(false);
     address.navigate({ name: "book", workId });
   };
   const openWork = (workId: string) => openBook(workId);
   const openBookOf = (book: Book) => openBook(book.workId);
-  const switchPlace = (p: Place) => {
+  // The tab bar and the rail (#581): another place adds an entry, the current one returns to its first page.
+  // On the Library, its own tab shows every book again (the rail's Library item did, before #581).
+  const choosePlace = (p: Place) => {
+    if (p === "library" && page === "library") setFilter(ALL_CHIP);
     leavePage(p);
     address.goPlace(p);
   };
@@ -777,131 +747,10 @@ function LibraryApp({
       fallback={featured}
       notify={notify}
     >
-      <div className="app-shell">
-        {sidebarOpen && (
-          <button
-            className="sidebar-backdrop"
-            onClick={() => setSidebarOpen(false)}
-            aria-label="Close navigation"
-          />
-        )}
-        <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
-          <button
-            className="brand"
-            onClick={() => switchPlace("library")}
-            aria-label="Sonder home"
-          >
-            <Mark />
-            sonder<span>®</span>
-          </button>
-          <nav className="main-nav" aria-label="Main navigation">
-            {nav.map((n) => (
-              <button
-                key={n.id}
-                className={page === n.id ? "selected" : ""}
-                // Activity keeps its name while work needs attention; the dot describes it instead of renaming it.
-                aria-label={n.id === "activity" ? n.label : undefined}
-                aria-describedby={n.id === "activity" && attentionDot ? "activity-attention-sidebar" : undefined}
-                onClick={() => {
-                  // Like the tab of the current place: on the Library, its own item shows every book again.
-                  if (n.id === "library" && page === "library") setFilter(ALL_CHIP);
-                  switchPlace(n.id);
-                }}
-              >
-                <n.icon size={20} strokeWidth={1.65} />
-                <span>{n.label}</span>
-                {n.id === "library" && <small>{libraryWorks.length}</small>}
-                {n.id === "activity" &&
-                  Object.keys(downloadJobs).length > 0 && (
-                    <span className="activity-dot" />
-                  )}
-                {/* The attention dot (#516), lit by Now's builder (#521): the server's work for the administrator, this device's saves for anyone. */}
-                {n.id === "activity" && attentionDot && <span id="activity-attention-sidebar" className="attention-dot" role="img" aria-label="Background work needs attention" data-testid="activity-indicator" />}
-              </button>
-            ))}
-          </nav>
-          {user.role === "admin" && <button className="sidebar-add" onClick={() => { setSidebarOpen(false); setImportOpen(true); }}>
-            <Plus size={17} /> Add an audiobook
-          </button>}
-          <div className="sidebar-bottom">
-            <button
-              className={`settings-nav ${page === "settings" ? "selected" : ""}`}
-              onClick={() => switchPlace("settings")}
-              aria-label="Settings"
-            >
-              <Settings size={19} />
-              <span>Settings</span>
-            </button>
-            <div className="sidebar-footer">
-              <span className={`status-dot ${online ? "" : "offline"}`} />
-              {online ? "Online" : "Offline"}
-              <span>v0.1</span>
-            </div>
-          </div>
-        </aside>
+      <div className="app-shell" data-offline={offlineLine ? "" : undefined}>
+        <PlaceNav current={page} attention={attentionDot} onPlace={choosePlace} />
         <div className="main-shell">
-          <header className="topbar">
-            <div className="topbar-start">
-              <button
-                className="icon-button mobile-menu"
-                aria-label="Open navigation"
-                onClick={() => setSidebarOpen(true)}
-              >
-                <Menu size={22} />
-              </button>
-              <span className="breadcrumb">
-                <strong>
-                  {page === "library"
-                    ? "Library"
-                    : page.charAt(0).toUpperCase() + page.slice(1)}
-                </strong>
-              </span>
-            </div>
-            <div className="topbar-end">
-              {page !== "settings" && page !== "discover" && page !== "library" && (
-                <label className="search-input">
-                  <Search size={17} />
-                  <input
-                    placeholder="Search your library…"
-                    aria-label="Search your library"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                  />
-                  {query ? (
-                    <button
-                      className="icon-button"
-                      onClick={() => setQuery("")}
-                      aria-label="Clear search"
-                    >
-                      <X size={15} />
-                    </button>
-                  ) : (
-                    <kbd>/</kbd>
-                  )}
-                </label>
-              )}
-              <span className="topbar-divider" />
-              <button
-                className="profile-button"
-                onClick={() => navigate("settings")}
-                aria-label="Open your settings"
-              >
-                {needsPassword ? user.username.charAt(0).toUpperCase() : "J"}<span />
-              </button>
-            </div>
-          </header>
           <main className={`main-content page-${page}`}>
-            {!online && (
-              <div className="offline-banner">
-                <WifiOff size={17} />
-                <span>
-                  You’re offline. Downloaded books are available.
-                </span>
-                <button onClick={openDevice}>
-                  View downloads <ArrowRight size={14} />
-                </button>
-              </div>
-            )}
             {getSheet && admin && (
               <GetAudiobookSheet
                 // Not the work's id alone: the Book page under it, a sibling, is keyed by that.
@@ -1147,24 +996,7 @@ function LibraryApp({
             </>}
           </main>
         </div>
-        <nav className="mobile-nav" aria-label="Mobile navigation">
-          {[...nav, { id: "settings", label: "Settings", icon: Settings }].map(
-            (n) => (
-              <button
-                key={n.id}
-                className={page === n.id ? "selected" : ""}
-                onClick={() => switchPlace(n.id as Place)}
-                aria-label={n.label}
-                // The tab keeps its name while work needs attention; the dot describes it instead of renaming it.
-                aria-describedby={n.id === "activity" && attentionDot ? "activity-attention-mobile" : undefined}
-              >
-                <n.icon size={20} />
-                <span>{n.label}</span>
-                {n.id === "activity" && attentionDot && <span id="activity-attention-mobile" className="attention-dot" role="img" aria-label="Background work needs attention" />}
-              </button>
-            ),
-          )}
-        </nav>
+        {offlineLine && <OfflineLine />}
         <AppUpdate />
         <PlayerDock
           fallback={featured}
@@ -1198,453 +1030,9 @@ function LibraryApp({
           }}
         />
         <ReaderHost books={books} notify={notify} />
-        {notice && (
-          <div className={`toast ${notice.error ? "error" : ""}`} role="status">
-            {notice.error ? <X size={18} /> : <Check size={18} />}
-            <span>{notice.text}</span>
-            <button
-              className="icon-button"
-              aria-label="Dismiss notification"
-              onClick={() => setNotice(null)}
-            >
-              <X size={15} />
-            </button>
-          </div>
-        )}
-        <ImportDialog
-          onQueued={(shown) => {
-            void refresh();
-            if (!shown) return;
-            setImportOpen(false);
-            navigate("activity");
-          }}
-          open={importOpen}
-          onClose={() => setImportOpen(false)}
-          onImported={(shown) => {
-            void refresh();
-            if (shown) setImportOpen(false);
-            notify("Audiobook imported.");
-          }}
-          notify={notify}
-          torboxConfigured={!!settings?.torboxConfigured}
-          onConnect={() => {
-            setImportOpen(false);
-            openConnections();
-          }}
-        />
+        {notice && <Toast text={notice.text} error={notice.error} onDismiss={() => setNotice(null)} />}
       </div>
     </PlayerProvider>
-  );
-}
-function ImportDialog({
-  onQueued,
-  open,
-  onClose,
-  onImported,
-  notify,
-  torboxConfigured,
-  onConnect,
-}: {
-  /** `shown`: the dialog the request was made in is still open; one closed by Back or opened anew is left alone. */
-  onQueued: (shown: boolean) => void;
-  open: boolean;
-  onClose: () => void;
-  onImported: (shown: boolean) => void;
-  notify: (s: string, error?: boolean) => void;
-  torboxConfigured: boolean;
-  onConnect: () => void;
-}) {
-  const [tab, setTab] = useState<"files" | "torbox" | "magnet">("files");
-  const [files, setFiles] = useState<File[]>([]);
-  const [title, setTitle] = useState("");
-  const [author, setAuthor] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [magnet, setMagnet] = useState("");
-  const [torrents, setTorrents] = useState<
-    { id: number; name: string; files: { name: string; size: number }[] }[]
-  >([]);
-  const [loadingTorrents, setLoadingTorrents] = useState(false);
-  const input = useRef<HTMLInputElement>(null);
-  const [dragging, setDragging] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
-  // Each opening of the dialog. A request that ends after its opening was closed (Back closes it even while busy)
-  // must not clear, close or move away from a dialog opened again meanwhile.
-  const opening = useRef(0);
-  const openNow = useRef(open);
-  openNow.current = open;
-  useEffect(() => {
-    if (open) opening.current++;
-  }, [open]);
-  const stillShown = (asked: number) => openNow.current && opening.current === asked;
-  useEffect(() => {
-    if (open) {
-      setError("");
-      setUploadProgress(null);
-    } else if (!busy) {
-      setFiles([]);
-      setTitle("");
-      setAuthor("");
-      setMagnet("");
-    }
-  }, [open, busy]);
-  const choose = (list: File[]) => {
-    setFiles(
-      [...list].sort((a, b) =>
-        a.name.localeCompare(b.name, undefined, { numeric: true }),
-      ),
-    );
-    if (list.length && !title) setTitle(list[0].name.replace(/\.[^.]+$/, ""));
-    setError("");
-  };
-  const fetchTorrents = async () => {
-    setLoadingTorrents(true);
-    setError("");
-    try {
-      setTorrents(await api("/torbox/files"));
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setLoadingTorrents(false);
-    }
-  };
-  useEffect(() => {
-    if (open && tab === "torbox" && torboxConfigured) void fetchTorrents();
-  }, [open, tab, torboxConfigured]);
-  const upload = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!files.length) {
-      setError("Choose an audio file to get started.");
-      return;
-    }
-    const asked = opening.current;
-    setBusy(true);
-    setError("");
-    setUploadProgress(0);
-    const form = new FormData();
-    form.set("title", title);
-    form.set("author", author || "Unknown author");
-    files.forEach((f) => form.append("files", f));
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", "/api/import");
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable)
-            setUploadProgress(Math.round((e.loaded / e.total) * 100));
-        };
-        xhr.onload = () => {
-          try {
-            const data = JSON.parse(xhr.responseText);
-            if (xhr.status >= 200 && xhr.status < 300) resolve();
-            else
-              reject(
-                new Error(
-                  data.error || "Your audiobook could not be imported.",
-                ),
-              );
-          } catch {
-            reject(new Error("Your audiobook could not be imported."));
-          }
-        };
-        xhr.onerror = () =>
-          reject(new Error("The upload was interrupted. Please try again."));
-        xhr.send(form);
-      });
-      onImported(stillShown(asked));
-    } catch (e) {
-      if (stillShown(asked)) setError((e as Error).message);
-      else notify((e as Error).message, true);
-    } finally {
-      setBusy(false);
-      setUploadProgress(null);
-    }
-  };
-  const importTorrent = async (id: number) => {
-    const asked = opening.current;
-    setBusy(true);
-    setError("");
-    try {
-      await api("/torbox/import", {
-        method: "POST",
-        body: JSON.stringify({ torrentId: id }),
-      });
-      onImported(stillShown(asked));
-    } catch (e) {
-      if (stillShown(asked)) setError((e as Error).message);
-      else notify((e as Error).message, true);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const addMagnet = async (e: FormEvent) => {
-    e.preventDefault();
-    const asked = opening.current;
-    setBusy(true);
-    setError("");
-    try {
-      const job = await api<Acquisition>("/acquire", {
-        method: "POST",
-        body: JSON.stringify({ magnet }),
-      });
-      const shown = stillShown(asked);
-      // A draft typed into the dialog opened again is not this request's to clear.
-      if (shown) setMagnet("");
-      notify(
-        job.status === "ready"
-          ? "Your audiobook is ready."
-          : job.backend === "torbox"
-            ? "Preparing your cached stream."
-            : "Downloading to your home server’s HDD.",
-      );
-      onQueued(shown);
-    } catch (e) {
-      if (stillShown(asked)) setError((e as Error).message);
-      else notify((e as Error).message, true);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(v) => {
-        if (!v && !busy) onClose();
-      }}
-      title="Add audiobook"
-      className="import-dialog"
-    >
-      <div className="import-tabs">
-        {[
-          { id: "files", label: "Your files", icon: FolderOpen },
-          { id: "torbox", label: "TorBox library", icon: Cloud },
-          { id: "magnet", label: "Magnet link", icon: Link2 },
-        ].map((t) => (
-          <button
-            key={t.id}
-            className={tab === t.id ? "selected" : ""}
-            onClick={() => {
-              setTab(t.id as typeof tab);
-              setError("");
-            }}
-            disabled={busy}
-          >
-            <t.icon size={16} />
-            {t.label}
-          </button>
-        ))}
-      </div>
-      {tab === "files" ? (
-        <form onSubmit={(e) => void upload(e)}>
-          <div
-            className={`file-drop ${dragging ? "dragging" : ""} ${files.length ? "has-files" : ""}`}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragging(false);
-              if (!busy) choose(Array.from(e.dataTransfer.files));
-            }}
-          >
-            <input
-              ref={input}
-              type="file"
-              multiple
-              accept=".mp3,.m4b,.m4a,.ogg,.opus,.flac,.wav,audio/*"
-              onChange={(e) => choose(Array.from(e.target.files || []))}
-              hidden
-            />
-            <span className="upload-icon">
-              {files.length ? <Music2 size={27} /> : <Upload size={27} />}
-            </span>
-            <strong>
-              {files.length
-                ? `${files.length} audio ${files.length === 1 ? "file" : "files"} selected`
-                : "Drop audio files here"}
-            </strong>
-            <p>
-              {files.length
-                ? `${files[0].name}${files.length > 1 ? ` + ${files.length - 1} more` : ""} · ${bytes(files.reduce((n, f) => n + f.size, 0))}`
-                : "MP3, M4B, M4A, OGG, Opus, FLAC, or WAV"}
-            </p>
-            <button
-              type="button"
-              className="button subtle"
-              disabled={busy}
-              onClick={() => input.current?.click()}
-            >
-              {files.length ? "Choose different files" : "Browse files"}{" "}
-              <ArrowUpRight size={15} />
-            </button>
-          </div>
-          <div className="import-fields">
-            <label>
-              Book title
-              <input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="Book title"
-                required
-                maxLength={200}
-                disabled={busy}
-              />
-            </label>
-            <label>
-              Author
-              <input
-                value={author}
-                onChange={(e) => setAuthor(e.target.value)}
-                placeholder="Author"
-                maxLength={200}
-                disabled={busy}
-              />
-            </label>
-          </div>
-          <p className="import-hint">
-            Multiple files become chapters in filename order. Your originals are
-            saved on your server.
-          </p>
-          {uploadProgress !== null && (
-            <div className="upload-status">
-              <div className="download-progress">
-                <i style={{ width: `${uploadProgress}%` }} />
-              </div>
-              <span>
-                {uploadProgress === 100
-                  ? "Processing audio…"
-                  : `Uploading… ${uploadProgress}%`}
-              </span>
-            </div>
-          )}
-          {error && (
-            <p className="inline-error" role="alert">
-              {error}
-            </p>
-          )}
-          <div className="dialog-footer">
-            <button
-              type="button"
-              className="button ghost"
-              onClick={onClose}
-              disabled={busy}
-            >
-              Cancel
-            </button>
-            <button className="button primary" disabled={busy || !files.length}>
-              {busy ? (
-                <Loader2 size={16} className="spin" />
-              ) : (
-                <Plus size={16} />
-              )}{" "}
-              {busy ? "Adding audiobook…" : "Add to my library"}
-            </button>
-          </div>
-        </form>
-      ) : tab === "torbox" && !torboxConfigured ? (
-        <Empty
-          icon={Cloud}
-          title="TorBox not connected"
-          text="Connect your TorBox account to stream and import audiobooks."
-          action={
-            <button className="button primary" onClick={onConnect}>
-              Connect TorBox <ArrowUpRight size={16} />
-            </button>
-          }
-        />
-      ) : tab === "magnet" ? (
-        <form className="magnet-form" onSubmit={(e) => void addMagnet(e)}>
-          <label>
-            Magnet link
-            <textarea
-              value={magnet}
-              onChange={(e) => setMagnet(e.target.value)}
-              placeholder="magnet:?xt=urn:btih:…"
-              required
-              rows={4}
-            />
-          </label>
-          <p className="import-hint">
-            We check TorBox’s cache first. If it’s ready, you can stream it;
-            otherwise your home server downloads it to the 4 TB drive. Progress
-            is saved, and downloads keep going when you close this app.
-          </p>
-          {error && (
-            <p className="inline-error" role="alert">
-              {error}
-            </p>
-          )}
-          <button
-            className="button primary"
-            disabled={busy || !magnet.startsWith("magnet:?")}
-          >
-            {busy ? <Loader2 size={16} className="spin" /> : <Plus size={16} />}{" "}
-            Add audiobook
-          </button>
-        </form>
-      ) : (
-        <div className="torbox-browser">
-          <div className="torbox-browser-heading">
-            <span>Your ready-to-play audio</span>
-            <button
-              className="icon-button"
-              onClick={() => void fetchTorrents()}
-              aria-label="Refresh TorBox library"
-              disabled={loadingTorrents || busy}
-            >
-              <RefreshCw size={16} className={loadingTorrents ? "spin" : ""} />
-            </button>
-          </div>
-          {error && (
-            <p className="inline-error" role="alert">
-              {error}
-            </p>
-          )}
-          {loadingTorrents ? (
-            <div className="external-loading">
-              <Loader2 className="spin" /> Loading TorBox audiobooks…
-            </div>
-          ) : torrents.length ? (
-            <div className="torbox-items">
-              {torrents.map((t) => (
-                <div key={t.id}>
-                  <span className="torbox-file-icon">
-                    <Headphones size={21} />
-                  </span>
-                  <span>
-                    <strong>{t.name}</strong>
-                    <small>
-                      {t.files.length} audio files ·{" "}
-                      {bytes(t.files.reduce((n, f) => n + f.size, 0))}
-                    </small>
-                  </span>
-                  <button
-                    className="button subtle"
-                    disabled={busy}
-                    onClick={() => void importTorrent(t.id)}
-                  >
-                    {busy ? (
-                      <Loader2 size={15} className="spin" />
-                    ) : (
-                      <Plus size={15} />
-                    )}{" "}
-                    Add
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <Empty
-              icon={Cloud}
-              title="No completed audiobooks"
-              text="No completed audiobooks were found. Add a magnet link or wait for your TorBox download to finish."
-            />
-          )}
-        </div>
-      )}
-    </Dialog>
   );
 }
 export default App;

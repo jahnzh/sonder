@@ -10,7 +10,7 @@
  */
 import type { DeviceSaveEntry } from "./device-saves";
 import {
-  downloadLine, ebookCheckLine, failedLine, finishedLine, readingSyncLine, serverCopyLine, seriesSearchLine,
+  downloadLine, ebookCheckLine, failedLine, finishedLine, readingSyncLine, serverCopyLine, seriesSearchLine, spareEditionsLine,
   withFileCount, withReason, withUser, deviceSaveLine, ALREADY_HAS_COPY_LINE,
   type DownloadFacts, type EbookCheckFacts, type ReadingSyncJobFacts, type SeriesSearchFacts, type ServerCopyFacts,
 } from "./status-lines";
@@ -123,8 +123,11 @@ export type NowInput = {
   now: number;
 };
 
-/** One entry before rows are joined by work. */
-type Entry = Omit<NowRow, "key" | "changedAt"> & { group: NowGroupId; changedAt: number };
+/**
+ * One entry before rows are joined by work. `place` is a waiting series search's place in its queue (#717), which
+ * orders those rows in Waiting.
+ */
+type Entry = Omit<NowRow, "key" | "changedAt"> & { group: NowGroupId; changedAt: number; place?: number | null };
 
 /** The row's button: the first of the item's actions in this order; Cancel only when there is nothing else (#716). */
 const BUTTON_ORDER = ["retry", "resume", "discard", "cancel"] as const satisfies readonly ActivityItemAction[];
@@ -177,7 +180,11 @@ function movingLine(item: ActivityItem): string | null {
     case "server-copy":
       return serverCopyLine({ status: facts.status as ServerCopyFacts["status"], progress: item.progress });
     case "series-acquisition":
-      return seriesSearchLine({ status: facts.status as SeriesSearchFacts["status"], search: facts.search });
+      // A waiting search says where it is in the queue, or that it waits to try its source again (#717).
+      return seriesSearchLine({
+        status: facts.status as SeriesSearchFacts["status"], search: facts.search, place: facts.place,
+        retrying: !!facts.retryAt, reason: item.error,
+      });
     case "ebook-set":
       return ebookCheckLine(
         (facts.status === "held" ? { status: "held", holdReason: facts.holdReason } : { status: facts.status }) as EbookCheckFacts,
@@ -223,9 +230,36 @@ function doneLine(item: ActivityItem): string | null {
   }
 }
 
-function serverEntry(item: ActivityItem, now: number): Entry | null {
-  const group = itemGroup(item, now);
+/** A sync of a spare edition that was queued by itself (#718): nobody reads that edition. */
+const spareSync = (item: ActivityItem) => item.facts.kind === "alignment" && !!item.facts.spare && !!item.facts.background;
+const moving = (item: ActivityItem) => item.state === "queued" || item.state === "running" || item.state === "paused";
+
+/**
+ * Each work's syncs of spare editions, as one count (#718): how many there are (those still to run and those that
+ * ended today) and which one is being checked now (the first after those that ended).
+ */
+function spareCounts(items: readonly ActivityItem[], now: number) {
+  const counts = new Map<string, { total: number; current: number }>();
+  for (const item of items) {
+    if (!item.workId || !spareSync(item)) continue;
+    const ended = (item.state === "done" || item.state === "failed") && now - item.updatedAt <= FINISHED_TODAY_MS;
+    if (!moving(item) && !ended) continue;
+    const count = counts.get(item.workId) ?? { total: 0, current: 1 };
+    count.total++;
+    if (ended) count.current++;
+    counts.set(item.workId, count);
+  }
+  return counts;
+}
+
+function serverEntry(item: ActivityItem, now: number, spares: Map<string, { total: number; current: number }>): Entry | null {
+  let group = itemGroup(item, now);
   if (!group) return null;
+  // A finished sync of a spare edition is not listed: the book's own sync is the one it reads (#718).
+  if (group === "finished" && spareSync(item)) return null;
+  // A sync of a spare edition waits in the background, under one line per book, never In progress (#718).
+  const spare = spareSync(item) && moving(item) && group !== "attention" && item.workId ? spares.get(item.workId) : undefined;
+  if (spare) group = "waiting";
   const entry = ENTRY_OF[item.kind];
   const failed = item.state === "failed";
   // A Hardcover queue and a backup are not books: they appear only when they need attention.
@@ -234,8 +268,12 @@ function serverEntry(item: ActivityItem, now: number): Entry | null {
   let line: string | null;
   // A Hardcover queue is one user's: its line names whose it is, as Server's queue line does ("… · admin").
   if (notBook) line = withUser(item.error ?? item.stuck?.reason ?? item.detail ?? "", item.user);
+  // A failed series search names which search failed and why (#717).
+  else if (failed && item.facts.kind === "series-acquisition")
+    line = seriesSearchLine({ status: "failed", search: item.facts.search, reason: item.error });
   else if (failed) line = failedLine({ entry: entry as "download" });
   else if (item.state === "done") line = doneLine(item);
+  else if (spare) line = spareEditionsLine(spare);
   else line = movingLine(item);
   // A finished series search for the audiobook has no line: the download it starts takes over the row.
   if (line === null && entry === "series-search" && item.state === "done") return null;
@@ -269,7 +307,18 @@ function serverEntry(item: ActivityItem, now: number): Entry | null {
         ? { to: syncOpen ? "reading-sync" : "book", workId: item.workId, bookId: item.bookId }
         : null,
     changedAt: item.updatedAt,
+    place: group === "waiting" && item.facts.kind === "series-acquisition" ? item.facts.place ?? null : null,
   };
+}
+
+/**
+ * The order of a group's rows: newest change first; in Waiting, the series searches with a place in the queue come
+ * after the rest, in the queue's order (#717), so "2nd in line" is above "3rd in line".
+ */
+function byGroupOrder(a: NowRow & { place: number | null }, b: NowRow & { place: number | null }) {
+  if ((a.place === null) !== (b.place === null)) return a.place === null ? -1 : 1;
+  if (a.place !== null && b.place !== null && a.place !== b.place) return a.place - b.place;
+  return b.changedAt - a.changedAt || a.key.localeCompare(b.key);
 }
 
 /** Whether a background process needs attention (and lights the dot): it is down. A worker switched off is never down. */
@@ -345,8 +394,9 @@ export function buildNow({ activity, saves, books, admin, online, now }: NowInpu
   const entries: { key: string; entry: Entry }[] = [];
   // The server's work is the administrator's, and only while there is a connection: a stale answer never reads as live.
   if (admin && online && activity) {
+    const spares = spareCounts(activity.items, now);
     for (const item of activity.items) {
-      const entry = serverEntry(item, now);
+      const entry = serverEntry(item, now, spares);
       if (entry) entries.push({ key: entry.book && entry.workId ? `work:${entry.workId}` : item.id, entry });
     }
     for (const process of activity.processes) {
@@ -363,16 +413,16 @@ export function buildNow({ activity, saves, books, admin, online, now }: NowInpu
 
   const byKey = new Map<string, Entry[]>();
   for (const { key, entry } of entries) byKey.set(key, [...(byKey.get(key) ?? []), entry]);
-  const rows: (NowRow & { group: NowGroupId })[] = [];
+  const rows: (NowRow & { group: NowGroupId; place: number | null })[] = [];
   for (const [key, joined] of byKey) {
-    const { group, ...shown } = shownEntry(joined);
+    const { group, place, ...shown } = shownEntry(joined);
     // A save's row has no title of its own when the device does not know the book: take the server's.
     const title = shown.title || joined.find((entry) => entry.title)?.title || "";
     const cover = shown.book ? shown.cover ?? joined.find((entry) => entry.cover)?.cover ?? null : null;
     const bookId = shown.bookId ?? joined.find((entry) => entry.bookId)?.bookId ?? null;
     const opens = shown.opens && shown.opens.to !== "worker" && shown.opens.to !== "server" ? { ...shown.opens, bookId: shown.opens.bookId ?? bookId } : shown.opens;
     rows.push({
-      ...shown, key, group, title, cover, bookId, opens,
+      ...shown, key, group, place: place ?? null, title, cover, bookId, opens,
       changedAt: Math.max(...joined.map((entry) => entry.changedAt)),
     });
   }
@@ -381,8 +431,8 @@ export function buildNow({ activity, saves, books, admin, online, now }: NowInpu
     title,
     rows: rows
       .filter((row) => row.group === id)
-      .sort((a, b) => b.changedAt - a.changedAt || a.key.localeCompare(b.key))
-      .map(({ group: _group, ...row }) => row),
+      .sort(byGroupOrder)
+      .map(({ group: _group, place: _place, ...row }) => row),
   }));
   return {
     groups,
