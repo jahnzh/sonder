@@ -61,12 +61,12 @@
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: start;
-  gap: 6px 16px;
+  gap: var(--space-4) var(--space-16);
   color: var(--muted);
   font-size: 12px;
   line-height: 1.5;
   text-align: left;
-  margin-top: 18px;
+  margin-top: var(--space-16);
 }
 .timeline-scope > span:first-child {
   color: var(--text);
@@ -87,7 +87,7 @@
 }
 .compact-timeline .dock-progress {
   margin: 0;
-  gap: 10px;
+  gap: var(--space-8);
 }
 .compact-timeline .dock-progress > span {
   min-width: 40px;
@@ -95,7 +95,7 @@
 }
 .player-dock {
   grid-template-columns: minmax(180px, 0.85fr) minmax(200px, 2fr) auto 44px;
-  gap: 16px;
+  gap: var(--space-16);
 }
 .dock-center {
   max-width: none;
@@ -103,7 +103,7 @@
 .dock-info {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-8);
   min-width: 0;
 }
 .dock-info .dock-book {
@@ -121,11 +121,11 @@
 .dock-cover-button img {
   width: 40px;
   height: 56px;
-  border-radius: 3px;
+  border-radius: var(--corner-control);
   object-fit: cover;
 }
 .dock-actions {
-  gap: 9px;
+  gap: var(--space-8);
 }
 .full-timestamps .timeline-speed-left {
   color: var(--muted);
@@ -133,20 +133,20 @@
 }
 @media (max-width: 850px) and (min-width: 651px) {
   .player-dock {
-    padding-inline: 16px;
-    gap: 10px;
+    padding-inline: var(--space-16);
+    gap: var(--space-8);
     grid-template-columns: minmax(150px, 0.8fr) minmax(200px, 2fr) auto 44px;
   }
 }
 @media (max-width: 650px) {
   .player-dock {
-    padding: 8px 12px;
-    gap: 8px;
+    padding: var(--space-8) var(--space-12);
+    gap: var(--space-8);
   }
   .dock-info {
     flex: 1;
     min-width: 0;
-    gap: 6px;
+    gap: var(--space-4);
   }
   .dock-info .dock-book {
     flex: 1;
@@ -223,7 +223,7 @@
 }
 .position-history-list {
   display: grid;
-  gap: 6px;
+  gap: var(--space-4);
   max-height: min(60vh, 420px);
   overflow: auto;
   margin: 0;
@@ -238,7 +238,7 @@
   white-space: normal;
 }
 .position-history-empty {
-  margin: 8px 0;
+  margin: var(--space-8) 0;
   color: var(--muted);
   font-size: 14px;
 }
