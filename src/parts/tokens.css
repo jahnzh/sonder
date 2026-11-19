@@ -1,5 +1,4 @@
-/* The redesign's tokens (spec #480, "Tokens"). Same values as src/parts/tokens.ts; tests/parts-tokens.test.ts
-   keeps them equal. Only new names: no existing variable or style is changed here. The colours stay the existing
+/* The redesign's tokens (spec #480, "Tokens"). tests/parts-tokens.test.ts keeps them equal to the spec. Only new names: no existing variable or style is changed here. The colours stay the existing
    variables of appearance.css, so every preset and the custom palette colour the parts. */
 :root {
   --space-4: 4px;
