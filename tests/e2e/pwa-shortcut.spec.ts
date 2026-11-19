@@ -33,7 +33,8 @@ test("the home-screen shortcut opens the app, and Back leaves it without a stuck
   };
 
   await page.goto("/#library");
-  await expect(page.getByRole("button", { name: "Settings" }).first()).toBeVisible();
+  // The tab bar's Settings (#581; the drawer and its Settings button went).
+  await expect(page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button", { name: "Settings", exact: true })).toBeVisible();
   await androidShell("input tap 672 112"); // the toolbar's three-dot menu
   await wait(1500);
   await tap(/^More/, "open More");

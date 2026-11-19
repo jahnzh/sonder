@@ -75,6 +75,8 @@ const desktopProjects = [
               /(^|\/)reader-page-turn\.spec\.ts$/,
               // Activity › Server (#519).
               /(^|\/)activity-server\.spec\.ts$/,
+              // The Get sheet without a book (#576).
+              /(^|\/)get-recording\.spec\.ts$/,
               // The attention dot from Now's builder (#521).
               /(^|\/)activity-dot\.spec\.ts$/,
               // Settings as a list with pages (#579).
@@ -165,6 +167,8 @@ const desktopProjects = [
               /(^|\/)now-playing-ebook-only\.spec\.ts$/,
               // Discover finds books (#575).
               /(^|\/)discover\.spec\.ts$/,
+              // The shell: the tab bar, the rail and the offline line (#581).
+              /(^|\/)shell\.spec\.ts$/,
               // A stuck download says why and offers Cancel (#716).
               /(^|\/)activity-cancel\.spec\.ts$/,
               // A paused seek moves the reader's highlight, on a stream and a device copy (#730).

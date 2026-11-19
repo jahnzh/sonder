@@ -112,7 +112,7 @@ test("chapter progress persists; precision dragging previews, slows with distanc
     await expect.poll(async()=>(await (await page.request.get("/api/appearance")).json()).playback.progressScope).toBe("chapter");
     await page.reload();
     await expect(scope.getByRole("radio",{name:"Current chapter",exact:true})).toHaveAttribute("aria-checked","true");
-    await page.locator(".mobile-nav").getByRole("button",{name:"My library",exact:true}).click();
+    await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button",{name:"Library",exact:true}).click();
     await playAndPause(page,"Alice’s Adventures in Wonderland");
     await position(page,150.12345678);
     // The mouse's pointer id differs between engines (Chromium 1, Firefox 0): synthetic events use the real one.
@@ -165,7 +165,7 @@ test("chapter progress persists; precision dragging previews, slows with distanc
     await page.screenshot({path:"artifacts/playback-chapter-desktop.png",fullPage:true});
     await listenFace(page).getByRole("button",{name:"Close now playing",exact:true}).click();
     await page.setViewportSize({width:390,height:844});
-    await page.locator(".mobile-nav").getByRole("button",{name:"Settings",exact:true}).click();
+    await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button",{name:"Settings",exact:true}).click();
     await page.getByRole("button",{name:/^Playback\b/}).click();
     await page.getByRole("radiogroup",{name:"Progress bar shows",exact:true}).getByRole("radio",{name:"Whole audiobook",exact:true}).click();
     await openListen(page);
@@ -273,7 +273,7 @@ test("playback opens the reader and title page; downloaded sources can be switch
   // The page's address survives a reload, and so does the mark.
   await page.reload();
   await expect(manager.getByRole("button",{name:"Device copy Marked faulty",exact:true})).toBeVisible();
-  await page.locator(".mobile-nav").getByRole("button",{name:"My library",exact:true}).click();
+  await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button",{name:"Library",exact:true}).click();
   await playFromLibrary(page, title);
   await expect(page.locator(".player-dock").getByRole("button",{name:"Pause",exact:true})).toBeVisible();
   await page.locator(".player-dock").getByRole("button",{name:"Pause",exact:true}).click();

@@ -195,11 +195,16 @@ export function failureSentence(source: SourceId) {
  */
 export function sheetView(
   state: GetSearch,
-  { online, bookTitle, language = GET_LANGUAGE }: { online: boolean; bookTitle: string; language?: string },
+  {
+    online,
+    bookTitle,
+    language = GET_LANGUAGE,
+    titleFirst = false,
+  }: { online: boolean; bookTitle: string; language?: string; /** Each row's title first (no book, #576). */ titleFirst?: boolean },
 ): SheetView {
   const searches = Object.entries(state.sources) as [SourceId, SourceSearch][];
   const all = mergeReleases(...searches.map(([, search]) => search.results));
-  const rows = recordingRows(all, bookTitle, language);
+  const rows = recordingRows(all, bookTitle, language, titleFirst);
   const searching = online && searches.some(([, search]) => search.status === "searching");
   const failures = searches
     .filter(([, search]) => search.status === "failed")

@@ -44,7 +44,7 @@ const address = (workId: string) => `/#book/${encodeURIComponent(workId)}`;
 const isSave = (request: Request) => !!request.headers()["x-sonder-download"];
 const DOT = "Background work needs attention";
 const dot = (page: Page) =>
-  page.getByRole("navigation", { name: "Mobile navigation" }).getByRole("button", { name: "Activity", exact: true }).getByRole("img", { name: DOT });
+  page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button", { name: "Activity", exact: true }).getByRole("img", { name: DOT });
 const group = (page: Page, name: string) => page.getByRole("list", { name, exact: true });
 
 /** The source refuses the track's save while `refuse.on`; each refused request is counted. */

@@ -309,7 +309,7 @@ test("on a desktop the page sits beside the list, and choosing the other worker 
   await routeActivity(page, () => poolState());
   await routeBackfill(page);
   await page.goto("/#library");
-  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: /^Activity/ }).click();
+  await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button", { name: /^Activity/ }).click();
   await page.getByRole("radiogroup", { name: "Activity" }).getByRole("radio", { name: "Server" }).click();
   await expect(page).toHaveURL(/#activity\/server$/);
   const length = await page.evaluate(() => history.length);

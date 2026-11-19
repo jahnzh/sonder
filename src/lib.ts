@@ -8,6 +8,7 @@ import type { StoredSeriesAnswer } from "./series-store";
 import { isKeptReaderFile, type ReaderFileRecord } from "./ebook-keep";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { connection, isNoAnswer } from "./connection";
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
@@ -76,16 +77,24 @@ export async function api<T = unknown>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const response = await fetch(`/api${path}`, {
-    ...options,
-    headers: {
-      ...(userKnown && path !== "/auth/status" && path !== "/auth/login" ? { "X-Sonder-User-Id": String(currentUserId) } : {}),
-      ...(options.body != null && !(options.body instanceof FormData)
-        ? { "Content-Type": "application/json" }
-        : {}),
-      ...options.headers,
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(`/api${path}`, {
+      ...options,
+      headers: {
+        ...(userKnown && path !== "/auth/status" && path !== "/auth/login" ? { "X-Sonder-User-Id": String(currentUserId) } : {}),
+        ...(options.body != null && !(options.body instanceof FormData)
+          ? { "Content-Type": "application/json" }
+          : {}),
+        ...options.headers,
+      },
+    });
+  } catch (error) {
+    // No answer at all: the shell's offline line shows until a request is answered again (#581).
+    if (isNoAnswer(error)) connection.unanswered();
+    throw error;
+  }
+  connection.answered();
   if (response.status === 401)
     window.dispatchEvent(new Event("sonder:unauthorized"));
   const result = await response.json();

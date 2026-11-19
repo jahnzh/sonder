@@ -538,6 +538,9 @@ export const SYNC_STATE_LINES = {
 /** A page shows what this device kept because the server cannot be reached (the Series page's card, #568). */
 export const NO_CONNECTION_LINE = "No connection";
 
+/** The shell's offline line (#471, #581): above the mini player, the last line of the rail on a desktop. */
+export const OFFLINE_LINE = { lead: NO_CONNECTION_LINE, rest: "Books on this device still play" } as const;
+
 /** The line under a state's name. */
 export const SYNC_STATE_NOTES = {
   estimated: "Timings are estimated",

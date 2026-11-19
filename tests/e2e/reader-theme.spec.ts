@@ -35,7 +35,7 @@ test("appearance presets and custom colors persist without interrupting audio", 
     ).toBeVisible();
   await playing();
   await page
-    .locator(".mobile-nav")
+    .getByRole("navigation", { name: "Main", exact: true })
     .getByRole("button", { name: "Settings", exact: true })
     .click();
   // Settings › Appearance saves a theme when it is chosen (#579).

@@ -29,17 +29,12 @@
 }
 body,
 .app-loading,
-.main-shell,
 .main-content {
   background: var(--background);
   color: var(--text);
 }
-.sidebar,
-.mobile-nav,
 .player-dock,
-.dialog-content,
-.toast,
-.topbar {
+.dialog-content {
   background: var(--surface);
   color: var(--text);
   border-color: var(--border);
@@ -74,7 +69,6 @@ textarea {
   color: var(--text);
   border-color: var(--border);
 }
-.profile-button,
 .settings-section-icon,
 .connection-tag,
 .quiet-tag {
@@ -83,8 +77,7 @@ textarea {
 }
 .settings-form label,
 .settings-section h2,
-.book-title,
-.sidebar-link {
+.book-title {
   color: var(--text);
 }
 .inline-error,
@@ -103,9 +96,7 @@ textarea {
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  body,
-  .sidebar,
-  .topbar {
+  body {
     transition:
       background-color 0.15s ease,
       color 0.15s ease;
