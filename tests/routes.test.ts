@@ -267,25 +267,28 @@ test("what an address shows: built pages as they are, everything else the first 
 
 test("#settings/<page>: each page, an unknown word, and the administrator's pages for someone else", () => {
   const shows = (address: string, admin: boolean) => writeAddress(resolve(readAddress(address), { admin }));
-  assert.deepEqual([...SETTINGS_PAGES], ["account", "appearance", "playback", "connections", "users", "library", "app"]);
+  assert.deepEqual([...SETTINGS_PAGES], ["account", "appearance", "playback", "connections", "users", "library", "app", "keyboard"]);
   for (const page of SETTINGS_PAGES) {
     const address = `#settings/${page}`;
     assert.deepEqual(readAddress(address), { name: "settings-page", page }, address);
     assert.equal(writeAddress({ name: "settings-page", page }), address);
     assert.equal(placeOf(readAddress(address)), "settings", address);
-    assert.deepEqual(parentOf(readAddress(address)), { name: "settings" }, address);
+    // Keyboard shortcuts is Playback's page (#614); every other page is the list's.
+    const parent = page === "keyboard" ? { name: "settings-page", page: "playback" } : { name: "settings" };
+    assert.deepEqual(parentOf(readAddress(address)), parent, address);
     // The administrator has every page.
     assert.equal(shows(address, true), address, address);
   }
   // Someone else has every page but Connections (since Hardcover went, #721 part d), Users and Library and storage,
   // which show Settings.
-  for (const page of ["account", "appearance", "playback", "app"])
+  for (const page of ["account", "appearance", "playback", "app", "keyboard"])
     assert.equal(shows(`#settings/${page}`, false), `#settings/${page}`, page);
   for (const page of ["connections", "users", "library"]) assert.equal(shows(`#settings/${page}`, false), "#settings", page);
   // A word that names no page shows Settings, for everyone.
   for (const admin of [true, false]) {
     assert.equal(shows("#settings/reading", admin), "#settings");
-    assert.equal(shows("#settings/keyboard", admin), "#settings");
+    assert.equal(shows("#settings/keys", admin), "#settings");
+    assert.equal(shows("#settings/keyboard/more", admin), "#settings");
     assert.equal(shows("#settings/Account", admin), "#settings");
     assert.equal(shows("#settings/account/more", admin), "#settings");
   }
@@ -405,4 +408,27 @@ test("#discover/get/<query> (#576): a query with a slash is one part of the addr
   assert.equal(writeAddress({ name: "discover-get", query: "AC/DC" }), "#discover/get/AC%2FDC");
   // An unencoded slash names nothing: Discover.
   assert.equal(writeAddress(resolve(readAddress("#discover/get/AC/DC"), { admin: true })), "#discover");
+});
+
+// #614: Keyboard shortcuts is a Settings page whose parent is Playback, so its back button reads "Back to Playback".
+test("#settings/keyboard reads, writes, is everyone's, and has Playback as its parent", async () => {
+  const { backName } = await import("../src/parts/back-name.ts");
+  const { keyboardBackNamed } = await import("../src/settings-list.ts");
+  const route = readAddress("#settings/keyboard");
+  assert.deepEqual(route, { name: "settings-page", page: "keyboard" });
+  assert.equal(writeAddress(route), "#settings/keyboard");
+  assert.equal(writeAddress({ name: "settings-page", page: "keyboard" }), "#settings/keyboard");
+  assert.equal(placeOf(route), "settings");
+  assert.deepEqual(parentOf(route), { name: "settings-page", page: "playback" });
+  // The page names its parent (keyboardBackNamed in src/settings-list.ts): "Back to Playback".
+  assert.equal(backName(parentOf(route)!, keyboardBackNamed), "Back to Playback");
+  // Any other page that lands on Playback keeps the generic name.
+  assert.equal(backName(parentOf(route)!), "Back to Settings");
+  // Playback's own back button still goes to the list.
+  assert.deepEqual(parentOf(readAddress("#settings/playback")), { name: "settings" });
+  assert.equal(backName(parentOf(readAddress("#settings/playback"))!), "Back to Settings");
+  for (const admin of [true, false]) assert.deepEqual(resolve(route, { admin }), route);
+  assert.equal(isSettingsPage("keyboard"), true);
+  // Opening it from Playback adds an entry, so Back returns to Playback.
+  assert.equal(step(readAddress("#settings/playback"), route), "push");
 });

@@ -427,8 +427,9 @@ test("Space toggles playback across views and arrows skip 30 seconds while ignor
   }
 });
 // Changed by design (spec #586, behaviour 30; #593): the keyboard help no longer opens from Now playing; it is in
-// Settings › Playback.
-test("keyboard shortcut sheet opens from Settings, not from Now Playing", async ({ page }) => {
+// Settings › Playback. Changed by design again (#614): Playback's row opens the Keyboard shortcuts page, not a dialog,
+// and the page lists exactly the keys that work.
+test("keyboard shortcuts open from Settings as a page, not from Now Playing", async ({ page }) => {
   await instrument(page);
   await page.goto("/");
   await playFromLibrary(page, "Alice’s Adventures in Wonderland");
@@ -436,26 +437,27 @@ test("keyboard shortcut sheet opens from Settings, not from Now Playing", async 
   await expect(page.getByRole("dialog", { name: "Now playing", exact: true }).getByRole("button", { name: "Keyboard shortcuts" })).toHaveCount(0);
   await page.goto("/#settings/playback");
   await page.locator("main").getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
-  const sheet = page.getByRole("dialog", { name: "Keyboard shortcuts", exact: true });
-  await expect(sheet).toBeVisible();
-  for (const action of ["Play or pause", "Skip 30 seconds back or forward", "Search", "Follow the audio in the reader"])
-    await expect(sheet.getByText(action, { exact: true })).toBeVisible();
-  for (const key of ["Space", "←", "→", "/", "f"])
-    await expect(sheet.locator("kbd", { hasText: new RegExp(`^${key === "/" ? "\\/" : key}$`) })).toBeVisible();
-  // The reader has one view (ADR 0017): no view switch and no `p` key are listed.
-  await expect(sheet.getByText(/Page view|Lyrics|Word view/)).toHaveCount(0);
-  await expect(sheet.locator("kbd", { hasText: /^p$/i })).toHaveCount(0);
-  await expect(sheet.locator("kbd")).toHaveCount(5);
-  await sheet.getByRole("button", { name: "Close dialog" }).click();
-  await expect(sheet).toBeHidden();
+  await expect(page).toHaveURL(/#settings\/keyboard$/);
+  await expect(page.getByRole("dialog", { name: "Keyboard shortcuts", exact: true })).toHaveCount(0);
+  const keys = page.locator('[data-page="keyboard"]');
+  await expect(keys.getByRole("heading", { name: "Keyboard shortcuts", exact: true })).toBeVisible();
+  for (const action of ["Play or pause", "Back 30 seconds", "Forward 30 seconds", "Back to narration", "Previous page", "Next page", "Search"])
+    await expect(keys.getByText(action, { exact: true })).toBeVisible();
+  await expect(keys.locator("kbd")).toHaveText(["Space", "←", "→", "F", "←", "→", "/"]);
+  // The reader has one view (ADR 0017): no view switch, no `p` key and no sentence step are listed.
+  await expect(keys.getByText(/Page view|Lyrics|Word view|sentence/i)).toHaveCount(0);
+  await expect(keys.locator("kbd", { hasText: /^p$|Shift/i })).toHaveCount(0);
+  await page.getByRole("button", { name: "Back to Playback", exact: true }).click();
+  await expect(page).toHaveURL(/#settings\/playback$/);
 });
 test("a dialog without a text field starts on itself, not on a button", async ({ page }) => {
   // The import dialog, the form dialog this test opened, went with the drawer's Add an audiobook (#581; a book's
   // files are imported in its Get sheet). The same rule's other branch: a dialog with no text field takes the focus
-  // on its container, so Space does not activate a focused button (components/ui/dialog.tsx).
-  await page.goto("/#settings/playback");
-  await page.locator("main").getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Keyboard shortcuts", exact: true });
+  // on its container, so Space does not activate a focused button (components/ui/dialog.tsx). The keyboard help dialog
+  // this test then opened is a page since #614: Appearance's Font list is such a dialog.
+  await page.goto("/#settings/appearance");
+  await page.locator("main").getByRole("button", { name: /^Font\b/ }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Font", exact: true });
   await expect(dialog).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute("role"))).toBe("dialog");
 });

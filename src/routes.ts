@@ -5,9 +5,12 @@
 export type Place = "library" | "discover" | "activity" | "settings";
 export type BookPage = "audiobook" | "ebook" | "sync" | "chapters" | "bookmarks" | "search" | "match" | "edit";
 export type ActivityPart = "now" | "device" | "server";
-/** The pages of Settings (spec #572, "Settings"): `#settings/<page>`. */
-export type SettingsPage = "account" | "appearance" | "playback" | "connections" | "users" | "library" | "app";
-export const SETTINGS_PAGES: readonly SettingsPage[] = ["account", "appearance", "playback", "connections", "users", "library", "app"];
+/**
+ * The pages of Settings (spec #572, "Settings"): `#settings/<page>`. Keyboard shortcuts (#614) is not a row of the
+ * list: it opens from Playback's row and Playback is its parent.
+ */
+export type SettingsPage = "account" | "appearance" | "playback" | "connections" | "users" | "library" | "app" | "keyboard";
+export const SETTINGS_PAGES: readonly SettingsPage[] = ["account", "appearance", "playback", "connections", "users", "library", "app", "keyboard"];
 /** The Settings pages only the administrator has (Connections since Hardcover went, #721 part d). */
 export const ADMIN_SETTINGS_PAGES: readonly SettingsPage[] = ["connections", "users", "library"];
 export function isSettingsPage(page: string): page is SettingsPage {
@@ -271,8 +274,9 @@ export function parentOf(route: Route): Route | null {
       return { name: "book-page", workId: route.workId, page: "sync" };
     case "worker":
       return { name: "activity", part: "server" };
+    // Keyboard shortcuts belongs to Playback, whose row opens it (#614).
     case "settings-page":
-      return { name: "settings" };
+      return route.page === "keyboard" ? { name: "settings-page", page: "playback" } : { name: "settings" };
     case "discover-get":
       return { name: "discover" };
     case "gallery-child":
