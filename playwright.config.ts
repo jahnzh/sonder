@@ -157,6 +157,8 @@ const desktopProjects = [
               /(^|\/)series-(not-saved|discovery|acquisition)\.spec\.ts$/,
               // A Hardcover book opens its Book page before it is a work on the server (#574).
               /(^|\/)hardcover-book-look\.spec\.ts$/,
+              // Now playing for a book without a recording or without an EPUB (#594).
+              /(^|\/)now-playing-ebook-only\.spec\.ts$/,
               // Discover finds books (#575).
               /(^|\/)discover\.spec\.ts$/,
               // The shell: the tab bar, the rail and the offline line (#581).

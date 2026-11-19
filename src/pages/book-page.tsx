@@ -202,8 +202,9 @@ export function BookPage(props: Props) {
   };
   const read = () => {
     if (!model.readEbookId) return;
-    // The book in the player reads beside the narration: Now playing on its Read face (#593).
-    if (p.book?.workId === workId) address.navigate({ name: "read", workId });
+    // The book in the player reads beside the narration: Now playing on its Read face (#593). A book without a
+    // recording reads there too, like any other book (#594).
+    if (model.readFace || p.book?.workId === workId) address.navigate({ name: "read", workId });
     else openReader(model.readEbookId);
   };
   /**
