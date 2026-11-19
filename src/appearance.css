@@ -74,8 +74,7 @@ textarea {
   color: var(--text);
   border-color: var(--border);
 }
-.profile-button,
-.quiet-tag {
+.profile-button {
   background: var(--raised);
   color: var(--text);
 }

@@ -1,4 +1,7 @@
-import {test,expect,type Page} from "@playwright/test";
+import {type Page} from "@playwright/test";
+// Each test runs its own server (own-server.ts): on the suite's server the book the Library's reader opens is the one
+// with the newest place, which the specs before this file also write; it failed in a full Chromium run only (#575).
+import {test,expect} from "./own-server";
 import {readFileSync} from "node:fs";
 import {randomUUID} from "node:crypto";
 import {readerFixture} from "../reader-fixture";
@@ -9,8 +12,7 @@ import {closeAppearance,openAppearance} from "./reader-appearance";
 // views are gone with their switch, their settings, the `P` key and the timing correction; `F` stays.
 test.use({serviceWorkers:"block"});
 installReaderWaitBudget(test);
-// Every test makes its own book the one in the player; the specs after this file share the server and open
-// the player's book, so each book leaves the library again.
+// Every test makes its own book the one in the player; each book leaves the library again.
 const imported:string[]=[];
 test.afterEach(async({page})=>{
  await page.unrouteAll({behavior:"wait"});

@@ -10,7 +10,7 @@
  */
 import type { DeviceSaveEntry } from "./device-saves";
 import {
-  downloadLine, ebookCheckLine, failedLine, finishedLine, readingSyncLine, serverCopyLine, seriesSearchLine,
+  downloadLine, ebookCheckLine, failedLine, finishedLine, readingSyncLine, serverCopyLine, seriesSearchLine, spareEditionsLine,
   withFileCount, withReason, withUser, deviceSaveLine, ALREADY_HAS_COPY_LINE,
   type DownloadFacts, type EbookCheckFacts, type ReadingSyncJobFacts, type SeriesSearchFacts, type ServerCopyFacts,
 } from "./status-lines";
@@ -223,9 +223,36 @@ function doneLine(item: ActivityItem): string | null {
   }
 }
 
-function serverEntry(item: ActivityItem, now: number): Entry | null {
-  const group = itemGroup(item, now);
+/** A sync of a spare edition that was queued by itself (#718): nobody reads that edition. */
+const spareSync = (item: ActivityItem) => item.facts.kind === "alignment" && !!item.facts.spare && !!item.facts.background;
+const moving = (item: ActivityItem) => item.state === "queued" || item.state === "running" || item.state === "paused";
+
+/**
+ * Each work's syncs of spare editions, as one count (#718): how many there are (those still to run and those that
+ * ended today) and which one is being checked now (the first after those that ended).
+ */
+function spareCounts(items: readonly ActivityItem[], now: number) {
+  const counts = new Map<string, { total: number; current: number }>();
+  for (const item of items) {
+    if (!item.workId || !spareSync(item)) continue;
+    const ended = (item.state === "done" || item.state === "failed") && now - item.updatedAt <= FINISHED_TODAY_MS;
+    if (!moving(item) && !ended) continue;
+    const count = counts.get(item.workId) ?? { total: 0, current: 1 };
+    count.total++;
+    if (ended) count.current++;
+    counts.set(item.workId, count);
+  }
+  return counts;
+}
+
+function serverEntry(item: ActivityItem, now: number, spares: Map<string, { total: number; current: number }>): Entry | null {
+  let group = itemGroup(item, now);
   if (!group) return null;
+  // A finished sync of a spare edition is not listed: the book's own sync is the one it reads (#718).
+  if (group === "finished" && spareSync(item)) return null;
+  // A sync of a spare edition waits in the background, under one line per book, never In progress (#718).
+  const spare = spareSync(item) && moving(item) && group !== "attention" && item.workId ? spares.get(item.workId) : undefined;
+  if (spare) group = "waiting";
   const entry = ENTRY_OF[item.kind];
   const failed = item.state === "failed";
   // A Hardcover queue and a backup are not books: they appear only when they need attention.
@@ -236,6 +263,7 @@ function serverEntry(item: ActivityItem, now: number): Entry | null {
   if (notBook) line = withUser(item.error ?? item.stuck?.reason ?? item.detail ?? "", item.user);
   else if (failed) line = failedLine({ entry: entry as "download" });
   else if (item.state === "done") line = doneLine(item);
+  else if (spare) line = spareEditionsLine(spare);
   else line = movingLine(item);
   // A finished series search for the audiobook has no line: the download it starts takes over the row.
   if (line === null && entry === "series-search" && item.state === "done") return null;
@@ -345,8 +373,9 @@ export function buildNow({ activity, saves, books, admin, online, now }: NowInpu
   const entries: { key: string; entry: Entry }[] = [];
   // The server's work is the administrator's, and only while there is a connection: a stale answer never reads as live.
   if (admin && online && activity) {
+    const spares = spareCounts(activity.items, now);
     for (const item of activity.items) {
-      const entry = serverEntry(item, now);
+      const entry = serverEntry(item, now, spares);
       if (entry) entries.push({ key: entry.book && entry.workId ? `work:${entry.workId}` : item.id, entry });
     }
     for (const process of activity.processes) {

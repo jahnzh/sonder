@@ -81,6 +81,8 @@ const desktopProjects = [
               /(^|\/)hardcover(-page)?\.spec\.ts$/,
               // Activity's Now (#522).
               /(^|\/)activity-now\.spec\.ts$/,
+              // Activity: the syncs of a book's spare editions as one row under Waiting (#718).
+              /(^|\/)activity-spare-editions\.spec\.ts$/,
               // The Ebook page (#531).
               /(^|\/)ebook-page\.spec\.ts$/,
               // The worker's page (#520).
@@ -161,6 +163,10 @@ const desktopProjects = [
               /(^|\/)series-(not-saved|discovery|acquisition)\.spec\.ts$/,
               // A Hardcover book opens its Book page before it is a work on the server (#574).
               /(^|\/)hardcover-book-look\.spec\.ts$/,
+              // Now playing for a book without a recording or without an EPUB (#594).
+              /(^|\/)now-playing-ebook-only\.spec\.ts$/,
+              // Discover finds books (#575).
+              /(^|\/)discover\.spec\.ts$/,
               // A stuck download says why and offers Cancel (#716).
               /(^|\/)activity-cancel\.spec\.ts$/,
             ]

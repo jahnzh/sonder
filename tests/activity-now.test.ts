@@ -445,6 +445,73 @@ test("a series search's line has the icon of the file it looks for (#522)", () =
   assert.equal(row(now, "work:w3").icon, "ebook");
 });
 
+// #718: a sync of a spare edition (an EPUB nobody reads, queued by itself) is not the book being synced again.
+const spare = { spare: true, background: true } as const;
+
+test("one sync of a spare edition reads 'Checking another edition' and waits, without a bar (#718)", () => {
+  const now = build({
+    activity: answer([sync("alignment:s1", "w-hs", "processing", { state: "running", progress: 0.2 }, { ...spare, stage: "encoding", files: { done: 0, total: 2 } })]),
+  });
+  assert.deepEqual(where(now), { "work:w-hs": "waiting" });
+  const shown = row(now, "work:w-hs");
+  assert.equal(shown.line, "Checking another edition");
+  assert.equal(shown.progress, null);
+  assert.equal(shown.entry, "reading-sync");
+  assert.equal(now.dot, false);
+});
+
+test("a backfill of several spare editions is one row per book with the one being checked (#718)", () => {
+  const items = [
+    // Hydrogen Sonata: one ended today, one runs, two wait.
+    sync("alignment:h1", "w-hs", "ready", { state: "done", updatedAt: NOW - HOUR }, spare),
+    sync("alignment:h2", "w-hs", "processing", { state: "running", progress: 0.1 }, { ...spare, stage: "encoding", files: { done: 0, total: 2 } }),
+    sync("alignment:h3", "w-hs", "queued", { state: "queued" }, spare),
+    sync("alignment:h4", "w-hs", "queued", { state: "queued" }, spare),
+    // Consider Phlebas: four wait, none started.
+    ...[1, 2, 3, 4].map((n) => sync(`alignment:c${n}`, "w-cp", "queued", { state: "queued" }, spare)),
+    // One that ended yesterday is not counted.
+    sync("alignment:c0", "w-cp", "ready", { state: "done", updatedAt: NOW - 2 * DAY }, spare),
+  ];
+  const now = build({ activity: answer(items) });
+  assert.deepEqual(where(now), { "work:w-hs": "waiting", "work:w-cp": "waiting" });
+  assert.equal(row(now, "work:w-hs").line, "Checking 4 other editions · 2 of 4");
+  assert.equal(row(now, "work:w-cp").line, "Checking 4 other editions · 1 of 4");
+  assert.equal(group(now, "progress").length, 0, "nothing under In progress");
+  assert.equal(group(now, "finished").length, 0, "a finished spare sync is not listed under Finished today");
+});
+
+test("the read edition's own sync stays In progress beside its spare editions; a Prepare of a spare edition is not background (#718)", () => {
+  const now = build({
+    activity: answer([
+      sync("alignment:own", "w-own", "processing", { state: "running", progress: 0.5 }, { stage: "encoding", files: { done: 1, total: 2 }, spare: false, background: true }),
+      sync("alignment:spare", "w-own", "queued", { state: "queued" }, spare),
+      // The administrator prepared this spare edition: it reads as the sync it is.
+      sync("alignment:asked", "w-asked", "processing", { state: "running", progress: 0.3 }, { stage: "encoding", files: { done: 0, total: 2 }, spare: true, background: false }),
+    ]),
+  });
+  assert.deepEqual(where(now), { "work:w-own": "progress", "work:w-asked": "progress" });
+  assert.equal(row(now, "work:w-own").line, "Encoding audio · 1 of 2 files");
+  assert.equal(row(now, "work:w-asked").line, "Encoding audio · 0 of 2 files");
+});
+
+test("a spare edition's sync that stopped still needs attention (#718)", () => {
+  const now = build({ activity: answer([sync("alignment:x", "w-x", "error", { state: "failed", attention: true, actions: ["retry"] }, spare)]) });
+  assert.deepEqual(where(now), { "work:w-x": "attention" });
+  assert.equal(row(now, "work:w-x").line, "Reading sync stopped");
+});
+
+test("a book whose spare-edition syncs all ended today is not listed under Finished today (#718)", () => {
+  const now = build({
+    activity: answer([
+      sync("alignment:d1", "w-done", "ready", { state: "done", updatedAt: NOW - HOUR }, spare),
+      sync("alignment:d2", "w-done", "partial", { state: "done", updatedAt: NOW - 2 * HOUR }, { ...spare, coverage: 0.9 }),
+      // The read edition's own sync that finished today is listed as before.
+      sync("alignment:mine", "w-mine", "ready", { state: "done", updatedAt: NOW - HOUR }, { spare: false, background: true }),
+    ]),
+  });
+  assert.deepEqual(where(now), { "work:w-mine": "finished" });
+});
+
 test("a stuck download says why and offers Cancel; a failing one Retry with Cancel beside it; a cancelled one is finished (#716)", () => {
   const now = build({
     activity: answer([
