@@ -11,6 +11,7 @@ import { tempDir } from "../temp-dir";
 import { openSavedSeries, savedSeriesList, seriesChip, showSavedSeries } from "./library-series";
 import { playFromContinue } from "./library-play";
 import { inSortPicker } from "./library-view";
+import { showReadControls } from "./now-playing";
 
 // Addresses and the page stack (#484, ADR 0020): the browser's history is the stack, Back means the same for the
 // phone's gesture and the browser's button, and every address that works today keeps working.
@@ -54,17 +55,15 @@ async function importWithEbook(page: Page, title: string) {
   expect(upload.ok()).toBe(true);
   return { ...book, ebookId: (await upload.json()).id as string };
 }
-const reader = (page: Page) => page.getByRole("dialog", { name: "Reader" });
+// The reader on its own is gone (#613 part 2): every reader is Now playing's Read face (#593), at #read/<workId>.
+const reader = (page: Page) => page.locator(".now-playing-screen .reader-room");
 async function closeReader(page: Page) {
-  const room = page.locator(".reader-room:not(.inline-reader)");
-  await expect(room.locator(".reader-viewport iframe")).toBeVisible();
+  await expect(reader(page).locator(".reader-viewport iframe")).toBeVisible();
   // A tap in the middle of the page shows the reader's controls (no drag over the EPUB frame).
-  if (!(await room.locator(".reader-topbar").isVisible())) {
-    const box = (await room.locator(".reader-viewport").boundingBox())!;
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  }
-  await room.locator(".reader-topbar").getByRole("button", { name: "Close reader", exact: true }).click();
+  await showReadControls(page);
+  await reader(page).locator(".reader-topbar").getByRole("button", { name: "Close reader", exact: true }).click();
 }
+const readAddress = (workId: string) => new RegExp(`#read/${encodeURIComponent(workId).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
 
 test("switching place counts as a step for Back, and the installed app starts on the Library", async ({ page }) => {
   await page.goto("/");
@@ -142,9 +141,11 @@ test("the old names keep working: #downloads and #reader/<ebook id>", async ({ p
   await page.goto("/#downloads");
   await expect(shown(page)).toHaveText("Activity");
   await expect.poll(() => hash(page)).toBe("#activity");
+  // #reader/<ebook id> opens Now playing's Read face of the ebook's book, with that edition, replacing its entry.
   await page.goto(`/#reader/${book.ebookId}`);
   await expect(reader(page)).toBeVisible();
-  expect(await hash(page)).toBe(`#reader/${book.ebookId}`);
+  await expect(page).toHaveURL(readAddress(book.workId));
+  await expect(reader(page)).toHaveAttribute("data-ebook", book.ebookId);
   // The phone's back gesture closes the reader, as before.
   await page.goBack();
   await expect(reader(page)).toBeHidden();
@@ -185,10 +186,12 @@ test("closing the reader goes back, and Back afterwards does not reopen it", asy
   await tab(page, "Library").click();
   await expect(shown(page)).toHaveText("Library");
   await page.getByRole("button", { name: `About ${title}`, exact: true }).click();
-  // Read on the Book page (#532) opens the chosen EPUB; closing the reader goes back to the book.
+  // Read on the Book page (#532) opens the chosen EPUB in Now playing's Read face, also for a narrated book that is
+  // not in the player (#613 part 2); closing the reader goes back to the book.
   await page.getByRole("region", { name: "Book", exact: true }).getByRole("button", { name: "Read", exact: true }).click();
   await expect(reader(page)).toBeVisible();
-  await expect(page).toHaveURL(new RegExp(`#reader/${book.ebookId}$`));
+  await expect(page).toHaveURL(readAddress(book.workId));
+  await expect(reader(page)).toHaveAttribute("data-ebook", book.ebookId);
   await closeReader(page);
   await expect(reader(page)).toBeHidden();
   await expect(page).toHaveURL(/#book\/[^/]+$/);
@@ -200,16 +203,18 @@ test("closing the reader goes back, and Back afterwards does not reopen it", asy
   await expect(reader(page)).toBeHidden();
 });
 
-test("a reader opened by a link closes to the Library, and Back then leaves the app", async ({ page }) => {
+test("a reader opened by a link closes to its book, and Back then leaves the app", async ({ page }) => {
   const book = await importWithEbook(page, unique("Reader by link"));
   // Another document lies behind the link, as a page the link was followed from would.
   await page.goto("/api/health");
   await page.goto(`/#reader/${book.ebookId}`);
   await expect(reader(page)).toBeVisible();
+  await expect(page).toHaveURL(readAddress(book.workId));
+  // The Read face's parent is the book (#593); the link's entry was replaced twice, never added to.
   await closeReader(page);
   await expect(reader(page)).toBeHidden();
-  await expect(page).toHaveURL(/#library$/);
-  await expect(shown(page)).toHaveText("Library");
+  await expect(page).toHaveURL(/#book\/[^/]+$/);
+  await expect(page.getByRole("region", { name: "Book", exact: true })).toBeVisible();
   await page.goBack();
   await expect(page).toHaveURL(/\/api\/health$/);
 });
@@ -576,7 +581,7 @@ test.describe("with answers from the test", () => {
     await expect(manager).toBeHidden();
   });
 
-  test("a reader closed before its ebook's \"gone\" answer came leaves the page shown then alone", async ({ page }) => {
+  test("an old reader link left before its ebook's \"gone\" answer came leaves the page shown then alone", async ({ page }) => {
     const id = unique("late-gone").replace(/ /g, "-");
     let answer!: () => void;
     const held = new Promise<void>((resolve) => (answer = resolve));
@@ -588,11 +593,9 @@ test.describe("with answers from the test", () => {
     });
     await page.goto("/#library");
     await expect(shown(page)).toHaveText("Library");
-    // A link followed inside the app: an entry on the Library's.
+    // A link followed inside the app: an entry on the Library's, the Library in the link's place while it is asked.
     await page.evaluate((target) => { location.hash = `#reader/${target}`; }, id);
-    await expect(reader(page)).toBeVisible();
-    await page.goBack();
-    await expect(reader(page)).toBeHidden();
+    await expect.poll(() => hash(page)).toBe("#library");
     await expect(shown(page)).toHaveText("Library");
     await tab(page, "Discover").click();
     await expect(shown(page)).toHaveText("Discover");
@@ -609,6 +612,7 @@ test.describe("with answers from the test", () => {
     const book = await importWithEbook(page, unique("Cached details"));
     await page.goto(`/#reader/${book.ebookId}`);
     await expect(reader(page).locator(".reader-viewport iframe")).toBeVisible();
+    await expect(page).toHaveURL(readAddress(book.workId));
     // The reader kept the details on the device (and, where the browser can, the file: take that away again).
     const fileKey = `reader-file:${book.ebookId}`;
     const preferences = (action: "has" | "delete", key: string) =>
@@ -691,7 +695,7 @@ test("an old reader link to an ebook that is gone shows the Library, in the link
   await expect(page).toHaveURL(/\/api\/health$/);
 });
 
-test("an older build's entry reached by Back is not taken as one with the app behind it: its close shows the Library", async ({ page }) => {
+test("an older build's entry reached by Back is not taken as one with the app behind it: its close shows its parent", async ({ page }) => {
   const book = await importWithEbook(page, unique("Old entry"));
   await page.goto("/api/health");
   await page.goto("/#discover");
@@ -706,9 +710,13 @@ test("an older build's entry reached by Back is not taken as one with the app be
   await expect(shown(page)).toHaveText("Discover");
   await page.goBack();
   await expect(reader(page)).toBeVisible();
+  // The older build's reader entry is an old name: Now playing's Read face of the book, in that entry's place.
+  await expect(page).toHaveURL(readAddress(book.workId));
   await closeReader(page);
   await expect(reader(page)).toBeHidden();
-  await expect(page).toHaveURL(/#library$/);
+  // Nothing of the app is known to lie behind it: its parent, the book, in its place (#613 part 2: the reader on its
+  // own closed to the Library).
+  await expect(page).toHaveURL(/#book\/[^/]+$/);
   await expect(shown(page)).toHaveText("Library");
 });
 
@@ -716,6 +724,7 @@ test("a back button whose entries behind were thrown away goes to its page's par
   const book = await importWithEbook(page, unique("Evicted"));
   await page.goto(`/#reader/${book.ebookId}`);
   await expect(reader(page)).toBeVisible();
+  await expect(page).toHaveURL(readAddress(book.workId));
   // Nothing of the app lies behind (Chromium keeps the tab's first blank page there, Firefox nothing).
   const length = await page.evaluate(() => history.length);
   // A reader entry whose state says two of the app's entries lie behind, as the oldest entry Firefox kept of 50.
@@ -724,7 +733,8 @@ test("a back button whose entries behind were thrown away goes to its page's par
   await expect(reader(page)).toBeVisible();
   await closeReader(page);
   await expect(reader(page)).toBeHidden();
-  await expect(page).toHaveURL(/#library$/);
+  // The Read face's parent, the book (the reader on its own's was the Library).
+  await expect(page).toHaveURL(/#book\/[^/]+$/);
   await expect(shown(page)).toHaveText("Library");
   expect(await page.evaluate(() => history.length)).toBe(length);
 });

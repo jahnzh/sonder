@@ -9,6 +9,7 @@ import "./appearance.css";
 import "./reader.css";
 import "./player.css";
 import "./parts/tokens.css";
+import {handleSearchKey} from "./keyboard";
 applyAppearance(cachedAppearance());
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
@@ -20,17 +21,6 @@ if ("serviceWorker" in navigator && import.meta.env.PROD) {
     void navigator.serviceWorker.register("/sw.js").catch(() => {});
   });
 }
-// Keep the search shortcut available without intercepting typing in a field: "/" focuses the Library's search field
-// where it is shown (the top bar and its field went with #581).
-window.addEventListener("keydown", (e) => {
-  if (
-    e.key === "/" &&
-    !["INPUT", "TEXTAREA", "SELECT"].includes((e.target as HTMLElement).tagName)
-  ) {
-    const search = document.querySelector<HTMLInputElement>('.library-search input[aria-label="Search your library"]');
-    if (search) {
-      e.preventDefault();
-      search.focus();
-    }
-  }
-});
+// `/` focuses the search of the page shown, the Library's or Discover's, found by its data attribute (#614); never
+// while typing in a field.
+window.addEventListener("keydown", handleSearchKey);

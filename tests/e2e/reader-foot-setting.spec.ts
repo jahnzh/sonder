@@ -5,6 +5,7 @@ import { readerFixture } from "../reader-fixture";
 import { skipOnMobile } from "./mobile";
 import { bandBoxes, expectTextUncovered, intersects, showControls } from "./reader-bands";
 import { openRead } from "./now-playing";
+import { gotoRead } from "./read-face";
 // Speed and the sleep timer in the reader's foot (#589, spec #586 "Speed and the sleep timer in the foot"; boards
 // ReaderSpeed.dc.html, ReaderSleep.dc.html): each takes the place of the foot's transport row with its label, a
 // Stepper and Done; the timeline above stays, nothing covers the text and the view is not laid out again.
@@ -31,7 +32,7 @@ async function withReader(page: Page, reader: object, run: () => Promise<void>) 
   await page.request.put("/api/appearance", { data: { ...appearance, reader: { ...appearance.reader, ...reader } } });
   try { await run(); } finally { await page.request.put("/api/appearance", { data: appearance }); }
 }
-const standalone = (page: Page) => page.locator(".reader-room:not(.inline-reader)");
+const standalone = (page: Page) => page.locator(".reader-room");
 // The view's resize count and the bands' boxes stay the same across two reads apart: epub.js is done laying out.
 async function settled(room: Locator) {
   let previous = "";
@@ -63,9 +64,9 @@ async function readerWithNarration(page: Page, book: any, ebook: string) {
   await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "Now playing", exact: true })).toBeHidden();
-  await page.goto(`/#reader/${ebook}`);
+  await gotoRead(page, ebook);
   const room = standalone(page);
-  await expect(page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").getByText("Alice was beginning", { exact: false })).toBeVisible();
+  await expect(page.frameLocator(".reader-room .reader-viewport iframe").getByText("Alice was beginning", { exact: false })).toBeVisible();
   await settled(room);
   await showControls(page, room);
   return room;
@@ -304,7 +305,7 @@ test("the default speed from Settings shows in the foot's Speed once saved, and 
     for (let i = 0; i < 6; i++) await page.keyboard.press("ArrowUp");
     await expect(stepper).toHaveText("1.8×");
     await expect.poll(async () => (await (await page.request.get("/api/appearance")).json()).playback.speed).toBe(1.8);
-    await page.goto(`/#reader/${ebook}`);
+    await gotoRead(page, ebook);
     room = standalone(page);
     await settled(room);
     await showControls(page, room);
@@ -324,7 +325,7 @@ test("the default speed from Settings shows in the foot's Speed once saved, and 
     for (let i = 0; i < 6; i++) await page.keyboard.press("ArrowDown");
     await expect(stepper).toHaveText("1×");
     await expect.poll(async () => (await (await page.request.get("/api/appearance")).json()).playback.speed).toBe(1);
-    await page.goto(`/#reader/${ebook}`);
+    await gotoRead(page, ebook);
     await page.reload();
     room = standalone(page);
     await settled(room);
@@ -371,7 +372,7 @@ test("speed from the foot: the lock screen's rate, the chapter list's time left 
   // The current chapter's time left at 2.65× was in the book dialog's chapter list, gone with the Book page (#532):
   // tests/playback-speed.test.ts holds the rule (chapterRowTime), and Now playing's Chapters page (#593) shows it.
   // Use default in the foot returns to the default, also after a reload.
-  await page.evaluate((id) => { location.hash = `#reader/${id}`; }, ebook);
+  await gotoRead(page, ebook, "hash");
   const again = standalone(page);
   await settled(again);
   await showControls(page, again);
@@ -402,9 +403,9 @@ test("on the desktop Speed and the sleep timer take the transport's place in the
   const { book, ebook } = await fixture(page, "Foot desktop");
   await page.goto("about:blank");
   expect((await page.request.post("/api/progress", { data: { recordingId: book.recordingId, trackId: book.tracks[0].id, position: 5, duration: book.tracks[0].duration, updatedAt: Date.now() } })).ok()).toBe(true);
-  await page.goto(`/#reader/${ebook}`);
+  await gotoRead(page, ebook);
   const room = standalone(page);
-  await expect(page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").getByText("Alice was beginning", { exact: false })).toBeVisible();
+  await expect(page.frameLocator(".reader-room .reader-viewport iframe").getByText("Alice was beginning", { exact: false })).toBeVisible();
   let previous = "";
   await expect.poll(async () => { const now = JSON.stringify(await desktopState(room)); const same = now === previous; previous = now; return same; }, { intervals: [300] }).toBe(true);
   const before = await desktopState(room);

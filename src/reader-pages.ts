@@ -20,8 +20,8 @@ export type Bookmark = ReaderBook["bookmarks"][number];
 export type LiveReader = {
   ebookId: string;
   workId: string;
-  /** Which reader: the one in Now playing, or the reader on its own (`#reader/<ebook>`). */
-  host: "now-playing" | "reader";
+  /** Which reader: the one in Now playing's Read face, the only one since the reader on its own went (#613 part 2). */
+  host: "now-playing";
   title: string;
   sections: readonly ReaderSection[];
   bookmarks: readonly Bookmark[];

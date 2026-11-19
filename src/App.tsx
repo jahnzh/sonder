@@ -12,7 +12,7 @@ import { SeriesPage } from "./pages/series-page";
 import { REMOVED_TOAST as SERIES_REMOVED_TOAST } from "./pages/series-remove-model";
 import { useSavedSeries } from "./pages/library-series";
 import { isSavedSeries, SERIES_CHIP } from "./pages/library-series-model";
-import { ReaderHost } from "./components/Reader";
+import { EditionLinkFollower } from "./edition-link";
 import { EBOOK_DEVICE_EVENT } from "./reading";
 import {
   ApiError,
@@ -1033,7 +1033,8 @@ function LibraryApp({
             await refreshOfflineEbooks();
           }}
         />
-        <ReaderHost books={books} notify={notify} />
+        {/* An old reader link (#613 part 2) opens the Read face above, once the server names the work. */}
+        <EditionLinkFollower notify={notify} />
         {notice && <Toast text={notice.text} error={notice.error} onDismiss={() => setNotice(null)} />}
       </div>
     </PlayerProvider>

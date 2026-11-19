@@ -23,7 +23,7 @@ const IGNORED_TAGS = new Set([
   "A",
 ]);
 export const BLOCKING_DIALOG_SELECTOR =
-  '[role="dialog"][data-state="open"]:not(.now-playing-screen):not(.reader-dialog)';
+  '[role="dialog"][data-state="open"]:not(.now-playing-screen)';
 /** Situations in which a key belongs to something else: a field, a dialog, a shortcut. */
 function keyIgnored({
   defaultPrevented = false,
@@ -126,10 +126,86 @@ export function readerKeyAction(input: ReaderKeyInput): ReaderKeyAction {
     return { type: "page", direction: key === "ArrowLeft" ? "previous" : "next" };
   return null;
 }
-/** One row per key. */
-export const KEYBOARD_SHORTCUTS: { keys: string[]; action: string }[] = [
-  { keys: ["Space"], action: "Play or pause" },
-  { keys: ["←", "→"], action: "Skip 30 seconds back or forward" },
-  { keys: ["/"], action: "Search" },
-  { keys: ["f"], action: "Follow the audio in the reader" },
+export type SearchKeyInput = PlaybackKeyInput & {
+  /** A search field of the page shown carries the search key's data attribute (the Library's, Discover's). */
+  hasField?: boolean;
+};
+export type SearchKeyAction = { type: "search" } | null;
+/** The data attribute that marks the search field `/` puts the focus in. */
+export const SEARCH_KEY_ATTRIBUTE = "data-search-key";
+/** The event the field is sent before it is focused: the Library opens its search in place of the Title row. */
+export const SEARCH_KEY_EVENT = "sonder:search-key";
+/**
+ * `/` focuses the search of the page shown (the Library's, Discover's): not while typing in a field (the `/` is
+ * typed), not with Ctrl, Alt or Meta, not with a dialog or sheet open, and not on a page without such a field.
+ * Shift is allowed: on a Nordic keyboard `/` is Shift+7.
+ */
+export function searchKeyAction(input: SearchKeyInput): SearchKeyAction {
+  if (input.key !== "/") return null;
+  if (input.defaultPrevented || input.ctrlKey || input.metaKey || input.altKey || input.dialogOpen) return null;
+  if (typingInField(input)) return null;
+  return input.hasField ? { type: "search" } : null;
+}
+/** Any dialog or sheet that is open: Now playing, the reader and the Get sheets cover the page whose search it is. */
+const OPEN_DIALOG_SELECTOR = '[role="dialog"][data-state="open"], [role="dialog"]:not([data-state])';
+/** The page's search field that `/` focuses, found by its data attribute. */
+export function searchKeyField(root: ParentNode = document): HTMLElement | null {
+  return root.querySelector<HTMLElement>(`[${SEARCH_KEY_ATTRIBUTE}]`);
+}
+/** The `/` key, wired to the document: the page's search field opens and takes the focus. */
+export function handleSearchKey(event: KeyboardEvent) {
+  const field = searchKeyField();
+  const { targetTag, contentEditable } = keyEventContext(event);
+  const action = searchKeyAction({
+    key: event.key,
+    ctrlKey: event.ctrlKey,
+    metaKey: event.metaKey,
+    altKey: event.altKey,
+    defaultPrevented: event.defaultPrevented,
+    targetTag,
+    contentEditable,
+    dialogOpen: !!document.querySelector(OPEN_DIALOG_SELECTOR),
+    hasField: !!field,
+  });
+  if (!action || !field) return;
+  event.preventDefault();
+  field.dispatchEvent(new CustomEvent(SEARCH_KEY_EVENT));
+  field.focus();
+}
+
+export type ShortcutGroup = "Listening" | "Reading" | "Library and Discover";
+export type KeyboardShortcut = {
+  group: ShortcutGroup;
+  action: string;
+  /** The key as the page shows it. */
+  key: string;
+  /** When the key does this, under the action ("While nothing plays"). */
+  note?: string;
+};
+/**
+ * The keys that work, one row each, in the order of Settings › Playback › Keyboard shortcuts (SettingsKeys.dc.html).
+ * tests/keyboard.test.ts keeps this list equal to the keys the functions above handle.
+ */
+export const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
+  { group: "Listening", action: "Play or pause", key: "Space" },
+  { group: "Listening", action: "Back 30 seconds", key: "←" },
+  { group: "Listening", action: "Forward 30 seconds", key: "→" },
+  { group: "Reading", action: "Back to narration", key: "F" },
+  { group: "Reading", action: "Previous page", key: "←", note: "While nothing plays" },
+  { group: "Reading", action: "Next page", key: "→", note: "While nothing plays" },
+  { group: "Library and Discover", action: "Search", key: "/" },
 ];
+/** The `KeyboardEvent.key` of a key as the list shows it. */
+export function eventKey(shown: string): string {
+  return { Space: " ", "←": "ArrowLeft", "→": "ArrowRight" }[shown] ?? shown;
+}
+/** The list in its groups, in order. */
+export function shortcutGroups(list: readonly KeyboardShortcut[] = KEYBOARD_SHORTCUTS) {
+  const groups: { group: ShortcutGroup; rows: KeyboardShortcut[] }[] = [];
+  for (const row of list) {
+    const last = groups[groups.length - 1];
+    if (last?.group === row.group) last.rows.push(row);
+    else groups.push({ group: row.group, rows: [row] });
+  }
+  return groups;
+}

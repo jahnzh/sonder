@@ -356,3 +356,18 @@
   background: var(--danger);
   color: var(--background);
 }
+
+/* A key on the Keyboard shortcuts page (#614): on the raised fill, corner 8, at least 32 by 32. */
+.settings-kbd {
+  box-sizing: border-box;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 var(--space-8);
+  border: 1px solid var(--border);
+  border-radius: var(--corner-control);
+  background: var(--raised);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

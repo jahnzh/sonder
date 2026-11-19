@@ -5,6 +5,7 @@ import { readerFixture } from "../reader-fixture";
 import { skipOnMobile } from "./mobile";
 import { applyInsets, bandBoxes, expectTextUncovered, INSET_PROFILES, intersects, type Box } from "./reader-bands";
 import { openRead } from "./now-playing";
+import { gotoRead } from "./read-face";
 // The reader's page (#587, ADR 0019; boards Reader.dc.html, ReaderControls.dc.html, ReaderScroll.dc.html): a head
 // of 44 and a foot of 72 that keep their boxes whether the controls show or not, plus the safe areas, and the
 // text band exactly what is between them. From the prototype of #469.
@@ -26,12 +27,12 @@ async function withReader(page: Page, reader: object, run: () => Promise<void>) 
   await page.request.put("/api/appearance", { data: { ...appearance, reader: { ...appearance.reader, ...reader } } });
   try { await run(); } finally { await page.request.put("/api/appearance", { data: appearance }); }
 }
-const standalone = (page: Page) => page.locator(".reader-room:not(.inline-reader)");
+const standalone = (page: Page) => page.locator(".reader-room");
 // The standalone reader (`#reader/<id>`), opened and laid out: its view sized once and settled.
 async function openStandalone(page: Page, ebook: string) {
-  await page.goto(`/#reader/${ebook}`);
+  await gotoRead(page, ebook);
   const room = standalone(page);
-  await expect(page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").getByText("Alice was beginning", { exact: false })).toBeVisible();
+  await expect(page.frameLocator(".reader-room .reader-viewport iframe").getByText("Alice was beginning", { exact: false })).toBeVisible();
   await settled(room);
   return room;
 }
@@ -179,9 +180,9 @@ async function playerThenOpen(page: Page, book: any, ebook: string) {
   await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "Now playing", exact: true })).toBeHidden();
-  await page.goto(`/#reader/${ebook}`);
+  await gotoRead(page, ebook);
   const room = standalone(page);
-  await expect(page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").getByText("Alice was beginning", { exact: false })).toBeVisible();
+  await expect(page.frameLocator(".reader-room .reader-viewport iframe").getByText("Alice was beginning", { exact: false })).toBeVisible();
   await settled(room);
   return room;
 }
@@ -271,9 +272,9 @@ test("the desktop's head of 60 and footer are beside the text, not over it (#595
   skipOnMobile(true, "the desktop layout needs a desktop window, not a phone profile");
   await page.setViewportSize({ width: 1280, height: 800 });
   const { ebook } = await fixture(page, "Desktop bands");
-  await page.goto(`/#reader/${ebook}`);
+  await gotoRead(page, ebook);
   const room = standalone(page);
-  await expect(page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").getByText("Alice was beginning", { exact: false })).toBeVisible();
+  await expect(page.frameLocator(".reader-room .reader-viewport iframe").getByText("Alice was beginning", { exact: false })).toBeVisible();
   const topbar = (await room.locator(".reader-topbar").boundingBox())!, player = (await room.locator(".reader-player").boundingBox())!;
   expect(topbar.height).toBeCloseTo(60, 0);
   // The footer (DesktopReader.dc.html): 12 above, a row of 44, 16 below, and its line on top.

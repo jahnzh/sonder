@@ -1,19 +1,3 @@
-.reader-dialog {
-  width: min(1200px, 100vw - 28px);
-  height: calc(100dvh - 28px);
-  max-height: none;
-  padding: 18px;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.reader-dialog .dialog-heading {
-  margin-bottom: 10px;
-  flex-shrink: 0;
-}
-.reader-dialog .dialog-heading h2 {
-  font-size: 17px;
-}
 .reader-room {
   position: relative;
   flex: 1;
@@ -43,18 +27,6 @@
   display: flex;
   align-items: center;
   gap: 10px;
-}
-@media (max-width: 650px) {
-  .reader-dialog {
-    width: 100vw;
-    height: 100dvh;
-    padding: 12px;
-    border-radius: 0;
-    border: 0;
-  }
-  .reader-dialog .dialog-heading p {
-    display: none;
-  }
 }
 
 /* Page mode (#22): the page fills the room, the player bar stays at the
@@ -522,6 +494,12 @@
     min-height: 0;
     margin: 0;
   }
+  /* Two pages side by side (#762): in Page mode, when the text area between the arrows has room for two pages of the
+     text's measure, the host spans both (its width set by the reader, src/reader-spread.ts) and epub.js lays out a
+     spread. The dock and the footer keep their own widths. */
+  .reader-room .reader-page-area > .reader-viewport[data-spread] {
+    flex: 0 1 var(--reader-spread);
+  }
   /* The page arrows in the margins, beside the text. */
   .reader-edge {
     position: static;
@@ -644,22 +622,6 @@
   }
 }
 
-/* The standalone reader is full-screen; its own top bar holds Close. */
-.reader-dialog {
-  width: 100vw;
-  height: 100dvh;
-  max-width: none;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-}
-.reader-dialog > .dialog-heading {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-}
 /* The reader's page (#587, ADR 0019, spec #586 "The reader's page"): on a phone the room is a grid of a head, the
    text band, a dock row and a foot. The head and the foot keep their boxes whether the controls show or not, so
    the text band, and with it the epub.js view, is sized once. They carry the safe areas as padding; the two
@@ -878,13 +840,6 @@
   }
 }
 
-/* The reader on its own stays mounted under its pages (#590): closed, it keeps its layout but is neither seen,
-   tapped nor read, as Now playing does. */
-.reader-dialog[data-state="closed"],
-.reader-dialog[data-state="closed"] * {
-  visibility: hidden !important;
-  pointer-events: none !important;
-}
 
 /* A book without a recording (#594, spec #586 "A book without a recording", ReaderEbookOnly.dc.html): no narration
    in the foot. With the controls shown its line holds the chapter and "N% of the book", and its row Chapters and the

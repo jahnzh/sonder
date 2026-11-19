@@ -1,5 +1,7 @@
 # Restarts from the web UI go through an allowlisted SSH key
 
+**Status (2026-11-19).** Restart is now on a worker's page in Activity › Server (`#activity/server/<worker>`, #520), which replaced the Activity page; the decision stands.
+
 The Activity page (#357) restarts a background process (an alignment worker on WSL or lisa, the local torrent client) by calling SSH with a key whose authorised command is a fixed list of named restarts, like the existing alignment-pool key. The web server never gets the docker socket, and the page is not a shell.
 
 ## Considered Options
