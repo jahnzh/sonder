@@ -4,8 +4,8 @@ The redesign's parts (spec #480, "Parts"; boards in `docs/design/redesign/projec
 screens do not use them yet; each screen's slice moves it over.
 
 - **Tokens:** `tokens.css` (custom properties `--space-4` … `--space-32`, `--corner-control|group|round`,
-  `--height-control|row|bar`, `--edge`, and the classes `.type-title|heading|body|label|caption`) and
-  `tokens.ts` (the same numbers). `tests/parts-tokens.test.ts` keeps them equal to the spec. Colours are the
+  `--height-control|row|bar`, `--edge`, and the classes `.type-title|heading|body|label|caption`).
+  `tests/parts-tokens.test.ts` keeps them equal to the spec. Colours are the
   existing variables of `src/appearance.css` (`--background`, `--surface`, `--raised`, `--border`, `--text`,
   `--muted`, `--accent`, `--on-accent`); a part never names a colour of its own, so every preset and the custom
   palette apply. The compact density changes nothing in a part's measures.
