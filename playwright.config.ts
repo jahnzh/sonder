@@ -249,6 +249,8 @@ const desktopProjects = [
               /(^|\/)keyboard-shortcuts\.spec\.ts$/,
               // Read on a desktop: two pages side by side when the text area is wide enough (#762).
               /(^|\/)reader-two-pages\.spec\.ts$/,
+              // A paused player picks up a newer place saved on another device (#773).
+              /(^|\/)paused-catch-up\.spec\.ts$/,
               // The Series slice's states beside their boards, opt-in with SONDER_SERIES_BOARDS=1 (#570).
               /(^|\/)series-boards\.spec\.ts$/,
             ]
