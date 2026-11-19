@@ -27,7 +27,24 @@
             "acquisition": null
           },
           "hardcover": null,
-          "wantToRead": false
+          "wantToRead": false,
+          "details": {
+            "subtitle": "",
+            "authors": [
+              "Author of Only a Placeholder"
+            ],
+            "genres": [
+              "Fiction"
+            ],
+            "tags": [],
+            "publisher": "",
+            "language": "",
+            "isbn": "",
+            "asin": "",
+            "abridged": null,
+            "explicit": null,
+            "edited": []
+          }
         },
         {
           "workId": "w-beside",
@@ -75,7 +92,11 @@
               "serverStored": true,
               "faults": {},
               "progress": null,
-              "serverCopy": null
+              "serverCopy": null,
+              "narrators": [
+                "Beside Narrator"
+              ],
+              "narratorsEdited": false
             }
           ],
           "chosenEbookId": null,
@@ -84,7 +105,24 @@
           "series": [],
           "mediaState": null,
           "hardcover": null,
-          "wantToRead": false
+          "wantToRead": false,
+          "details": {
+            "subtitle": "",
+            "authors": [
+              "Author of Placeholder Beside Audio"
+            ],
+            "genres": [
+              "Fiction"
+            ],
+            "tags": [],
+            "publisher": "",
+            "language": "en",
+            "isbn": "",
+            "asin": "",
+            "abridged": null,
+            "explicit": null,
+            "edited": []
+          }
         },
         {
           "workId": "w-two",
@@ -156,7 +194,11 @@
                 "duration": 600,
                 "updatedAt": 1768089600000
               },
-              "serverCopy": null
+              "serverCopy": null,
+              "narrators": [
+                "Narrator A"
+              ],
+              "narratorsEdited": false
             },
             {
               "recordingId": "rec-two-b",
@@ -196,7 +238,11 @@
                 "duration": 600,
                 "updatedAt": 1768176000000
               },
-              "serverCopy": null
+              "serverCopy": null,
+              "narrators": [
+                "Narrator B"
+              ],
+              "narratorsEdited": false
             }
           ],
           "chosenEbookId": null,
@@ -221,7 +267,24 @@
             "syncError": null,
             "listIds": []
           },
-          "wantToRead": false
+          "wantToRead": false,
+          "details": {
+            "subtitle": "",
+            "authors": [
+              "Author of Two Recordings"
+            ],
+            "genres": [
+              "Fiction"
+            ],
+            "tags": [],
+            "publisher": "",
+            "language": "de",
+            "isbn": "",
+            "asin": "",
+            "abridged": null,
+            "explicit": null,
+            "edited": []
+          }
         },
         {
           "workId": "w-unplayed",
@@ -269,7 +332,11 @@
               "serverStored": true,
               "faults": {},
               "progress": null,
-              "serverCopy": null
+              "serverCopy": null,
+              "narrators": [
+                "Narrator D"
+              ],
+              "narratorsEdited": false
             },
             {
               "recordingId": "rec-unplayed-a",
@@ -303,7 +370,11 @@
               "serverStored": true,
               "faults": {},
               "progress": null,
-              "serverCopy": null
+              "serverCopy": null,
+              "narrators": [
+                "Narrator C"
+              ],
+              "narratorsEdited": false
             }
           ],
           "chosenEbookId": null,
@@ -312,7 +383,24 @@
           "series": [],
           "mediaState": null,
           "hardcover": null,
-          "wantToRead": false
+          "wantToRead": false,
+          "details": {
+            "subtitle": "",
+            "authors": [
+              "Author of Never Played"
+            ],
+            "genres": [
+              "Fiction"
+            ],
+            "tags": [],
+            "publisher": "",
+            "language": "en",
+            "isbn": "",
+            "asin": "",
+            "abridged": null,
+            "explicit": null,
+            "edited": []
+          }
         },
         {
           "workId": "w-removed",
@@ -370,7 +458,11 @@
                 "status": "downloading",
                 "progress": 0.4,
                 "error": null
-              }
+              },
+              "narrators": [
+                "Kept Narrator"
+              ],
+              "narratorsEdited": false
             }
           ],
           "chosenEbookId": null,
@@ -379,7 +471,24 @@
           "series": [],
           "mediaState": null,
           "hardcover": null,
-          "wantToRead": false
+          "wantToRead": false,
+          "details": {
+            "subtitle": "",
+            "authors": [
+              "Author of One Removed"
+            ],
+            "genres": [
+              "Fiction"
+            ],
+            "tags": [],
+            "publisher": "",
+            "language": "en",
+            "isbn": "",
+            "asin": "",
+            "abridged": null,
+            "explicit": null,
+            "edited": []
+          }
         }
       ]
     },
@@ -409,7 +518,24 @@
           "acquisition": null
         },
         "hardcover": null,
-        "wantToRead": false
+        "wantToRead": false,
+        "details": {
+          "subtitle": "",
+          "authors": [
+            "Author of Only a Placeholder"
+          ],
+          "genres": [
+            "Fiction"
+          ],
+          "tags": [],
+          "publisher": "",
+          "language": "",
+          "isbn": "",
+          "asin": "",
+          "abridged": null,
+          "explicit": null,
+          "edited": []
+        }
       }
     },
     "/api/works/w-beside": {
@@ -460,7 +586,11 @@
             "serverStored": true,
             "faults": {},
             "progress": null,
-            "serverCopy": null
+            "serverCopy": null,
+            "narrators": [
+              "Beside Narrator"
+            ],
+            "narratorsEdited": false
           }
         ],
         "chosenEbookId": null,
@@ -469,7 +599,24 @@
         "series": [],
         "mediaState": null,
         "hardcover": null,
-        "wantToRead": false
+        "wantToRead": false,
+        "details": {
+          "subtitle": "",
+          "authors": [
+            "Author of Placeholder Beside Audio"
+          ],
+          "genres": [
+            "Fiction"
+          ],
+          "tags": [],
+          "publisher": "",
+          "language": "en",
+          "isbn": "",
+          "asin": "",
+          "abridged": null,
+          "explicit": null,
+          "edited": []
+        }
       }
     },
     "/api/works/w-two": {
@@ -544,7 +691,11 @@
               "duration": 600,
               "updatedAt": 1768089600000
             },
-            "serverCopy": null
+            "serverCopy": null,
+            "narrators": [
+              "Narrator A"
+            ],
+            "narratorsEdited": false
           },
           {
             "recordingId": "rec-two-b",
@@ -584,7 +735,11 @@
               "duration": 600,
               "updatedAt": 1768176000000
             },
-            "serverCopy": null
+            "serverCopy": null,
+            "narrators": [
+              "Narrator B"
+            ],
+            "narratorsEdited": false
           }
         ],
         "chosenEbookId": null,
@@ -609,7 +764,24 @@
           "syncError": null,
           "listIds": []
         },
-        "wantToRead": false
+        "wantToRead": false,
+        "details": {
+          "subtitle": "",
+          "authors": [
+            "Author of Two Recordings"
+          ],
+          "genres": [
+            "Fiction"
+          ],
+          "tags": [],
+          "publisher": "",
+          "language": "de",
+          "isbn": "",
+          "asin": "",
+          "abridged": null,
+          "explicit": null,
+          "edited": []
+        }
       }
     },
     "/api/works/w-unplayed": {
@@ -660,7 +832,11 @@
             "serverStored": true,
             "faults": {},
             "progress": null,
-            "serverCopy": null
+            "serverCopy": null,
+            "narrators": [
+              "Narrator D"
+            ],
+            "narratorsEdited": false
           },
           {
             "recordingId": "rec-unplayed-a",
@@ -694,7 +870,11 @@
             "serverStored": true,
             "faults": {},
             "progress": null,
-            "serverCopy": null
+            "serverCopy": null,
+            "narrators": [
+              "Narrator C"
+            ],
+            "narratorsEdited": false
           }
         ],
         "chosenEbookId": null,
@@ -703,7 +883,24 @@
         "series": [],
         "mediaState": null,
         "hardcover": null,
-        "wantToRead": false
+        "wantToRead": false,
+        "details": {
+          "subtitle": "",
+          "authors": [
+            "Author of Never Played"
+          ],
+          "genres": [
+            "Fiction"
+          ],
+          "tags": [],
+          "publisher": "",
+          "language": "en",
+          "isbn": "",
+          "asin": "",
+          "abridged": null,
+          "explicit": null,
+          "edited": []
+        }
       }
     },
     "/api/works/w-removed": {
@@ -764,7 +961,11 @@
               "status": "downloading",
               "progress": 0.4,
               "error": null
-            }
+            },
+            "narrators": [
+              "Kept Narrator"
+            ],
+            "narratorsEdited": false
           }
         ],
         "chosenEbookId": null,
@@ -773,7 +974,24 @@
         "series": [],
         "mediaState": null,
         "hardcover": null,
-        "wantToRead": false
+        "wantToRead": false,
+        "details": {
+          "subtitle": "",
+          "authors": [
+            "Author of One Removed"
+          ],
+          "genres": [
+            "Fiction"
+          ],
+          "tags": [],
+          "publisher": "",
+          "language": "en",
+          "isbn": "",
+          "asin": "",
+          "abridged": null,
+          "explicit": null,
+          "edited": []
+        }
       }
     },
     "/api/works/w-outside": {
@@ -798,7 +1016,24 @@
         "series": [],
         "mediaState": null,
         "hardcover": null,
-        "wantToRead": false
+        "wantToRead": false,
+        "details": {
+          "subtitle": "",
+          "authors": [
+            "Author of Outside the Library"
+          ],
+          "genres": [
+            "Fiction"
+          ],
+          "tags": [],
+          "publisher": "",
+          "language": "en",
+          "isbn": "",
+          "asin": "",
+          "abridged": null,
+          "explicit": null,
+          "edited": []
+        }
       }
     },
     "/api/works/w-sam": {
@@ -823,7 +1058,24 @@
         "series": [],
         "mediaState": null,
         "hardcover": null,
-        "wantToRead": false
+        "wantToRead": false,
+        "details": {
+          "subtitle": "",
+          "authors": [
+            "Author of Sam's Placeholder"
+          ],
+          "genres": [
+            "Fiction"
+          ],
+          "tags": [],
+          "publisher": "",
+          "language": "",
+          "isbn": "",
+          "asin": "",
+          "abridged": null,
+          "explicit": null,
+          "edited": []
+        }
       }
     },
     "/api/works/work-hc-9001": {
@@ -898,7 +1150,11 @@
               "duration": 600,
               "updatedAt": 1768089600000
             },
-            "serverCopy": null
+            "serverCopy": null,
+            "narrators": [
+              "Narrator A"
+            ],
+            "narratorsEdited": false
           },
           {
             "recordingId": "rec-two-b",
@@ -938,7 +1194,11 @@
               "duration": 600,
               "updatedAt": 1768176000000
             },
-            "serverCopy": null
+            "serverCopy": null,
+            "narrators": [
+              "Narrator B"
+            ],
+            "narratorsEdited": false
           }
         ],
         "chosenEbookId": null,
@@ -963,7 +1223,24 @@
           "syncError": null,
           "listIds": []
         },
-        "wantToRead": false
+        "wantToRead": false,
+        "details": {
+          "subtitle": "",
+          "authors": [
+            "Author of Two Recordings"
+          ],
+          "genres": [
+            "Fiction"
+          ],
+          "tags": [],
+          "publisher": "",
+          "language": "de",
+          "isbn": "",
+          "asin": "",
+          "abridged": null,
+          "explicit": null,
+          "edited": []
+        }
       }
     },
     "/api/works/w-none": {
@@ -1047,7 +1324,11 @@
                 "duration": 600,
                 "updatedAt": 1768953600000
               },
-              "serverCopy": null
+              "serverCopy": null,
+              "narrators": [
+                "Narrator A"
+              ],
+              "narratorsEdited": false
             }
           ],
           "chosenEbookId": null,
@@ -1072,7 +1353,24 @@
             "syncError": null,
             "listIds": []
           },
-          "wantToRead": false
+          "wantToRead": false,
+          "details": {
+            "subtitle": "",
+            "authors": [
+              "Author of Two Recordings"
+            ],
+            "genres": [
+              "Fiction"
+            ],
+            "tags": [],
+            "publisher": "",
+            "language": "en",
+            "isbn": "",
+            "asin": "",
+            "abridged": null,
+            "explicit": null,
+            "edited": []
+          }
         },
         {
           "workId": "w-sam",
@@ -1094,7 +1392,24 @@
           "series": [],
           "mediaState": null,
           "hardcover": null,
-          "wantToRead": false
+          "wantToRead": false,
+          "details": {
+            "subtitle": "",
+            "authors": [
+              "Author of Sam's Placeholder"
+            ],
+            "genres": [
+              "Fiction"
+            ],
+            "tags": [],
+            "publisher": "",
+            "language": "",
+            "isbn": "",
+            "asin": "",
+            "abridged": null,
+            "explicit": null,
+            "edited": []
+          }
         }
       ]
     },
@@ -1126,7 +1441,24 @@
         "series": [],
         "mediaState": null,
         "hardcover": null,
-        "wantToRead": false
+        "wantToRead": false,
+        "details": {
+          "subtitle": "",
+          "authors": [
+            "Author of Placeholder Beside Audio"
+          ],
+          "genres": [
+            "Fiction"
+          ],
+          "tags": [],
+          "publisher": "",
+          "language": "en",
+          "isbn": "",
+          "asin": "",
+          "abridged": null,
+          "explicit": null,
+          "edited": []
+        }
       }
     },
     "/api/works/w-two": {
@@ -1201,7 +1533,11 @@
               "duration": 600,
               "updatedAt": 1768953600000
             },
-            "serverCopy": null
+            "serverCopy": null,
+            "narrators": [
+              "Narrator A"
+            ],
+            "narratorsEdited": false
           }
         ],
         "chosenEbookId": null,
@@ -1226,7 +1562,24 @@
           "syncError": null,
           "listIds": []
         },
-        "wantToRead": false
+        "wantToRead": false,
+        "details": {
+          "subtitle": "",
+          "authors": [
+            "Author of Two Recordings"
+          ],
+          "genres": [
+            "Fiction"
+          ],
+          "tags": [],
+          "publisher": "",
+          "language": "en",
+          "isbn": "",
+          "asin": "",
+          "abridged": null,
+          "explicit": null,
+          "edited": []
+        }
       }
     },
     "/api/works/w-unplayed": {
@@ -1251,7 +1604,24 @@
         "series": [],
         "mediaState": null,
         "hardcover": null,
-        "wantToRead": false
+        "wantToRead": false,
+        "details": {
+          "subtitle": "",
+          "authors": [
+            "Author of Never Played"
+          ],
+          "genres": [
+            "Fiction"
+          ],
+          "tags": [],
+          "publisher": "",
+          "language": "en",
+          "isbn": "",
+          "asin": "",
+          "abridged": null,
+          "explicit": null,
+          "edited": []
+        }
       }
     },
     "/api/works/w-removed": {
@@ -1276,7 +1646,24 @@
         "series": [],
         "mediaState": null,
         "hardcover": null,
-        "wantToRead": false
+        "wantToRead": false,
+        "details": {
+          "subtitle": "",
+          "authors": [
+            "Author of One Removed"
+          ],
+          "genres": [
+            "Fiction"
+          ],
+          "tags": [],
+          "publisher": "",
+          "language": "en",
+          "isbn": "",
+          "asin": "",
+          "abridged": null,
+          "explicit": null,
+          "edited": []
+        }
       }
     },
     "/api/works/w-outside": {
@@ -1301,7 +1688,24 @@
         "series": [],
         "mediaState": null,
         "hardcover": null,
-        "wantToRead": false
+        "wantToRead": false,
+        "details": {
+          "subtitle": "",
+          "authors": [
+            "Author of Outside the Library"
+          ],
+          "genres": [
+            "Fiction"
+          ],
+          "tags": [],
+          "publisher": "",
+          "language": "en",
+          "isbn": "",
+          "asin": "",
+          "abridged": null,
+          "explicit": null,
+          "edited": []
+        }
       }
     },
     "/api/works/w-sam": {
@@ -1326,7 +1730,24 @@
         "series": [],
         "mediaState": null,
         "hardcover": null,
-        "wantToRead": false
+        "wantToRead": false,
+        "details": {
+          "subtitle": "",
+          "authors": [
+            "Author of Sam's Placeholder"
+          ],
+          "genres": [
+            "Fiction"
+          ],
+          "tags": [],
+          "publisher": "",
+          "language": "",
+          "isbn": "",
+          "asin": "",
+          "abridged": null,
+          "explicit": null,
+          "edited": []
+        }
       }
     },
     "/api/works/work-hc-9001": {
@@ -1401,7 +1822,11 @@
               "duration": 600,
               "updatedAt": 1768953600000
             },
-            "serverCopy": null
+            "serverCopy": null,
+            "narrators": [
+              "Narrator A"
+            ],
+            "narratorsEdited": false
           }
         ],
         "chosenEbookId": null,
@@ -1426,7 +1851,24 @@
           "syncError": null,
           "listIds": []
         },
-        "wantToRead": false
+        "wantToRead": false,
+        "details": {
+          "subtitle": "",
+          "authors": [
+            "Author of Two Recordings"
+          ],
+          "genres": [
+            "Fiction"
+          ],
+          "tags": [],
+          "publisher": "",
+          "language": "en",
+          "isbn": "",
+          "asin": "",
+          "abridged": null,
+          "explicit": null,
+          "edited": []
+        }
       }
     },
     "/api/works/w-none": {

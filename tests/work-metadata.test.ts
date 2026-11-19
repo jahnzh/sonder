@@ -152,7 +152,7 @@ test("a recording's narrators are edited and reverted on their own", async () =>
 
 test("a local series by hand: the Book page, the Series page and the Series chip of those who have its books", async () => {
   await edit({ series: [{ id: null, name: "Hand Made", position: 1 }] });
-  await ok<WorkMetadata>(OWNER, "/api/works/w-two/metadata", "PATCH", { values: { series: [{ id: null, name: "hand made", position: 2, positionLabel: "2" }] } });
+  await ok<WorkMetadata>(OWNER, "/api/works/w-two/metadata", "PATCH", { values: { title: "Calibans War (edited)", series: [{ id: null, name: "hand made", position: 2, positionLabel: "2" }] } });
   const one = await work(OWNER, "w-one");
   const two = await work(OWNER, "w-two");
   assert.equal(one.series.length, 1);
@@ -166,9 +166,11 @@ test("a local series by hand: the Book page, the Series page and the Series chip
   const local = chip.find((item) => item.id === id);
   assert.ok(local, JSON.stringify(chip));
   assert.equal(local.total, 2);
-  const page = await ok<{ name: string; works: { id: string; workId: string; position: number; added: boolean }[] }>(OWNER, `/api/series/${id}`);
+  const page = await ok<{ name: string; works: { id: string; workId: string; position: number; added: boolean; title: string }[] }>(OWNER, `/api/series/${id}`);
   assert.equal(page.name, "Hand Made");
   assert.deepEqual(page.works.map((entry) => [entry.workId, entry.position, entry.added]), [["w-one", 1, true], ["w-two", 2, true]]);
+  // The series page names a book by its edited title.
+  assert.equal((page.works[1] as unknown as { title: string }).title, "Calibans War (edited)");
   // Kim has one of its books: the series with that book; Sam has none: no series, and its page is not found.
   const kim = await ok<{ id: string }[]>(KIM, "/api/series");
   assert.ok(kim.some((item) => item.id === id));
