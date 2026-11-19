@@ -7,8 +7,12 @@ import {chromium,expect as baseExpect} from '@playwright/test';
 import {FORBIDDEN} from './multi-user-forbidden.mjs';
 import {verifyBaseURL} from './live-check-target.mjs';
 import {adminMultiUserVerifySnapshot,assertAdminMultiUserVerifyUnchanged} from './verify-multi-user-snapshot.mjs';
+import {assertNoLeakedPlaceholders} from './multi-user-placeholders.mjs';
 const expect=baseExpect.configure({timeout:25000});
-process.loadEnvFile('.env');
+// Production reads APP_PASSWORD from .env. A local test server needs one too: the check signs in as the administrator
+// and makes a second account (tests/browser-server.ts with PLAYWRIGHT_AUTH=1 and APP_PASSWORD in the environment).
+if(fs.existsSync('.env'))process.loadEnvFile('.env');
+if(!process.env.APP_PASSWORD)throw Error('The multi-user check needs APP_PASSWORD, the administrator\'s password (from .env or the environment)');
 const baseURL=verifyBaseURL();
 const browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || '/home/jahn/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome'});
 const report={checks:[],errors:[]};
@@ -40,14 +44,14 @@ try {
  expect(qaStatus.user).toMatchObject({username,role:'user'});
  check('User signs in through the real sign-in screen');
  const qaBooks=await(await qa.request.get('/api/books')).json();
- // Every title with audio is shared; metadata-only Hardcover placeholders from the admin's shelves are not (r6#1).
+ // Every title with audio is shared; the administrator's placeholders are not (r6#1). A placeholder is an audio
+ // edition whose recordings have no track (#483), whatever its id: an ebook-only book's (#555) too.
  const withAudio=adminCatalogue.filter(b=>b.tracks?.length).map(b=>b.id).sort();
  expect(qaBooks.filter(b=>b.tracks?.length).map(b=>b.id).sort()).toEqual(withAudio);
- const leaked=qaBooks.filter(b=>!b.tracks?.length&&b.id.startsWith('hc-'));
- if(leaked.length)throw Error('Admin Hardcover placeholders visible to a user: '+leaked.map(b=>b.title).join(', '));
+ assertNoLeakedPlaceholders(qaBooks);
  expect(qaBooks.filter(b=>b.inLibrary).length).toBe(0);
  expect(qaBooks.filter(b=>b.progress).length).toBe(0);
- check('User sees every title with audio, none of the admin\'s Hardcover placeholders, an empty library and no progress',{userCatalogue:qaBooks.length,adminCatalogue:adminCatalogue.length,withAudio:withAudio.length});
+ check('User sees every title with audio, none of the admin\'s placeholders, an empty library and no progress',{userCatalogue:qaBooks.length,adminCatalogue:adminCatalogue.length,withAudio:withAudio.length,adminPlaceholders:adminCatalogue.length-withAudio.length});
  const forbidden=FORBIDDEN;
  for(const [method,url,data] of forbidden){const r=await qa.request.fetch(url,{method,data});if(r.status()!==403)throw Error(`${method} ${url} returned ${r.status()} for a regular user`);}
  const settings=await(await qa.request.get('/api/settings')).json();
@@ -57,17 +61,25 @@ try {
  const media=await qa.request.get(`/api/media/${encodeURIComponent(playable.tracks[0].id)}/location?source=auto`);
  if(!media.ok())throw Error('User cannot resolve media: '+media.status());
  check('User can resolve shared media',{book:playable.title});
- // Settings is a list whose rows open pages (#579): the user's list has Personal and no Server group,
- // the Account page is the user's, and the administrator's pages are refused.
+ // Settings is a list whose rows open pages (#579, src/settings-list.ts): someone who is not the administrator
+ // sees Personal (Account, Appearance, Playback) and This device (App); Connections (the administrator's since
+ // Hardcover went, #721 part d), Users and Library and storage are in the Server group only the administrator has.
+ // A row is a button named by its label and its value ("Account qa-… · User").
  await page.goto('/#settings');
- await expect(page.getByRole('heading',{name:'Personal',exact:true})).toBeVisible();
- await expect(page.getByRole('heading',{name:'Server',exact:true})).toHaveCount(0);
- await page.goto('/#settings/account');
- await expect(page.getByRole('heading',{name:'Account',level:1})).toBeVisible();
- for(const admin of ['users','library']){await page.goto(`/#settings/${admin}`);await expect(page.getByRole('heading',{name:/^(Users|Library and storage)$/,level:1})).toHaveCount(0);}
- for(const hidden of ['Your home server','TorBox','Prowlarr','Users'])await expect(page.getByRole('heading',{name:hidden,exact:true})).toHaveCount(0);
+ const list=page.getByRole('navigation',{name:'Settings',exact:true});
+ await expect(list.getByRole('heading',{name:'Personal',exact:true})).toBeVisible();
+ await expect(list.getByRole('heading',{name:'This device',exact:true})).toBeVisible();
+ await expect(list.getByRole('heading',{name:'Server',exact:true})).toHaveCount(0);
+ const rows=['Account','Appearance','Playback','App'];
+ for(const label of rows)await expect(list.getByRole('button',{name:new RegExp(`^${label}(\\s|$)`)})).toBeVisible();
+ await expect(list.getByRole('button')).toHaveCount(rows.length);
+ for(const hidden of ['Connections','Users','Library and storage','TorBox','Prowlarr'])await expect(list.getByRole('button',{name:new RegExp(`^${hidden}`)})).toHaveCount(0);
  await page.screenshot({path:'artifacts/live-multi-user-settings.png',fullPage:true});
- check('Settings UI shows Account and hides admin sections');
+ await list.getByRole('button',{name:/^Account\s/}).click();
+ await expect(page.getByRole('heading',{name:'Account',level:1})).toBeVisible();
+ // The administrator's pages are refused at their address: it opens the Settings list.
+ for(const admin of ['connections','users','library']){await page.goto(`/#settings/${admin}`);await expect(page.getByRole('heading',{name:'Settings',level:1})).toBeVisible();await expect(page.getByRole('heading',{name:/^(Connections|Users|Library and storage)$/,level:1})).toHaveCount(0);}
+ check('Settings lists Account, Appearance, Playback and App, and refuses the administrator\'s pages',{rows});
  // Write as the QA user only, then confirm the admin did not change.
  const track=playable.tracks[0];
  const wrote=await qa.request.post('/api/progress',{data:{recordingId:playable.recordingId,trackId:track.id,position:5,duration:track.duration||60,updatedAt:Date.now()},headers:{'x-sonder-user-id':String(qaId)}});
