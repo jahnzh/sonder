@@ -1,13 +1,12 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, type Server } from "node:http";
 import { connect, type AddressInfo } from "node:net";
+import { tempDir } from "./temp-dir.ts";
 
 // AudioBookBay requests through ABB_PROXY_URL (#755): a real mirror and a real CONNECT proxy on loopback.
-const temp = mkdtempSync(join(tmpdir(), "sonder-abb-proxy-"));
+const temp = tempDir("sonder-abb-proxy-");
 process.env.DATA_DIR = join(temp, "db");
 const { db } = await import("../server/db.ts");
 const s = await import("../server/schema.ts");
@@ -49,7 +48,6 @@ after(() => {
   proxy.closeAllConnections();
   mirror.close();
   proxy.close();
-  rmSync(temp, { recursive: true, force: true });
 });
 
 test("without ABB_PROXY_URL the mirror is asked directly", async () => {
@@ -77,4 +75,15 @@ test("a mirror that cannot be reached says so instead of 'fetch failed'", async 
   await new Promise((resolve) => closed.close(resolve));
   setMirror(`http://127.0.0.1:${port}`);
   await assert.rejects(abbReleaseSearch("banks"), /The mirror could not be reached\./);
+});
+
+test("a proxy that cannot be reached is named in the sentence", async () => {
+  const closed = createServer();
+  const port = await listen(closed);
+  await new Promise((resolve) => closed.close(resolve));
+  process.env.ABB_PROXY_URL = `http://127.0.0.1:${port}`;
+  setMirror(`http://127.0.0.1:${mirrorPort}`);
+  await assert.rejects(abbReleaseSearch("banks"), /could not be reached through the server's proxy\./);
+  process.env.ABB_PROXY_URL = "not a url";
+  await assert.rejects(abbReleaseSearch("banks"), /could not be reached through the server's proxy\./);
 });
