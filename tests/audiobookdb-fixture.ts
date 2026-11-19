@@ -146,6 +146,8 @@ export const FIXTURE = {
   medDash: book("M8WaKdjCh86T", "Marcus Aurelius – Meditations", "Marcus Aurelius", { releases: [{ id: "rl-med-m8" }] }),
   medHyphen: book("4DqnhVBTt3iG", "Marcus Aurelius - Meditations", "Marcus Aurelius", { releases: [{ id: "rl-med-4d" }] }),
   medPlain: book("hTJnVwadQJUM", "Meditations", "Marcus Aurelius", { releases: Array.from({ length: 8 }, (_, i) => ({ id: `rl-med-h${i + 1}` })) }),
+  // A number that is part of a title, not a place in a series: the title as written still finds it.
+  fahrenheit: book("bk-fahrenheit", "Fahrenheit 451", "Ray Bradbury", { releases: [{ id: "rl-fahrenheit" }] }),
   classics: book("bk-classics", "The Classics Collection: Meditations, The Republic and The Prince", "Marcus Aurelius", {
     people: [person("Marcus Aurelius", "Author"), person("Plato", "Author"), person("Niccolò Machiavelli", "Author")],
     releases: [{ id: "rl-classics" }],
@@ -172,6 +174,7 @@ const RELEASES: Record<string, ReturnType<typeof release>> = {
   "rl-med-m8": release("rl-med-m8", "M8WaKdjCh86T", "Duncan Steen", 15_000_000, "English", null, 12),
   "rl-med-4d": release("rl-med-4d", "4DqnhVBTt3iG", "Robin Homer", 16_200_000, "English", null, 12),
   ...Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`rl-med-h${i + 1}`, release(`rl-med-h${i + 1}`, "hTJnVwadQJUM", `Narrator ${i + 1}`, 18_000_000 + i * 3_600_000, "English", null, 12)])),
+  "rl-fahrenheit": release("rl-fahrenheit", "bk-fahrenheit", "Tim Robbins", 18_600_000, "English", null, 10),
   "rl-classics": release("rl-classics", "bk-classics", "Various", 90_000_000, "English", null, 40),
 };
 const BOOKS: Record<string, ReturnType<typeof book> & { releases?: unknown }> = Object.fromEntries(Object.values(FIXTURE).map((entry) => [entry.id, entry]));

@@ -543,6 +543,11 @@ test("a match by hand or by ASIN gathers the other entries of the picked book's 
   sqlite.prepare("INSERT OR REPLACE INTO catalogue_usage(provider,day,units) VALUES('audiobookdb',?,?)").run(provider.usageDay(now), abdb.AUDIOBOOKDB_DAILY_UNITS - abdb.AUDIOBOOKDB_SEARCH_RESERVE);
   await links.linkWork("w-meditations", { provider: "audiobookdb", id: "M8WaKdjCh86T" }, "manual");
   assert.deepEqual(links.workEntryIds("w-meditations"), ["M8WaKdjCh86T"]);
+  // "Fahrenheit 451: A Novel" reads like "<Series> <N>: <Title>": its prefix-free words find nothing, the title as written does.
+  resetCatalogue();
+  work("w-fahrenheit", "Fahrenheit 451: A Novel", "Ray Bradbury", { seconds: 18_600 });
+  assert.deepEqual(await links.matchWork("w-fahrenheit"), { outcome: "matched", reason: null, candidates: 1 });
+  assert.equal(links.workLink("w-fahrenheit")?.id, "bk-fahrenheit");
   // The work's stored series position (Hardcover's old link) picks among entries of one title.
   sqlite.prepare("INSERT OR REPLACE INTO hardcover_links(work_id,book_id,series) VALUES('w-xwing',1,?)").run(JSON.stringify([{ name: "X-Wing", position: 9 }]));
   assert.equal(links.workSeriesPosition("w-xwing", "Star Wars Omnibus: X-Wing Rogue Squadron"), 9);
