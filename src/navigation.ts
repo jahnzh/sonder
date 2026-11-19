@@ -116,8 +116,14 @@ function rootAfter(from: Entry | null, to: Route, depth: number, kind: "push" | 
 function emit() {
   for (const listener of listeners) listener();
 }
-function show(entry: Entry) {
+/**
+ * The old reader link (`#reader/<ebook id>`, spec #608 "Old names") the current entry was read from, while the app
+ * still shows that entry: the Library in the link's place until the server names the edition's work.
+ */
+let editionLink: { ebookId: string; key: string } | null = null;
+function show(entry: Entry, edition?: string) {
   current = entry;
+  editionLink = edition ? { ebookId: edition, key: entry.key } : null;
   if (!covers(entry)) shownPage = entry.route;
 }
 
@@ -236,7 +242,7 @@ function onPopState(event: PopStateEvent) {
         from: added ? current.route : null,
       };
   const before = shownPage;
-  show(entry);
+  show(entry, read.edition);
   // An old name, a bad address or an entry without the app's state: replaced by what it shows.
   if (!saved || read.redirect || writeAddress(route) !== location.hash) history.replaceState(stateOf(entry), "", urlOf(route));
   lengthSeen = history.length;
@@ -280,7 +286,7 @@ export function startNavigation(options: { admin: boolean }) {
     data: saved?.sonderSheet ? undefined : saved?.sonderData,
   };
   const first = !current;
-  show(entry);
+  show(entry, read.edition);
   if (!saved || read.redirect || writeAddress(route) !== location.hash) history.replaceState(stateOf(entry), "", urlOf(route));
   lengthSeen = history.length;
   if (!listening) {
@@ -297,6 +303,24 @@ export function startNavigation(options: { admin: boolean }) {
   } else if (first && saved?.sonderScroll && keepsScroll(route) && !covers(entry)) restoreScroll(saved.sonderScroll);
   emit();
 }
+/** The old reader link the shown entry was read from, or null once anything else is shown. */
+export function shownEditionLink(): { ebookId: string; key: string } | null {
+  return editionLink;
+}
+/**
+ * The edition's work is known: the old reader link's entry becomes `route` (the Read face), in place, so Back does
+ * not return to the link. Nothing moves when the app has left that entry meanwhile.
+ */
+export function followEditionLink(key: string, route: Route) {
+  // `editionLink` belongs to the entry shown (show() sets both), so its key is the current entry's.
+  if (!editionLink || editionLink.key !== key) return;
+  navigate(route, { replace: true });
+}
+/** The old reader link was answered with nothing to open: the Library stays in its place, and the link is done. */
+export function dropEditionLink(key: string) {
+  if (editionLink?.key === key) editionLink = null;
+}
+
 function ensure(): Entry {
   if (!current) startNavigation({ admin });
   return current!;
