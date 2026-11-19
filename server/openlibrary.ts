@@ -111,7 +111,10 @@ export async function searchOpenLibrary(query: string, options: { priority?: Pri
 }
 
 /** `/works/{id}.json`, cached a week; the description only on a live answer. */
-export async function openLibraryWork(id: string, options: { priority?: Priority; fresh?: boolean } = {}): Promise<{ id: string; title: string; description: string | null; cover: string | null }> {
+export async function openLibraryWork(
+  id: string,
+  options: { priority?: Priority; fresh?: boolean } = {},
+): Promise<{ id: string; title: string; description: string | null; cover: string | null; authorIds: string[]; year: number | null }> {
   if (!/^OL\d+W$/.test(id)) throw fail("not_found", "Open Library has no work with this id.");
   const { data } = await cached({
     provider: "openlibrary",
@@ -124,9 +127,31 @@ export async function openLibraryWork(id: string, options: { priority?: Priority
   });
   if (!isObject(data) || !text(data.title)) throw fail("unexpected", "Open Library returned an unexpected response.");
   const description = isObject(data.description) ? text(data.description.value) : text(data.description);
-  return { id, title: text(data.title)!, description, cover: coverUrl(Array.isArray(data.covers) ? data.covers[0] : null) };
+  // `authors[].author.key` ("/authors/OL1A"); the names are their own entries (`openLibraryAuthor`).
+  const authorIds = (Array.isArray(data.authors) ? data.authors : [])
+    .map((entry) => (isObject(entry) && isObject(entry.author) ? text(entry.author.key) : null))
+    .map((key) => key?.match(/(OL\d+A)$/)?.[1] ?? null)
+    .filter((key): key is string => !!key);
+  const year = text(data.first_publish_date)?.match(/\b(1[5-9]\d\d|20\d\d)\b/)?.[1];
+  return { id, title: text(data.title)!, description, cover: coverUrl(Array.isArray(data.covers) ? data.covers[0] : null), authorIds, year: year ? Number(year) : null };
+}
+
+/** `/authors/{id}.json`: the author's name, cached a week. */
+export async function openLibraryAuthor(id: string, options: { priority?: Priority; fresh?: boolean } = {}): Promise<string | null> {
+  if (!/^OL\d+A$/.test(id)) return null;
+  const { data } = await cached({
+    provider: "openlibrary",
+    kind: "author",
+    key: id,
+    ttlMs: DETAIL_TTL_MS,
+    now: config.clock.now(),
+    fresh: options.fresh,
+    live: () => request(`/authors/${id}.json`, options.priority ?? "interactive"),
+  });
+  return isObject(data) ? text(data.name) ?? text(data.personal_name) : null;
 }
 
 export async function refreshOpenLibraryEntry(kind: string, key: string): Promise<void> {
   if (kind === "work") await openLibraryWork(key, { priority: "background", fresh: true });
+  else if (kind === "author") await openLibraryAuthor(key, { priority: "background", fresh: true });
 }

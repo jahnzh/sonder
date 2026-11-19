@@ -113,6 +113,25 @@
 .discover-failed > p {
   margin: 0;
   color: var(--muted);
+  min-width: 0;
+}
+/* The provider's reason under the line (#716/#717). */
+.discover-failed-text {
+  display: flex;
+  flex-direction: column;
+  overflow-wrap: anywhere;
+}
+/* AudiobookDB's terms: its results credit it with a link (#721). */
+.discover-credit {
+  margin: calc(-1 * var(--space-8)) 0 0;
+  padding: 0 var(--space-16);
+  color: var(--muted);
+}
+.discover-credit a {
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
 }
 /* Search for a recording: two lines and the chevron, 64 high as a Book row without a cover. */
 .discover-recording {

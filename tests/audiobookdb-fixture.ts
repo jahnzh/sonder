@@ -58,6 +58,11 @@ export const FIXTURE = {
   asinBook: book("bk-asin", "A Long Way Home", "Ida Vale", { releases: [{ id: "rl-asin" }] }),
   // The match page's own book (browser spec).
   feral: book("bk-feral", "Quiet Harbour", "Mira Sand", { releases: [{ id: "rl-feral" }] }),
+  // Discover's "banks" (#721 part c2): two English audiobooks, one the server has (The Wasp Factory), and one in
+  // German only, which the search answer marks as German and Discover leaves out.
+  excession: book("bk-excession", "Excession", "Iain M. Banks", { releaseDate: "1996-08-01", releases: [{ id: "rl-excession" }] }),
+  wasp: book("bk-wasp", "The Wasp Factory", "Iain Banks", { releaseDate: "1984-02-16", releases: [{ id: "rl-wasp" }] }),
+  wespen: book("bk-wespen", "Die Wespenfabrik", "Iain Banks", { language: { code: "de", name: "German" }, releases: [{ id: "rl-wespen" }] }),
 };
 const RELEASES: Record<string, ReturnType<typeof release>> = {
   "rl-lw-en": release("rl-lw-en", "bk-leviathan", "Jefferson Mays", 72_060_000, "English", "B004GJ4ZPU", 55),
@@ -68,6 +73,9 @@ const RELEASES: Record<string, ReturnType<typeof release>> = {
   "rl-schwarm": release("rl-schwarm", "bk-german", "Frank Glaubrecht", 60_000_000, "German", null, 10),
   "rl-asin": release("rl-asin", "bk-asin", "Mara Lind", 36_000_000, "English", "B0ASINFIX1", 12),
   "rl-feral": release("rl-feral", "bk-feral", "Rowan Hale", 40_000_000, "English", "B0FERAL001", 30),
+  "rl-excession": release("rl-excession", "bk-excession", "Peter Kenny", 57_600_000, "English", null, 20),
+  "rl-wasp": release("rl-wasp", "bk-wasp", "Peter Kenny", 28_800_000, "English", null, 12),
+  "rl-wespen": release("rl-wespen", "bk-wespen", "Frank Arnold", 28_000_000, "German", null, 12),
 };
 const BOOKS: Record<string, ReturnType<typeof book> & { releases?: unknown }> = Object.fromEntries(Object.values(FIXTURE).map((entry) => [entry.id, entry]));
 const ASINS: Record<string, { bookId: string; releaseId: string }> = {
@@ -90,7 +98,11 @@ const OPEN_LIBRARY_DOCS = [
   { key: "/works/OL27448W", title: "The Quiet Shelf", author_name: ["Nora Reader"], first_publish_year: 1999, cover_i: 12345, language: ["eng"] },
   { key: "/works/OL1000W", title: "Quiet Harbour", author_name: ["Mira Sand"], first_publish_year: 2021, language: ["eng"] },
   { key: "/works/OL2000W", title: "Wilde Götter", author_name: ["Mira Sand"], first_publish_year: 2022, language: ["ger"] },
+  // Discover's "banks" (#721 part c2): a book without an audiobook, and Excession, which AudiobookDB has too.
+  { key: "/works/OL3000W", title: "The Bridge", author_name: ["Iain Banks"], author_key: ["OL300A"], first_publish_year: 1986, cover_i: 30000, language: ["eng"] },
+  { key: "/works/OL3001W", title: "Excession", author_name: ["Iain M. Banks"], author_key: ["OL301A"], first_publish_year: 1996, language: ["eng"] },
 ];
+const OPEN_LIBRARY_AUTHORS: Record<string, string> = { OL300A: "Iain Banks", OL301A: "Iain M. Banks" };
 
 export function createControl(): FixtureControl {
   return { calls: [], failNext: [], offline: false, remaining: 39, gone: new Set() };
@@ -143,7 +155,17 @@ export function fixtureFetch(control: FixtureControl, passThrough: typeof fetch 
       }
       const work = url.pathname.match(/^\/works\/(OL\d+W)\.json$/);
       const doc = work && OPEN_LIBRARY_DOCS.find((entry) => entry.key === `/works/${work[1]}`);
-      if (doc) return json({ key: doc.key, title: doc.title, description: { type: "/type/text", value: `About ${doc.title}.` }, covers: doc.cover_i ? [doc.cover_i] : [] });
+      if (doc)
+        return json({
+          key: doc.key,
+          title: doc.title,
+          description: { type: "/type/text", value: `About ${doc.title}.` },
+          covers: doc.cover_i ? [doc.cover_i] : [],
+          authors: (("author_key" in doc ? doc.author_key : undefined) ?? []).map((key) => ({ type: { key: "/type/author_role" }, author: { key: `/authors/${key}` } })),
+          first_publish_date: String(doc.first_publish_year),
+        });
+      const author = url.pathname.match(/^\/authors\/(OL\d+A)\.json$/);
+      if (author && OPEN_LIBRARY_AUTHORS[author[1]]) return json({ key: `/authors/${author[1]}`, name: OPEN_LIBRARY_AUTHORS[author[1]] });
       return json({ error: "notfound" }, 404);
     }
     return passThrough(input, init);

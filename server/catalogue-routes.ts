@@ -2,7 +2,8 @@
 // failure answers with its reason (502) and touches nothing else: the library and playback never read a provider.
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
-import { requireAdmin } from "./users.ts";
+import { currentUserId, requireAdmin } from "./users.ts";
+import { discoverAudiobookDb, discoverOpenLibrary } from "./discover-catalogue.ts";
 import { sqlite } from "./db.ts";
 import { CatalogueError } from "./catalogue-provider.ts";
 import { audiobookDbKey, audiobookDbReleases, audiobookDbUnitsToday, searchAudiobookDbBooks, testAudiobookDb, type CatalogueBook } from "./audiobookdb.ts";
@@ -73,6 +74,27 @@ async function workCatalogue(workId: string) {
 }
 
 export function registerCatalogueRoutes(app: FastifyInstance) {
+  /**
+   * Discover's book search (#721 part c2), for every account with the server's key: `{ books: CatalogueHit[] }`, each
+   * with the work it opens for this user. A provider failure answers its reason (`failed`): 409 without a key, else 502.
+   */
+  const discoverQuery = z.object({ q: z.string().trim().min(2).max(150) });
+  app.get("/api/discover/audiobookdb", async (req, reply) => {
+    const { q } = discoverQuery.parse(req.query);
+    try {
+      return { books: await discoverAudiobookDb(currentUserId(req), q) };
+    } catch (error) {
+      return failed(reply, error);
+    }
+  });
+  app.get("/api/discover/openlibrary", async (req, reply) => {
+    const { q } = discoverQuery.parse(req.query);
+    try {
+      return { books: await discoverOpenLibrary(currentUserId(req), q) };
+    } catch (error) {
+      return failed(reply, error);
+    }
+  });
   app.post("/api/audiobookdb/test", async (req, reply) => {
     requireAdmin(req);
     try {

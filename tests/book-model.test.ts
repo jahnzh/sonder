@@ -419,4 +419,9 @@ test("Get adds first only on a Hardcover book outside the library", () => {
   assert.equal(addsBeforeGet({ workId: "work-war", inLibrary: false }), false);
   assert.equal(addsBeforeGet({ workId: "work-hc-503x", inLibrary: false }), false);
   assert.equal(addsBeforeGet({ workId: "my-work-hc-503", inLibrary: false }), false);
+  // A catalogue book not on the server (#721): AudiobookDB's and Open Library's ids.
+  assert.equal(addsBeforeGet({ workId: "work-abdb-bk-excession", inLibrary: false }), true);
+  assert.equal(addsBeforeGet({ workId: "work-ol-OL27448W", inLibrary: false }), true);
+  assert.equal(addsBeforeGet({ workId: "work-ol-OL27448W", inLibrary: true }), false);
+  assert.equal(addsBeforeGet({ workId: "work-ol-27448", inLibrary: false }), false);
 });

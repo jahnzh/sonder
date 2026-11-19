@@ -413,6 +413,15 @@ export function BookPage(props: Props) {
         </div>
       )}
 
+      {/* A catalogue book not on the server (#721): AudiobookDB's terms ask for the credit where its data shows. */}
+      {work.catalogue?.provider === "audiobookdb" && (
+        <p className="book-page-credit type-label">
+          <a href="https://audiobookdb.org" target="_blank" rel="noreferrer">
+            Data from AudiobookDB
+          </a>
+        </p>
+      )}
+
       {model.inLibrary && (
         <Group label="Book">
           {hardcoverValue !== null && (
