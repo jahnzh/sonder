@@ -125,6 +125,8 @@ const desktopProjects = [
               /(^|\/)library-redesign\.spec\.ts$/,
               // The Book page (#532).
               /(^|\/)book-page\.spec\.ts$/,
+              // An edition without its own cover: the work's cover or the generated one, never a sample book's (#763).
+              /(^|\/)sample-cover\.spec\.ts$/,
               // The reader's page: a head, the text band and a foot (#587).
               /(^|\/)reader-bands\.spec\.ts$/,
               // Appearance docked under the text (#588).

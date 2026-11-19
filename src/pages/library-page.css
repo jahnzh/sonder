@@ -103,7 +103,6 @@
   overflow: hidden;
   background: var(--raised);
 }
-.library-continue-cover .part-cover,
 .library-continue-cover img {
   width: 100%;
   height: 100%;
@@ -261,7 +260,6 @@
   overflow: hidden;
   background: var(--raised);
 }
-.library-cover .part-cover,
 .library-cover img {
   width: 100%;
   height: 100%;
@@ -375,4 +373,11 @@
     padding-right: 0;
     flex-wrap: wrap;
   }
+}
+
+/* The generated cover fills the tile and Continue's cover (#763). */
+.library-cover .part-cover,
+.library-continue-cover .part-cover {
+  width: 100%;
+  height: 100%;
 }
