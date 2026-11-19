@@ -7,6 +7,7 @@ import { test, expect, type Page, type Request } from "@playwright/test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
+import { skipWithoutBlobStore } from "./mobile";
 
 test.use({ serviceWorkers: "block" });
 
@@ -342,6 +343,7 @@ test("the heart and the Favorites chip agree", async ({ page }) => {
 });
 
 test("the This device switch: on saves the recording and the EPUB; off asks with the size and keeps the place", async ({ page }) => {
+  skipWithoutBlobStore();
   test.setTimeout(90_000);
   const book = await importBook(page, unique("Kept book"));
   const place = { recordingId: book.recordingId, trackId: book.tracks[0].id, position: 33, duration: book.tracks[0].duration, updatedAt: Date.now() };

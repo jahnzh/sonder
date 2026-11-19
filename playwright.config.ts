@@ -53,8 +53,18 @@ const activityIphone = existsSync(webkit.executablePath())
 // in sign-in.spec.ts).
 const slice13Specs =
   /(^|\/)(account-requests|activity-(device|dot|navigation|now|worker)|app|audiobook-page|book-page(-states)?|device-reset|device-save-records|discover|discovery|ebook-only-library|gallery(-picker|-tooltip)?|get-recording|hardcover(-book-look|-sync-form)?|integrated-reader|keep-not-complete|keep-saver|library-(picker|redesign|series)|media-controls|navigation|now-playing-layout|offline-restart|one-reading-view|playback-speed(-rate)?|playback-workflow|position-history|prowlarr|reader-cache-not-kept|reader-foot-setting|reader-messages|reader-theme|reliability|series-(acquisition|discovery|followups|page|removal)|settings-(pages|server)|shell|sign-in|source-progress|stalled-seek|torrent-health|users|works-gallery)\.spec\.ts$/;
+// The iPhone 15 profile (touch, user agent, pixel ratio) at the suite's phone window, 390 by 844, the size the specs and
+// the boards measure (the profile's own is 393 by 659). The service worker is blocked, as on webkit-iphone-activity:
+// once it controls the page, WebKit's requests no longer pass page.route. The specs that test the service worker run
+// with it on their own project. The Activity specs among them run on webkit-iphone-activity already. The names start
+// with mobile- so that skipOnMobile (tests/e2e/mobile.ts) skips a test that needs a keyboard or the desktop layout.
+const slice13WorkerSpecs = /(^|\/)(app|device-reset|offline-restart|reader-theme|works-gallery)\.spec\.ts$/;
+const slice13Phone = { ...devices["iPhone 15"], viewport: { width: 390, height: 844 }, launchOptions: {} };
 const slice13Iphone = existsSync(webkit.executablePath())
-  ? [{ name: "webkit-iphone-slice13", testMatch: slice13Specs, use: { ...devices["iPhone 15"], launchOptions: {} } }]
+  ? [
+      { name: "mobile-iphone-slice13", testMatch: slice13Specs, testIgnore: [slice13WorkerSpecs, activitySpecs], use: { ...slice13Phone, serviceWorkers: "block" as const } },
+      { name: "mobile-iphone-slice13-sw", testMatch: slice13WorkerSpecs, use: slice13Phone },
+    ]
   : [];
 const desktopProjects = [
   { name: "chromium" },
