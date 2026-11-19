@@ -43,3 +43,10 @@
   font-size: 18px;
   line-height: 1;
 }
+/* The words are not DOM text: drawn from data-text, so getByText and the accessibility tree see none of them. */
+.part-cover-title::before,
+.part-cover-author::before,
+.part-cover-letter::before {
+  content: attr(data-text);
+  content: attr(data-text) / "";
+}

@@ -1,7 +1,9 @@
 // A book's cover (#763): the image of the one cover choice (`src/cover-choice.ts`), or, for a book with no cover of
 // its own or of its work, the generated cover: the title and the author on the work's colour (a share of the theme's
 // accent, so every preset colours it). Never another book's art. An image that fails to load is drawn as the
-// generated cover too. `compact` covers (56 px and less) show the title's first letter only.
+// generated cover too. `compact` covers (56 px and less) show the title's first letter only. The generated cover's
+// words are decoration, drawn by CSS from `data-text` (`cover.css`): neither DOM text nor in the accessibility tree,
+// so the page's own title and author stay the only text with the book's name.
 import { useEffect, useState, type CSSProperties } from "react";
 import { coverShare } from "../cover-choice";
 import "./cover.css";
@@ -38,11 +40,11 @@ export function Cover({ src, title, author, workId, className, compact, lazy }: 
   return (
     <span className={`${className ? `${className} ` : ""}part-cover`} data-compact={compact ? "" : undefined} style={style} aria-hidden="true">
       {compact ? (
-        <span className="part-cover-letter">{letter}</span>
+        <span className="part-cover-letter" data-text={letter} />
       ) : (
         <>
-          <span className="part-cover-title">{title}</span>
-          {author && <span className="part-cover-author">{author}</span>}
+          <span className="part-cover-title" data-text={title} />
+          {author && <span className="part-cover-author" data-text={author} />}
         </>
       )}
     </span>

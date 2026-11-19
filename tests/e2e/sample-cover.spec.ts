@@ -34,8 +34,22 @@ test("the mini player, Now playing and the Library show the work's cover or the 
   await expect(tile("w-got-763").locator("img")).toHaveAttribute("src", COVER_SHAPE_IMAGE);
   const generated = tile("w-dw-763").locator(".part-cover");
   await expect(generated).toBeVisible();
-  await expect(generated.locator(".part-cover-title")).toHaveText("Dangerous Women");
-  await expect(generated.locator(".part-cover-author")).toHaveText("George R.R. Martin");
+  // The words are drawn, not DOM text (#763's fix round): no getByText match and nothing in the accessibility tree,
+  // so a page's own title stays the one element with the book's name.
+  const drawn = (part: string) =>
+    generated.locator(part).evaluate((el) => ({
+      text: el.textContent,
+      // The drawn words, without the alternative text after "/" (empty, so nothing is read out) where it is reported.
+      drawn: getComputedStyle(el, "::before").content.replace(/ \/ ""$/, ""),
+      height: el.getBoundingClientRect().height,
+    }));
+  expect(await drawn(".part-cover-title")).toEqual({ text: "", drawn: '"Dangerous Women"', height: expect.any(Number) });
+  expect(await drawn(".part-cover-author")).toEqual({ text: "", drawn: '"George R.R. Martin"', height: expect.any(Number) });
+  expect((await drawn(".part-cover-title")).height).toBeGreaterThan(10);
+  expect((await drawn(".part-cover-author")).height).toBeGreaterThan(10);
+  await expect(tile("w-dw-763").getByText("Dangerous Women")).toHaveCount(0);
+  await expect(tile("w-dw-763").getByText("George R.R. Martin")).toHaveCount(0);
+  expect(await generated.getAttribute("aria-hidden")).toBe("true");
   await expect(tile("w-dw-763").locator("img")).toHaveCount(0);
   const box = await generated.boundingBox();
   expect(box && box.width > 40 && Math.abs(box.width - box.height) < 2).toBe(true);

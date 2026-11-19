@@ -12,6 +12,8 @@ import { createServer, type AddressInfo } from "node:net";
 
 const OUT = "OUT";
 mkdirSync(OUT, { recursive: true });
+// A 2x3 PNG for the cover address (#763).
+const COVER_PNG = Buffer.from("89504e470d0a1a0a0000000d4948445200000002000000030802000000368849d60000001049444154789c6338606000440c2814004a5506c1a837df340000000049454e44ae426082", "hex");
 const unique = (label: string) => `${label} ${randomBytes(3).toString("hex")}`;
 
 async function expectLaidOut(page: Page) {
@@ -50,6 +52,8 @@ for (const [size, viewport] of [["phone", { width: 390, height: 844 }], ["deskto
       // A series name of this test's own: one local series per name, and a series shows one book per number.
       const seriesName = unique("Harbour Tales");
       const workId = await importBook(page, title, "Mira Sand");
+      // The cover address answers with an image (#763: a cover that fails to load is drawn as the generated cover).
+      await page.route("https://covers.example/**", (route) => route.fulfill({ contentType: "image/png", body: COVER_PNG }));
       await page.goto(`/#book/${encodeURIComponent(workId)}`);
       await page.getByRole("button", { name: "Edit", exact: true }).click();
       await expect(page).toHaveURL(new RegExp(`#book/${encodeURIComponent(workId)}/edit$`));
