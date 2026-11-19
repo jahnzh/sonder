@@ -8,7 +8,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { noOverflow } from "./overflow";
-import { unsaveSeries } from "./series-save";
+import { connectAudiobookDb, unsaveSeries } from "./series-save";
 
 test.use({ serviceWorkers: "block" });
 
@@ -269,23 +269,25 @@ test("someone who is not the administrator gets no recording row", async ({ page
   await expect(page.getByRole("dialog", { name: "Get audiobook" })).toHaveCount(0);
 });
 
-test("series search: two equal names told apart by Hardcover's number, the chosen one opening", async ({ page }) => {
+test("series search: two equal names told apart by AudiobookDB's id, the chosen one opening", async ({ page }) => {
   await setHardcover(page, true);
+  // Series come from AudiobookDB since #721 (recorded answers: tests/series-browser-fixture.ts), on its text ids.
+  await connectAudiobookDb(page);
   // The chosen series, 702, is one this account has not saved: another spec on the server may have saved it, so it is
   // removed here (its books stay) and saved back with the same books at the end.
-  const saved = ((await (await page.request.get("/api/series")).json()) as { id: number }[]).some((series) => series.id === 702);
+  const saved = ((await (await page.request.get("/api/series")).json()) as { id: string }[]).some((series) => series.id === "702");
   const addedBefore = saved
-    ? ((await (await page.request.get("/api/series/702")).json()) as { works: { id: number; added?: boolean }[] }).works.filter((work) => work.added).map((work) => work.id)
+    ? ((await (await page.request.get("/api/series/702")).json()) as { works: { id: string; added?: boolean }[] }).works.filter((work) => work.added).map((work) => work.id)
     : [];
-  await unsaveSeries(page, 702);
+  await unsaveSeries(page, "702");
   try {
     await page.goto("/#discover");
     await discover(page).getByRole("radio", { name: "Series", exact: true }).click();
     await search(page, "Crossing", "Search for a series");
     const rows = rowsOf(page, "Series · 2");
     await expect(rows).toHaveCount(2);
-    await expect(rows.nth(0)).toHaveAccessibleName(/^The Crossing Ada North · 4 books( · Saved)? · Hardcover #701$/);
-    await expect(rows.nth(1)).toHaveAccessibleName(/^The Crossing Bea South · 1 book( · Saved)? · Hardcover #702$/);
+    await expect(rows.nth(0)).toHaveAccessibleName(/^The Crossing Ada North · 4 books( · Saved)? · AudiobookDB 701$/);
+    await expect(rows.nth(1)).toHaveAccessibleName(/^The Crossing Bea South · 1 book( · Saved)? · AudiobookDB 702$/);
     await noOverflow(page);
     await page.screenshot({ path: `${OUT}/discover-series-phone.png` });
     await page.setViewportSize(DESKTOP);
@@ -297,11 +299,11 @@ test("series search: two equal names told apart by Hardcover's number, the chose
     const previews: string[] = [];
     page.on("request", (request) => {
       const path = new URL(request.url()).pathname;
-      if (path.startsWith("/api/hardcover/series/")) previews.push(path);
+      if (path.startsWith("/api/discover/series/")) previews.push(path);
     });
     await rows.nth(1).click();
     // The row opens #series/702: a series this account has not saved opens as its page with Save series (#564), read
-    // from Hardcover for the chosen series only.
+    // from AudiobookDB for the chosen series only.
     await expect.poll(() => opened).toContain("#series/702");
     const series = page.getByRole("region", { name: "Series", exact: true });
     await expect(page.getByRole("heading", { level: 1 })).toHaveText(["The Crossing"]);
@@ -309,14 +311,14 @@ test("series search: two equal names told apart by Hardcover's number, the chose
     await expect(series.getByRole("button", { name: "Save series", exact: true })).toBeVisible();
     await expect(series.getByRole("button", { name: "Back to Discover", exact: true })).toBeVisible();
     await expect(page.getByRole("dialog")).toHaveCount(0);
-    expect(previews).toEqual(["/api/hardcover/series/702"]);
+    expect(previews).toEqual(["/api/discover/series/702"]);
     // Back shows the series search as it was left.
     await page.goBack();
     await expect(page).toHaveURL(/#discover$/);
     await expect(field(page, "Search for a series")).toHaveValue("Crossing");
     await expect(rowsOf(page, "Series · 2")).toHaveCount(2);
   } finally {
-    if (saved) expect((await page.request.post("/api/series", { data: { id: 702, bookIds: addedBefore } })).ok()).toBe(true);
+    if (saved) expect((await page.request.post("/api/series", { data: { id: "702", bookIds: addedBefore } })).ok()).toBe(true);
   }
 });
 

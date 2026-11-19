@@ -54,7 +54,8 @@ test("#book/work-hc-<n> opens Not in your library with Add and its series line; 
   await expect(region(page).getByRole("heading", { level: 1 })).toHaveText(book.title);
   await expect(region(page).getByText(book.author, { exact: true })).toBeVisible();
   await expect(region(page).getByTestId("book-place")).toHaveText("Not in your library");
-  await expect(region(page).getByRole("button", { name: "The Crossing · Book 9", exact: true })).toBeVisible();
+  // Hardcover's series ids no longer open a series page (#721 part b): a look at a Hardcover book lists no series.
+  await expect(region(page).getByRole("button", { name: /^The Crossing · / })).toHaveCount(0);
   const add = region(page).getByRole("button", { name: "Add to library", exact: true });
   await expect(add).toBeVisible();
   await expect(region(page).getByRole("button", { name: "Listen" })).toHaveCount(0);
@@ -132,24 +133,23 @@ test("Get on such a page adds the book first, then opens Get for the work", asyn
   expect(await libraryIds(page)).toContain(book.workId);
 });
 
-// Its own server (own-server.ts): series 701 is not saved there, and this test's preview of it does not count toward
-// the fixture's Crossing Three on the suite's server, which the series specs after this one read. A series that is not
-// saved opens through `GET /api/hardcover/series/<id>` since the series dialog went (#569); a saved one through
-// `GET /api/series/<id>` (series-page.spec.ts, "a book's series line opens the saved series").
-ownServer("the series line opens the series' page, not saved", async ({ page }) => {
+// Its own server (own-server.ts): series 701 is not saved there. Series are on AudiobookDB's ids since #721 part b,
+// and a look at a Hardcover book lists none: no series line, and opening the look reads no series at all (a work's
+// AudiobookDB series line: book-page.spec.ts, "the series line opens the series").
+ownServer("a Hardcover book's look has no series line and reads no series", async ({ page }) => {
   await connect(page);
   const book = lookBook();
-  expect(((await (await page.request.get("/api/series")).json()) as { id: number }[]).map((series) => series.id)).not.toContain(701);
+  const reads: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (/^\/api\/(hardcover|discover)\/series\/|^\/api\/series\/./.test(path)) reads.push(path);
+  });
   await page.goto(`/#book/${book.workId}`);
-  const series = page.waitForRequest((request) => new URL(request.url()).pathname === "/api/hardcover/series/701");
-  const address = page.waitForURL(/#series\/701$/);
-  await region(page).getByRole("button", { name: "The Crossing · Book 9", exact: true }).click();
-  await address;
-  await series;
-  const page701 = page.getByRole("region", { name: "Series", exact: true });
-  await expect(page701.getByRole("heading", { name: "The Crossing", level: 1 })).toBeVisible();
-  await expect(page701.getByRole("button", { name: "Save series", exact: true })).toBeVisible();
-  // Opening the series wrote nothing: the book is not on the server and the series is still not saved.
+  await expect(region(page).getByRole("heading", { level: 1 })).toHaveText(book.title);
+  await expect(region(page).getByRole("button", { name: "Add to library", exact: true })).toBeVisible();
+  await expect(region(page).getByRole("button", { name: /^The Crossing · / })).toHaveCount(0);
+  expect(reads).toEqual([]);
+  // Opening the look wrote nothing: the book is not on the server and no series is saved.
   expect(await onServer(page, book.title)).toBe(false);
-  expect(((await (await page.request.get("/api/series")).json()) as { id: number }[]).map((series) => series.id)).not.toContain(701);
+  expect(((await (await page.request.get("/api/series")).json()) as { id: string }[]).map((series) => series.id)).not.toContain("701");
 });
