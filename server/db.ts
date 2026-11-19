@@ -121,6 +121,7 @@ CREATE TABLE IF NOT EXISTS user_saved_series_works(user_id INTEGER NOT NULL REFE
 CREATE TABLE IF NOT EXISTS user_series_seen_works(user_id INTEGER NOT NULL REFERENCES users(id),series_id INTEGER NOT NULL REFERENCES series_catalogue(id),book_id INTEGER NOT NULL,acknowledged_at INTEGER NOT NULL,PRIMARY KEY(user_id,series_id,book_id));
 CREATE TABLE IF NOT EXISTS user_work_completion(user_id INTEGER NOT NULL REFERENCES users(id),work_id TEXT NOT NULL REFERENCES works(id),status TEXT NOT NULL CHECK(status IN ('finished','unread')),PRIMARY KEY(user_id,work_id));
 CREATE TABLE IF NOT EXISTS user_work_library_origin(user_id INTEGER NOT NULL REFERENCES users(id),work_id TEXT NOT NULL REFERENCES works(id),source TEXT NOT NULL CHECK(source IN ('unknown','manual','hardcover_sync','series')),series_id INTEGER,added_at INTEGER NOT NULL,PRIMARY KEY(user_id,work_id));
+CREATE TABLE IF NOT EXISTS user_want_to_read(user_id INTEGER NOT NULL REFERENCES users(id),work_id TEXT NOT NULL REFERENCES works(id),source TEXT NOT NULL CHECK(source IN ('manual','hardcover')),added_at INTEGER NOT NULL,PRIMARY KEY(user_id,work_id));
 CREATE TABLE IF NOT EXISTS account_requests(id INTEGER PRIMARY KEY,email TEXT NOT NULL,username TEXT NOT NULL,note TEXT,status TEXT NOT NULL DEFAULT 'pending',created_at INTEGER NOT NULL,reviewed_at INTEGER,invite_id INTEGER);
 CREATE TABLE IF NOT EXISTS account_invites(id INTEGER PRIMARY KEY,token TEXT NOT NULL UNIQUE,email TEXT NOT NULL,username TEXT NOT NULL,account_request_id INTEGER NOT NULL,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,claimed_at INTEGER);
 `);
@@ -160,6 +161,17 @@ CREATE TABLE IF NOT EXISTS work_ebook_set_members(work_id TEXT NOT NULL REFERENC
 CREATE TABLE IF NOT EXISTS series_acquisition_jobs(id TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),series_id INTEGER NOT NULL REFERENCES series_catalogue(id),book_id INTEGER NOT NULL,work_id TEXT NOT NULL REFERENCES works(id),kind TEXT NOT NULL CHECK(kind IN ('audio','ebook')),status TEXT NOT NULL CHECK(status IN ('pending','searching','done','failed')),error TEXT,updated_at INTEGER NOT NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS series_acquisition_jobs_user_series_book_kind ON series_acquisition_jobs(user_id,series_id,book_id,kind);
 CREATE UNIQUE INDEX IF NOT EXISTS series_acquisition_jobs_user_work_kind ON series_acquisition_jobs(user_id,work_id,kind);
+`);
+// The catalogue (#721): AudiobookDB and Open Library answers cached with their expiry (searches a day, details a
+// week; covers and descriptions are never stored), the daily units spent per provider, a work's link to a provider
+// book or work, a recording's link to an AudiobookDB release, and the last outcome of the matcher for a work.
+// No foreign keys: a work or recording removed elsewhere leaves a row nothing reads, and its removal is not refused.
+sqlite.exec(`
+CREATE TABLE IF NOT EXISTS catalogue_cache(provider TEXT NOT NULL,kind TEXT NOT NULL,key TEXT NOT NULL,data TEXT NOT NULL,fetched_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,PRIMARY KEY(provider,kind,key));
+CREATE TABLE IF NOT EXISTS catalogue_usage(provider TEXT NOT NULL,day TEXT NOT NULL,units INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(provider,day));
+CREATE TABLE IF NOT EXISTS work_catalogue_links(work_id TEXT PRIMARY KEY,provider TEXT NOT NULL CHECK(provider IN ('audiobookdb','openlibrary')),external_id TEXT NOT NULL,title TEXT NOT NULL,author TEXT NOT NULL,series_id TEXT,series_name TEXT,series_position TEXT,series_sort REAL,matched_by TEXT NOT NULL CHECK(matched_by IN ('title','asin','manual')),linked_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS recording_release_links(recording_id TEXT PRIMARY KEY,book_id TEXT NOT NULL,release_id TEXT NOT NULL,narrator TEXT,length_ms INTEGER,asin TEXT,language TEXT,chapters TEXT NOT NULL DEFAULT '[]',matched_by TEXT NOT NULL CHECK(matched_by IN ('asin','length','manual')),linked_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS work_catalogue_match(work_id TEXT PRIMARY KEY,outcome TEXT NOT NULL CHECK(outcome IN ('matched','ambiguous','missing','failed')),reason TEXT,candidates INTEGER NOT NULL DEFAULT 0,checked_at INTEGER NOT NULL);
 `);
 // A series search that could not reach its source is tried again by itself (#717): how often it was, and not before when.
 {

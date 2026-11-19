@@ -300,6 +300,17 @@ export const userWorkLibraryOrigin = sqliteTable(
   },
   (t) => [primaryKey({ columns: [t.userId, t.workId] })],
 );
+/** Sonder's own Want to read (#721 part c1), per user and work: "manual" from a Book page or Discover, "hardcover" from the one-time copy of Hardcover's shelf. */
+export const userWantToRead = sqliteTable(
+  "user_want_to_read",
+  {
+    userId: integer("user_id").notNull(),
+    workId: text("work_id").notNull(),
+    source: text("source").notNull(),
+    addedAt: integer("added_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.workId] })],
+);
 export const accountRequests = sqliteTable("account_requests", { id: integer("id").primaryKey(), email: text("email").notNull(), username: text("username").notNull(), note: text("note"), status: text("status").notNull().default("pending"), createdAt: integer("created_at").notNull(), reviewedAt: integer("reviewed_at"), inviteId: integer("invite_id") });
 export const accountInvites = sqliteTable("account_invites", { id: integer("id").primaryKey(), token: text("token").notNull().unique(), email: text("email").notNull(), username: text("username").notNull(), accountRequestId: integer("account_request_id").notNull(), createdAt: integer("created_at").notNull(), expiresAt: integer("expires_at").notNull(), claimedAt: integer("claimed_at") });
 
@@ -363,3 +374,9 @@ export const userHardcoverProgress = sqliteTable("user_hardcover_progress", { us
 export const userHardcoverLists = sqliteTable("user_hardcover_lists", { userId: integer("user_id").notNull(), id: integer("id").notNull(), accountId: integer("account_id").notNull(), name: text("name").notNull(), slug: text("slug"), members: text("members", { mode: "json" }).$type<{ id: number; bookId: number }[]>().notNull().default([]), syncedAt: integer("synced_at").notNull() }, t => [primaryKey({ columns: [t.userId, t.id] })]);
 export const userHardcoverReads = sqliteTable("user_hardcover_reads", { userId: integer("user_id").notNull(), bookId: integer("book_id").notNull(), accountId: integer("account_id").notNull(), snapshot: text("snapshot").notNull(), fraction: real("fraction"), syncedAt: integer("synced_at").notNull() }, t => [primaryKey({ columns: [t.userId, t.bookId] })]);
 export const userHardcoverRecordingEditions = sqliteTable("user_hardcover_recording_editions", { userId: integer("user_id").notNull(), recordingId: text("recording_id").notNull(), editionId: integer("edition_id").notNull() }, t => [primaryKey({ columns: [t.userId, t.recordingId] })]);
+// The catalogue (#721; server/catalogue-cache.ts, server/catalogue-links.ts).
+export const catalogueCache = sqliteTable("catalogue_cache", { provider: text("provider").notNull(), kind: text("kind").notNull(), key: text("key").notNull(), data: text("data").notNull(), fetchedAt: integer("fetched_at").notNull(), expiresAt: integer("expires_at").notNull() }, t => [primaryKey({ columns: [t.provider, t.kind, t.key] })]);
+export const catalogueUsage = sqliteTable("catalogue_usage", { provider: text("provider").notNull(), day: text("day").notNull(), units: integer("units").notNull().default(0) }, t => [primaryKey({ columns: [t.provider, t.day] })]);
+export const workCatalogueLinks = sqliteTable("work_catalogue_links", { workId: text("work_id").primaryKey(), provider: text("provider", { enum: ["audiobookdb", "openlibrary"] }).notNull(), externalId: text("external_id").notNull(), title: text("title").notNull(), author: text("author").notNull(), seriesId: text("series_id"), seriesName: text("series_name"), seriesPosition: text("series_position"), seriesSort: real("series_sort"), matchedBy: text("matched_by", { enum: ["title", "asin", "manual"] }).notNull(), linkedAt: integer("linked_at").notNull() });
+export const recordingReleaseLinks = sqliteTable("recording_release_links", { recordingId: text("recording_id").primaryKey(), bookId: text("book_id").notNull(), releaseId: text("release_id").notNull(), narrator: text("narrator"), lengthMs: integer("length_ms"), asin: text("asin"), language: text("language"), chapters: text("chapters").notNull().default("[]"), matchedBy: text("matched_by", { enum: ["asin", "length", "manual"] }).notNull(), linkedAt: integer("linked_at").notNull() });
+export const workCatalogueMatch = sqliteTable("work_catalogue_match", { workId: text("work_id").primaryKey(), outcome: text("outcome", { enum: ["matched", "ambiguous", "missing", "failed"] }).notNull(), reason: text("reason"), candidates: integer("candidates").notNull().default(0), checkedAt: integer("checked_at").notNull() });

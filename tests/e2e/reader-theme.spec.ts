@@ -220,7 +220,8 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   expect((await paused).postDataJSON()).toEqual({ action: "pause" });
   await expect(sync).toHaveAttribute("data-state", "paused");
   await expect(sync.locator(".reading-sync-block .part-group > li").first()).toHaveText(/^Paused/);
-  await page.unroute(/\/api\/alignments\?ebookId=/);
+  // Waits for a listing the handler is still fetching: dropped mid-fetch, its fulfill met a route already handled (#596).
+  await page.unrouteAll({ behavior: "wait" });
   // Prepare again from Paused: Paused's main action, Resume, runs the reading sync again from the start.
   await expect(syncButtons).toHaveText(["Resume", "Cancel"]);
   await syncButtons.first().click();

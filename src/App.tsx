@@ -60,6 +60,7 @@ import { ActivityDevice } from "./pages/activity-device";
 import { SettingsPage } from "./pages/settings-page";
 import { AudiobookPage } from "./pages/audiobook-page";
 import { HardcoverPage } from "./pages/hardcover-page";
+import { MatchPage } from "./pages/match-page";
 import { EbookPage } from "./pages/ebook-page";
 import { BookPage } from "./pages/book-page";
 import { ReadingSyncDetailsPage, ReadingSyncPage } from "./pages/reading-sync-page";
@@ -74,14 +75,16 @@ import { deviceImports } from "./device-import";
 import { Gallery, isGalleryRoute } from "./gallery/Gallery";
 import { refreshLibraryWorks, startLibraryWorks, useLibraryWorksStored, useStoredWorksWithPlaces } from "./library-works-store";
 import { toggleFavoriteWork, WORK_FAVORITES_KEY } from "./favorites-by-work";
-import { ALL_CHIP, readChip, readHardcoverFilter, readSort, readView, type LibraryChip, type LibraryView, type ShelfFilter, type SortOrder } from "./pages/library-filter";
+import { ALL_CHIP, readChip, readShelf, readSort, readView, type LibraryChip, type LibraryView, type ShelfFilter, type SortOrder } from "./pages/library-filter";
 
 /** The Library's chip on this device (#577), per account through `userStorageKey`. */
 const LIBRARY_CHIP_KEY = "sonder-library-chip";
 // The sort-and-view control's choices (#578), remembered on this device for this account like the chip.
 const LIBRARY_SORT_KEY = "sonder-library-sort";
 const LIBRARY_VIEW_KEY = "sonder-library-view";
+// The Hardcover shelf and list an earlier build kept; read once as the shelf it stood for (#721 part c1).
 const LIBRARY_HARDCOVER_KEY = "sonder-library-hardcover";
+const LIBRARY_SHELF_KEY = "sonder-library-shelf";
 import { bookStatus, workProgress } from "./work-progress";
 import { classifyStop, type StopCause } from "./keep";
 import { activeSaves, claimRecording, keepSaver, pauseKeep, resumeKeep, keepOffAndRemove, onKeepJob, savesInOtherTabs, startKeepSaver, stopKeepSaver, useKeptWorks } from "./keep-runtime";
@@ -286,15 +289,17 @@ function LibraryApp({
   useEffect(() => {
     localStorage.setItem(chipKey(), filter);
   }, [filter]);
-  // Sort, view and the Hardcover shelf and list, remembered on this device for this account (#578; #455).
-  const [hardcoverFilter, setHardcoverFilter] = useState<ShelfFilter>(() => readHardcoverFilter(localStorage.getItem(userStorageKey(LIBRARY_HARDCOVER_KEY))));
+  // Sort, view and the shelf, remembered on this device for this account (#578; #455; #721 part c1).
+  const [shelf, setShelf] = useState<ShelfFilter>(() =>
+    readShelf(localStorage.getItem(userStorageKey(LIBRARY_SHELF_KEY)), localStorage.getItem(userStorageKey(LIBRARY_HARDCOVER_KEY))),
+  );
   const [sort, setSort] = useState<SortOrder>(() => readSort(localStorage.getItem(userStorageKey(LIBRARY_SORT_KEY))));
   const [view, setView] = useState<LibraryView>(() => readView(localStorage.getItem(userStorageKey(LIBRARY_VIEW_KEY))));
   useEffect(() => {
     localStorage.setItem(userStorageKey(LIBRARY_SORT_KEY), sort);
     localStorage.setItem(userStorageKey(LIBRARY_VIEW_KEY), view);
-    localStorage.setItem(userStorageKey(LIBRARY_HARDCOVER_KEY), JSON.stringify(hardcoverFilter));
-  }, [sort, view, hardcoverFilter]);
+    localStorage.setItem(userStorageKey(LIBRARY_SHELF_KEY), shelf);
+  }, [sort, view, shelf]);
   // The favourites by work (#577): work ids, read from this account's device database.
   const [favorites, setFavorites] = useState<string[]>([]);
   const [online, setOnline] = useState(navigator.onLine);
@@ -846,7 +851,7 @@ function LibraryApp({
               <ReadingSyncDetailsPage key={pageRoute.workId} workId={pageRoute.workId} />
             ) : seriesRouteId !== null && !seriesBeside ? (
               seriesPage(seriesRouteId, false)
-            ) : pageRoute.name === "book-page" && pageRoute.page === "hardcover" ? <HardcoverPage key={pageRoute.workId} workId={pageRoute.workId} admin={user.role === "admin"} books={books} onChanged={() => void refresh()} /> : ebookPage ? (
+            ) : pageRoute.name === "book-page" && pageRoute.page === "hardcover" ? <HardcoverPage key={pageRoute.workId} workId={pageRoute.workId} admin={user.role === "admin"} books={books} onChanged={() => void refresh()} /> : pageRoute.name === "book-page" && pageRoute.page === "match" ? <MatchPage key={pageRoute.workId} workId={pageRoute.workId} admin={user.role === "admin"} onChanged={() => void refresh()} /> : ebookPage ? (
               <EbookPage
                 key={ebookPage}
                 workId={ebookPage}
@@ -867,8 +872,8 @@ function LibraryApp({
                 setView={setView}
                 sort={sort}
                 setSort={setSort}
-                hardcoverFilter={hardcoverFilter}
-                setHardcoverFilter={setHardcoverFilter}
+                shelf={shelf}
+                setShelf={setShelf}
                 savedSeries={savedSeries}
                 openSeries={openSeries}
                 findSeries={findSeries}
@@ -893,6 +898,7 @@ function LibraryApp({
                 onSeries={(id) => address.navigate({ name: "series", id: String(id) })}
                 onRecording={(words) => address.navigate({ name: "discover-get", query: words })}
                 onConnect={openConnections}
+                notify={notify}
               />
             )}
             {page === "activity" && (

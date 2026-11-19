@@ -7,6 +7,9 @@ import {highlightShown} from "./reader-view";
 import {openRead,nowPlaying} from "./now-playing";
 import { playFromLibrary } from "./library-play";
 test.afterEach(async({page})=>{await page.unrouteAll({behavior:"wait"});});
+// The tests route the reader's answers (a refused map, a restarting server): once a service worker controls the page,
+// WebKit's requests no longer pass page.route (#523), so it is blocked, as in the other reader specs (#596).
+test.use({serviceWorkers:"block"});
 // Imports a book whose title is unique to this run, so a repeat on the same server finds exactly one
 // "Play <title>" button and its own EPUB; returns that title.
 async function fixture(page:Page,name:string,language="en-US"){
@@ -183,7 +186,8 @@ test("opening the reader restores saved audio position without starting playback
  await expect(page.locator(".inline-reader")).toHaveAttribute("data-current-passage",interval.paragraphId);
  await expect(page.locator(".inline-reader").getByRole("button",{name:"Play narration",exact:true})).toBeVisible();
  const box=(await page.locator(".inline-reader .reader-viewport").boundingBox())!;
- expect(box.height).toBeGreaterThan(844*.65);
+ // Against the window: the iPhone profile is 659 high, not 844 (#596).
+ expect(box.height).toBeGreaterThan(page.viewportSize()!.height*.65);
  await expect(page.locator(".inline-reader .reader-viewport .sonder-follow").first()).toBeVisible();
 });
 

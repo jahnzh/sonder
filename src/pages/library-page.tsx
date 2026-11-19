@@ -2,12 +2,12 @@
 // the library by work (#528) with this device's newer places, one tile per work. The head (Title, Search, the plus),
 // Continue, the chips (the Series chip's list is #567's), the heading named by the chip, and the tiles with the cover
 // marks of #556 or the list rows with the Book page's place line. One control, "<sort> · <view>", opens the
-// sort-and-view Picker (#578; boards LibrarySort.dc.html, LibraryShelf.dc.html, LibraryList.dc.html): Sort, View and,
-// with Hardcover connected, its Shelf and List; a Hardcover filter in use is a chip under the heading that clears it.
+// sort-and-view Picker (#578; boards LibrarySort.dc.html, LibraryShelf.dc.html, LibraryList.dc.html): Sort, View and
+// the Shelf (Want to read, Reading, Finished; #721 part c1, in place of Hardcover's shelf and list); a shelf in use is a
+// chip under the heading that clears it.
 // What it shows is in library-filter.ts.
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Pause, Play, Search, Plus, X, Loader2 } from "lucide-react";
-import { useHardcover } from "../components/Hardcover";
 import { coverMarks, COVER_MARK_NAMES, type CoverMark, type CoverMarks } from "../cover-marks";
 import { BookRow } from "../parts/BookRow";
 import { Button } from "../parts/Button";
@@ -27,21 +27,18 @@ import {
   controlLabel,
   emptyShelf,
   filterLibrary,
-  hardcoverChips,
-  hardcoverInEffect,
   LIBRARY_CHIPS,
-  listChoices,
   listLine,
   listRowLine,
-  NO_HARDCOVER_FILTER,
+  NO_SHELF,
   progressFraction,
+  SHELF_NAMES,
+  shelfChip,
   shelfChoices,
   shelfHeading,
-  shelfName,
   SORT_NAMES,
   SORT_ORDERS,
   sortLibrary,
-  type HardcoverNames,
   type LibraryChip,
   type LibraryView,
   type ShelfFilter,
@@ -68,8 +65,8 @@ export function LibraryPage({
   setView,
   sort,
   setSort,
-  hardcoverFilter,
-  setHardcoverFilter,
+  shelf,
+  setShelf,
   savedSeries,
   openSeries,
   findSeries,
@@ -94,9 +91,9 @@ export function LibraryPage({
   setView: (view: LibraryView) => void;
   sort: SortOrder;
   setSort: (sort: SortOrder) => void;
-  /** The Hardcover shelf and list chosen on this device; in effect only while Hardcover is connected. */
-  hardcoverFilter: ShelfFilter;
-  setHardcoverFilter: (filter: ShelfFilter) => void;
+  /** The shelf chosen on this device (Want to read, Reading, Finished), or all. */
+  shelf: ShelfFilter;
+  setShelf: (shelf: ShelfFilter) => void;
   /** `GET /api/series`, for the Series chip (#567). */
   savedSeries: { items: SavedSeriesItem[] | undefined; error: string };
   openSeries: (id: number) => void;
@@ -129,18 +126,13 @@ export function LibraryPage({
     // Beside a series the Library is at the series' address: a chip shows the Library again in its place.
     if (beside) navigate("library");
   };
-  // Hardcover's shelves and lists, and whether it is connected: its group in the picker and its filters need it.
-  const { state: hardcoverState } = useHardcover();
-  const connected = !!hardcoverState?.configured;
-  const names: HardcoverNames | null = hardcoverState ? { shelves: hardcoverState.shelves, lists: hardcoverState.lists } : null;
-  const hardcover = hardcoverInEffect(hardcoverFilter, connected);
-  const input = { chip, query, favorites, onDevice, hardcover };
+  const input = { chip, query, favorites, onDevice, shelf };
   const shown = sortLibrary(filterLibrary(works, input), sort);
-  const featured = continueShown(chip, query, hardcover) ? continueWork(works) : null;
+  const featured = continueShown(chip, query, shelf) ? continueWork(works) : null;
   const [picking, setPicking] = useState(false);
   const control = useRef<HTMLButtonElement>(null);
   const label = controlLabel(sort, view);
-  const chips = hardcoverChips(hardcover, names);
+  const shelfInUse = shelfChip(shelf);
   const closeSearch = () => {
     setSearching(false);
     setQuery("");
@@ -148,9 +140,9 @@ export function LibraryPage({
   const clear = () => {
     setFilter(ALL_CHIP);
     closeSearch();
-    setHardcoverFilter(NO_HARDCOVER_FILTER);
+    setShelf(NO_SHELF);
   };
-  const empty = emptyShelf(works.length, input, shelfName(hardcover, names));
+  const empty = emptyShelf(works.length, input);
   return (
     <div className="library-page" data-searching={searching ? "" : undefined}>
       <header className="library-head">
@@ -219,20 +211,12 @@ export function LibraryPage({
               </svg>
             </button>
           </div>
-          {chips.length > 0 && (
+          {shelfInUse && (
             <div className="library-hardcover-chips">
-              {chips.map((c) => (
-                <button
-                  key={c.kind}
-                  type="button"
-                  className="library-hardcover-chip type-label"
-                  aria-label={c.name}
-                  onClick={() => setHardcoverFilter({ ...hardcoverFilter, [c.kind]: "all" })}
-                >
-                  {c.text}
-                  <X size={16} aria-hidden="true" />
-                </button>
-              ))}
+              <button type="button" className="library-hardcover-chip type-label" aria-label={shelfInUse.name} onClick={() => setShelf(NO_SHELF)}>
+                {shelfInUse.text}
+                <X size={16} aria-hidden="true" />
+              </button>
             </div>
           )}
           <SortAndView
@@ -243,9 +227,8 @@ export function LibraryPage({
             setSort={setSort}
             view={view}
             setView={setView}
-            hardcover={connected && names ? names : null}
-            filter={hardcover}
-            setFilter={setHardcoverFilter}
+            shelf={shelf}
+            setShelf={setShelf}
           />
           {!stored && works.length === 0 ? (
             <p className="library-reading type-label" role="status">
@@ -334,9 +317,9 @@ function WorkRow({ work, onOpen }: { work: LibraryWork; onOpen: () => void }) {
 }
 
 /**
- * The sort-and-view Picker: Sort as choice rows, View as a Segmented control and, for a user with Hardcover
- * connected, the Hardcover group with Shelf and List, each a picker row opening its own short list. Every choice
- * applies at once; Done, Escape or a tap outside closes it.
+ * The sort-and-view Picker: Sort as choice rows, View as a Segmented control and the Shelf group, whose row opens
+ * its own short list (All shelves, Want to read, Reading, Finished). Every choice applies at once; Done, Escape or a
+ * tap outside closes it.
  */
 function SortAndView({
   open,
@@ -346,9 +329,8 @@ function SortAndView({
   setSort,
   view,
   setView,
-  hardcover,
-  filter,
-  setFilter,
+  shelf,
+  setShelf,
 }: {
   open: boolean;
   onClose: () => void;
@@ -357,30 +339,21 @@ function SortAndView({
   setSort: (sort: SortOrder) => void;
   view: LibraryView;
   setView: (view: LibraryView) => void;
-  /** Hardcover's shelves and lists while it is connected; none hides its group. */
-  hardcover: HardcoverNames | null;
-  filter: ShelfFilter;
-  setFilter: (filter: ShelfFilter) => void;
+  shelf: ShelfFilter;
+  setShelf: (shelf: ShelfFilter) => void;
 }) {
-  const [second, setSecond] = useState<"shelf" | "list" | null>(null);
+  const [second, setSecond] = useState<"shelf" | null>(null);
   useEffect(() => {
     if (!open) setSecond(null);
   }, [open]);
-  const named = shelfName(filter, hardcover);
   const sub =
-    hardcover && second === "shelf"
+    second === "shelf"
       ? {
           title: "Shelf",
           onBack: () => setSecond(null),
-          content: <PickerChoices label="Shelf" options={shelfChoices(hardcover)} value={filter.shelf} onChoose={(shelf) => { setFilter({ ...filter, shelf }); setSecond(null); }} />,
+          content: <PickerChoices label="Shelf" options={shelfChoices()} value={shelf} onChoose={(next) => { setShelf(next); setSecond(null); }} />,
         }
-      : hardcover && second === "list"
-        ? {
-            title: "List",
-            onBack: () => setSecond(null),
-            content: <PickerChoices label="List" options={listChoices(hardcover)} value={filter.list} onChoose={(list) => { setFilter({ ...filter, list }); setSecond(null); }} />,
-          }
-        : null;
+      : null;
   return (
     <PickerDialog open={open} title="Sort and view" onClose={onClose} anchor={anchor} sub={sub} className="library-picker">
       <PickerGroup caption="Sort">
@@ -389,14 +362,11 @@ function SortAndView({
       <PickerGroup caption="View">
         <Segmented<LibraryView> label="View" options={[{ value: "grid", label: "Grid" }, { value: "list", label: "List" }]} value={view} onChange={setView} />
       </PickerGroup>
-      {hardcover && (
-        <PickerGroup caption="Hardcover">
-          <PickerRows>
-            <PickerRow label="Shelf" value={named.shelf ?? "All shelves"} onOpen={() => setSecond("shelf")} />
-            <PickerRow label="List" value={named.list ?? "All lists"} onOpen={() => setSecond("list")} />
-          </PickerRows>
-        </PickerGroup>
-      )}
+      <PickerGroup caption="Shelf">
+        <PickerRows>
+          <PickerRow label="Shelf" value={SHELF_NAMES[shelf]} onOpen={() => setSecond("shelf")} />
+        </PickerRows>
+      </PickerGroup>
     </PickerDialog>
   );
 }

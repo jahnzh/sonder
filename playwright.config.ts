@@ -67,6 +67,14 @@ const slice13Iphone = process.env.SONDER_SLICE_WEBKIT === "1" && existsSync(webk
       { name: "mobile-iphone-slice13-sw", testMatch: slice13WorkerSpecs, use: slice13Phone },
     ]
   : [];
+// Every browser spec of Now playing and the reader's page, old and rewritten, the slice's final check (#596): they also
+// run in WebKit with the iPhone profile, and in Firefox beside the lines above.
+const nowPlayingSpecs =
+  /(^|\/)(now-playing-(layout|faces|ebook-only|desktop)|reader-(bands|frame|theme|follow-highlight|load-teardown|appearance|foot-setting|pages|messages|more-gone|keys|page-turn|book-text|text-links|paused-seek|second-track|long-press-mapped|check-edition)|integrated-reader|back-to-narration|one-reading-view|playback-(workflow|speed|speed-rate)|media-controls|position-history|app|audiobook-page|book-page|device-downloads|discover|keep-reading|library-series|navigation|source-progress|users|reading-sync-again)\.spec\.ts$/;
+// Opt-in (SONDER_SLICE_WEBKIT=1): a slice's final check runs it; the committed check on every push does not.
+const nowPlayingIphone = process.env.SONDER_SLICE_WEBKIT === "1" && existsSync(webkit.executablePath())
+  ? [{ name: "webkit-iphone-now-playing", testMatch: nowPlayingSpecs, use: { ...devices["iPhone 15"], launchOptions: {} } }]
+  : [];
 const desktopProjects = [
   { name: "chromium" },
   // Layout checks also run in Firefox/WebKit when those browsers are installed.
@@ -141,6 +149,8 @@ const desktopProjects = [
               /(^|\/)keep-reading\.spec\.ts$/,
               // The Get audiobook sheet, and the specs that used today's release picker for a book (#601).
               /(^|\/)(get-audiobook|releases|prowlarr|reliability)\.spec\.ts$/,
+              // A book's catalogue match page and AudiobookDB in Connections (#721).
+              /(^|\/)catalogue-match\.spec\.ts$/,
               // The Series page of a saved series (#562).
               /(^|\/)series-page\.spec\.ts$/,
               // The Reading sync page's buttons (#541).
@@ -209,6 +219,10 @@ const desktopProjects = [
               /(^|\/)reader-check-edition\.spec\.ts$/,
               // The rest of slice 13's specs (Library, Discover, Settings and the shell), its final check (#583).
               slice13Specs,
+              // Every spec of Now playing and the reader's page, the slice's final check (#596).
+              nowPlayingSpecs,
+              // Sonder's own Want to read on the Book page, Discover's rows and the Library's Shelf (#721 part c1).
+              /(^|\/)want-to-read\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },
@@ -216,6 +230,7 @@ const desktopProjects = [
   ...pageTurnIphone,
   ...activityIphone,
   ...slice13Iphone,
+  ...nowPlayingIphone,
 ];
 export default defineConfig({
   testDir: "./tests/e2e",

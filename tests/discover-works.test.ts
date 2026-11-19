@@ -242,6 +242,7 @@ test("a work whose only audio is a placeholder hidden from the user, and that ha
       hasAudiobook: false,
       hasEbook: false,
       hardcoverId: 1002,
+      wantToRead: false,
     },
   );
   assert.deepEqual(ids(await works(OWNER, "excession")), ["w-sam-shelf"]);
@@ -273,6 +274,7 @@ test("the full shape of a result", async () => {
       hasAudiobook: true,
       hasEbook: false,
       hardcoverId: 1001,
+      wantToRead: false,
     },
   ]);
 });

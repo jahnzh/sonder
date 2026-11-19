@@ -3,7 +3,9 @@
 // and Read, the rows that open the Audiobook and Ebook pages, the series line, Mark as finished and back, Remove from
 // library (asks once, Cancel sends nothing, the work's DELETE), the heart and the Favorites filter, the This device
 // switch, a Library book without a connection, Back, and the measures against the boards at phone size and desktop.
-import { test, expect, type Page, type Request } from "@playwright/test";
+// Saves to this device: in WebKit each test needs a persistent context to store a Blob in IndexedDB (#523, #596).
+import type { Request } from "@playwright/test";
+import { test, expect, type Page } from "./device-store";
 import { mkdirSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
@@ -142,7 +144,8 @@ test("a book with both files and a ready reading sync, as the boards draw it, at
   const about = shown.getByRole("button", { name: "Show the whole description", exact: true });
   await expect(about).toHaveAttribute("aria-expanded", "false");
   const more = shown.getByRole("list", { name: "Book", exact: true });
-  await expect(more.getByRole("button")).toHaveText(["Mark as finished", "Remove from library"]);
+  // Want to read for everyone; the administrator's Match opens the book's catalogue match page (#721).
+  await expect(more.getByRole("button")).toHaveText(["Add to Want to read", "Match", "Mark as finished", "Remove from library"]);
   // Measures: file rows 64, rows 52, the head's buttons and Listen/Read 44.
   for (const row of await files(page).locator(".part-file-row").all()) expect(await clientHeight(row)).toBe(64);
   expect(await clientHeight(shown.locator(".book-page-keep"))).toBe(64);
