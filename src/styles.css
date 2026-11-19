@@ -436,7 +436,7 @@ input[type="range"]::-moz-range-thumb {
 }
 .dialog-heading > .icon-button {
   /* Centre the close button on the title's first line at any UI scale. */
-  margin-top: calc((var(--dialog-title-line) - 32px) / 2); /* tokens: centres the 32 close button on the heading's first line (its line height), not a spacing */
+  margin-top: calc((var(--dialog-title-line) - 32px) / 2); /* tokens: no board draws the old dialog; centres its 32 close button on the heading's first line (the line height), not a spacing */
   margin-right: calc(var(--space-8) * -1);
 }
 .full-seek {

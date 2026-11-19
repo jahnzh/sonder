@@ -70,7 +70,7 @@
   flex: 1;
   min-height: 0;
   display: flex;
-  padding-bottom: var(--reader-bar); /* tokens: room for the player bar under the text (its height), not a spacing */
+  padding-bottom: var(--reader-bar); /* tokens: Reader.dc.html, room for the foot under the text (its height), not a spacing */
 }
 .reader-page-area {
   position: relative;
@@ -698,7 +698,7 @@
     grid-column: 1;
     min-width: 0;
     box-sizing: border-box;
-    padding-top: var(--reader-safe-top); /* tokens: the safe-area inset as the reader keeps it, 0 inline (see --reader-safe-top) */
+    padding-top: var(--reader-safe-top); /* tokens: Reader.dc.html, the head below the safe-area inset as the reader keeps it, 0 inline (--reader-safe-top) */
     display: grid;
     grid-template: 44px / minmax(0, 1fr);
     background: var(--background);
@@ -771,7 +771,7 @@
     min-width: 0;
     box-sizing: border-box;
     height: var(--reader-foot);
-    padding: var(--space-4) var(--space-16) var(--reader-safe-bottom); /* tokens: the safe-area inset as the reader keeps it, 0 inline (see --reader-safe-bottom) */
+    padding: var(--space-4) var(--space-16) var(--reader-safe-bottom); /* tokens: Reader.dc.html, the foot 4 by 16 inside above the safe-area inset as the reader keeps it, 0 inline (--reader-safe-bottom) */
     grid-template-columns: 1fr auto 1fr;
     grid-template-rows: 20px 44px;
     row-gap: var(--space-4);
