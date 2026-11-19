@@ -12,10 +12,11 @@ import {
   jsonBody,
   normaliseQuery,
   realClock,
+  englishOrUnknown,
+  type CatalogueBook,
   type LimiterClock,
   type Priority,
 } from "./catalogue-provider.ts";
-import type { CatalogueBook } from "./audiobookdb.ts";
 
 export const OPENLIBRARY_BASE = "https://openlibrary.org";
 const SEARCH_FIELDS = "key,title,subtitle,author_name,first_publish_year,cover_i,language";
@@ -107,7 +108,7 @@ export async function searchOpenLibrary(query: string, options: { priority?: Pri
     .map(readOpenLibraryDoc)
     .filter((book): book is CatalogueBook => !!book)
     // English only: a result whose languages Open Library names and which has no English one is left out.
-    .filter((book) => !book.languages.length || book.languages.includes("eng"));
+    .filter(englishOrUnknown);
 }
 
 /** `/works/{id}.json`, cached a week; the description only on a live answer. */

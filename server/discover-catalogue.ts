@@ -21,12 +21,15 @@ import { workVisibleTo } from "./work-library.ts";
 import { userIsAdmin } from "./users.ts";
 import type { LibraryWork } from "../src/types.ts";
 
-const PREFIX: Record<CatalogueProviderName, string> = { audiobookdb: "work-abdb-", openlibrary: "work-ol-" };
+/** Discover's providers: Google Books and iTunes (#721 part e) serve the match page only. */
+type DiscoverProvider = Extract<CatalogueProviderName, "audiobookdb" | "openlibrary">;
+const PREFIX: Record<DiscoverProvider, string> = { audiobookdb: "work-abdb-", openlibrary: "work-ol-" };
 const AUDIOBOOKDB_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$/;
 const OPEN_LIBRARY_ID = /^OL[1-9][0-9]{0,11}W$/;
 
 /** The id a provider book's work gets (and the address its Book page opens under while it is not on the server). */
 export function catalogueWorkId(provider: CatalogueProviderName, id: string): string | null {
+  if (provider !== "audiobookdb" && provider !== "openlibrary") return null;
   const valid = provider === "audiobookdb" ? AUDIOBOOKDB_ID.test(id) : OPEN_LIBRARY_ID.test(id);
   return valid ? PREFIX[provider] + id : null;
 }
@@ -169,7 +172,7 @@ export async function catalogueLook(workId: string, book: { provider: CatalogueP
     mediaState: { state: "missing", holdReason: null, acquisition: null },
     hardcover: null,
     wantToRead: false,
-    catalogue: { provider: book.provider, id: book.id },
+    catalogue: { provider: book.provider as DiscoverProvider, id: book.id },
   };
 }
 

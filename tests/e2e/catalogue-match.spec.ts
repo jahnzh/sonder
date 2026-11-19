@@ -83,7 +83,7 @@ for (const [size, viewport] of [["phone", { width: 390, height: 844 }], ["deskto
       const pageEl = page.getByTestId("match-page");
       await expect(pageEl.getByText("Not matched")).toBeVisible();
       // Filled with the title and author and searched at once: both providers answer.
-      await expect(pageEl.getByRole("searchbox", { name: "Search AudiobookDB and Open Library" })).toHaveValue("Quiet Harbour Mira Sand");
+      await expect(pageEl.getByRole("searchbox", { name: "Search AudiobookDB, Open Library, Google Books and iTunes" })).toHaveValue("Quiet Harbour Mira Sand");
       const abdb = pageEl.getByRole("radiogroup", { name: "AudiobookDB" });
       const open = pageEl.getByRole("radiogroup", { name: "Open Library" });
       await expect(abdb.getByRole("radio", { name: /Quiet Harbour/ })).toBeVisible();
@@ -111,7 +111,7 @@ for (const [size, viewport] of [["phone", { width: 390, height: 844 }], ["deskto
       const book = (await (await page.request.get("/api/books")).json()).find((entry: { workId: string }) => entry.workId === workId);
       expect(book.narrator).toBe(narratorBefore);
       expect(book.title).toBe("Quiet Harbour");
-      await matched.getByRole("button", { name: "Unlink" }).click();
+      await matched.getByRole("button", { name: "Unlink", exact: true }).click();
       await expect(matched.getByText("Not matched")).toBeVisible();
       await expect(releases).toHaveCount(0);
       expect(errors).toEqual([]);

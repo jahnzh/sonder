@@ -1,4 +1,5 @@
-// What the catalogue providers (#721: AudiobookDB, Open Library) share: the error with its reason, the request
+// What the catalogue providers (#721: AudiobookDB, Open Library, Google Books, iTunes) share: the result shape,
+// the English check: the error with its reason, the request
 // limiter that follows the provider's own headers, the SQLite cache with its expiry, and the daily unit count.
 //
 // Caching (the coordinator's spec on #721): searches are kept a day, keyed by the normalised query and its type;
@@ -8,7 +9,48 @@
 import { readFileSync } from "node:fs";
 import { sqlite } from "./db.ts";
 
-export type CatalogueProviderName = "audiobookdb" | "openlibrary";
+export type CatalogueProviderName = "audiobookdb" | "openlibrary" | "googlebooks" | "itunes";
+/** The providers the match page searches, in its order (part e). Batch matching and Discover use the first two only. */
+export const CATALOGUE_PROVIDERS = ["audiobookdb", "openlibrary", "googlebooks", "itunes"] as const satisfies readonly CatalogueProviderName[];
+/** The providers a work's main link may name; Google Books and iTunes links sit beside it (work_provider_links). */
+export type MainCatalogueProvider = "audiobookdb" | "openlibrary";
+export type ExtraCatalogueProvider = "googlebooks" | "itunes";
+export const isExtraProvider = (provider: string): provider is ExtraCatalogueProvider => provider === "googlebooks" || provider === "itunes";
+
+export type CatalogueSeriesRef = { id: string | null; name: string; position: string | null; sort: number | null };
+/** The one result shape every provider's search and details answer with. */
+export type CatalogueBook = {
+  provider: CatalogueProviderName;
+  id: string;
+  title: string;
+  subtitle: string | null;
+  authors: string[];
+  narrators: string[];
+  /** Shown from the provider by its address; never stored as an image. */
+  cover: string | null;
+  year: number | null;
+  /** Languages the provider names for the book or its releases (lower case, as given). */
+  languages: string[];
+  series: CatalogueSeriesRef[];
+  /** The book's releases where the answer lists them (AudiobookDB details). */
+  releaseIds: string[];
+  /** Only on a live detail answer: never cached, never sent on unless a match fills an empty description. */
+  description: string | null;
+};
+
+/** English as a provider writes it: a name or a code. An unknown language is not English. */
+export function isEnglish(language: string | null | undefined): boolean {
+  return !!language && /^(en|eng|english|en[-_][a-z]+)$/i.test(language.trim());
+}
+/** The English filter where a provider names languages: kept when it names none, or names English among them. */
+export const englishOrUnknown = (book: Pick<CatalogueBook, "languages">) => !book.languages.length || book.languages.some(isEnglish);
+
+/** A provider's description as plain text: tags dropped, spaces folded. */
+export function plainDescription(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const plain = value.replace(/<br\s*\/?>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/\s+/g, " ").trim();
+  return plain || null;
+}
 export type CatalogueErrorKind =
   | "missing_key"
   | "unreachable"
@@ -52,7 +94,8 @@ export function normaliseQuery(query: string): string {
   return query.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-const UNSTORED_KEYS = /^(description|descriptionhtml|summary|synopsis|blurb|about|excerpt)$/i;
+// `textSnippet` is Google Books' excerpt of the description.
+const UNSTORED_KEYS = /^(description|descriptionhtml|summary|synopsis|blurb|about|excerpt|textsnippet|longdescription|shortdescription)$/i;
 /** A copy without any description-like field, at any depth: what the cache may hold. */
 export function withoutUnstored(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(withoutUnstored);

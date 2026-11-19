@@ -127,6 +127,9 @@ for (const [size, viewport] of [["phone", { width: 390, height: 844 }], ["deskto
         // The catalogue (#721).
         "AudiobookDB",
         "Open Library",
+        // The match page's other providers (#721 part e).
+        "Google Books",
+        "iTunes",
       ]);
       await expect(main.getByRole("heading", { name: "Anna’s Archive" })).toHaveCount(0);
       // The old long form is gone: no save bar, no section for the local torrent client.

@@ -42,3 +42,20 @@ test("the batch's line in Connections, and the list of books not matched", () =>
   assert.equal(model.testedLine({ remaining: 39, limit: 40, unitsToday: 1234 }), "AudiobookDB is connected · 1,234 of 10,000 units used today.");
   assert.equal(model.KEY_IN_SERVER_FILE, "Set in the server's file");
 });
+
+test("part e: four providers in the match page's order, their names, and a Google Books or iTunes link alone", () => {
+  assert.deepEqual([...model.SEARCH_PROVIDERS], ["audiobookdb", "openlibrary", "googlebooks", "itunes"]);
+  assert.deepEqual(model.SEARCH_PROVIDERS.map((name) => model.PROVIDER_NAMES[name]), ["AudiobookDB", "Open Library", "Google Books", "iTunes"]);
+  assert.equal(model.SEARCH_LABEL, "Search AudiobookDB, Open Library, Google Books and iTunes");
+  const other = { provider: "itunes" as const, id: "1500000001", title: "Quiet Harbour", author: "Mira Sand", matchedBy: "manual" as const, url: "https://books.apple.com/us/audiobook/id1500000001" };
+  assert.deepEqual(model.outcomeLine({ link: null, links: [other], outcome: null }), { text: "Matched by hand", failed: false });
+  assert.equal(model.outcomeLine({ link: null, links: [], outcome: null }), null);
+  assert.equal(model.linkLabel(other), "Quiet Harbour · Mira Sand");
+  const main = { provider: "audiobookdb" as const, id: "bk", title: "Quiet Harbour", author: "Mira Sand", series: null, matchedBy: "manual" as const, url: "https://audiobookdb.org" };
+  assert.deepEqual(model.currentChoices({ link: main, links: [other] }), ["audiobookdb:bk", "itunes:1500000001"]);
+  assert.deepEqual(model.currentChoices({ link: null }), []);
+  assert.equal(
+    model.resultDetail({ provider: "itunes", id: "1", title: "Leviathan Wakes", subtitle: null, authors: ["James S. A. Corey"], narrators: [], cover: "https://is1-ssl.mzstatic.com/x/600x600bb.jpg", year: 2017, series: null }),
+    "James S. A. Corey · 2017",
+  );
+});
