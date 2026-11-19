@@ -13,6 +13,7 @@ import type { MetadataApplied, MetadataProvider, SeriesEntry, WorkField, WorkMet
 import { SEARCH_PROVIDERS, PROVIDER_NAMES, type CatalogueSearch, type WorkCatalogue } from "../catalogue-page-model";
 import { MatchSearch } from "./match-page";
 import { MetadataCompare } from "./metadata-compare";
+import { ChaptersGroup } from "./chapter-editor";
 import { FROM_PROVIDER, MATCHING, MATCH_AUTOMATICALLY, appliedLine, fromLabel } from "./metadata-compare-model";
 import {
   ADD_SERIES,
@@ -240,6 +241,8 @@ export function EditPage({ workId, admin, onChanged }: Props) {
             )}
           </div>
         </form>
+        {/* Outside the form too: each recording's chapters are saved on their own. */}
+        <ChaptersGroup metadata={answer} busy={busy} onChanged={onChanged} />
         </div>
       )}
     </div>

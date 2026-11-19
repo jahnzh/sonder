@@ -159,3 +159,49 @@ textarea.edit-description {
   object-fit: cover;
   display: block;
 }
+/* A recording's chapters (#719 part c): number, title, start and Remove on one line; the list on the surface card. */
+.edit-chapters {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  min-width: 0;
+}
+.edit-chapter-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-radius: var(--corner-group);
+  background: var(--surface);
+  overflow: hidden;
+}
+.edit-chapter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-8) var(--space-8) var(--space-8) var(--space-16);
+  min-width: 0;
+}
+.edit-chapter + .edit-chapter {
+  border-top: 1px solid var(--border);
+}
+.edit-chapter-number {
+  flex: 0 0 24px;
+  color: var(--muted);
+}
+.edit-chapter > .edit-input:not(.edit-chapter-start) {
+  flex: 1;
+  min-width: 0;
+}
+.edit-chapter-start {
+  flex: 0 0 96px;
+  width: 96px;
+  font-variant-numeric: tabular-nums;
+}
+.edit-chapter-shift,
+.edit-chapter-lookup {
+  align-items: flex-end;
+}
+.edit-chapter-shift > .part-button,
+.edit-chapter-lookup > .part-button {
+  flex: none;
+}

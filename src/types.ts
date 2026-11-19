@@ -593,3 +593,39 @@ export type ActivityResponse = {
   /** Number of items with `attention` plus down processes: drives the indicator on Settings. */
   attention: number;
 };
+/** A chapter of a whole recording (#719 part c): its start in seconds from the recording's beginning, over its files. */
+export type RecordingChapter = { title: string; start: number };
+/** Chapters found for a recording (#719 part c): from its linked AudiobookDB release or by an ASIN. */
+export type ChapterLookup = {
+  from: "release" | "asin";
+  releaseId: string;
+  asin: string | null;
+  /** The release's length, null when AudiobookDB gives none. */
+  lengthMs: number | null;
+  chapters: RecordingChapter[];
+  /** Whether the release's length agrees with the recording's within `CHAPTER_LENGTH_TOLERANCE_S`: only then are they taken. */
+  agrees: boolean;
+  /** Why they are not taken; null when they agree. */
+  reason: string | null;
+};
+/** A recording's chapters on the Edit page (#719 part c), the administrator's. */
+export type RecordingChapters = {
+  recordingId: string;
+  workId: string;
+  label: string;
+  /** The recording's length in seconds over all its files; 0 while a file's length is not known. */
+  duration: number;
+  /** Whether every file's length is known, so chapters can be placed over the files. */
+  lengthKnown: boolean;
+  /** The chapters shown: the edited ones, or the files'. */
+  chapters: RecordingChapter[];
+  /** The files' own chapters (one per file without any). */
+  source: RecordingChapter[];
+  edited: boolean;
+  /** The provider the edited chapters were looked up from; null when edited by hand or not edited. */
+  from: "audiobookdb" | null;
+  /** The linked AudiobookDB release, whose chapters 'Look up chapters' reads first. */
+  release: { releaseId: string; asin: string | null; lengthMs: number | null } | null;
+  /** The ASIN 'Look up chapters' takes when there is no linked release: the work's (edited or the link's). */
+  asin: string | null;
+};

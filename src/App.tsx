@@ -746,6 +746,7 @@ function LibraryApp({
       onProgress={onProgress}
       fallback={featured}
       notify={notify}
+      books={books}
     >
       <div className="app-shell" data-offline={offlineLine ? "" : undefined}>
         <PlaceNav current={page} attention={attentionDot} onPlace={choosePlace} />

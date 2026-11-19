@@ -25,6 +25,7 @@ import { z } from "zod";
 import { currentUserId, listUserIds, requireAdmin, setUserSetting, userIsAdmin } from "./users.ts";
 import { hardcoverForWorks, hiddenHardcoverPlaceholders } from "./hardcover.ts";
 import { deliveredTracks } from "./media-library.ts";
+import { chapterOverrides } from "./recording-chapters.ts";
 import { choiceKey, chosenRecordingId, fallbackCovers, idList, listedRecordings, storedChoices, workCovers } from "./work-cover.ts";
 import { readerPlaces, workCompletions } from "./work-completion.ts";
 import { applyTitleEdits, applyWorkEdits, metadataOf, registerWorkMetadataRoutes } from "./work-metadata.ts";
@@ -158,9 +159,10 @@ function recordingsByWork(userId: number, workIds: string[], files: FileCheck[])
       )
     : new Map<string, typeof s.serverDownloads.$inferSelect>();
   const faultsOf = faultsByRecording(recordingIds);
+  const editedChapters = chapterOverrides(recordingIds);
   for (const row of rows) {
     const faults = faultsOf.get(row.recordingId) ?? {};
-    const delivered = deliveredTracks(tracks.get(row.recordingId) ?? [], faults, onServer);
+    const delivered = deliveredTracks(tracks.get(row.recordingId) ?? [], faults, onServer, editedChapters.get(row.recordingId));
     const place = places.get(row.recordingId);
     const copy = serverCopies.get(row.recordingId);
     const progress: Progress | null = place

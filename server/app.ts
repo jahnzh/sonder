@@ -44,6 +44,7 @@ import { registerAccountRequests } from "./account-requests.ts";
 import { registerInvites } from "./invites.ts";
 import { registerReader } from "./reader.ts";
 import { registerLibraryWorks, workMetadata } from "./library-works.ts";
+import { chapterOverrides, registerRecordingChapterRoutes } from "./recording-chapters.ts";
 import { registerMetadataMatchRoutes, retryMetadataMatch } from "./metadata-match.ts";
 import { registerDeviceKeep } from "./device-keep.ts";
 import { registerAlignment, autoQueueAlignmentsForWork, persistedPoolErrors, resumeAlignmentJob } from "./alignment.ts";
@@ -113,6 +114,7 @@ export function listBooks(userId = 1): Book[] {
       "SELECT DISTINCT e.work_id AS workId FROM user_library u JOIN audio_editions e ON e.id=u.book_id WHERE u.user_id=?",
     )
     .all(userId) as { workId: string }[];
+  const editedChapters = chapterOverrides();
   const mediaStates = getWorkMediaStates(
     userId,
     libraryWorkIds.map((row) => row.workId),
@@ -130,6 +132,8 @@ export function listBooks(userId = 1): Book[] {
       const { tracks, serverStored } = deliveredTracks(
         allTracks.filter((t) => t.recordingId === recording.id),
         faults,
+        undefined,
+        editedChapters.get(recording.id),
       );
       return {
         serverStored,
@@ -342,6 +346,7 @@ export async function createApp(options?: {
   });
   app.get("/api/books", async (req) => listBooks(currentUserId(req)));
   registerLibraryWorks(app);
+  registerRecordingChapterRoutes(app);
   registerDeviceKeep(app);
   registerUsers(app);
   registerAccountRequests(app);

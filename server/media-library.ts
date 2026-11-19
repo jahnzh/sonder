@@ -7,7 +7,8 @@ import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
 import { mediaRoot, ensureMediaStorage } from "./storage.ts";
 import { hasServerMedia, pauseServerDownload } from "./downloads.ts";
-import type { Book, MediaFault, RecordingSources } from "../src/types.ts";
+import type { Book, MediaFault, RecordingChapter, RecordingSources } from "../src/types.ts";
+import { withEditedChapters } from "./recording-chapters.ts";
 type Track = typeof s.tracks.$inferSelect;
 /**
  * A recording's tracks as clients read them (`GET /api/books`, the read by work): in order, without
@@ -18,8 +19,10 @@ export function deliveredTracks(
   rows: Track[],
   faults: NonNullable<Book["faults"]>,
   onServer: (track: Track) => boolean = hasServerMedia,
+  /** The recording's edited chapters (#719 part c), placed over its files in place of theirs. */
+  editedChapters?: RecordingChapter[],
 ) {
-  const tracks = [...rows]
+  const tracks = withEditedChapters([...rows], editedChapters)
     .sort((a, b) => a.index - b.index)
     .map((t) => {
       const serverAvailable = onServer(t);

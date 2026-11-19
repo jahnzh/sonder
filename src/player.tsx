@@ -14,6 +14,8 @@ import { HISTORY_LIFETIME, planUndo, recentPositions, restored, type JumpKind, t
 import {
   listeningChapters,
   currentChapter,
+  sessionChapterTitle,
+  withFreshChapters,
   relativeSeekTarget,
   absoluteSeekTarget,
 } from "./chapters";
@@ -118,10 +120,13 @@ export function PlayerProvider({
   onProgress,
   fallback,
   notify,
+  books,
 }: {
   children: ReactNode;
   onProgress: (p: Progress) => void;
   fallback?: Book;
+  /** The library as last read: a recording's edited chapters (#719 part c) reach the book playing. */
+  books?: Book[];
   notify?: (text: string) => void;
 }) {
   const [element] = useState(() => new Audio());
@@ -142,6 +147,18 @@ export function PlayerProvider({
   fallbackRef.current = fallback;
   const state = useRef({ book, track, position, length });
   state.current = { book, track, position, length };
+  // Chapters edited while a book is loaded: the chapter list, Media Session and the reader's chapter lines read them.
+  useEffect(() => {
+    if (!book || !books) return;
+    const fresh = withFreshChapters(book, books.find((other) => other.recordingId === book.recordingId));
+    if (fresh !== book) setBook(fresh);
+  }, [books, book]);
+  // Media Session names the chapter playing as the album, and follows it as the place crosses into another.
+  const sessionChapter = book && track ? sessionChapterTitle(book, track, position) : null;
+  useEffect(() => {
+    if (!sessionChapter || !("mediaSession" in navigator) || !navigator.mediaSession.metadata) return;
+    if (navigator.mediaSession.metadata.album !== sessionChapter) navigator.mediaSession.metadata.album = sessionChapter;
+  }, [sessionChapter]);
   const onProgressRef = useRef(onProgress);
   onProgressRef.current = onProgress;
   const lastSave = useRef(0);
@@ -540,7 +557,7 @@ export function PlayerProvider({
         navigator.mediaSession.metadata = new MediaMetadata({
           title: b.title,
           artist: b.author,
-          album: selected.title,
+          album: sessionChapterTitle(b, selected, pendingSeek.current),
           artwork: [
             {
               src: new URL(b.cover, location.origin).href,

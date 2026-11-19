@@ -188,3 +188,19 @@ export function relativeSeekTarget(
     ),
   };
 }
+/**
+ * The playing book with the chapters of `fresh` (the same recording read again, #719 part c: the administrator edited
+ * its chapters). Only the chapters change, and only when every file is the same file: the place stays where it is.
+ * The same object when nothing changed.
+ */
+export function withFreshChapters(playing: Book, fresh: Pick<Book, "recordingId" | "tracks"> | undefined): Book {
+  if (!fresh || fresh.recordingId !== playing.recordingId || fresh.tracks.length !== playing.tracks.length) return playing;
+  if (!fresh.tracks.every((track, i) => track.id === playing.tracks[i].id)) return playing;
+  const changed = fresh.tracks.some((track, i) => JSON.stringify(track.chapters ?? []) !== JSON.stringify(playing.tracks[i].chapters ?? []));
+  if (!changed) return playing;
+  return { ...playing, tracks: playing.tracks.map((track, i) => ({ ...track, chapters: fresh.tracks[i].chapters ?? [] })) };
+}
+/** What Media Session names as the album: the chapter playing (the file's title when it has none). */
+export function sessionChapterTitle(book: Pick<Book, "tracks">, track: Pick<Track, "id" | "title">, position: number) {
+  return currentChapter(book as Book, track.id, position)?.title || track.title;
+}
