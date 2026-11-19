@@ -21,6 +21,8 @@ export type RowProps = Common &
         /** It opens a page (draws the chevron). */
         opens?: boolean;
         disabled?: boolean;
+        /** The row of the page shown beside its list (a desktop's Settings, #614): marked as the current page. */
+        current?: boolean;
         control?: never;
         info?: never;
       }
@@ -31,9 +33,12 @@ export type RowProps = Common &
         info?: ReactNode;
         /** 0 to 1: a thin bar under the label (a share, such as the storage in use); the row is then 64 high. */
         progress?: number | null;
+        /** A line under the label (Label size, muted), such as when a key works ("While nothing plays", #614). */
+        detail?: string;
         onClick?: never;
         opens?: never;
         disabled?: never;
+        current?: never;
       }
   );
 
@@ -51,7 +56,7 @@ export function Row(props: RowProps) {
   if (props.onClick) {
     return (
       <li className="part-row-item">
-        <button type="button" className="part-row" data-opens={props.opens ? "" : undefined} onClick={props.onClick} disabled={props.disabled}>
+        <button type="button" className="part-row" data-opens={props.opens ? "" : undefined} aria-current={props.current ? "page" : undefined} onClick={props.onClick} disabled={props.disabled}>
           <span className="part-row-label type-body">{label}</span>
           {(value || props.opens) && (
             <span className="part-row-value type-label">
@@ -76,13 +81,22 @@ export function Row(props: RowProps) {
     </span>
   );
   const moving = props.progress != null;
+  const detail = props.detail;
+  const named = [`${id}-label`, detail && `${id}-detail`, value && `${id}-value`].filter(Boolean).join(" ");
   return (
-    <li className="part-row-item" aria-labelledby={value ? `${id}-label ${id}-value` : `${id}-label`}>
-      <div className="part-row" data-moving={moving ? "" : undefined}>
+    <li className="part-row-item" aria-labelledby={named}>
+      <div className="part-row" data-moving={moving ? "" : undefined} data-detail={detail ? "" : undefined}>
         {moving ? (
           <span className="part-row-stack">
             {name}
             <ProgressBar progress={props.progress as number} />
+          </span>
+        ) : detail ? (
+          <span className="part-row-stack">
+            {name}
+            <span id={`${id}-detail`} className="part-row-detail type-label">
+              {detail}
+            </span>
           </span>
         ) : (
           name

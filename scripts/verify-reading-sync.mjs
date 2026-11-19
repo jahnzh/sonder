@@ -61,7 +61,9 @@ try {
     localStorage.setItem(key("sonder-appearance"), JSON.stringify({ ...appearance, reader: { ...appearance.reader, display: "book" } }));
     // The old selector is gone. This choice belongs only to the fresh QA browser, not the server.
     localStorage.setItem(key(`reader-recording:${ebookId}`), recordingId);
-  }, { appearance, ebookId, recordingId, userId: auth.user.id });
+    // This device's edition of the work, so the Read face opens this EPUB if the old name below leads there.
+    localStorage.setItem(key(`reader-ebook:${workId}`), ebookId);
+  }, { appearance, ebookId, recordingId, workId: book.workId, userId: auth.user.id });
   page = await context.newPage();
   page.on("pageerror", (error) => report.errors.push(error.message));
   await page.addInitScript(() => {
@@ -113,8 +115,10 @@ try {
       new URL(response.url()).pathname === `/api/alignments/${encodeURIComponent(prepared.id)}/map` && response.ok()),
     page.goto(`/#reader/${encodeURIComponent(ebookId)}`),
   ]);
-  const room = page.locator(".reader-room:not(.inline-reader)");
-  // The reader has no More sheet (#592): Listen from here is the long-press on a sentence and Read from audio
+  // `#reader/<ebook id>` is an old name kept for good (#455): it opens a reader of this EPUB, the reader's own page or
+  // Now playing's Read face. The reader is found by the EPUB it shows, so either one is checked, and only this one.
+  const room = page.locator(`.reader-room[data-ebook="${ebookId}"]`);
+  // The reader head has no More button (#592): Listen from here is the long-press on a sentence and Read from audio
   // is the foot's Back to narration. The helper reveals the controls and retries a swallowed tap (#413).
   const controls = createReaderControls({ page, room });
   // Long-press the sentence that starts with `text` where it is on the page the reader shows.

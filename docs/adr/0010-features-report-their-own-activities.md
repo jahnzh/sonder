@@ -1,5 +1,7 @@
 # Features report their own activities
 
+**Status (2026-11-19).** The Activity page is now the Activity place (#516): the sources described here feed its Server part (#519) and the attention dot, and Now groups the same items by book (#522). The decision stands.
+
 Each feature that runs work in the background describes it to the Activity page itself. A feature module exports one **activity source**: the identity of its **background process** (id, label, whether it can be paused and what pausing does), the time after which a running **activity** counts as **stuck**, a function that returns the feature's current activities, and the actions an activity supports (retry, discard). The Activity module keeps a plain list of the sources and does only what is common to all of them: it asks each source for its activities when the page is requested, marks stuck and blocked ones, applies the pause switches, sorts, counts and dispatches an action to the source that owns the activity. It contains no SQL against a feature's tables and no feature status words.
 
 A source reads its rows from the database when asked. Nothing is pushed to Activity and Activity stores nothing about a feature, so there is no second copy of a job's state that can go stale.
