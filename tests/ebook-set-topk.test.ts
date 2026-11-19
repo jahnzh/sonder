@@ -286,8 +286,85 @@ test("evaluateEbookSetMember rejects wrong editions with sample passages", async
   assert.ok("language" in row.evidence);
 });
 
-test("fetchTopKIntoEbookSet downloads at most five filtered candidates", async () => {
+/** A work's recording with server audio, so a candidate is checked against the narration. */
+function withNarration(workId: string) {
+  const audio = join(temp, "media", `narration-${workId}.mp3`);
+  mkdirSync(join(temp, "media"), { recursive: true });
+  writeFileSync(audio, "audio");
+  seedRecording(workId, `rec-${randomUUID()}`, audio);
+}
+
+/** Search results: `count` EPUBs of the book, then unrelated ones. */
+const candidates = (title: string, count: number, total = 8) => ({
+  website: "https://example.test",
+  files: Array.from({ length: total }, (_, i) => ({
+    md5: randomUUID().replace(/-/g, ""),
+    source: "libgen" as const,
+    title: i < count ? `${title} vol ${i}` : "Unrelated",
+    authors: ["Cara Author"],
+    extension: "epub" as const,
+    language: "English",
+    size: "1 MB",
+    year: "2020",
+    coverUrl: null,
+    url: `https://example.test/${i}`,
+  })),
+});
+
+async function saveFixture(input: { source: string; md5: string; workId?: string | null }) {
+  const id = `${input.source}-${input.md5}`;
+  const dir = join(temp, "media", "ebooks");
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `${id}.epub`);
+  writeFileSync(path, await readerFixture());
+  db.insert(schema.ebookEditions).values({ id, workId: input.workId!, format: "epub", source: path }).run();
+  return { id, alreadySaved: false };
+}
+
+test("fetchTopKIntoEbookSet fetches one edition that cannot be checked yet, and no more (#718)", async () => {
+  const workId = seedWork("One First Book", "Cara Author");
+  let saved = 0;
+  setEbookSetDeps({
+    search: async () => candidates("One First Book", 6),
+    save: async (input) => {
+      saved++;
+      return saveFixture(input);
+    },
+    anchorSample: async () => ({ spokenWords: 0, match: null }),
+  });
+  // No audio on the server: the edition is held, not failed, so nothing else is fetched.
+  const result = await fetchTopKIntoEbookSet(workId);
+  assert.equal(saved, 1);
+  assert.deepEqual(result.downloaded.map((d) => d.status), ["held"]);
+  assert.equal(listEbookSetMembers(workId).length, 1);
+});
+
+test("fetchTopKIntoEbookSet stops at the first edition that matches the narration (#718)", async () => {
+  const workId = seedWork("Match Book", "Cara Author");
+  withNarration(workId);
+  let saved = 0;
+  let fragment = 0;
+  setEbookSetDeps({
+    search: async () => candidates("Match Book", 6),
+    save: async (input) => {
+      saved++;
+      return saveFixture(input);
+    },
+    // The first edition matches: forward anchors.
+    anchorSample: async ({ start }) => {
+      const step = fragment;
+      fragment += 3;
+      return { spokenWords: 40, match: { fragment: step, score: 0.85, start: start + 1 } };
+    },
+  });
+  const result = await fetchTopKIntoEbookSet(workId);
+  assert.equal(saved, 1);
+  assert.deepEqual(result.downloaded.map((d) => d.status), ["accepted"]);
+});
+
+test("fetchTopKIntoEbookSet fetches the next edition while each fails the narration check, at most five", async () => {
   const workId = seedWork("Top K Book", "Cara Author");
+  withNarration(workId);
   let saved = 0;
   setEbookSetDeps({
     search: async () => ({
@@ -322,11 +399,14 @@ test("fetchTopKIntoEbookSet downloads at most five filtered candidates", async (
   const result = await fetchTopKIntoEbookSet(workId);
   assert.equal(saved, EBOOK_SET_TOP_K);
   assert.equal(result.downloaded.length, EBOOK_SET_TOP_K);
+  assert.ok(result.downloaded.every((d) => d.status === "rejected"));
   assert.equal(listEbookSetMembers(workId).length, EBOOK_SET_TOP_K);
 });
 
 test("fetchTopKIntoEbookSet keeps other candidates when one save fails", async () => {
   const workId = seedWork("Partial Fail Book", "Cara Author");
+  // Each edition fails the narration check, so the fetch goes on past the failed save.
+  withNarration(workId);
   const md5Ok1 = randomUUID().replace(/-/g, "");
   const md5Fail = randomUUID().replace(/-/g, "");
   const md5Ok2 = randomUUID().replace(/-/g, "");

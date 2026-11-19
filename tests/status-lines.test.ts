@@ -8,7 +8,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   NOT_IN_LIBRARY_LINE, QUEUE_OFF_LINE, WORKER_OFF_LINE, ALREADY_HAS_COPY_LINE,
-  deviceSaveLine, downloadLine, ebookCheckLine, readingSyncLine, serverCopyLine, withReason,
+  deviceSaveLine, downloadLine, ebookCheckLine, readingSyncLine, serverCopyLine, spareEditionsLine, withReason,
   type EbookCheckFacts, type ReadingSyncJobFacts,
 } from "../src/status-lines.ts";
 import { ALIGNMENT_OUTCOMES, ALIGNMENT_STATUSES } from "../src/reading-types.ts";
@@ -321,6 +321,13 @@ test("a series search's failure names the search and its reason, and a waiting o
   assert.equal(searchReason("Prowlarr did not answer in time."), "Prowlarr did not answer in time");
   assert.equal(searchReason("  "), "");
   assert.equal(searchReason(undefined), "");
+});
+
+test("the syncs of a book's spare editions: one line, with the one being checked (#718)", () => {
+  assert.equal(spareEditionsLine({ total: 1, current: 1 }), "Checking another edition");
+  assert.equal(spareEditionsLine({ total: 4, current: 1 }), "Checking 4 other editions · 1 of 4");
+  assert.equal(spareEditionsLine({ total: 5, current: 3 }), "Checking 5 other editions · 3 of 5");
+  assert.equal(spareEditionsLine({ total: 4, current: 9 }), "Checking 4 other editions · 4 of 4", "never past the last");
 });
 
 test("a stalled download of a book that already has a copy: the line leads with it (#716)", () => {

@@ -186,9 +186,12 @@ test("a reading sync names its work and carries the worker's stage with its file
   assert.deepEqual(book("alignment:sync-encoding"), { workId: "w-real", bookId: "ed-real", cover: "/covers/real.jpg" });
   assert.deepEqual(item("alignment:sync-encoding").facts, {
     kind: "alignment", status: "processing", outcome: null, coverage: null, wholeBook: true, stage: "encoding", files: { done: 24, total: 43 },
+    spare: false, background: false,
   });
   assert.deepEqual(item("alignment:sync-partial").facts, {
     kind: "alignment", status: "partial", outcome: "partial", coverage: 0.61, wholeBook: true, stage: null, files: null,
+    // eb-2 is w-real's second EPUB and nobody reads it: a spare edition (#718), prepared, not queued by itself.
+    spare: true, background: false,
   });
   const decoding = item("alignment:sync-decoding").facts;
   assert.ok(decoding.kind === "alignment");

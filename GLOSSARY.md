@@ -175,6 +175,10 @@ _Avoid_: Re-sync, repair, migrate
 Generating a fresh alignment map because the user asked for it. As with a rebuild, the existing map stays the map in use until the new one is ready, and a new one that is clearly worse is not used.
 _Avoid_: Rebuild (for the manual action), re-sync
 
+**Spare edition**:
+An EPUB of a work that nobody reads: not the work's shared default (or, without one, its first EPUB), and no account has a place in it. It was fetched to find the edition that matches the narration; its check against the narration is the probe, and nothing syncs it whole by itself (ADR 0024).
+_Avoid_: Other ebook, extra copy, set member (when the unread edition is meant)
+
 **Map in use**:
 The alignment map the reader follows for one recording and one ebook edition. While a rebuild or Prepare again runs, it is the earlier map. A map made for files that have changed since is never in use.
 _Avoid_: Published map, kept map, old map

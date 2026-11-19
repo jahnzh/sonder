@@ -987,3 +987,46 @@
   visibility: hidden !important;
   pointer-events: none !important;
 }
+
+/* A book without a recording (#594, spec #586 "A book without a recording", ReaderEbookOnly.dc.html): no narration
+   in the foot. With the controls shown its line holds the chapter and "N% of the book", and its row Chapters and the
+   position slider, which takes the rest of the row. At rest the progress line and the place, as any book. */
+@media (max-width: 899.98px) {
+  .reader-player[data-recording="none"],
+  .reader-player[data-recording="none"][data-controls="true"] {
+    grid-template-columns: 44px minmax(0, 1fr);
+    grid-template-areas:
+      "info info"
+      "chapters scrub";
+    column-gap: var(--space-8);
+  }
+  .reader-player[data-recording="none"] .reader-player-info,
+  .reader-player[data-recording="none"][data-controls="true"] .reader-player-info {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-12);
+    height: 20px;
+    padding: 0;
+    font-family: var(--font-body);
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 500;
+    color: var(--muted);
+  }
+  .reader-player[data-recording="none"] .reader-player-info > * {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .reader-player[data-recording="none"] .reader-player-info > span {
+    flex: none;
+  }
+  .reader-player[data-recording="none"] .reader-player-info span::before {
+    content: none;
+  }
+  .reader-player[data-recording="none"] .reader-scrubber {
+    height: 44px;
+  }
+}
