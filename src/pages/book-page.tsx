@@ -1,11 +1,10 @@
 // The Book page (#532, spec #526 "The Book page"; boards Book.dc.html, BookMore.dc.html, BookGetting.dc.html,
 // BookSeries.dc.html; and #533's BookNotInLibrary.dc.html, BookNothing.dc.html, BookPdf.dc.html): `#book/<workId>`. The head (the back button named after where it goes, Favorite), the intro
 // (cover, title, author, the series line, the place line), Listen and Read; Files (Audiobook, Ebook, Reading sync);
-// This device (Keep on this device, the work's standing choice on this device, #550); About; then Hardcover, Mark as
-// finished and Remove from library. It replaces the book dialog (`BookDetail`). The words and rules are in
+// This device (Keep on this device, the work's standing choice on this device, #550); About; then Want to read, Match
+// (the administrator's), Mark as finished and Remove from library (the Hardcover row went with Hardcover, #721 part d). It replaces the book dialog (`BookDetail`). The words and rules are in
 // book-model.ts; the work comes from the library by work on the device (`useWork`), so it opens without a connection.
 import { useEffect, useMemo, useState } from "react";
-import { useHardcover } from "../components/Hardcover";
 import { api, localDB } from "../lib";
 import { refreshLibraryWorks, useWork } from "../library-works-store";
 import { useAddress } from "../navigation";
@@ -21,7 +20,6 @@ import { useDeviceEbookChoice, useEbookDeviceCopy } from "../ebook-device-copy";
 import { ebookSearchTarget } from "./ebook-page";
 import { keepOffAndRemove, removeBookFiles, useDeviceBook, useKeepRecord } from "../keep-runtime";
 import type { DeviceSaveRecord } from "../device-saves";
-import { hardcoverRowValue } from "../hardcover-page-model";
 import { bytes } from "../size-format";
 import { tip } from "../tooltip-texts";
 import type { Book, Download, DownloadPart, LibraryWork } from "../types";
@@ -120,7 +118,6 @@ export function BookPage(props: Props) {
   const address = useAddress();
   const p = usePlayer();
   const { work, status, reload } = useWork(workId);
-  const { state: hardcover } = useHardcover();
   const deviceChoice = useDeviceEbookChoice(workId);
   // Keep on this device is the work's Keep record on this device (#550); undefined while it is read.
   const keepRecord = useKeepRecord(workId);
@@ -152,7 +149,6 @@ export function BookPage(props: Props) {
   const searchTarget = chosenBook ?? entries[0] ?? (work ? ebookSearchTarget(work) : null);
   // Every file of the book on this device (#553): what Off frees and the earlier copies.
   const onDevice = useDeviceBook(work);
-  const hardcoverValue = hardcoverRowValue(hardcover, work?.hardcover ?? null);
 
   const back = address.backTarget();
   const backLabel = backName(back);
@@ -446,9 +442,6 @@ export function BookPage(props: Props) {
 
       {model.inLibrary && (
         <Group label="Book">
-          {hardcoverValue !== null && (
-            <Row label="Hardcover" value={hardcoverValue} opens onClick={() => address.navigate({ name: "book-page", workId, page: "hardcover" })} />
-          )}
           <Row label={wantToRead.label} disabled={busy || !online} onClick={() => void toggleWantToRead()} />
           {/* The catalogue match (#721), the administrator's. */}
           {admin && <Row label="Match" opens onClick={() => address.navigate({ name: "book-page", workId, page: "match" })} />}

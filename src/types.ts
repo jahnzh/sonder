@@ -223,7 +223,8 @@ export type DownloadPart = {
 };
 export type Settings = {
   torboxConfigured: boolean;
-  hardcoverConfigured: boolean;
+  /** A Hardcover token is stored: never after the switch from Hardcover (#721 part d); read by Discover until part c2. */
+  hardcoverConfigured?: boolean;
   abbUrl: string;
   name: string;
   authenticated?: boolean;
@@ -332,21 +333,6 @@ export type SeriesWorkAcquisition = {
     | null;
 };
 
-export type HardcoverState = {
-  configured: boolean;
-  mode: "off" | "import" | "two-way";
-  syncLists: boolean;
-  accountId: number | null;
-  username: string | null;
-  lastSync: number;
-  lastError: string | null;
-  listWarning: string | null;
-  syncing: boolean;
-  pending: number;
-  linked: number;
-  lists: { id: number; name: string; count: number; slug: string | null }[];
-  shelves: { id: number; name: string }[];
-};
 export type TorrentHealth = {
   status: "ok" | "offline" | "unreachable" | "auth" | "error" | "unconfigured";
   // RPC answered with a valid session.
@@ -364,7 +350,6 @@ export type ActivityKind =
   | "server-copy"
   | "series-acquisition"
   | "alignment"
-  | "hardcover"
   | "ebook-set"
   | "backup";
 export type ActivityState = "running" | "queued" | "paused" | "failed" | "done";
@@ -379,7 +364,7 @@ export type ActivityItem = {
   processId: string;
   title: string;
   detail: string | null;
-  /** Whose item it is when the page is read by the administrator (one row per user for Hardcover). */
+  /** Whose item it is when the page is read by the administrator (an item a user owns). */
   user: string | null;
   state: ActivityState;
   /** 0 to 1, or null when the kind has no measurable progress. */
@@ -399,7 +384,7 @@ export type ActivityItem = {
   stuck: { reason: string; known?: true } | null;
   /** The background process this item cannot move without, while that process is down. */
   blockedBy: string | null;
-  /** The work the item concerns; null for an acquisition with no work yet, a Hardcover queue and a backup (#514). */
+  /** The work the item concerns; null for an acquisition with no work yet and a backup (#514). */
   workId: string | null;
   /** The audio edition of the work's chosen recording; null when it has none, and never a placeholder's (#514). */
   bookId: string | null;
@@ -467,7 +452,6 @@ export type ActivityFacts =
       /** Queued by itself (the backfill, an ebook-set check, new audio), not by a Prepare (#718). */
       background?: boolean;
     }
-  | { kind: "hardcover"; status: "waiting" | "failing"; queue: "status" | "listening" | "reading" }
   /** An ebook's check against the narration: the member's status, with the reason it is held when it is. */
   | { kind: "ebook-set"; status: string; holdReason: string | null }
   | { kind: "backup"; status: string };

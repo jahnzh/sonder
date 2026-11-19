@@ -23,7 +23,7 @@ npx playwright test tests/e2e/releases.spec.ts -g "name" # one browser test
 
 **Browser tests serve the built `dist/`, not the source — run `npm run build` before `npm run test:browser`**, or the tests silently exercise the previous build.
 
-Playwright starts `tests/browser-server.ts`, which runs the real app on :4173 against a throwaway temp DB/media dir with Hardcover and alignment fixtures installed (`tests/*-fixture.ts`) and no password. Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` if the pinned Chromium path in `playwright.config.ts` is missing.
+Playwright starts `tests/browser-server.ts`, which runs the real app on :4173 against a throwaway temp DB/media dir with Hardcover (until parts b/c2 of #721), AudiobookDB/Open Library and alignment fixtures installed (`tests/*-fixture.ts`) and no password. Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` if the pinned Chromium path in `playwright.config.ts` is missing.
 
 Deploy (production runs from Docker, not `npm start`); use `scripts/deploy-prod.sh <commit>` from any checkout — see `docs/LOCAL_CHECKS.md` (Production deployment).
 
@@ -43,7 +43,7 @@ For isolated checks of a committed revision, database backups, and live-verifica
 - External, alignment: the remote CTC pool (ADR 0006, `docs/CTC_WORKER_POOL.md`). The Python FastAPI worker (`worker/align.py`, token-protected, port 3012) runs only on the pool hosts, WSL's GPU first and lisa's CPU as the fallback, installed by `scripts/install-ctc-workers.sh`; production runs no alignment worker (the `sonder-alignment` container was retired in #279). It does known-text forced alignment, candidate probing and short-excerpt passage locating; models live under each worker's `MEDIA_ROOT/alignment` and are fetched only by `download_model.py`. Server side lives in `server/alignment.ts` and `server/alignment-pool.ts` (SSH staging, host leases); reading sync is available only with `ALIGNMENT_POOL_ENABLED=1` and `ALIGNMENT_WORKER_TOKEN`.
 - External: a dedicated Transmission (`sonder-torrents`) sharing the network of the user's existing `transmission-openvpn` container, configured by `scripts/setup-local-torrents.mjs` (writes credentials into `.env`).
 
-**Server layout.** `server/index.ts` loads `.env` and calls `createApp()` in `server/app.ts`, which holds auth, the core library/progress/media routes and the background tickers. Feature areas register their own routes: `hardcover-routes.ts`/`hardcover.ts`, `reader.ts`, `alignment.ts`, `appearance.ts`, `media-library.ts` (sources/faulty flags/copy choice). Other key modules:
+**Server layout.** `server/index.ts` loads `.env` and calls `createApp()` in `server/app.ts`, which holds auth, the core library/progress/media routes and the background tickers. Feature areas register their own routes: `catalogue-routes.ts` (AudiobookDB/Open Library: `audiobookdb.ts`, `openlibrary.ts`, `catalogue-links.ts`), `hardcover-routes.ts` (the series routes, still on Hardcover's catalogue until #721 part b, and the 410s of the removed Hardcover routes), `reader.ts`, `alignment.ts`, `appearance.ts`, `media-library.ts` (sources/faulty flags/copy choice). Other key modules:
 - `services.ts` — TorBox API and AudioBookBay scraping.
 - `acquisitions.ts` + `transmission.ts` — magnet routing: TorBox only on a confirmed cache hit (`add_only_if_cached`), otherwise local Transmission. A book is added to the library only after the torrent completes and its files validate.
 - `downloads.ts` — "Save to server" copies to `MEDIA_ROOT/saved`.
@@ -53,13 +53,13 @@ For isolated checks of a committed revision, database backups, and live-verifica
 
 **Database.** SQLite via better-sqlite3 in `DATA_DIR` (default `data/`). There is no migration tool: `server/db.ts` runs `CREATE TABLE IF NOT EXISTS` and guarded `ALTER TABLE ... ADD COLUMN` checks (via `PRAGMA table_info`) at startup. `server/schema.ts` is the Drizzle mirror. A schema change must update **both** files and stay additive, because the live DB has real data. Integration secrets are AES-256-GCM encrypted with `data/.encryption-key`.
 
-**Data model.** `works` → `audio_editions` (the "book" a library row points at) → `recordings` → `tracks`. Ebooks are `ebook_editions` hanging off the same `work`. Progress is keyed **per recording** (track + position), so each release keeps its own position; never merge progress across recordings. "Delivery source" (device copy / server HDD copy / original stream or TorBox) is separate from the choice of recording. Removing a library row adds a `hidden_library` entry so Hardcover sync won't re-add it; files and progress are kept.
+**Data model.** `works` → `audio_editions` (the "book" a library row points at) → `recordings` → `tracks`. Ebooks are `ebook_editions` hanging off the same `work`. Progress is keyed **per recording** (track + position), so each release keeps its own position; never merge progress across recordings. "Delivery source" (device copy / server HDD copy / original stream or TorBox) is separate from the choice of recording. Removing a library row adds a `hidden_library` entry so nothing re-adds it; files and progress are kept.
 
 **Client (`src/`).** React 19 + Tailwind 4 + Radix dialogs. `App.tsx` is a large single-file shell with hash routes (`#library`, `#discover`, `#settings`, …). Playback state and Media Session live in `player.tsx` (30 s skips for every remote command, including next/previous). Dexie (`lib.ts`) stores offline state: device downloads as 4 MiB IndexedDB chunks (`media-download.ts`), queued progress and reader checkpoints. `public/sw.js` is a template; `build-sw.mjs` injects the precache list and version into `dist/sw.js`, and the service worker serves byte ranges from complete device downloads. `__SONDER_BUILD_ID__` / `dist/build.json` drive the in-app "update available" notice (`AppUpdate.tsx`).
 
 **Sync rules.**
 - Progress is saved locally first and reconciled with the server by timestamp.
-- Hardcover writes go through durable SQLite queues: one for listening and a separate one for reading. They are coalesced and retried, and a newer local position must never be overwritten by an older remote response.
+- Hardcover sync is removed (#721 part d): nothing is sent to or pulled from Hardcover. The catalogue is AudiobookDB (audiobooks) and Open Library (books without one): a work links to a catalogue book, a recording may link to a release; covers and descriptions are shown by URL, never stored. Want to read is Sonder's own shelf; Reading and Finished come from the user's progress.
 - Reader positions use CFIs plus sentence locators, not page numbers.
 - Alignment maps belong to one specific recording and EPUB. They are invalidated when either file changes, and their timings are labelled "estimated".
 

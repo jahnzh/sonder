@@ -1,4 +1,5 @@
-/* The Hardcover page (src/pages/hardcover-page.tsx; boards Hardcover.dc.html, HardcoverMatch.dc.html). One column
+/* The match page (src/pages/match-page.tsx), in the layout of the Hardcover page it replaced (#721 part d; boards
+   Hardcover.dc.html, HardcoverMatch.dc.html), whose class names it keeps. One column
    of groups 16 apart; on a desktop the phone layout in one centred column beside the rail. Colours are the app's
    variables; the parts keep their own measures. */
 .hardcover-page {

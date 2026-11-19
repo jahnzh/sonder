@@ -10,7 +10,6 @@ export type SettingsListInput = {
   /** `GET /api/settings`, null until it answers. */
   settings: {
     torboxConfigured: boolean;
-    hardcoverConfigured: boolean;
     prowlarrConfigured?: boolean;
     storage?: { connected: boolean; usedBytes: number | null; totalBytes: number | null } | null;
   } | null;
@@ -49,16 +48,10 @@ export function themeName(appearance: Pick<Appearance, "preset" | "colors">): st
   return Object.values(appearance.colors ?? {}).some(Boolean) ? "Custom colours" : PRESET_NAMES[appearance.preset];
 }
 
-/** The services connected, as the Connections row says them; Hardcover only for someone who is not the administrator. */
-export function connectionsValue(settings: SettingsListInput["settings"], admin: boolean): string {
+/** The services connected, as the administrator's Connections row says them. */
+export function connectionsValue(settings: SettingsListInput["settings"]): string {
   if (!settings) return "";
-  const names = admin
-    ? [
-        settings.torboxConfigured && "TorBox",
-        settings.hardcoverConfigured && "Hardcover",
-        settings.prowlarrConfigured && "Prowlarr",
-      ]
-    : [settings.hardcoverConfigured && "Hardcover"];
+  const names = [settings.torboxConfigured && "TorBox", settings.prowlarrConfigured && "Prowlarr"];
   const connected = names.filter((name): name is string => !!name);
   return connected.length ? connected.join(", ") : "Not connected";
 }
@@ -78,12 +71,13 @@ export function settingsList(input: SettingsListInput): SettingsGroup[] {
     { page: "appearance", label: PAGE_TITLES.appearance, value: themeName(input.appearance) },
     { page: "playback", label: PAGE_TITLES.playback, value: `${formatSpeed(input.speed)}×` },
   ];
-  const connections: SettingsRow = { page: "connections", label: PAGE_TITLES.connections, value: connectionsValue(input.settings, admin) };
+  const connections: SettingsRow = { page: "connections", label: PAGE_TITLES.connections, value: connectionsValue(input.settings) };
   const device: SettingsGroup = {
     caption: "This device",
     rows: [{ page: "app", label: PAGE_TITLES.app, value: input.installed ? "Installed" : "Install" }],
   };
-  if (!admin) return [{ caption: "Personal", rows: [...personal, connections] }, device];
+  // Connections has nothing of anyone else's since Hardcover went (#721 part d): it is the administrator's.
+  if (!admin) return [{ caption: "Personal", rows: personal }, device];
   return [
     { caption: "Personal", rows: personal },
     {

@@ -138,7 +138,7 @@ search("search-audio", "w-placeholder", "audio", "pending", 1);
 search("search-ebook", "w-real", "ebook", "done", 2);
 search("search-bare", "w-bare", "audio", "pending", 3);
 
-// A Hardcover queue and a database backup concern no book.
+// A database backup concerns no book; a Hardcover queue's row stays in its table, unused, and is no item (#721 part d).
 run("INSERT INTO user_hardcover_outbox(user_id,book_id,account_id,status_id,intent,updated_at,error) VALUES(1,1,1,1,'add',?,NULL)", now - MIN);
 run("INSERT INTO backup_runs(day,file,status,bytes,error,started_at,finished_at,updated_at) VALUES('2026-11-15','daily.db','done',1000,NULL,?,?,?)", now - 2 * MIN, now - MIN, now - MIN);
 
@@ -233,11 +233,9 @@ test("a work whose only audio edition is a placeholder lends its cover and no ed
   assert.deepEqual(book("series-acquisition:search-bare"), { workId: "w-bare", bookId: null, cover: "" }, "a work without any audio edition has no cover");
 });
 
-test("a Hardcover queue and a backup have no work, no edition and no cover", () => {
-  for (const id of ["hardcover:status:1", "backup:2026-11-15"]) {
-    assert.deepEqual(book(id), { workId: null, bookId: null, cover: null }, id);
-  }
-  assert.deepEqual(item("hardcover:status:1").facts, { kind: "hardcover", status: "waiting", queue: "status" });
+test("a backup has no work, no edition and no cover, and a stored Hardcover queue is no item", () => {
+  assert.deepEqual(book("backup:2026-11-15"), { workId: null, bookId: null, cover: null });
+  assert.equal(activity.items.some((entry: { id: string }) => entry.id === "hardcover:status:1"), false);
   assert.deepEqual(item("backup:2026-11-15").facts, { kind: "backup", status: "done" });
 });
 
@@ -299,7 +297,6 @@ const deps = (over: Record<string, unknown> = {}) => ({
   torrentHealth: async () => torrentDown,
   poolStatus: async () => ({ enabled: false, engine: "ctc", checkedAt: now, hosts: [] }),
   requireAdmin: () => {},
-  syncHardcover: async () => ({}),
   pauseState: () => ({}),
   setPaused: () => {},
   now: () => now,

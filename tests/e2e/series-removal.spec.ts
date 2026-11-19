@@ -45,7 +45,7 @@ async function reset(page: Page) {
     expect((await page.request.delete(`/api/works/${encodeURIComponent(workId)}/library`)).ok()).toBe(true);
 }
 async function aliceFromShelves(page: Page) {
-  if (!(await inLibrary(page)).some((book) => book.title === ALICE)) expect((await page.request.post("/api/hardcover/books", { data: { id: 501 } })).ok()).toBe(true);
+  if (!(await inLibrary(page)).some((book) => book.title === ALICE)) expect((await page.request.post("/api/__fixture/hardcover-books", { data: { id: 501 } })).ok()).toBe(true);
 }
 /** Alice leaves the library, so a series saved next adds her (she is then Added with that series). */
 async function aliceOut(page: Page) {

@@ -61,25 +61,6 @@
         }
       },
       {
-        "id": "hardcover-sync",
-        "label": "Hardcover sync",
-        "type": "loop",
-        "notTracked": false,
-        "pausable": true,
-        "paused": false,
-        "lockedBy": null,
-        "pauseEffect": "Off: your changes are still saved, but nothing is sent to Hardcover until it is on again. Sync now still works.",
-        "health": "degraded",
-        "reason": "2 failed, 2 stuck",
-        "since": 1794654900000,
-        "counts": {
-          "running": 0,
-          "queued": 2,
-          "failed": 2,
-          "stuck": 2
-        }
-      },
-      {
         "id": "alignment",
         "label": "Reading sync queue",
         "type": "loop",
@@ -270,37 +251,6 @@
         "attention": true
       },
       {
-        "id": "hardcover:status:1",
-        "kind": "hardcover",
-        "processId": "hardcover-sync",
-        "title": "Hardcover shelf changes",
-        "detail": "2 waiting to be sent",
-        "user": "admin",
-        "state": "failed",
-        "progress": null,
-        "host": null,
-        "startedAt": 1794225600000,
-        "updatedAt": 1794657540000,
-        "workId": null,
-        "bookId": null,
-        "cover": null,
-        "facts": {
-          "kind": "hardcover",
-          "status": "failing",
-          "queue": "status"
-        },
-        "error": "We weren't able to find that book. Was it deleted?",
-        "permanent": true,
-        "actions": [
-          "discard"
-        ],
-        "stuck": {
-          "reason": "This change cannot succeed"
-        },
-        "blockedBy": null,
-        "attention": true
-      },
-      {
         "id": "alignment:align-copying",
         "kind": "alignment",
         "processId": "alignment",
@@ -362,35 +312,6 @@
           "reason": "Blocked by Torrent client"
         },
         "blockedBy": "torrent-client",
-        "attention": true
-      },
-      {
-        "id": "hardcover:listening:1",
-        "kind": "hardcover",
-        "processId": "hardcover-sync",
-        "title": "Hardcover listening progress",
-        "detail": "1 waiting to be sent",
-        "user": "admin",
-        "state": "failed",
-        "progress": null,
-        "host": null,
-        "startedAt": 1794657420000,
-        "updatedAt": 1794657420000,
-        "workId": null,
-        "bookId": null,
-        "cover": null,
-        "facts": {
-          "kind": "hardcover",
-          "status": "failing",
-          "queue": "listening"
-        },
-        "error": "socket hang up",
-        "permanent": false,
-        "actions": [
-          "retry"
-        ],
-        "stuck": null,
-        "blockedBy": null,
         "attention": true
       },
       {
@@ -889,37 +810,6 @@
         "attention": true
       },
       {
-        "id": "hardcover:reading:2",
-        "kind": "hardcover",
-        "processId": "hardcover-sync",
-        "title": "Hardcover reading progress",
-        "detail": "1 waiting to be sent",
-        "user": "sam",
-        "state": "queued",
-        "progress": null,
-        "host": null,
-        "startedAt": 1794654900000,
-        "updatedAt": 1794654900000,
-        "workId": null,
-        "bookId": null,
-        "cover": null,
-        "facts": {
-          "kind": "hardcover",
-          "status": "waiting",
-          "queue": "reading"
-        },
-        "error": null,
-        "permanent": false,
-        "actions": [
-          "retry"
-        ],
-        "stuck": {
-          "reason": "Unsent for 45 min"
-        },
-        "blockedBy": null,
-        "attention": true
-      },
-      {
         "id": "ebook-set:w2:eb-pending-stuck",
         "kind": "ebook-set",
         "processId": "ebook-set",
@@ -1204,35 +1094,6 @@
         "error": null,
         "permanent": false,
         "actions": [],
-        "stuck": null,
-        "blockedBy": null,
-        "attention": false
-      },
-      {
-        "id": "hardcover:status:2",
-        "kind": "hardcover",
-        "processId": "hardcover-sync",
-        "title": "Hardcover shelf changes",
-        "detail": "1 waiting to be sent",
-        "user": "sam",
-        "state": "queued",
-        "progress": null,
-        "host": null,
-        "startedAt": 1794657480000,
-        "updatedAt": 1794657480000,
-        "workId": null,
-        "bookId": null,
-        "cover": null,
-        "facts": {
-          "kind": "hardcover",
-          "status": "waiting",
-          "queue": "status"
-        },
-        "error": null,
-        "permanent": false,
-        "actions": [
-          "retry"
-        ],
         "stuck": null,
         "blockedBy": null,
         "attention": false
@@ -1683,7 +1544,7 @@
         "attention": false
       }
     ],
-    "attention": 26
+    "attention": 23
   },
   "probesFail": {
     "checkedAt": 1794657600000,
@@ -1744,25 +1605,6 @@
           "queued": 1,
           "failed": 1,
           "stuck": 0
-        }
-      },
-      {
-        "id": "hardcover-sync",
-        "label": "Hardcover sync",
-        "type": "loop",
-        "notTracked": false,
-        "pausable": true,
-        "paused": false,
-        "lockedBy": null,
-        "pauseEffect": "Off: your changes are still saved, but nothing is sent to Hardcover until it is on again. Sync now still works.",
-        "health": "degraded",
-        "reason": "2 failed, 2 stuck",
-        "since": 1794654900000,
-        "counts": {
-          "running": 0,
-          "queued": 2,
-          "failed": 2,
-          "stuck": 2
         }
       },
       {
@@ -1882,66 +1724,6 @@
     ],
     "items": [
       {
-        "id": "hardcover:status:1",
-        "kind": "hardcover",
-        "processId": "hardcover-sync",
-        "title": "Hardcover shelf changes",
-        "detail": "2 waiting to be sent",
-        "user": "admin",
-        "state": "failed",
-        "progress": null,
-        "host": null,
-        "startedAt": 1794225600000,
-        "updatedAt": 1794657540000,
-        "workId": null,
-        "bookId": null,
-        "cover": null,
-        "facts": {
-          "kind": "hardcover",
-          "status": "failing",
-          "queue": "status"
-        },
-        "error": "We weren't able to find that book. Was it deleted?",
-        "permanent": true,
-        "actions": [
-          "discard"
-        ],
-        "stuck": {
-          "reason": "This change cannot succeed"
-        },
-        "blockedBy": null,
-        "attention": true
-      },
-      {
-        "id": "hardcover:listening:1",
-        "kind": "hardcover",
-        "processId": "hardcover-sync",
-        "title": "Hardcover listening progress",
-        "detail": "1 waiting to be sent",
-        "user": "admin",
-        "state": "failed",
-        "progress": null,
-        "host": null,
-        "startedAt": 1794657420000,
-        "updatedAt": 1794657420000,
-        "workId": null,
-        "bookId": null,
-        "cover": null,
-        "facts": {
-          "kind": "hardcover",
-          "status": "failing",
-          "queue": "listening"
-        },
-        "error": "socket hang up",
-        "permanent": false,
-        "actions": [
-          "retry"
-        ],
-        "stuck": null,
-        "blockedBy": null,
-        "attention": true
-      },
-      {
         "id": "series-acquisition:series-failed",
         "kind": "series-acquisition",
         "processId": "series-acquisition",
@@ -2408,37 +2190,6 @@
         "attention": true
       },
       {
-        "id": "hardcover:reading:2",
-        "kind": "hardcover",
-        "processId": "hardcover-sync",
-        "title": "Hardcover reading progress",
-        "detail": "1 waiting to be sent",
-        "user": "sam",
-        "state": "queued",
-        "progress": null,
-        "host": null,
-        "startedAt": 1794654900000,
-        "updatedAt": 1794654900000,
-        "workId": null,
-        "bookId": null,
-        "cover": null,
-        "facts": {
-          "kind": "hardcover",
-          "status": "waiting",
-          "queue": "reading"
-        },
-        "error": null,
-        "permanent": false,
-        "actions": [
-          "retry"
-        ],
-        "stuck": {
-          "reason": "Unsent for 45 min"
-        },
-        "blockedBy": null,
-        "attention": true
-      },
-      {
         "id": "ebook-set:w2:eb-pending-stuck",
         "kind": "ebook-set",
         "processId": "ebook-set",
@@ -2837,35 +2588,6 @@
         "error": null,
         "permanent": false,
         "actions": [],
-        "stuck": null,
-        "blockedBy": null,
-        "attention": false
-      },
-      {
-        "id": "hardcover:status:2",
-        "kind": "hardcover",
-        "processId": "hardcover-sync",
-        "title": "Hardcover shelf changes",
-        "detail": "1 waiting to be sent",
-        "user": "sam",
-        "state": "queued",
-        "progress": null,
-        "host": null,
-        "startedAt": 1794657480000,
-        "updatedAt": 1794657480000,
-        "workId": null,
-        "bookId": null,
-        "cover": null,
-        "facts": {
-          "kind": "hardcover",
-          "status": "waiting",
-          "queue": "status"
-        },
-        "error": null,
-        "permanent": false,
-        "actions": [
-          "retry"
-        ],
         "stuck": null,
         "blockedBy": null,
         "attention": false
@@ -3316,7 +3038,7 @@
         "attention": false
       }
     ],
-    "attention": 20
+    "attention": 17
   },
   "noProbes": {
     "checkedAt": 1794657600000,
@@ -3377,25 +3099,6 @@
           "queued": 1,
           "failed": 1,
           "stuck": 0
-        }
-      },
-      {
-        "id": "hardcover-sync",
-        "label": "Hardcover sync",
-        "type": "loop",
-        "notTracked": false,
-        "pausable": true,
-        "paused": false,
-        "lockedBy": null,
-        "pauseEffect": "Off: your changes are still saved, but nothing is sent to Hardcover until it is on again. Sync now still works.",
-        "health": "degraded",
-        "reason": "2 failed, 2 stuck",
-        "since": 1794654900000,
-        "counts": {
-          "running": 0,
-          "queued": 2,
-          "failed": 2,
-          "stuck": 2
         }
       },
       {
@@ -3496,66 +3199,6 @@
     ],
     "items": [
       {
-        "id": "hardcover:status:1",
-        "kind": "hardcover",
-        "processId": "hardcover-sync",
-        "title": "Hardcover shelf changes",
-        "detail": "2 waiting to be sent",
-        "user": "admin",
-        "state": "failed",
-        "progress": null,
-        "host": null,
-        "startedAt": 1794225600000,
-        "updatedAt": 1794657540000,
-        "workId": null,
-        "bookId": null,
-        "cover": null,
-        "facts": {
-          "kind": "hardcover",
-          "status": "failing",
-          "queue": "status"
-        },
-        "error": "We weren't able to find that book. Was it deleted?",
-        "permanent": true,
-        "actions": [
-          "discard"
-        ],
-        "stuck": {
-          "reason": "This change cannot succeed"
-        },
-        "blockedBy": null,
-        "attention": true
-      },
-      {
-        "id": "hardcover:listening:1",
-        "kind": "hardcover",
-        "processId": "hardcover-sync",
-        "title": "Hardcover listening progress",
-        "detail": "1 waiting to be sent",
-        "user": "admin",
-        "state": "failed",
-        "progress": null,
-        "host": null,
-        "startedAt": 1794657420000,
-        "updatedAt": 1794657420000,
-        "workId": null,
-        "bookId": null,
-        "cover": null,
-        "facts": {
-          "kind": "hardcover",
-          "status": "failing",
-          "queue": "listening"
-        },
-        "error": "socket hang up",
-        "permanent": false,
-        "actions": [
-          "retry"
-        ],
-        "stuck": null,
-        "blockedBy": null,
-        "attention": true
-      },
-      {
         "id": "series-acquisition:series-failed",
         "kind": "series-acquisition",
         "processId": "series-acquisition",
@@ -4022,37 +3665,6 @@
         "attention": true
       },
       {
-        "id": "hardcover:reading:2",
-        "kind": "hardcover",
-        "processId": "hardcover-sync",
-        "title": "Hardcover reading progress",
-        "detail": "1 waiting to be sent",
-        "user": "sam",
-        "state": "queued",
-        "progress": null,
-        "host": null,
-        "startedAt": 1794654900000,
-        "updatedAt": 1794654900000,
-        "workId": null,
-        "bookId": null,
-        "cover": null,
-        "facts": {
-          "kind": "hardcover",
-          "status": "waiting",
-          "queue": "reading"
-        },
-        "error": null,
-        "permanent": false,
-        "actions": [
-          "retry"
-        ],
-        "stuck": {
-          "reason": "Unsent for 45 min"
-        },
-        "blockedBy": null,
-        "attention": true
-      },
-      {
         "id": "ebook-set:w2:eb-pending-stuck",
         "kind": "ebook-set",
         "processId": "ebook-set",
@@ -4451,35 +4063,6 @@
         "error": null,
         "permanent": false,
         "actions": [],
-        "stuck": null,
-        "blockedBy": null,
-        "attention": false
-      },
-      {
-        "id": "hardcover:status:2",
-        "kind": "hardcover",
-        "processId": "hardcover-sync",
-        "title": "Hardcover shelf changes",
-        "detail": "1 waiting to be sent",
-        "user": "sam",
-        "state": "queued",
-        "progress": null,
-        "host": null,
-        "startedAt": 1794657480000,
-        "updatedAt": 1794657480000,
-        "workId": null,
-        "bookId": null,
-        "cover": null,
-        "facts": {
-          "kind": "hardcover",
-          "status": "waiting",
-          "queue": "status"
-        },
-        "error": null,
-        "permanent": false,
-        "actions": [
-          "retry"
-        ],
         "stuck": null,
         "blockedBy": null,
         "attention": false
@@ -4930,6 +4513,6 @@
         "attention": false
       }
     ],
-    "attention": 20
+    "attention": 17
   }
 }

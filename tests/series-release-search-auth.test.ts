@@ -71,6 +71,8 @@ setSeriesReleaseSearchDeps({
 });
 // The series loop never ticks on its own here.
 const app = await createApp({ background: { manual: ["series-acquisition"] } });
+// The Hardcover token and book import the series and Discover code still needs (#721 part d; removed in part b/c2).
+(await import("./hardcover-fixture-routes.ts")).registerHardcoverFixtureRoutes(app);
 
 after(async () => {
   globalThis.fetch = originalFetch;

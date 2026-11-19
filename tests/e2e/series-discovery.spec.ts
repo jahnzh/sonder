@@ -38,8 +38,8 @@ test("discover and save chosen works from the intended series, then reopen it", 
   await searchSeries(page, "Crossing");
   await expect(seriesResult(page, "The Crossing", "Ada North")).toBeVisible();
 
-  await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
-  const existing = await page.request.post("/api/hardcover/books", { data: { id: 501 } });
+  await page.request.put("/api/__fixture/hardcover-token", { data: { token: "series-browser-token" } });
+  const existing = await page.request.post("/api/__fixture/hardcover-books", { data: { id: 501 } });
   expect(existing.ok()).toBeTruthy();
   await page.reload();
   // Guard 19: two series with the same name are both listed and told apart; the chosen one opens.

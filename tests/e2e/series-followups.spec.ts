@@ -17,7 +17,7 @@ test("a saved series keeps the provenance of a synced book and counts its comple
       book.title === "Alice’s Adventures in Wonderland" && book.inLibrary,
   );
   if (seededAlice?.id) await page.request.delete(`/api/library/${seededAlice.id}`);
-  await page.request.post("/api/hardcover/books", { data: { id: 501 } });
+  await page.request.post("/api/__fixture/hardcover-books", { data: { id: 501 } });
   // Saved through its page and Save series with the defaults (#564).
   await unsaveSeries(page, "701");
   await listCrossingThree(page, false);

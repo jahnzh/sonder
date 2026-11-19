@@ -35,7 +35,7 @@ const recordingRow = (page: Page) => discover(page).getByRole("button", { name: 
 
 async function setHardcover(page: Page, connected: boolean) {
   const token = connected ? "browser-test-token" : "";
-  expect((await page.request.put("/api/hardcover/token", { data: { token } })).ok()).toBe(true);
+  expect((await page.request.put("/api/__fixture/hardcover-token", { data: { token } })).ok()).toBe(true);
 }
 async function search(page: Page, words: string, name?: string) {
   await field(page, name).fill(words);

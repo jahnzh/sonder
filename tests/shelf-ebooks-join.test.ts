@@ -73,6 +73,9 @@ edition("w-in", "ed-in", true);
 run("INSERT INTO user_library(user_id,book_id,status,added_at) VALUES(?,'ed-in','listening',?)", OWNER, T0);
 ebook("upload-in", "w-in", "epub");
 
+// The switch from Hardcover (#721 part d) writes each user's Want to read copy result at startup; it is another
+// one-time step than this one, marked done so the rows here are this step's alone.
+run("INSERT INTO settings(key,value) VALUES('migration:hardcover-removed','0')");
 const { createApp } = await import("../server/app.ts");
 const { joinShelfEbooksOnce } = await import("../server/work-library.ts");
 const libraryRows = (userId: number, workId: string) =>

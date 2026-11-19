@@ -22,7 +22,6 @@ import { acquisitionSource } from "../server/acquisitions-activity.ts";
 import { serverCopySource } from "../server/downloads-activity.ts";
 import { seriesAcquisitionSource } from "../server/series-acquisition-activity.ts";
 import { alignmentSource } from "../server/alignment-activity.ts";
-import { hardcoverSource, hardcoverQueueStatus, type HardcoverQueueStatus } from "../server/hardcover-activity.ts";
 import { EBOOK_SET_IDLE_HOLDS, ebookSetSource, type EbookSetCheckStatus } from "../server/ebook-set-activity.ts";
 import type { EbookSetHoldReason, EbookSetMemberStatus } from "../server/ebook-set.ts";
 import { backupSource, type BackupRunRow } from "../server/backups-activity.ts";
@@ -52,7 +51,6 @@ const ebookSetRow = (status: string, holdReason: string | null = null, evidence 
   work_id: "work-1", ebook_id: `ebook-${status}-${holdReason}`, title: "Book", source_title: "Edition", status, hold_reason: holdReason, evidence,
   updated_at: NOW - MIN,
 });
-const hardcoverRow = (error: string | null) => ({ userId: 1, user: "admin", queue: "status" as const, count: 1, oldest: NOW - MIN, newest: NOW - MIN, error });
 
 test("acquisitions: every status the writers use maps to its Activity state", () => {
   const expected = {
@@ -116,20 +114,6 @@ test("alignment: every status of the job record maps to its Activity state", () 
   assert.deepEqual(job({ status: "error", outcome: "language_not_supported" }).actions, [], "a retry would fail the same way");
   assert.deepEqual(job("{not json").actions, [], "a record that cannot be read has no job to resume");
   assert.deepEqual(job({ status: "exploded" }).actions, [], "a status outside the vocabulary offers nothing");
-});
-
-test("Hardcover queues: waiting is queued and failing is failed", () => {
-  const expected = { waiting: "queued", failing: "failed" } satisfies Record<HardcoverQueueStatus, ActivityState>;
-  assert.equal(hardcoverQueueStatus(null), "waiting");
-  assert.equal(hardcoverQueueStatus("socket hang up"), "failing");
-  assert.equal(itemFor(hardcoverSource, hardcoverRow(null)).state, expected.waiting);
-  assert.equal(itemFor(hardcoverSource, hardcoverRow("socket hang up")).state, expected.failing);
-  assert.deepEqual(itemFor(hardcoverSource, hardcoverRow(null)).facts, { kind: "hardcover", status: "waiting", queue: "status" });
-  assert.deepEqual(itemFor(hardcoverSource, hardcoverRow("socket hang up")).facts, { kind: "hardcover", status: "failing", queue: "status" });
-  assert.deepEqual(itemFor(hardcoverSource, hardcoverRow(null)).actions, ["retry"], "waiting: Sync now");
-  assert.deepEqual(itemFor(hardcoverSource, hardcoverRow("socket hang up")).actions, ["retry"], "failing: Retry");
-  assert.deepEqual(itemFor(hardcoverSource, hardcoverRow("We weren't able to find that book. Was it deleted?")).actions, ["discard"],
-    "failing for good: Discard");
 });
 
 test("ebook-set checks: every member status and every hold the loop works on maps to its Activity state (#325)", () => {
@@ -242,7 +226,7 @@ test("a stored status outside a source's vocabulary is failed with Unknown statu
 
 test("every loop has exactly one source and every kind is reported", () => {
   const kinds: Record<ActivityKind, true> = {
-    acquisition: true, "server-copy": true, "series-acquisition": true, alignment: true, hardcover: true, "ebook-set": true, backup: true,
+    acquisition: true, "server-copy": true, "series-acquisition": true, alignment: true, "ebook-set": true, backup: true,
   };
   assert.deepEqual(ACTIVITY_SOURCES.map((source) => source.kind).sort(), Object.keys(kinds).sort());
   assert.deepEqual(ACTIVITY_SOURCES.map((source) => source.process.id).sort(), [...PAUSABLE_PROCESSES].sort());
@@ -266,7 +250,7 @@ test("Retry, Discard and Resume go to the source whose kind prefixes the item id
   const refused = await post("/api/activity/items/retry", "acquisition:a");
   assert.equal(refused.statusCode, 400, "a source without the action refuses it");
   assert.equal(refused.json().message, "This item has no retry or discard yet.");
-  assert.equal((await post("/api/activity/items/retry", "hardcover:status:1")).statusCode, 400, "no source of that kind");
+  assert.equal((await post("/api/activity/items/retry", "hardcover:status:1")).statusCode, 400, "no source of that kind (Hardcover's went with it, #721 part d)");
   const resumeRefused = await post("/api/activity/items/resume", "acquisition:a");
   assert.equal(resumeRefused.statusCode, 400, "a source without Resume refuses it (#515)");
   assert.equal(resumeRefused.json().message, "This item cannot be resumed.");
@@ -294,7 +278,7 @@ test("the pause switches import no feature, and the Activity modules do not open
   assert.deepEqual(runtimeImports(source("activity-pause.ts")).sort(), ["./activity-pause-model.ts", "./activity-pause-model.ts", "./db.ts"]);
   assert.deepEqual(runtimeImports(source("activity-pause-model.ts")), []);
   for (const file of ["activity.ts", "activity-source.ts", "activity-sources.ts", "acquisitions-activity.ts", "downloads-activity.ts",
-    "series-acquisition-activity.ts", "alignment-activity.ts", "hardcover-activity.ts", "ebook-set-activity.ts", "backups-activity.ts"]) {
+    "series-acquisition-activity.ts", "alignment-activity.ts", "ebook-set-activity.ts", "backups-activity.ts"]) {
     const imports = runtimeImports(source(file));
     assert.ok(imports.every((path) => path === "./activity-source.ts" || path === "./activity-pause-model.ts" || path === "./activity-sources.ts"
       || /^\.\/[a-z-]+-activity\.ts$/.test(path) || path === "fastify" || path === "./backup-schedule.ts" || path === "./work-cover.ts" || path === "./work-files.ts" || path === "./ebook-chosen.ts" || path === "../src/reading-types.ts"),

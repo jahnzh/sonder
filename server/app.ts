@@ -28,17 +28,11 @@ import { seed } from "./seed.ts";
 import { removeUserLibraryRow, setLibraryOrigin } from "./library-origin.ts";
 import {
   hardcoverForWork,
-  hardcoverSearch,
-  queueHardcoverStatus,
-  queueHardcoverProgress,
-  setHardcoverToken,
-  hardcoverSyncLoop,
   hardcoverWorkForMedia,
-  claimHardcoverAudio,
   hiddenHardcoverPlaceholders,
-  syncHardcover,
 } from "./hardcover.ts";
 import { registerHardcoverRoutes } from "./hardcover-routes.ts";
+import { switchFromHardcover } from "./hardcover-switch.ts";
 import { registerCatalogueRoutes } from "./catalogue-routes.ts";
 import { registerSeriesRoutes } from "./series-routes.ts";
 import { savedSeriesRefreshLoop } from "./series-catalogue.ts";
@@ -52,7 +46,7 @@ import { registerAppearance } from "./appearance.ts";
 import { registerAccountRequests } from "./account-requests.ts";
 import { registerInvites } from "./invites.ts";
 import { registerReader } from "./reader.ts";
-import { registerLibraryWorks, withHitWorks } from "./library-works.ts";
+import { registerLibraryWorks } from "./library-works.ts";
 import { registerDeviceKeep } from "./device-keep.ts";
 import { registerAlignment, autoQueueAlignmentsForWork, persistedPoolErrors, resumeAlignmentJob } from "./alignment.ts";
 import { checkPoolHostsSetting, getAlignmentPoolCoordinator, getAlignmentPoolStatus } from "./alignment-pool.ts";
@@ -370,7 +364,6 @@ export async function createApp(options?: {
     poolStatus: () => getAlignmentPoolStatus({ persistedErrors: persistedPoolErrors() }),
     requireAdmin,
     userId: currentUserId,
-    syncHardcover,
     retryEbookSetMember,
     controlAcquisition: (id: string, action: "retry" | "resume", userId: number) => controlAcquisition(id, action, userId),
     torrentStates: (hashes: string[]) => getTorrentStates(hashes),
@@ -410,7 +403,6 @@ export async function createApp(options?: {
       .get();
     if (inserted && edition)
       setLibraryOrigin(currentUserId(req), edition.workId, "manual", { addedAt });
-    if (edition) queueHardcoverStatus(currentUserId(req), edition.workId, "unread", "add");
     return { ok: true };
   });
   app.patch("/api/library/:id", async (req) => {
@@ -429,7 +421,6 @@ export async function createApp(options?: {
       else db.insert(s.userWorkCompletion).values({ userId: currentUserId(req), workId: edition.workId, status })
         .onConflictDoUpdate({ target: [s.userWorkCompletion.userId, s.userWorkCompletion.workId], set: { status } }).run();
     }
-    if (edition) queueHardcoverStatus(currentUserId(req), edition.workId, status);
     return { ok: true };
   });
   app.delete("/api/library/:id", async (req) => {
@@ -490,9 +481,8 @@ export async function createApp(options?: {
       .from(s.recordings)
       .where(eq(s.recordings.id, p.recordingId))
       .get();
-    if (rec) {
-      const changed = db
-        .update(s.userLibrary)
+    if (rec)
+      db.update(s.userLibrary)
         .set({ status: "listening" })
         .where(
           and(
@@ -502,29 +492,14 @@ export async function createApp(options?: {
           ),
         )
         .run();
-      if (changed.changes) {
-        const edition = db
-          .select()
-          .from(s.editions)
-          .where(eq(s.editions.id, rec.editionId))
-          .get();
-        if (edition)
-          queueHardcoverStatus(
-            currentUserId(req),
-            edition.workId,
-            "listening",
-            "status",
-            p.updatedAt,
-          );
-      }
-    }
-    queueHardcoverProgress(currentUserId(req), p.recordingId);
     return { progress: p, conflict: false };
   });
   app.get("/api/settings", async (req) => currentUser(req).role !== "admin" ? ({ name: getSetting("name") || "My listening space", authenticationEnabled: !!process.env.APP_PASSWORD, role: currentUser(req).role, hardcoverConfigured: !!getUserSecret(currentUserId(req), "hardcover") }) : ({
     role: currentUser(req).role,
     name: getSetting("name") || "My listening space",
     torboxConfigured: !!getSetting("torbox"),
+    // Hardcover is removed (#721 part d): the switch deleted every token and nothing stores one again, so this is
+    // false. The field stays for the builds that read it, and for Discover's Hardcover search until part c2 replaces it.
     hardcoverConfigured: !!getUserSecret(currentUserId(req), "hardcover"),
     // AudiobookDB (#721): the server's AUDIOBOOKDB_API_KEY, else the key saved here; which one is in use.
     audiobookdbConfigured: !!audiobookDbKey().key,
@@ -540,10 +515,9 @@ export async function createApp(options?: {
     storage: serverStorage({ warn: (message) => req.log.warn(message), ...options?.storage }),
   }));
   app.patch("/api/settings", async (req) => {
-    // Any user may save or clear their own Hardcover token here (#15); every other setting is the admin's.
+    // Every setting is the admin's. An older build's Hardcover token field (#15) is still accepted from anyone
+    // and ignored, since Hardcover is removed (#721 part d); an empty save from the reduced Settings form is a no-op (r6#5).
     const fields = Object.keys((req.body ?? {}) as Record<string, unknown>);
-    // A regular user may save (or clear) only their own Hardcover token; an empty
-    // save from the reduced Settings form is a no-op (r6#5).
     if (fields.length > 0 && !(fields.length === 1 && fields[0] === "hardcover")) requireAdmin(req);
     const input = z
       .object({
@@ -586,9 +560,7 @@ export async function createApp(options?: {
         throw new Error("Use an HTTPS mirror of the selected ebook source.");
       input.libgenUrl = url.origin;
     }
-    // The Hardcover token belongs to the signed-in user (#15), not the server settings.
-    if (input.hardcover !== undefined)
-      setHardcoverToken(currentUserId(req), input.hardcover);
+    // Accepted from older clients and ignored: Hardcover is removed (#721 part d).
     delete input.hardcover;
     for (const [key, value] of Object.entries(input)) {
       if (value === "") {
@@ -951,11 +923,16 @@ export async function createApp(options?: {
       .header("Cache-Control", "private, no-store");
     return reply.send(createReadStream(row.source));
   });
+  // Once per database (#721 part d): Hardcover's Want to read shelf is copied for every user, then its tokens go.
+  const hardcoverSwitch = switchFromHardcover({ info: (message) => app.log.info(message), warn: (message) => app.log.warn(message) });
+  if (hardcoverSwitch.ran)
+    app.log.info(
+      `Switched from Hardcover: ${hardcoverSwitch.copied} books copied to Want to read for ${hardcoverSwitch.users} users, ${hardcoverSwitch.unmatched} not matched, ${hardcoverSwitch.tokensDeleted} tokens deleted.`,
+    );
   for (const loop of [
     acquisitionsLoop,
     serverCopiesLoop,
     seriesAcquisitionLoop,
-    hardcoverSyncLoop,
     ebookSetEvaluationLoop,
     databaseBackupLoop(app.log),
   ])
@@ -965,12 +942,6 @@ export async function createApp(options?: {
   // Series on AudiobookDB (#721 part b): saved series read again daily; the Hardcover series saved again after the reset.
   background.add(savedSeriesRefreshLoop((message) => app.log.warn(message)));
   background.add(seriesResaveLoop((message) => app.log.warn(message)));
-  app.get("/api/discover/hardcover", async (req) => {
-    const { q } = z.object({ q: z.string().min(2).max(150) }).parse(req.query);
-    const userId = currentUserId(req);
-    // Each hit gains the work it opens and whether that work is on the server (#573).
-    return withHitWorks(userId, await hardcoverSearch(userId, q));
-  });
   app.post("/api/import", async (req) => {
     ensureMediaStorage();
     let title = "";

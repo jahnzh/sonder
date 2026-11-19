@@ -33,7 +33,7 @@ const ALICE = "Alice’s Adventures in Wonderland";
 
 /** Alice (AudiobookDB 501, number 1 of The Crossing) is in the library, as the suite's Hardcover sync puts it there. */
 async function aliceInLibrary(page: Page) {
-  if (!(await libraryTitles(page)).has(ALICE)) expect((await page.request.post("/api/hardcover/books", { data: { id: 501 } })).ok()).toBe(true);
+  if (!(await libraryTitles(page)).has(ALICE)) expect((await page.request.post("/api/__fixture/hardcover-books", { data: { id: 501 } })).ok()).toBe(true);
 }
 
 /**

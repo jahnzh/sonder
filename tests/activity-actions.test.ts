@@ -12,7 +12,6 @@ function build(overrides: Partial<ActivityDeps> = {}) {
     torrentHealth: async () => { throw new Error("unused"); },
     poolStatus: async () => { throw new Error("unused"); },
     requireAdmin: () => {},
-    syncHardcover: async (userId: number) => { calls.push(["sync", userId]); return { pending: 0 }; },
     pauseState: () => ({ alignment: { paused: false, locked: false }, "series-acquisition": { paused: false, locked: true } }),
     setPaused: (id: string, paused: boolean) => { calls.push(["pause", { id, paused }]); },
     ...overrides,
@@ -21,20 +20,14 @@ function build(overrides: Partial<ActivityDeps> = {}) {
   return { app, calls };
 }
 
-test("Retry runs the sync of the user named in the item and nobody else's", async () => {
+test("Retry or Discard of a Hardcover queue an older page still shows answers that it has none (#721 part d)", async () => {
   const { app, calls } = build();
-  const response = await app.inject({ method: "POST", url: "/api/activity/items/retry", payload: { id: "hardcover:listening:7" } });
-  assert.equal(response.statusCode, 200, response.body);
-  assert.deepEqual(calls, [["sync", 7]]);
-  assert.deepEqual(response.json(), { ok: true, result: { pending: 0 } });
-  await app.close();
-});
-
-test("Retry reports a sync that failed instead of saying it worked", async () => {
-  const { app } = build({ syncHardcover: async () => { throw Object.assign(new Error("Add your Hardcover token first."), { statusCode: 400 }); } });
-  const response = await app.inject({ method: "POST", url: "/api/activity/items/retry", payload: { id: "hardcover:status:2" } });
-  assert.equal(response.statusCode, 400);
-  assert.equal(response.json().message, "Add your Hardcover token first.");
+  for (const action of ["retry", "discard"]) {
+    const response = await app.inject({ method: "POST", url: `/api/activity/items/${action}`, payload: { id: "hardcover:listening:7" } });
+    assert.equal(response.statusCode, 400, response.body);
+    assert.equal(response.json().message, "This item has no retry or discard yet.");
+  }
+  assert.deepEqual(calls, []);
   await app.close();
 });
 

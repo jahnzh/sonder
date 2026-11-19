@@ -1,5 +1,5 @@
-// Discover's read of the server's works (#573): `GET /api/works`, the `workId` and `onServer` of
-// `GET /api/discover/hardcover`'s hits and the `saved` of `GET /api/discover/series`, on a throwaway
+// Discover's read of the server's works (#573): `GET /api/works`,
+// `GET /api/discover/hardcover` (gone: 410) and the `saved` of `GET /api/discover/series`, on a throwaway
 // database, read as the owner (the administrator), Sam and Kim (two users who are not).
 //
 // Works, in the order they are made (the newest last):
@@ -16,7 +16,7 @@
 // - w-new "Transition" (Iain Banks): a recording, made last.
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { WorkResult } from "../src/types.ts";
 import { tempDir } from "./temp-dir.ts";
@@ -124,20 +124,6 @@ const { CONSENSUS_EBOOK_PREFIX } = await import("../server/ebook-set-consensus.t
   run("INSERT INTO user_saved_series(user_id,series_id,saved_at) VALUES(2,'sr-culture',?)", T0);
 }
 
-// Hardcover, answered from the recorded search in `tests/fixtures/hardcover-search-banks.json`.
-const recordedSearch = JSON.parse(readFileSync(new URL("./fixtures/hardcover-search-banks.json", import.meta.url), "utf8"));
-const realFetch = globalThis.fetch;
-globalThis.fetch = async (input, init) => {
-  if (!String(input).startsWith("https://api.hardcover.app/")) return realFetch(input, init);
-  const { query } = JSON.parse(String(init?.body));
-  if (query.includes("SonderSearchLinks"))
-    return Response.json({
-      data: { books: recordedSearch.hits.map((hit: { document: { id: string; slug: string } }) => ({ id: Number(hit.document.id), slug: hit.document.slug })) },
-    });
-  if (query.includes("SonderSearch(")) return Response.json({ data: { search: { results: structuredClone(recordedSearch) } } });
-  return Response.json({ errors: [{ message: "Unexpected Hardcover query" }] });
-};
-
 // Series come from AudiobookDB (#721 part b), answered from the recorded answers in `tests/audiobookdb-fixture.ts`.
 process.env.AUDIOBOOKDB_API_KEY = "env-key";
 const { createControl, fixtureFetch } = await import("./audiobookdb-fixture.ts");
@@ -158,7 +144,6 @@ const { createApp } = await import("../server/app.ts");
 const app = await createApp({ background: { manual: true } });
 
 after(async () => {
-  globalThis.fetch = realFetch;
   await app.close();
   sqlite.close();
 });
@@ -311,44 +296,12 @@ test("a query of one character or more than 150 is refused", async () => {
   assert.equal((await request(OWNER, `/api/works?q=${"a".repeat(150)}`)).statusCode, 200);
 });
 
-test("Hardcover's hits name the work they open and whether it is on the server", async () => {
-  for (const token of [OWNER, KIM])
-    assert.equal((await request(token, "/api/hardcover/token", "PUT", { token: `hc-${token}` })).statusCode, 200);
-  const search = async (token: string) => {
+test("Discover's Hardcover search is gone: an older build's call answers 410 to anyone", async () => {
+  for (const token of [OWNER, KIM]) {
     const response = await request(token, "/api/discover/hardcover?q=matter%20banks");
-    assert.equal(response.statusCode, 200, response.body);
-    return response.json() as {
-      found: number;
-      hits: { document: Record<string, unknown> & { id: string }; highlight: unknown; workId: string; onServer: boolean }[];
-    };
-  };
-  const owner = await search(OWNER);
-  // Matter is matched to w-matter; Consider Phlebas to nothing on the server; Excession to Sam's placeholder.
-  assert.deepEqual(
-    owner.hits.map((hit) => [hit.document.id, hit.workId, hit.onServer]),
-    [
-      ["1001", "w-matter", true],
-      ["1002", "w-sam-shelf", true],
-      ["1004", "work-hc-1004", false],
-    ],
-  );
-  // Everything else of Hardcover's answer is as it was.
-  assert.equal(owner.found, recordedSearch.found);
-  assert.deepEqual(owner.hits[0].highlight, recordedSearch.hits[0].highlight);
-  assert.deepEqual(
-    { ...owner.hits[0].document },
-    { ...recordedSearch.hits[0].document, url: "https://hardcover.app/books/matter" },
-  );
-  // Kim may not see Sam's placeholder: the hit names the work id the import would give it, not Sam's work.
-  const kim = await search(KIM);
-  assert.deepEqual(
-    kim.hits.map((hit) => [hit.document.id, hit.workId, hit.onServer]),
-    [
-      ["1001", "w-matter", true],
-      ["1002", "work-hc-1002", false],
-      ["1004", "work-hc-1004", false],
-    ],
-  );
+    assert.equal(response.statusCode, 410, response.body);
+    assert.equal((response.json() as { code: string }).code, "hardcover_removed");
+  }
 });
 
 test("series search says which series the user saved", async () => {

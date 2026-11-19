@@ -24,12 +24,6 @@ export const TIPS = {
     "Where this edition is kept: on this device, where it opens without a connection, and on your server.",
   exportFile:
     "Downloads the file out of Sonder, for example to read it in another app.",
-  hardcoverPosition:
-    "Plays this recording from the place saved on Hardcover. The place you leave is kept under Earlier positions.",
-  hardcoverEdition:
-    "The audio edition on Hardcover that your place in this recording is sent to. Automatic uses the edition of your current read there, or the one with the same narrator.",
-  hardcoverMatch:
-    "Links this book to its book on Hardcover, so its shelf, lists and progress sync. The match is the same for everyone on this server.",
   getRecordings:
     "Plays now: TorBox already has it, so it plays at once. The others are downloaded to your server first. More seeders means a faster download; with none it may never finish.",
   getEditions:
@@ -84,8 +78,6 @@ export const TIPS = {
     "Off: no new search or download for a series starts.",
   ebookChecks:
     "Off: no new check of an ebook against the narration starts. One that is running finishes. Turning the reading sync queue off holds these checks too.",
-  hardcoverSync:
-    "Off: your changes are still saved, but nothing is sent to Hardcover until it is on again. Sync now still works.",
   backups:
     "Off: no new daily backup starts. One that is running finishes. A deploy still makes its own backup.",
   imports:
@@ -110,8 +102,6 @@ export const TIPS = {
     "Whole audiobook spans all its files. Current chapter follows the chapters inside the files.",
   torbox:
     "Asked first for every recording. What TorBox already has plays at once; the rest is downloaded.",
-  hardcoverProgress:
-    "On: your listening and reading progress is also sent to Hardcover. Off: Sonder only reads your shelves, lists and positions from it.",
   prowlarr:
     "Adds the indexers of your Prowlarr to the recording search. Sonder only reads from it.",
   density:

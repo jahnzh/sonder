@@ -50,6 +50,8 @@ const { deriveWorkMediaStates, playableWorks } = await import(
   "../server/work-media-derivation.ts"
 );
 const app = await createApp({ background: { manual: ["series-acquisition"] } });
+// The Hardcover token and book import the series and Discover code still needs (#721 part d; removed in part b/c2).
+(await import("./hardcover-fixture-routes.ts")).registerHardcoverFixtureRoutes(app);
 
 /** A Hardcover book as the Hardcover import reads it. */
 const catalogBook = (id: number, title = `Pinned volume ${id}`) => ({

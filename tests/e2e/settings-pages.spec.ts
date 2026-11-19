@@ -253,20 +253,14 @@ test.describe("with signing in", () => {
         new RegExp(`^Account\\s*${reader} · User`),
         /^Appearance/,
         /^Playback/,
-        /^Connections\s*Not connected/,
         /^App/,
       ]);
       await expectLaidOut(page);
-      // The administrator's pages show Settings to someone else.
-      for (const word of ["users", "library"]) {
+      // The administrator's pages show Settings to someone else; Connections is one since Hardcover went (#721 part d).
+      for (const word of ["users", "library", "connections"]) {
         await page.goto(`${base}/#settings/${word}`);
         await expect.poll(() => hash(page)).toBe("#settings");
       }
-      // Connections has Hardcover only.
-      await page.goto(`${base}/#settings/connections`);
-      await expect(page.getByRole("heading", { name: "Hardcover", exact: true })).toBeVisible();
-      await expect(page.getByRole("heading", { name: "TorBox", exact: true })).toHaveCount(0);
-      await expect(page.getByRole("heading", { name: "Prowlarr", exact: true })).toHaveCount(0);
 
       await page.goto(`${base}/#settings/account`);
       await expect(page.getByRole("list", { name: "Account", exact: true }).getByRole("listitem")).toHaveText([

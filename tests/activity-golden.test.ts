@@ -125,7 +125,8 @@ for (const [id, ebook, data, updated] of alignments) {
     `align-${id}`, ebook, recording, typeof data === "string" ? data : JSON.stringify(data), updated);
 }
 
-// Hardcover: one queue of each kind per user, waiting, failing transiently, failing for good, waiting long.
+// Hardcover: one queue of each kind per user, waiting, failing transiently, failing for good, waiting long. The tables
+// stay, unused, since Hardcover went (#721 part d): Activity must list none of these rows.
 run("INSERT INTO user_hardcover_outbox(user_id,book_id,account_id,status_id,intent,updated_at,error) VALUES(1,11,1,1,'add',?,?)", NOW - 5 * DAY, "We weren't able to find that book. Was it deleted?");
 run("INSERT INTO user_hardcover_outbox(user_id,book_id,account_id,status_id,intent,updated_at,error) VALUES(1,12,1,1,'add',?,NULL)", NOW - MIN);
 run("INSERT INTO user_hardcover_outbox(user_id,book_id,account_id,status_id,intent,updated_at,error) VALUES(2,13,1,1,'add',?,NULL)", NOW - 2 * MIN);
@@ -200,6 +201,24 @@ const snapshots = async (sources = ACTIVITY_SOURCES) => ({
 
 /** The sources that existed when the Activity module was split; the ebook-set checks came later (#325). */
 const sourcesAtSplit = ACTIVITY_SOURCES.filter((source) => source.kind !== "ebook-set");
+
+/**
+ * The record from before the split, less what went with Hardcover (#721 part d): its queues' items and the Hardcover
+ * sync process, and what they added to the count needing attention. Their rows stay in the database, unused; Activity
+ * no longer lists them. Everything else is the record's own text, key order included.
+ */
+function withoutHardcover(recorded: string) {
+  type Item = { kind: string; state: string; stuck: unknown };
+  const answers = JSON.parse(recorded) as Record<string, { processes: { id: string }[]; items: Item[]; attention: number }>;
+  for (const answer of Object.values(answers)) {
+    answer.processes = answer.processes.filter((process) => process.id !== "hardcover-sync");
+    const gone = answer.items.filter((item) => item.kind === "hardcover");
+    answer.items = answer.items.filter((item) => item.kind !== "hardcover");
+    // The record counted a failed or stuck item as needing attention.
+    answer.attention -= gone.filter((item) => item.state === "failed" || item.stuck).length;
+  }
+  return `${JSON.stringify(answers, null, 2)}\n`;
+}
 
 /**
  * Rows whose Activity state changes on purpose with #392 (statuses outside a vocabulary, failed series jobs), and the
@@ -298,7 +317,7 @@ test("no process name or item detail the server sends says alignment, and the id
   assert.ok(names.length > 40, "the rows cover every kind of process and item");
   assert.deepEqual(names.filter((name) => /alignment/i.test(name)), []);
   assert.deepEqual(all.probesAnswer.processes.map((process) => process.id), [
-    "acquisitions", "server-copies", "series-acquisition", "hardcover-sync", "alignment", "ebook-set", "backups", "torrent-client",
+    "acquisitions", "server-copies", "series-acquisition", "alignment", "ebook-set", "backups", "torrent-client",
     "alignment-host:wsl", "alignment-host:lisa", "imports",
   ]);
   assert.deepEqual(all.probesFail.processes.map((process) => process.id).filter((id) => id.startsWith("alignment")), ["alignment", "alignment-pool"]);
@@ -308,8 +327,9 @@ test("no process name or item detail the server sends says alignment, and the id
   assert.equal(labels["series-acquisition"], "Series search");
   assert.equal(labels["ebook-set"], "Ebook checks");
   assert.equal(all.probesFail.processes.find((process) => process.id === "alignment-pool")?.label, "Reading sync workers");
-  for (const id of ["acquisitions", "server-copies", "hardcover-sync", "backups", "torrent-client", "imports"]) {
-    assert.equal(labels[id], { acquisitions: "Download queue", "server-copies": "Copies to server", "hardcover-sync": "Hardcover sync", backups: "Database backups", "torrent-client": "Torrent client", imports: "Imports" }[id], id);
+  assert.equal(all.probesAnswer.items.some((item) => item.id.startsWith("hardcover:")), false, "no Hardcover queue is listed");
+  for (const id of ["acquisitions", "server-copies", "backups", "torrent-client", "imports"]) {
+    assert.equal(labels[id], { acquisitions: "Download queue", "server-copies": "Copies to server", backups: "Database backups", "torrent-client": "Torrent client", imports: "Imports" }[id], id);
   }
   assert.equal(new Set(all.probesAnswer.items.map((item) => item.detail)).has("Reading sync rebuild"), true);
 });
@@ -321,5 +341,5 @@ test("GET /api/activity returns the recorded JSON for the same rows", async () =
 
   deleteIntendedChanges();
   const unchanged = withNamesBefore495(`${JSON.stringify(withBackupsUntracked(withoutHostDetail(withoutBookAndFacts(withoutActionsOf515(await snapshots(sourcesAtSplit))))), null, 2)}\n`);
-  assert.equal(unchanged, readFileSync(BEFORE_SOURCES, "utf8"), "same rows, same JSON text as before the split into sources");
+  assert.equal(unchanged, withoutHardcover(readFileSync(BEFORE_SOURCES, "utf8")), "same rows, same JSON text as before the split into sources");
 });

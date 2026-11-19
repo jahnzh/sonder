@@ -129,7 +129,7 @@ function Full({ act }: { act: GalleryTools["act"] }) {
             }}
           />
         </PickerGroup>
-        <PickerGroup caption="Hardcover">
+        <PickerGroup caption="Filter">
           <PickerRows>
             <PickerRow label="Shelf" value={shelves.find((s) => s.value === shelf)!.label} onOpen={() => setSecond("Shelf")} />
             <PickerRow label="List" value={lists.find((l) => l.value === list)!.label} onOpen={() => setSecond("List")} />

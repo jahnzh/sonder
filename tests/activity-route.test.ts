@@ -53,8 +53,9 @@ test("the Activity list reads every kind from the real tables and is admin only"
   assert.equal(byId["alignment:job1"].detail, "Ebook set check");
   assert.equal(byId["alignment:job1"].title, "Speaker for the Dead");
   assert.equal(byId["alignment:job1"].host, "wsl");
-  assert.equal(byId["hardcover:status:1"].permanent, true);
-  assert.equal(byId["hardcover:status:1"].user, "admin");
+  // The Hardcover queue's row stays in its table, unused; Activity lists no Hardcover item (#721 part d).
+  assert.equal(activity.items.some((item: any) => item.id.startsWith("hardcover:")), false);
+  assert.equal(activity.processes.some((process: any) => process.id === "hardcover-sync"), false);
   assert.ok(activity.processes.some((process: any) => process.id === "torrent-client"));
   const backups = activity.processes.find((process: any) => process.id === "backups");
   assert.equal(backups?.label, "Database backups");
@@ -63,7 +64,8 @@ test("the Activity list reads every kind from the real tables and is admin only"
   assert.match(backups?.reason ?? "", /Next run /);
   assert.ok(activity.processes.some((process: any) => process.id === "imports" && process.notTracked));
   assert.equal(activity.stuckMultiplier, 1);
-  assert.ok(activity.attention >= 1);
+  // The Hardcover failure was the one item needing attention here; nothing else asks for it (#721 part d).
+  assert.equal(typeof activity.attention, "number");
 });
 
 test("the stuck multiplier comes from the settings table", async () => {
@@ -96,8 +98,7 @@ test("the pause switch is admin only, validated, stored, and shown with what it 
   assert.equal(alignment.paused, true);
   assert.equal(alignment.lockedBy, null);
   assert.match(alignment.pauseEffect, /^Off: no new reading sync starts/);
-  const hardcover = (await getActivity(admin)).processes.find((process: any) => process.id === "hardcover-sync");
-  assert.equal(hardcover.paused, false);
+  assert.equal((await post(admin, "/api/activity/processes/hardcover-sync/pause", { paused: true })).statusCode, 404, "Hardcover sync is gone (#721 part d)");
   const torrent = (await getActivity(admin)).processes.find((process: any) => process.id === "torrent-client");
   assert.equal(torrent.pausable, false);
   assert.equal(torrent.pauseEffect, null);
@@ -121,35 +122,15 @@ test("a loop disabled by the environment shows as locked and refuses the switch"
   }
 });
 
-test("Discard removes a permanently failed Hardcover queue and nothing else; Retry sends the user's sync", async () => {
+test("Discard and Retry of a Hardcover queue an older page still shows are refused and touch nothing (#721 part d)", async () => {
   const admin = await login("203.0.113.186", { password: "admin-password" });
-  const readerId = (sqlite.prepare("SELECT id FROM users WHERE username='reader'").get() as { id: number }).id;
-  const now = Date.now();
-  sqlite.prepare("INSERT INTO user_hardcover_outbox(user_id,book_id,account_id,status_id,intent,updated_at,error) VALUES(?,?,1,1,'add',?,?)")
-    .run(readerId, 999, now, "socket hang up");
-  sqlite.prepare("INSERT INTO user_hardcover_outbox(user_id,book_id,account_id,status_id,intent,updated_at,error) VALUES(?,?,1,1,'add',?,NULL)")
-    .run(1, 555, now);
-  const before = await getActivity(admin);
-  const adminItem = before.items.find((item: any) => item.id === "hardcover:status:1");
-  assert.deepEqual(adminItem.actions, ["discard"], "a permanent error offers Discard, not Retry");
-  assert.deepEqual(before.items.find((item: any) => item.id === `hardcover:status:${readerId}`).actions, ["retry"], "a transient error offers Retry");
-  assert.deepEqual(before.items.find((item: any) => item.id === "acquisition:acq1").actions, [], "other kinds have no actions yet");
-
-  assert.equal((await post(admin, "/api/activity/items/discard", { id: `hardcover:status:${readerId}` })).statusCode, 409, "a change that may still go through is not discarded");
-  assert.equal((await post(admin, "/api/activity/items/discard", { id: "acquisition:acq1" })).statusCode, 400);
-  assert.equal((await post(admin, "/api/activity/items/discard", { id: "hardcover:status:abc" })).statusCode, 400);
-  assert.equal((await post(admin, "/api/activity/items/discard", { id: "hardcover:reading:1" })).statusCode, 404, "nothing queued there");
-
-  const discarded = await post(admin, "/api/activity/items/discard", { id: "hardcover:status:1" });
-  assert.equal(discarded.statusCode, 200, discarded.body);
-  assert.equal(discarded.json().discarded, 1, "only the failed row went");
-  assert.equal((sqlite.prepare("SELECT COUNT(*) n FROM user_hardcover_outbox WHERE user_id=1").get() as any).n, 1, "the healthy change for the same user stays");
-  assert.equal((sqlite.prepare("SELECT COUNT(*) n FROM user_hardcover_outbox WHERE user_id=?").get(readerId) as any).n, 1, "another user's queue is untouched");
-
+  const before = (sqlite.prepare("SELECT COUNT(*) n FROM user_hardcover_outbox").get() as any).n;
+  for (const action of ["discard", "retry"]) {
+    const refused = await post(admin, `/api/activity/items/${action}`, { id: "hardcover:status:1" });
+    assert.equal(refused.statusCode, 400, refused.body);
+  }
+  assert.equal((sqlite.prepare("SELECT COUNT(*) n FROM user_hardcover_outbox").get() as any).n, before);
   const user = await login("203.0.113.187", { username: "reader", password: "password1" });
   assert.equal((await post(user, "/api/activity/items/discard", { id: "hardcover:status:1" })).statusCode, 403);
-  assert.equal((await post(user, "/api/activity/items/retry", { id: `hardcover:status:${readerId}` })).statusCode, 403);
-  const retried = await post(admin, "/api/activity/items/retry", { id: `hardcover:status:${readerId}` });
-  assert.notEqual(retried.statusCode, 200, "the reader has no Hardcover account, so the sync reports why instead of pretending");
-  assert.ok(retried.json().error, retried.body);
 });
+

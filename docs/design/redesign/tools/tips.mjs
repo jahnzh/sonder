@@ -16,10 +16,6 @@ export const T = {
   ebookFrom: 'Where this edition is kept: on this device, where it opens without a connection, and on your server.',
   exportFile: 'Downloads the file out of Sonder, for example to read it in another app.',
 
-  // Hardcover (the Book page's Hardcover row, #460)
-  hardcoverPosition: 'Plays this recording from the place saved on Hardcover. The place you leave is kept under Earlier positions.',
-  hardcoverEdition: 'The audio edition on Hardcover that your place in this recording is sent to. Automatic uses the edition of your current read there, or the one with the same narrator.',
-  hardcoverMatch: 'Links this book to its book on Hardcover, so its shelf, lists and progress sync. The match is the same for everyone on this server.',
 
   // Get sheets
   getRecordings: 'Plays now: TorBox already has it, so it plays at once. The others are downloaded to your server first. More seeders means a faster download; with none it may never finish.',
@@ -59,7 +55,6 @@ export const T = {
   copies: 'Off: no new copy to the server starts. One that is running finishes.',
   seriesSearch: 'Off: no new search or download for a series starts.',
   ebookChecks: 'Off: no new check of an ebook against the narration starts. One that is running finishes. Turning the reading sync queue off holds these checks too.',
-  hardcoverSync: 'Off: your changes are still saved, but nothing is sent to Hardcover until it is on again. Sync now still works.',
   backups: 'Off: no new daily backup starts. One that is running finishes. A deploy still makes its own backup.',
   imports: 'Imports run, but their progress is not shown here yet.',
 
@@ -82,7 +77,6 @@ export const T = {
 
   // Settings, Connections
   torbox: 'Asked first for every recording. What TorBox already has plays at once; the rest is downloaded.',
-  hardcoverProgress: 'On: your listening and reading progress is also sent to Hardcover. Off: Sonder only reads your shelves, lists and positions from it.',
   prowlarr: 'Adds the indexers of your Prowlarr to the recording search. Sonder only reads from it.',
 
   // Settings, the detail pages (#472)
@@ -97,18 +91,17 @@ export const tipGroups = [
   ['Book', [['Reading sync', T.readingSync], ['Keep on this device', T.keep]]],
   ['Audiobook', [['Recordings', T.recordings], ['Available from', T.audioFrom], ['Plays from', T.playsFrom], ['Report a problem', T.problem]]],
   ['Ebook', [['Editions', T.editions], ['Available from', T.ebookFrom], ['Export the file', T.exportFile]]],
-  ['Hardcover', [['Use Hardcover position', T.hardcoverPosition], ['Hardcover edition', T.hardcoverEdition], ['Match on Hardcover', T.hardcoverMatch]]],
   ['Get audiobook, Get ebook', [['Recordings', T.getRecordings], ['Editions', T.getEditions]]],
   ['Reading sync', [['Reading sync (the title)', T.syncTitle], ['Preparing', T.preparing], ['Ready', T.ready], ['Text mapped', T.mapped], ['Unsynced passages', T.unsynced], ['Prepare again', T.prepareAgain], ['Stopped', T.stopped]]],
   ['Series', [['Books', T.seriesBooks], ['Get the audiobooks', T.seriesAudio], ['Get the ebooks', T.seriesEbooks]]],
   ['Activity, Now', [['Needs attention', T.attention], ['In progress', T.progress], ['Waiting', T.waiting], ['Finished today', T.finished]]],
   ['Activity, This device', [['Used by Sonder', T.used], ['Protected storage', T.protectedStorage], ['Kept on this device', T.kept]]],
-  ['Activity, Server', [['Reading sync queue', T.syncQueue], ['Prepare for all books', T.prepareAll], ['Workers', T.workers], ['Download queue', T.downloadQueue], ['Torrent client', T.torrent], ['Copies to server', T.copies], ['Series search', T.seriesSearch], ['Ebook checks', T.ebookChecks], ['Hardcover sync', T.hardcoverSync], ['Database backups', T.backups], ['Imports', T.imports]]],
+  ['Activity, Server', [['Reading sync queue', T.syncQueue], ['Prepare for all books', T.prepareAll], ['Workers', T.workers], ['Download queue', T.downloadQueue], ['Torrent client', T.torrent], ['Copies to server', T.copies], ['Series search', T.seriesSearch], ['Ebook checks', T.ebookChecks], ['Database backups', T.backups], ['Imports', T.imports]]],
   ['Worker', [['Code version', T.codeVersion], ['Use this worker', T.useWorker], ['Restart', T.restart]]],
   ['Now playing', [['Speed', T.speed], ['Earlier positions', T.earlier]]],
   ['Reader', [['Reading mode', T.readingMode], ['Follow the narration', T.follow]]],
   ['Settings, Playback', [['Default speed', T.defaultSpeed], ['Progress bar shows', T.progressBar]]],
-  ['Settings, Connections', [['TorBox', T.torbox], ['Sync listening and reading progress', T.hardcoverProgress], ['Prowlarr', T.prowlarr]]],
+  ['Settings, Connections', [['TorBox', T.torbox], ['Prowlarr', T.prowlarr]]],
   ['Settings, Appearance', [['Density', T.density], ['Reader theme', T.readerTheme]]],
   ['Settings, Library and storage', [['Media drive', T.mediaDrive]]],
   ['Settings, App', [['Reset this device', T.resetDevice]]],

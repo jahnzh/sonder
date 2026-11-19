@@ -236,20 +236,19 @@ test("a stuck and a blocked entry say why, under Needs attention, and light the 
   assert.equal(now.dot, true);
 });
 
-test("a down process and a Hardcover failure are rows that are not books, under Needs attention only", () => {
-  const hardcover = item("hardcover:status:1", {
-    title: "Status changes", state: "failed", attention: true, permanent: true, actions: ["discard"],
-    error: "This change cannot succeed", facts: { kind: "hardcover", status: "failing", queue: "status" },
+test("a down process and a failed backup are rows that are not books, under Needs attention only", () => {
+  const failedBackup = item("backup:2026-11-17", {
+    title: "Daily database backup", state: "failed", attention: true, actions: ["retry"],
+    error: "Disk full", facts: { kind: "backup", status: "failed" },
   });
-  const waitingHardcover = item("hardcover:listening:1", { state: "queued", facts: { kind: "hardcover", status: "waiting", queue: "listening" } });
   const backup = item("backup:2026-11-16", { title: "Daily database backup", state: "done", facts: { kind: "backup", status: "done" } });
   const torrent = process("torrent", { label: "Torrent client", health: "down", reason: "The VPN has no connection", since: NOW - HOUR });
   const worker = process("alignment-host:lisa", {
     label: "Reading sync worker (lisa)", health: "down", reason: "Offline since 14:02",
     host: { hostId: "lisa", device: "CPU", online: false, disabled: false, revision: null, work: null, jobs: [], restarting: false, lastRestart: null },
   });
-  const now = build({ activity: answer([hardcover, waitingHardcover, backup], [torrent, worker, process("ok")]) });
-  assert.deepEqual(where(now), { "hardcover:status:1": "attention", torrent: "attention", "alignment-host:lisa": "attention" });
+  const now = build({ activity: answer([failedBackup, backup], [torrent, worker, process("ok")]) });
+  assert.deepEqual(where(now), { "backup:2026-11-17": "attention", torrent: "attention", "alignment-host:lisa": "attention" });
   const rows = group(now, "attention");
   for (const r of rows) {
     assert.equal(r.book, false);
@@ -261,11 +260,11 @@ test("a down process and a Hardcover failure are rows that are not books, under 
   assert.equal(row(now, "torrent").line, "The VPN has no connection");
   assert.deepEqual(row(now, "torrent").opens, { to: "server" });
   assert.deepEqual(row(now, "alignment-host:lisa").opens, { to: "worker", hostId: "lisa" });
-  assert.equal(row(now, "hardcover:status:1").title, "Status changes");
-  // A Hardcover queue is one user's: the line names whose it is (#522).
-  assert.equal(row(now, "hardcover:status:1").line, "This change cannot succeed · admin");
-  assert.deepEqual(row(now, "hardcover:status:1").opens, { to: "server" });
-  assert.deepEqual(row(now, "hardcover:status:1").button, { action: "discard", source: "server", itemId: "hardcover:status:1" });
+  assert.equal(row(now, "backup:2026-11-17").title, "Daily database backup");
+  // A row that is not a book names whose it is when it has a user (#522).
+  assert.equal(row(now, "backup:2026-11-17").line, "Disk full · admin");
+  assert.deepEqual(row(now, "backup:2026-11-17").opens, { to: "server" });
+  assert.deepEqual(row(now, "backup:2026-11-17").button, { action: "retry", source: "server", itemId: "backup:2026-11-17" });
   assert.equal(now.dot, true);
 });
 
@@ -379,7 +378,7 @@ test("no dot for a paused queue, a worker not in use, a degraded process, a fail
         process("downloads", { type: "loop", pausable: true, paused: true }),
         process("server-copy", { type: "loop", pausable: true, paused: true, lockedBy: "environment" }),
         notInUse, offAndDown,
-        process("hardcover-sync", { health: "degraded", reason: "1 failed" }),
+        process("ebook-set", { health: "degraded", reason: "1 failed" }),
         process("imports", { health: "unknown", notTracked: true, reason: "Not tracked yet." }),
         // A process that is not tracked lights nothing, whatever it reports.
         process("untracked", { health: "down", notTracked: true, reason: "Not tracked yet." }),
@@ -422,16 +421,11 @@ test("a save's row takes the server's title and cover when the device does not k
   assert.equal(row(now, "work:w-fail").cover, "/feral");
 });
 
-test("a Hardcover failure with no user says only its reason; a backup's failure has none either (#522)", () => {
-  const hardcover = item("hardcover:reading:3", {
-    title: "Reading changes", state: "failed", attention: true, user: null, actions: ["retry"],
-    error: "socket hang up", facts: { kind: "hardcover", status: "failing", queue: "reading" },
-  });
+test("a backup's failure with no user says only its reason (#522)", () => {
   const backup = item("backup:1", {
     title: "Daily database backup", state: "failed", attention: true, user: null, error: "Disk full", facts: { kind: "backup", status: "failed" },
   });
-  const now = build({ activity: answer([hardcover, backup]) });
-  assert.equal(row(now, "hardcover:reading:3").line, "socket hang up");
+  const now = build({ activity: answer([backup]) });
   assert.equal(row(now, "backup:1").line, "Disk full");
 });
 

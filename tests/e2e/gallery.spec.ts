@@ -226,7 +226,7 @@ test("every part has a name and a role, and every control is at least 44 where i
   await expect(page.getByRole("listitem", { name: "Version 1.0" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Appearance Forest" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Mark as finished" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Hardcover Not connected" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "AudiobookDB Not connected" })).toBeDisabled();
   await expect(page.getByRole("listitem", { name: "Ebook Not added" }).getByRole("button", { name: "Get" })).toBeVisible();
   // Buttons, in their kinds; one that shows only its icon is named.
   for (const name of ["Listen", "Read", "Cancel"]) {

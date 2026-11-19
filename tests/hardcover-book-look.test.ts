@@ -50,6 +50,8 @@ sqlite.prepare("INSERT INTO user_settings(user_id,key,value) VALUES(1,'shelfEboo
 installHardcoverFixture();
 const { createApp } = await import("../server/app.ts");
 const app = await createApp({ background: { manual: true } });
+// The Hardcover token and book import the series and Discover code still needs (#721 part d; removed in part b/c2).
+(await import("./hardcover-fixture-routes.ts")).registerHardcoverFixtureRoutes(app);
 
 after(async () => {
   await app.close();
@@ -62,7 +64,7 @@ const request = (token: string, url: string, method: "GET" | "PUT" | "DELETE" = 
     : app.inject({ method, url, cookies: { sonder_session: token }, payload });
 
 for (const token of [OWNER, SAM])
-  assert.equal((await request(token, "/api/hardcover/token", "PUT", { token: `hc-${token}` })).statusCode, 200);
+  assert.equal((await request(token, "/api/__fixture/hardcover-token", "PUT", { token: `hc-${token}` })).statusCode, 200);
 
 /** Every table's row count. */
 function rowCounts() {

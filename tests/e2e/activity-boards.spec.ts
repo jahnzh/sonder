@@ -91,12 +91,11 @@ const PAUSE: Record<string, string> = {
   "server-copies": "Off: no new copy to the server starts. One that is running finishes.",
   "series-acquisition": "Off: no new search or download for a series starts.",
   "ebook-set": "Off: no new check of an ebook against the narration starts. One that is running finishes. Turning the reading sync queue off holds these checks too.",
-  "hardcover-sync": "Off: your changes are still saved, but nothing is sent to Hardcover until it is on again. Sync now still works.",
   backups: "Off: no new daily backup starts. One that is running finishes. A deploy still makes its own backup.",
 };
 const LABELS: Record<string, string> = {
   alignment: "Reading sync queue", acquisitions: "Download queue", "server-copies": "Copies to server", "series-acquisition": "Series search",
-  "ebook-set": "Ebook checks", "hardcover-sync": "Hardcover sync", backups: "Database backups",
+  "ebook-set": "Ebook checks", backups: "Database backups",
 };
 const queue = (id: string, over: Partial<ActivityProcess> = {}): ActivityProcess =>
   proc(id, LABELS[id], { type: "loop", pausable: true, pauseEffect: PAUSE[id], ...over });
@@ -117,10 +116,9 @@ function serverBoard({ paused = false, empty = false } = {}): ActivityResponse {
         serverItem("alignment", "queued", { title: "Children of Time", facts: { kind: "alignment", status: "queued", outcome: null, coverage: null, wholeBook: true, stage: null, files: null } }),
         serverItem("acquisitions", "running", { facts: { kind: "acquisition", status: "downloading", backend: "local" } }),
         serverItem("ebook-set", "running", { facts: { kind: "ebook-set", status: "pending", holdReason: null } }),
-        serverItem("hardcover-sync", "queued", { detail: "2 waiting to be sent", user: "admin", facts: { kind: "hardcover", status: "waiting", queue: "listening" } }),
       ],
       [
-        queue("acquisitions"), queue("server-copies"), queue("series-acquisition", { paused: !empty }), queue("hardcover-sync"),
+        queue("acquisitions"), queue("server-copies"), queue("series-acquisition", { paused: !empty }),
         queue("alignment", { paused }), queue("ebook-set"),
         queue("backups", { reason: "Last run 17 Nov 03:00 UTC: succeeded, 48.0 MB · Next run 18 Nov 03:00 UTC" }),
         proc("torrent-client", "Torrent client"),

@@ -31,7 +31,7 @@ const noOverflow = async (page: Page) =>
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(await page.evaluate(() => window.innerWidth));
 
 async function connect(page: Page) {
-  expect((await page.request.put("/api/hardcover/token", { data: { token: "browser-test-token" } })).ok()).toBe(true);
+  expect((await page.request.put("/api/__fixture/hardcover-token", { data: { token: "browser-test-token" } })).ok()).toBe(true);
 }
 /** The library's work ids, as the server answers them. */
 const libraryIds = async (page: Page) => ((await (await page.request.get("/api/library")).json()) as { workId: string }[]).map((w) => w.workId);

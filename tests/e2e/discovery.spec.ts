@@ -8,7 +8,7 @@ import { test, expect } from "@playwright/test";
 test.use({ serviceWorkers: "block" });
 
 test("a Hardcover result is added from its Book page, and its Hardcover page uses the catalogue's slug", async ({ page }) => {
-  expect((await page.request.put("/api/hardcover/token", { data: { token: "browser-test-token" } })).ok()).toBe(true);
+  expect((await page.request.put("/api/__fixture/hardcover-token", { data: { token: "browser-test-token" } })).ok()).toBe(true);
   await page.route("https://assets.hardcover.app/**", (route) => route.fulfill({ status: 404, body: "" }));
   // Consider Phlebas (Hardcover book 1004) is Hardcover's, or on the server from an earlier run of this spec.
   await page.goto("/#book/work-hc-1004");

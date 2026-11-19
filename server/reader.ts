@@ -20,7 +20,6 @@ import {
   type ReadingCheckpoint,
   type TextLocator,
 } from "../src/reading-types.ts";
-import { queueHardcoverReadingProgress } from "./hardcover.ts";
 export function paragraphsOf(root: HTMLElement) {
   return countedBlocks(root, (node) => node.text)
     .map((node) => normalizeReaderText(node.text))
@@ -304,13 +303,6 @@ export function registerReader(app: FastifyInstance) {
       sqlite
         .prepare("INSERT INTO user_reader_events(user_id,event_id,edition_id) VALUES(?,?,?)")
         .run(currentUserId(req), input.eventId, id);
-      if (input.origin === "reading")
-        queueHardcoverReadingProgress(
-          currentUserId(req),
-          book.workId,
-          input.locator.progression,
-          input.recordingId,
-        );
       return { checkpoint };
     })();
   });

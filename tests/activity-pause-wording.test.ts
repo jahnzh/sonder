@@ -13,14 +13,13 @@ const TOOLTIP_OF_QUEUE: Record<(typeof PAUSABLE_PROCESSES)[number], string> = {
   acquisitions: "downloadQueue",
   "server-copies": "copies",
   "series-acquisition": "seriesSearch",
-  "hardcover-sync": "hardcoverSync",
   alignment: "syncQueue",
   "ebook-set": "ebookChecks",
   backups: "backups",
 };
 
-test("the seven pause sentences are the design's tooltips for the seven queues", () => {
-  assert.equal(PAUSABLE_PROCESSES.length, 7);
+test("the six pause sentences are the design's tooltips for the six queues", () => {
+  assert.equal(PAUSABLE_PROCESSES.length, 6);
   assert.deepEqual(Object.keys(TOOLTIP_OF_QUEUE).sort(), [...PAUSABLE_PROCESSES].sort(), "every pausable process has a tooltip");
   for (const id of PAUSABLE_PROCESSES) {
     const tooltip = (T as Record<string, string>)[TOOLTIP_OF_QUEUE[id]];

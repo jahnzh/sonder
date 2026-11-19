@@ -50,21 +50,6 @@ test("a queue counts what is there in its own words, or says Nothing running", (
   assert.equal(queueLine(proc("series-acquisition"), [item("series-acquisition", "running")]), "1 searching");
 });
 
-test("Hardcover sync counts the changes waiting and whose they are", () => {
-  const hardcover = proc("hardcover-sync");
-  assert.equal(queueLine(hardcover, []), NOTHING_RUNNING);
-  assert.equal(queueLine(hardcover, [item("hardcover-sync", "queued", { detail: "2 waiting to be sent", user: "admin" })]), "2 changes waiting · admin");
-  assert.equal(
-    queueLine(hardcover, [
-      item("hardcover-sync", "queued", { detail: "1 waiting to be sent", user: "admin" }),
-      item("hardcover-sync", "failed", { detail: "3 waiting to be sent", user: "admin" }),
-      item("hardcover-sync", "queued", { detail: "1 waiting to be sent", user: "reader" }),
-    ]),
-    "5 changes waiting · admin, reader",
-  );
-  assert.equal(queueLine(hardcover, [item("hardcover-sync", "queued", { detail: "1 waiting to be sent", user: "admin" })]), "1 change waiting · admin");
-});
-
 test("Database backups read their schedule", () => {
   const backups = proc("backups", { reason: "Last run 17 Nov 03:00 UTC: succeeded, 48.0 MB · Next run 18 Nov 03:00 UTC" });
   assert.equal(queueLine(backups, []), "Last run 17 Nov 03:00 UTC: succeeded, 48.0 MB · Next run 18 Nov 03:00 UTC");

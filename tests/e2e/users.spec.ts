@@ -123,8 +123,8 @@ test("accounts keep libraries and offline queues separate", async ({ page }) => 
   const list = page.getByRole("navigation", { name: "Settings", exact: true });
   await expect(list.getByRole("button", { name: /^Account\b/ })).toBeVisible();
   await expect(list.getByRole("button", { name: /^Users\b/ })).toHaveCount(0);
-  await list.getByRole("button", { name: /^Connections\b/ }).click();
-  await expect(page.getByRole("heading", { name: "Hardcover", exact: true })).toBeVisible();
+  // Connections is the administrator's since Hardcover, the one connection a user had, went (#721 part d).
+  await expect(list.getByRole("button", { name: /^Connections\b/ })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "TorBox" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Prowlarr" })).toHaveCount(0);
   await page.screenshot({ path: "artifacts/users-reader-settings.png" });
