@@ -56,7 +56,8 @@ export function useAvailableUpdate(): string | null {
 // The notice's dismissal, one for the app's notice and the reader's message (#591): dismissed, the build's notice
 // stays away until the app starts again; Settings › App still says an update is ready.
 let dismissed: string | null = null;
-// Readers on screen: while one shows, the update is its message in the foot and the app's notice stays away.
+// Claims on the notice: a reader on screen (the update is its message in the foot) or Settings › App (its Updates row
+// has Reload, #733). While one holds, the app's notice stays away.
 let claims = 0;
 const notify = () => {
   for (const listener of listeners) listener();
@@ -74,7 +75,7 @@ export function useUpdateNotice(): string | null {
   return useSyncExternalStore(subscribe, () => (available && available !== dismissed ? available : null));
 }
 
-/** A reader on screen takes the update notice into its foot; the returned function gives it back. */
+/** A reader on screen or Settings › App takes the update notice; the returned function gives it back. */
 export function claimUpdateNotice(): () => void {
   claims += 1;
   notify();
@@ -87,7 +88,7 @@ export function claimUpdateNotice(): () => void {
   };
 }
 
-/** Whether a reader on screen shows the update notice. */
+/** Whether a reader on screen or Settings › App shows the update instead of the app's notice. */
 export function useUpdateNoticeClaimed(): boolean {
   return useSyncExternalStore(subscribe, () => claims > 0);
 }

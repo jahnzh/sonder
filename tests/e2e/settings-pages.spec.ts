@@ -162,6 +162,8 @@ for (const [size, viewport] of [["phone", { width: 390, height: 844 }], ["deskto
       newer = true;
       await page.evaluate(() => window.dispatchEvent(new Event("focus")));
       await expect(updates).toContainText("An update is ready");
+      // One Reload on screen: the shell's update notice stays away while this page shows its own (#733).
+      await expect(page.locator(".app-update")).toHaveCount(0);
       await expectLaidOut(page);
       await Promise.all([page.waitForEvent("load"), updates.getByRole("button", { name: "Reload", exact: true }).click()]);
       await expect(title(page, desktop)).toHaveText("App");
