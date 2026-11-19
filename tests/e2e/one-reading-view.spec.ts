@@ -8,6 +8,7 @@ import {readerFixture} from "../reader-fixture";
 import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
 import {openRead} from "./now-playing";
 import {closeAppearance,openAppearance} from "./reader-appearance";
+import {tapPages} from "./reader-tap";
 // One reading view (ADR 0017, #501): the reader shows the book's own text and nothing else. The Lyrics and Word
 // views are gone with their switch, their settings, the `P` key and the timing correction; `F` stays.
 test.use({serviceWorkers:"block"});
@@ -75,11 +76,12 @@ async function expectBookText(page:Page,manifest:any,paragraphId?:string){
  await expect(room.getByLabel("Lyrics reader")).toHaveCount(0);
  await expect(room.getByLabel("Word reader")).toHaveCount(0);
 }
-// A tap on the right edge of the page turns it: the reader pages away from the narration.
+// A tap on the right edge of the page turns it: the reader pages away from the narration. The tap's press and release
+// are a short tap in event time however busy the page is (reader-tap.ts, #737).
 async function pageAway(page:Page){
  const room=page.locator(".inline-reader");
  const box=(await room.locator(".reader-viewport").boundingBox())!;
- await page.mouse.click(box.x+box.width*0.9,box.y+box.height/2);
+ await tapPages(page,box.x+box.width*0.9,box.y+box.height/2);
  await expect(room).not.toHaveAttribute("data-current-passage",/.+/);
 }
 
