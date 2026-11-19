@@ -1,5 +1,7 @@
 # A Hardcover book opens before it is a work on the server
 
+**Status (2026-11-19).** Discover no longer searches Hardcover (#721): it finds AudiobookDB and Open Library books, which open under `work-abdb-<id>` and `work-ol-<id>` by this record's rule (no write on a look, one address per book, one shape). An address `work-hc-<id>` from an older build opens the work stored as matched to that Hardcover book, and Hardcover is never asked.
+
 Discover finds books on the server and on Hardcover (plan 0.1), and every result opens its Book page at `#book/<workId>` (ADR 0020). A book found on Hardcover that no work on the server is matched to has no work id yet. It opens under the id the Hardcover import already gives such a work, `work-hc-<Hardcover book id>`, and the one-work read answers it from Hardcover's catalogue, not in the library, without writing anything. The work is made the first time someone adds it to their library or gets a file for it, by the import that exists today. A Hardcover book that is matched to a work on the server opens that work.
 
 - **No write on a look.** Browsing Discover makes nothing on the server; a look at a book nobody adds leaves nothing behind in the shared catalogue, in `GET /api/books` or in another user's Discover.

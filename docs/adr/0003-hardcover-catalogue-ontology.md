@@ -1,5 +1,7 @@
 # Adapt Hardcover's catalogue ontology and reuse its metadata
 
+**Status (2026-11-19).** Hardcover is gone (#721): the catalogue is AudiobookDB for audiobooks and Open Library for books without one, linked per work (and per recording to a release) on the book's Match page and shown by URL, never stored; a field is overridden and reverted on the book's Edit page (#719). The work, edition and recording split described here stands.
+
 Sonder adapts Hardcover's book, edition and series model and reuses its catalogue metadata, rather than independently defining these relationships. Sonder's Work corresponds conceptually to a Hardcover Book; published edition metadata remains distinct from a particular recording or downloaded ebook file. Preserving Hardcover identities and membership relationships avoids a parallel catalogue that drifts from the provider, while Sonder adds its acquisition, storage, alignment and personal library state.
 
 Hardcover metadata is mirrored by default, with explicit manual overrides allowed locally. Imported audio and ebooks remain usable with basic file metadata when their Hardcover identity is unknown and can be linked later; uncertain matches require confirmation. Sonder retains the last fetched metadata when Hardcover is unavailable, and missing or failed responses do not remove library entries or files.

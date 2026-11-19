@@ -1,5 +1,7 @@
 # The delivery source for a play is chosen in one page module
 
+**Status (2026-11-19).** The player's source indicator is gone: the source in use is shown and chosen in Plays from, on Now playing's Listen face and the Audiobook page (#530, #593). The decision stands.
+
 One module in the page decides the **delivery source** for a play (device copy, server copy, original stream) and what to switch to when the chosen one fails. It is a pure function of what the page knows: the reader's stored choice for the recording, the fault flags, whether a complete device download exists, whether the device is online, whether the server failed a moment ago, and which sources the track has. It returns a plan: the source to try first, the ordered fallbacks, and the source to show in the player. Loading a track, recovering from a stall and the source indicator all follow the plan and no longer decide for themselves.
 
 The service worker keeps one decision of its own, and its contract is frozen because older client builds that are still open rely on it:
