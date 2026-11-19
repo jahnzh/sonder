@@ -114,9 +114,10 @@ async function abbFetch(url: string | URL, headers?: Record<string, string>) {
       signal: AbortSignal.timeout(20000),
       ...(dispatcher ? { dispatcher } : {}),
     } as RequestInit);
-  } catch {
+  } catch (cause) {
     throw new Error(
       "The mirror could not be reached. Retry, or try another mirror in Settings.",
+      { cause },
     );
   }
 }
