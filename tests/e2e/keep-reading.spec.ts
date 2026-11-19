@@ -142,7 +142,7 @@ test("a kept book with an audiobook, an EPUB and a ready reading sync is complet
   await expect
     .poll(async () => ((await (await page.request.get("/api/device/keep")).json()).records as { workId: string; completeAt: number | null }[]).find((r) => r.workId === book.workId)?.completeAt, { timeout: 10_000 })
     .toEqual(expect.any(Number));
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(page.viewportSize()!.width);
   await settled(page);
   await page.screenshot({ path: `${OUT}/keep-reading-complete-phone.png`, fullPage: true });
   await page.setViewportSize({ width: 1440, height: 900 });

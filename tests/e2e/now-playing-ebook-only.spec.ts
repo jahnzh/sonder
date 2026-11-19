@@ -12,6 +12,9 @@ import { expectTextUncovered } from "./reader-bands";
 import { playFromContinue } from "./library-play";
 
 test.use({ viewport: { width: 390, height: 844 } });
+// The member's answers are routed: once a service worker controls the page, WebKit's requests no longer pass
+// page.route (#523), so it is blocked (#596).
+test.use({ serviceWorkers: "block" });
 
 const works: string[] = [];
 test.afterEach(async ({ page }) => {

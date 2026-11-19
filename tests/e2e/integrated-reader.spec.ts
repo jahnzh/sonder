@@ -186,7 +186,8 @@ test("opening the reader restores saved audio position without starting playback
  await expect(page.locator(".inline-reader")).toHaveAttribute("data-current-passage",interval.paragraphId);
  await expect(page.locator(".inline-reader").getByRole("button",{name:"Play narration",exact:true})).toBeVisible();
  const box=(await page.locator(".inline-reader .reader-viewport").boundingBox())!;
- expect(box.height).toBeGreaterThan(844*.65);
+ // Against the window: the iPhone profile is 659 high, not 844 (#596).
+ expect(box.height).toBeGreaterThan(page.viewportSize()!.height*.65);
  await expect(page.locator(".inline-reader .reader-viewport .sonder-follow").first()).toBeVisible();
 });
 
