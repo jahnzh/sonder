@@ -110,10 +110,10 @@ export type SaverDeps = {
   /** `navigator.storage.persist()`: asked only on the switch's tap. */
   persist: () => Promise<boolean>;
   /**
-   * Stores the merged Keep records, and answers them as stored (#707): a choice made on this device after the run read
-   * the records (a later `at`) stays, as `keepStored` decides. Void: stored as given.
+   * Stores the merged Keep records. A choice made on this device after the run read the records (a later `at`) stays
+   * (#707, `keepStored`): the run's next pass sends it.
    */
-  storeKeep: (records: KeepEntry[]) => Promise<KeepEntry[] | void>;
+  storeKeep: (records: KeepEntry[]) => Promise<void>;
   /** `GET /api/device/keep`; throws without a connection. */
   fetchKeep: () => Promise<ServerKeep[]>;
   /** Sends one choice or completion; answers the record as the server stores it. */
@@ -337,8 +337,8 @@ export class KeepSaver {
       }
     }
     const keep = [...records.values()];
-    // A choice tapped since the read stays (#707); the run sends it at its next pass.
-    return { keep: (await this.deps.storeKeep(keep)) ?? keep, synced: true };
+    await this.deps.storeKeep(keep);
+    return { keep, synced: true };
   }
 
   private async runOnce(reason: KeepTrigger) {
@@ -367,7 +367,7 @@ export class KeepSaver {
       const turnOn = rolloutChoices({ works: state.works, keep, downloads: state.downloads, parts: state.parts });
       if (turnOn.length) {
         keep = [...keep, ...turnOn.map((workId) => ({ workId, on: true, at, completeAt: null, pending: true }))];
-        keep = (await this.deps.storeKeep(keep)) ?? keep;
+        await this.deps.storeKeep(keep);
         state = { ...state, keep };
         ({ keep } = await this.sync(state));
       }
@@ -455,8 +455,7 @@ export class KeepSaver {
     }
     const index = keep.findIndex((e) => e.workId === entry.workId);
     if (index >= 0) keep[index] = stored;
-    const answered = await this.deps.storeKeep(keep);
-    if (answered) keep.splice(0, keep.length, ...answered);
+    await this.deps.storeKeep(keep);
   }
 
   /** What a work needs on this device, from the device's state. */

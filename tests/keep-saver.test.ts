@@ -675,8 +675,8 @@ test("a run asked for during a save the network stopped does not try it again at
     saveTrack: async (t, signal) => {
       signal.throwIfAborted();
       d.saves.push(`1:${t.id}`);
-      // A library read that changed lands while the range fails.
-      void tab!.saver.trigger("library");
+      // A library read that changed lands while the range first fails.
+      if (d.saves.length === 1) void tab!.saver.trigger("library");
       if (failing.value) throw new TypeError("Failed to fetch");
       d.downloads.push({ trackId: t.id, recordingId: t.recordingId, size: 10 });
     },
@@ -719,12 +719,9 @@ test("the connection coming back during a run tries a save the network stopped a
 });
 
 /** The device's Keep store as `keep-runtime.ts` writes it: a choice newer than the run's merge stays (#707). */
-const storeAsRuntime = (d: ReturnType<typeof device>) => async (entries: KeepEntry[]) =>
-  entries.map((entry) => {
-    const stored = keepStored(entry, d.keep.get(entry.workId));
-    d.keep.set(entry.workId, { ...stored });
-    return stored;
-  });
+const storeAsRuntime = (d: ReturnType<typeof device>) => async (entries: KeepEntry[]) => {
+  for (const entry of entries) d.keep.set(entry.workId, { ...keepStored(entry, d.keep.get(entry.workId)) });
+};
 
 // keep-off.spec.ts:249 under load (#707): a run that read the records before Off went on to save the book.
 test("Off tapped while a run waits for the server: the run neither undoes Off nor saves the book; Off reaches the server", async () => {

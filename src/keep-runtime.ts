@@ -127,7 +127,7 @@ export function startKeepSaver(account: number): KeepSaver {
     isKept: async (workId) => (await db.keep.get(workId))?.on !== false,
     persist: askPersist,
     storeKeep: async (records) => {
-      const answered = await db.transaction("rw", db.keep, async () => {
+      await db.transaction("rw", db.keep, async () => {
         // A pause belongs to the pause and resume writers (#552): a merge that read the records before another tab
         // paused or resumed must not undo it. A record that turned off has no pause.
         const stored = new Map((await db.keep.bulkGet(records.map((r) => r.workId))).flatMap((e) => (e ? [[e.workId, e] as const] : [])));
@@ -142,10 +142,8 @@ export function startKeepSaver(account: number): KeepSaver {
           return { ...record, pausedAt, ...(recordings ? { recordings } : {}), ...(ebookIds ? { ebookIds } : {}) };
         });
         await db.keep.bulkPut(next);
-        return next;
       });
       keepChanged();
-      return answered;
     },
     fetchKeep: async () => (await api<{ records: ServerKeep[] }>("/device/keep")).records,
     sendKeep: (send: KeepSend) => {
