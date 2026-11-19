@@ -39,6 +39,9 @@ test("a Discover row of the server says Want to read for a book on it, in place 
   });
   assert.equal(serverRow(result({ inLibrary: true, wantToRead: false })).status, "Susanna Clarke · In your library");
   assert.equal(serverRow(result({ inLibrary: true, wantToRead: false })).wantToRead, false);
+  // Want to read is a shelf of the library: a work outside it is never shown on it.
+  assert.equal(serverRow(result({ inLibrary: false, wantToRead: true })).status, "Susanna Clarke · Audiobook");
+  assert.equal(serverRow(result({ inLibrary: false, wantToRead: true })).wantToRead, false);
   // A server before this part sends no `wantToRead`.
   assert.equal(serverRow(result({ inLibrary: true })).wantToRead, false);
   assert.equal(serverRow(result()).status, "Susanna Clarke · Audiobook");
@@ -54,9 +57,13 @@ test("a row after a tap on its action, until the answers are read again", () => 
   const offAgain = withWantToRead(on, false);
   assert.equal(offAgain.wantToRead, false);
   assert.equal(offAgain.status, "Susanna Clarke · In your library");
-  // No tap, or a tap that agrees with the row: the row as it is.
+  // No tap: the row as it is. A tap off a book that was not in the library: it is now, and its line says so.
   assert.equal(withWantToRead(off, undefined), off);
-  assert.equal(withWantToRead(off, false), off);
+  assert.deepEqual(withWantToRead(off, false), off);
+  const outside = serverRow(result());
+  assert.equal(outside.status, "Susanna Clarke · Audiobook");
+  assert.equal(withWantToRead(withWantToRead(outside, true), false).status, "Susanna Clarke · In your library");
+  assert.equal(withWantToRead(outside, false).status, "Susanna Clarke · In your library");
   const hit = hardcoverRow({ document: { id: 5, title: "Lent", author_names: ["Jo Walton"], release_year: 2019 }, workId: "work-hc-5" });
   assert.equal(withWantToRead(hit, true).status, "Jo Walton · Want to read");
 });

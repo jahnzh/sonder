@@ -93,7 +93,7 @@ export function hardcoverRow(hit: HardcoverHit & { workId: string }): DiscoverRo
  * library" (it stays there).
  */
 export function withWantToRead(row: DiscoverRow, tapped: boolean | undefined): DiscoverRow {
-  if (tapped === undefined || tapped === row.wantToRead) return row;
+  if (tapped === undefined) return row;
   const author = row.status.split(" · ")[0];
   return { ...row, wantToRead: tapped, status: joined(author, tapped ? WANT_TO_READ : "In your library") };
 }
