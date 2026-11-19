@@ -36,7 +36,7 @@ const resetFixture = () => {
   control.gone.clear();
 };
 const resetCatalogue = () => {
-  for (const table of ["catalogue_cache", "catalogue_usage", "work_catalogue_links", "recording_release_links", "work_catalogue_match"]) sqlite.exec(`DELETE FROM ${table}`);
+  for (const table of ["catalogue_cache", "catalogue_usage", "work_catalogue_links", "recording_release_links", "work_catalogue_match", "work_catalogue_duplicates"]) sqlite.exec(`DELETE FROM ${table}`);
   abdb.configureAudiobookDbForTests({ fetch: fixtureFetch(control), clock });
   ol.configureOpenLibraryForTests({ fetch: fixtureFetch(control), clock });
 };
@@ -93,7 +93,10 @@ test("the matcher: exact normalised title and author, ASINs in file names, and t
   const lw = { title: "Leviathan Wakes", author: "James S. A. Corey" };
   assert.deepEqual(links.decide(lw, []), { outcome: "missing" });
   assert.equal(links.decide(lw, [book("a", "Leviathan Wakes", "James S. A. Corey"), book("b", "Caliban's War", "James S. A. Corey")]).outcome, "matched");
-  assert.deepEqual(links.decide(lw, [book("a", "Leviathan Wakes", "James S. A. Corey"), book("b", "Leviathan Wakes", "James S. A. Corey")]), { outcome: "ambiguous", candidates: 2 });
+  // Two entries with the same title and author are one work (#754): gathered, not ambiguous.
+  const both = links.decide(lw, [book("a", "Leviathan Wakes", "James S. A. Corey"), book("b", "Leviathan Wakes", "James S. A. Corey")]);
+  assert.equal(both.outcome, "matched");
+  assert.deepEqual(both.outcome === "matched" && both.books.map((entry) => entry.id), ["a", "b"]);
   // A result that is close but not exact is never applied.
   assert.deepEqual(links.decide(lw, [book("a", "Leviathan Wakes", "Someone Else")]), { outcome: "ambiguous", candidates: 1 });
   const release = (id: string, lengthMs: number, language: string | null, asin: string | null = null) => ({ id, bookId: "a", title: null, narrators: [], lengthMs, asin, isbn: null, publisher: null, language, abridged: null, chapters: [] });
@@ -254,10 +257,14 @@ test("the batch match applies sure matches, fills only what is missing and lists
   const answer = (await call(admin, "GET", "/api/catalogue/match")).json();
   // Every work on the server: these six and the demo library the app seeds.
   const works = sqlite.prepare("SELECT COUNT(*) FROM works").pluck().get() as number;
-  assert.deepEqual({ ...answer.status, startedAt: 0, finishedAt: 0 }, { running: false, startedAt: 0, finishedAt: 0, done: works, total: works, matched: 3, error: null });
+  assert.deepEqual({ ...answer.status, startedAt: 0, finishedAt: 0 }, { running: false, startedAt: 0, finishedAt: 0, done: works, total: works, matched: 5, error: null });
+  // The demo library's Meditations is one of the five: its three AudiobookDB entries are one work (#754).
+  assert.equal(links.workLink("work-meditations")?.id, "hTJnVwadQJUM");
   const linked = sqlite.prepare("SELECT work_id,provider,external_id,matched_by,series_name,series_position FROM work_catalogue_links WHERE work_id LIKE 'w-%' ORDER BY work_id").all();
   assert.deepEqual(linked, [
     { work_id: "w-asin", provider: "audiobookdb", external_id: "bk-asin", matched_by: "asin", series_name: null, series_position: null },
+    // Its two entries are duplicates of one work (#754): the first of the two, each with one release, is the link.
+    { work_id: "w-dune", provider: "audiobookdb", external_id: "bk-dune-a", matched_by: "title", series_name: null, series_position: null },
     { work_id: "w-leviathan", provider: "audiobookdb", external_id: "bk-leviathan", matched_by: "title", series_name: "The Expanse", series_position: "1" },
     { work_id: "w-quiet", provider: "openlibrary", external_id: "OL27448W", matched_by: "title", series_name: null, series_position: null },
   ]);
@@ -266,7 +273,6 @@ test("the batch match applies sure matches, fills only what is missing and lists
     [
       ["w-nothing", "missing", null, 0],
       ["w-german", "missing", "No English release on AudiobookDB.", 0],
-      ["w-dune", "ambiguous", null, 2],
     ],
   );
   // Filled: the description and the narrator; kept: title, author and cover.
@@ -275,9 +281,11 @@ test("the batch match applies sure matches, fills only what is missing and lists
   assert.deepEqual(sqlite.prepare("SELECT narrator,cover FROM audio_editions WHERE id='ed-w-leviathan'").get(), { narrator: "Jefferson Mays", cover: "/covers/own.jpg" });
   assert.equal(sqlite.prepare("SELECT description FROM works WHERE id='w-quiet'").pluck().get(), "About The Quiet Shelf.");
   // The recordings: by length, and by the ASIN in the file name.
-  const releases = sqlite.prepare("SELECT recording_id,release_id,narrator,length_ms,asin,matched_by,json_array_length(chapters) AS chapters FROM recording_release_links ORDER BY recording_id").all();
+  const releases = sqlite.prepare("SELECT recording_id,release_id,narrator,length_ms,asin,matched_by,json_array_length(chapters) AS chapters FROM recording_release_links WHERE recording_id LIKE 'rec-w-%' ORDER BY recording_id").all();
   assert.deepEqual(releases, [
     { recording_id: "rec-w-asin", release_id: "rl-asin", narrator: "Mara Lind", length_ms: 36_000_000, asin: "B0ASINFIX1", matched_by: "asin", chapters: 12 },
+    // The release of the duplicate entry is the work's too.
+    { recording_id: "rec-w-dune", release_id: "rl-dune-b", narrator: "Simon Vance", length_ms: 76_000_000, asin: null, matched_by: "length", chapters: 10 },
     { recording_id: "rec-w-leviathan", release_id: "rl-lw-en", narrator: "Jefferson Mays", length_ms: 72_060_000, asin: "B004GJ4ZPU", matched_by: "length", chapters: 55 },
   ]);
   // A second pass searches only the works still without a link.
@@ -285,7 +293,8 @@ test("the batch match applies sure matches, fills only what is missing and lists
   const before = searched().length;
   links.startBatchMatch();
   await links.batchFinished();
-  assert.equal(links.batchStatus().total, works - 3);
+  assert.equal(links.batchStatus().total, works - 5);
+  assert.deepEqual(sqlite.prepare("SELECT work_id,external_id,releases FROM work_catalogue_duplicates WHERE work_id LIKE 'w-%' ORDER BY work_id").all(), [{ work_id: "w-dune", external_id: "bk-dune-b", releases: 1 }]);
   const next = searched().slice(before);
   assert.ok(!next.some((q) => /leviathan|home/i.test(q)), next.join(" | "));
   // Without a key the batch is refused with the reason.
@@ -330,7 +339,9 @@ test("the match page: search both providers, pick a book and a release, unlink; 
   page = put.json();
   assert.equal(page.link.id, "bk-dune-b");
   assert.equal(page.link.matchedBy, "manual");
-  assert.deepEqual(page.releases.map((entry: { id: string }) => entry.id), ["rl-dune-b"]);
+  // Picked by hand, the other entry of the same work is gathered with it (#754): both entries' releases are listed.
+  assert.deepEqual(page.releases.map((entry: { id: string; bookId: string }) => [entry.id, entry.bookId]), [["rl-dune-b", "bk-dune-b"], ["rl-dune-a", "bk-dune-a"]]);
+  assert.deepEqual(page.link.duplicates, [{ id: "bk-dune-a", title: "Dune", releases: 1 }]);
   // The length agrees within a minute: linked at once.
   assert.equal(page.recordings[0].release.releaseId, "rl-dune-b");
   const unlinked = await call(admin, "DELETE", "/api/recordings/rec-w-dune/release");
@@ -338,7 +349,11 @@ test("the match page: search both providers, pick a book and a release, unlink; 
   const picked = await call(admin, "PUT", "/api/recordings/rec-w-dune/release", { releaseId: "rl-dune-b" });
   assert.equal(picked.statusCode, 200, picked.body);
   assert.equal(picked.json().recordings[0].release.matchedBy, "manual");
-  const wrong = await call(admin, "PUT", "/api/recordings/rec-w-dune/release", { releaseId: "rl-dune-a" });
+  const duplicate = await call(admin, "PUT", "/api/recordings/rec-w-dune/release", { releaseId: "rl-dune-a" });
+  assert.equal(duplicate.statusCode, 200, duplicate.body);
+  assert.equal(sqlite.prepare("SELECT book_id FROM recording_release_links WHERE recording_id='rec-w-dune'").pluck().get(), "bk-dune-a");
+  assert.equal((await call(admin, "PUT", "/api/recordings/rec-w-dune/release", { releaseId: "rl-dune-b" })).statusCode, 200);
+  const wrong = await call(admin, "PUT", "/api/recordings/rec-w-dune/release", { releaseId: "rl-feral" });
   assert.equal(wrong.statusCode, 400);
   assert.equal(wrong.json().error, "This release belongs to another book.");
   // Open Library for a book without an audiobook.
@@ -349,6 +364,7 @@ test("the match page: search both providers, pick a book and a release, unlink; 
   assert.equal(removed.statusCode, 200, removed.body);
   assert.equal(removed.json().link, null);
   assert.equal(sqlite.prepare("SELECT COUNT(*) FROM recording_release_links WHERE recording_id='rec-w-dune'").pluck().get(), 0);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) FROM work_catalogue_duplicates WHERE work_id='w-dune'").pluck().get(), 0, "its duplicates go with it");
   // The second account learns nothing and changes nothing.
   for (const [method, url, payload] of [
     ["GET", "/api/catalogue/search?q=dune"],
@@ -365,4 +381,177 @@ test("the match page: search both providers, pick a book and a release, unlink; 
   }
   assert.equal(sqlite.prepare("SELECT external_id FROM work_catalogue_links WHERE work_id='w-quiet'").pluck().get(), "OL27448W");
   assert.equal((await call(admin, "GET", "/api/works/missing/catalogue")).statusCode, 404);
+});
+
+// ---- #754: a series prefix, an omnibus label, an author's name in the title; duplicates of one work ----
+const entry = (id: string, title: string, authors: string[], position: number | null = null) => ({
+  provider: "audiobookdb" as const,
+  id,
+  title,
+  subtitle: null,
+  authors,
+  narrators: [],
+  cover: null,
+  year: null,
+  languages: [],
+  series: position === null ? [] : [{ id: "sr", name: "Series", position: String(position), sort: position }],
+  releaseIds: [],
+  description: null,
+});
+const ids = (decision: ReturnType<typeof links.decide>) => (decision.outcome === "matched" ? decision.books.map((book) => book.id) : decision);
+
+test("the matcher compares titles without a series prefix or an omnibus label: production's three ambiguous titles", () => {
+  const dcc = "Dungeon Crawler Carl, Book 2: Carl’s Doomsday Scenario";
+  assert.ok(links.titleMatches(dcc, "Carl's Doomsday Scenario"));
+  assert.ok(links.titleMatches(dcc, "Carl’s Doomsday Scenario: Dungeon Crawler Carl, Book 2"));
+  assert.ok(links.titleMatches("Dungeon Crawler Carl 2: Carl’s Doomsday Scenario", "Carl’s Doomsday Scenario"));
+  assert.ok(links.titleMatches("Dungeon Crawler Carl #2: Carl’s Doomsday Scenario", "Carl’s Doomsday Scenario"));
+  assert.ok(!links.titleMatches(dcc, "Dungeon Crawler Carl"), "the series' first book is another book");
+  assert.equal(links.searchTitle(dcc), "Carl’s Doomsday Scenario");
+  const omnibus = "Star Wars Omnibus: X-Wing Rogue Squadron";
+  assert.ok(links.titleMatches(omnibus, "X-Wing: Rogue Squadron"));
+  assert.ok(links.titleMatches(omnibus, "X-Wing Rogue Squadron"));
+  assert.ok(!links.titleMatches(omnibus, "Star Wars Omnibus: Shadows of the Empire"), "an omnibus label is not a title");
+  assert.equal(links.searchTitle(omnibus), "X-Wing Rogue Squadron");
+  assert.ok(links.titleMatches("The Beautiful Place", "The Beautiful Place"));
+  // A number in a title is kept: "Fahrenheit 451: A Novel" is still "Fahrenheit 451".
+  assert.ok(links.titleMatches("Fahrenheit 451: A Novel", "Fahrenheit 451"));
+  // One candidate whose author and main title match is a sure match.
+  assert.deepEqual(ids(links.decide({ title: dcc, author: "Matt Dinniman" }, [entry("dcc2", "Carl’s Doomsday Scenario", ["Matt Dinniman"], 2)])), ["dcc2"]);
+  assert.deepEqual(ids(links.decide({ title: omnibus, author: "Michael A. Stackpole" }, [entry("xw", "X-Wing: Rogue Squadron", ["Michael A. Stackpole"])])), ["xw"]);
+  // The author must match too.
+  assert.deepEqual(links.decide({ title: omnibus, author: "Someone Else" }, [entry("xw", "X-Wing: Rogue Squadron", ["Michael A. Stackpole"])]), { outcome: "ambiguous", candidates: 1 });
+});
+
+test("the matcher: an author's name in the title, a collection, and the series position that picks among entries of one title", () => {
+  const meditations = [
+    entry("M8WaKdjCh86T", "Marcus Aurelius – Meditations", ["Marcus Aurelius"]),
+    entry("4DqnhVBTt3iG", "Marcus Aurelius - Meditations", ["Marcus Aurelius"]),
+    entry("hTJnVwadQJUM", "Meditations", ["Marcus Aurelius"]),
+    entry("classics", "The Classics Collection: Meditations, The Republic and The Prince", ["Marcus Aurelius", "Plato"]),
+    entry("other", "Meditations", ["René Descartes"]),
+  ];
+  // Every entry of the one work, never ambiguous; the collection and the other author's book are other works.
+  assert.deepEqual(ids(links.decide({ title: "Meditations", author: "Marcus Aurelius" }, meditations)), ["M8WaKdjCh86T", "4DqnhVBTt3iG", "hTJnVwadQJUM"]);
+  assert.deepEqual(ids(links.decide({ title: "Marcus Aurelius – Meditations", author: "Marcus Aurelius" }, meditations)), ["M8WaKdjCh86T", "4DqnhVBTt3iG", "hTJnVwadQJUM"]);
+  assert.ok(!links.titleMatches("Marcus Aurelius – Meditations", "Marcus Aurelius – The Golden Sayings", ["Marcus Aurelius"]), "the author's name alone is not the title");
+  // The work's place in its series: from a prefix, a bracketed note or a subtitle.
+  assert.equal(links.titlePosition("Dungeon Crawler Carl, Book 2: Carl’s Doomsday Scenario"), 2);
+  assert.equal(links.titlePosition("Leviathan Wakes (The Expanse, Book 1)"), 1);
+  assert.equal(links.titlePosition("Carl’s Doomsday Scenario: Dungeon Crawler Carl, Book 2"), 2);
+  assert.equal(links.titlePosition("Fahrenheit 451: A Novel"), null);
+  // Several candidates of one title: the one at the work's place in the series, by its author.
+  const sameTitle = [entry("first", "Rogue Squadron", ["Michael A. Stackpole"], 1), entry("ninth", "Rogue Squadron", ["Michael A. Stackpole"], 9), entry("theirs", "Rogue Squadron", ["Other Writer"], 2)];
+  assert.deepEqual(ids(links.decide({ title: "Rogue Squadron", author: "Michael A. Stackpole", position: 9 }, sameTitle)), ["ninth"]);
+  assert.deepEqual(ids(links.decide({ title: "X-Wing, Book 1: Rogue Squadron", author: "Michael A. Stackpole", position: links.titlePosition("X-Wing, Book 1: Rogue Squadron") }, sameTitle)), ["first"]);
+  // Without a place of its own, entries at two places of a series are different books: ambiguous.
+  assert.deepEqual(links.decide({ title: "Rogue Squadron", author: "Michael A. Stackpole" }, sameTitle), { outcome: "ambiguous", candidates: 2 });
+  // No entry at the work's own place: not sure.
+  assert.deepEqual(links.decide({ title: "Rogue Squadron", author: "Michael A. Stackpole", position: 4 }, sameTitle), { outcome: "ambiguous", candidates: 2 });
+  // The whole title is preferred to a main title alone: "Star Wars: Thrawn" is not "Star Wars: Thrawn: Alliances".
+  const thrawn = [entry("t1", "Star Wars: Thrawn", ["Timothy Zahn"]), entry("t2", "Star Wars: Thrawn: Alliances", ["Timothy Zahn"])];
+  assert.deepEqual(ids(links.decide({ title: "Star Wars: Thrawn", author: "Timothy Zahn" }, thrawn)), ["t1"]);
+});
+
+test("the batch matches the three titles and Meditations: every entry of a work is kept, the link is the one with the most releases, all releases are listed", async () => {
+  resetCatalogue();
+  work("w-dcc", "Dungeon Crawler Carl, Book 2: Carl’s Doomsday Scenario", "Matt Dinniman", { seconds: 50_010 });
+  work("w-xwing", "Star Wars Omnibus: X-Wing Rogue Squadron", "Michael A. Stackpole", { seconds: 30_000 });
+  work("w-beautiful", "The Beautiful Place", "Matt Dinniman", { seconds: 26_000 });
+  work("w-meditations", "Meditations", "Marcus Aurelius", { seconds: 15_000 });
+  links.startBatchMatch();
+  await links.batchFinished();
+  const linked = sqlite
+    .prepare("SELECT work_id,external_id,matched_by,series_name,series_position FROM work_catalogue_links WHERE work_id IN ('w-dcc','w-xwing','w-beautiful','w-meditations') ORDER BY work_id")
+    .all();
+  assert.deepEqual(linked, [
+    { work_id: "w-beautiful", external_id: "bk-beautiful-a", matched_by: "title", series_name: null, series_position: null },
+    { work_id: "w-dcc", external_id: "bk-dcc-2", matched_by: "title", series_name: "Dungeon Crawler Carl", series_position: "2" },
+    { work_id: "w-meditations", external_id: "hTJnVwadQJUM", matched_by: "title", series_name: null, series_position: null },
+    { work_id: "w-xwing", external_id: "bk-xwing", matched_by: "title", series_name: null, series_position: null },
+  ]);
+  assert.ok(!links.unmatchedWorks().some((row) => ["w-dcc", "w-xwing", "w-beautiful", "w-meditations"].includes(row.workId)), "none is left ambiguous");
+  // Duplicates are stored beside the link (additive rows); the collection is not one of them.
+  assert.deepEqual(
+    sqlite.prepare("SELECT work_id,provider,external_id,title,releases FROM work_catalogue_duplicates WHERE work_id IN ('w-beautiful','w-meditations') ORDER BY work_id,external_id").all(),
+    [
+      { work_id: "w-beautiful", provider: "audiobookdb", external_id: "bk-beautiful-b", title: "The Beautiful Place", releases: 1 },
+      { work_id: "w-meditations", provider: "audiobookdb", external_id: "4DqnhVBTt3iG", title: "Marcus Aurelius - Meditations", releases: 1 },
+      { work_id: "w-meditations", provider: "audiobookdb", external_id: "M8WaKdjCh86T", title: "Marcus Aurelius – Meditations", releases: 1 },
+    ],
+  );
+  // A recording is linked to the release it is, of whichever entry: the Beautiful Place's of the second entry,
+  // Meditations' of M8WaKdjCh86T.
+  assert.deepEqual(
+    sqlite.prepare("SELECT recording_id,book_id,release_id,matched_by FROM recording_release_links WHERE recording_id IN ('rec-w-dcc','rec-w-xwing','rec-w-beautiful','rec-w-meditations') ORDER BY recording_id").all(),
+    [
+      { recording_id: "rec-w-beautiful", book_id: "bk-beautiful-b", release_id: "rl-beautiful-3", matched_by: "length" },
+      { recording_id: "rec-w-dcc", book_id: "bk-dcc-2", release_id: "rl-dcc-2", matched_by: "length" },
+      { recording_id: "rec-w-meditations", book_id: "M8WaKdjCh86T", release_id: "rl-med-m8", matched_by: "length" },
+      { recording_id: "rec-w-xwing", book_id: "bk-xwing", release_id: "rl-xwing", matched_by: "length" },
+    ],
+  );
+  // The match page lists the releases of all three entries, and its picker takes any of them.
+  const page = (await call(admin, "GET", "/api/works/w-meditations/catalogue")).json();
+  assert.equal(page.link.id, "hTJnVwadQJUM");
+  assert.deepEqual(page.link.duplicates, [
+    { id: "4DqnhVBTt3iG", title: "Marcus Aurelius - Meditations", releases: 1 },
+    { id: "M8WaKdjCh86T", title: "Marcus Aurelius – Meditations", releases: 1 },
+  ]);
+  assert.deepEqual(page.releases.map((release: { id: string }) => release.id), [...Array.from({ length: 8 }, (_, i) => `rl-med-h${i + 1}`), "rl-med-4d", "rl-med-m8"]);
+  assert.ok(!page.releases.some((release: { id: string }) => release.id === "rl-classics"));
+  const picked = await call(admin, "PUT", "/api/recordings/rec-w-meditations/release", { releaseId: "rl-med-4d" });
+  assert.equal(picked.statusCode, 200, picked.body);
+  assert.deepEqual([picked.json().recordings[0].release.releaseId, picked.json().recordings[0].release.bookId], ["rl-med-4d", "4DqnhVBTt3iG"]);
+  assert.equal((await call(admin, "PUT", "/api/recordings/rec-w-meditations/release", { releaseId: "rl-classics" })).json().error, "This release belongs to another book.");
+  // The second account: no match page, no release pick, nothing about the entries.
+  for (const [method, url, payload] of [
+    ["GET", "/api/works/w-meditations/catalogue"],
+    ["PUT", "/api/recordings/rec-w-meditations/release", { releaseId: "rl-med-h1" }],
+    ["GET", "/api/catalogue/match"],
+  ] as const) {
+    const answer = await call(reader, method, url, payload);
+    assert.equal(answer.statusCode, 403, `${method} ${url}`);
+    assert.doesNotMatch(answer.body, /M8WaKdjCh86T|4DqnhVBTt3iG|hTJnVwadQJUM|rl-med/);
+  }
+  assert.equal(sqlite.prepare("SELECT release_id FROM recording_release_links WHERE recording_id='rec-w-meditations'").pluck().get(), "rl-med-4d");
+  // Discover: a duplicate entry opens the work its main entry opens, for each account by the same rule.
+  for (const cookie of [admin, reader]) {
+    const found = (await call(cookie, "GET", "/api/discover/audiobookdb?q=meditations%20marcus%20aurelius")).json().books as { id: string; workId: string; onServer: boolean }[];
+    const main = found.find((hit) => hit.id === "hTJnVwadQJUM")!;
+    for (const id of ["M8WaKdjCh86T", "4DqnhVBTt3iG"]) {
+      const hit = found.find((other) => other.id === id);
+      if (hit) assert.deepEqual([hit.workId, hit.onServer], [main.workId, main.onServer], id);
+    }
+    // Two works are Meditations here (the demo library's and this one): the hit opens one the account may see.
+    if (cookie === admin) assert.ok(["work-meditations", "w-meditations"].includes(main.workId) && main.onServer, main.workId);
+  }
+});
+
+test("a match by hand or by ASIN gathers the other entries of the picked book's work; a search refused leaves the link alone", async () => {
+  resetCatalogue();
+  await links.linkWork("w-meditations", { provider: "audiobookdb", id: "M8WaKdjCh86T" }, "manual");
+  // The administrator's pick stays the link; the other two entries are its duplicates.
+  assert.equal(links.workLink("w-meditations")?.id, "M8WaKdjCh86T");
+  assert.deepEqual(links.workEntryIds("w-meditations"), ["M8WaKdjCh86T", "hTJnVwadQJUM", "4DqnhVBTt3iG"]);
+  // A release linked by hand to an entry the work still is stays when another entry becomes the link.
+  await links.linkRecording("rec-w-meditations", "rl-med-h2", "manual");
+  await links.linkWork("w-meditations", { provider: "audiobookdb", id: "hTJnVwadQJUM" }, "manual");
+  assert.equal(links.releaseLink("rec-w-meditations")?.releaseId, "rl-med-h2");
+  // Out of search units: the link is made without duplicates, never refused.
+  resetCatalogue();
+  sqlite.prepare("INSERT OR REPLACE INTO catalogue_usage(provider,day,units) VALUES('audiobookdb',?,?)").run(provider.usageDay(now), abdb.AUDIOBOOKDB_DAILY_UNITS - abdb.AUDIOBOOKDB_SEARCH_RESERVE);
+  await links.linkWork("w-meditations", { provider: "audiobookdb", id: "M8WaKdjCh86T" }, "manual");
+  assert.deepEqual(links.workEntryIds("w-meditations"), ["M8WaKdjCh86T"]);
+  // "Fahrenheit 451: A Novel" reads like "<Series> <N>: <Title>": its prefix-free words find nothing, the title as written does.
+  resetCatalogue();
+  work("w-fahrenheit", "Fahrenheit 451: A Novel", "Ray Bradbury", { seconds: 18_600 });
+  assert.deepEqual(await links.matchWork("w-fahrenheit"), { outcome: "matched", reason: null, candidates: 1 });
+  assert.equal(links.workLink("w-fahrenheit")?.id, "bk-fahrenheit");
+  // The work's stored series position (Hardcover's old link) picks among entries of one title.
+  sqlite.prepare("INSERT OR REPLACE INTO hardcover_links(work_id,book_id,series) VALUES('w-xwing',1,?)").run(JSON.stringify([{ name: "X-Wing", position: 9 }]));
+  assert.equal(links.workSeriesPosition("w-xwing", "Star Wars Omnibus: X-Wing Rogue Squadron"), 9);
+  assert.equal(links.workSeriesPosition("w-dcc", "Dungeon Crawler Carl, Book 2: Carl’s Doomsday Scenario"), 2);
+  assert.equal(links.workSeriesPosition("w-beautiful", "The Beautiful Place"), null);
+  sqlite.prepare("DELETE FROM hardcover_links WHERE work_id='w-xwing'").run();
 });

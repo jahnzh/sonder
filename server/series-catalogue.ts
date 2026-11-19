@@ -26,7 +26,7 @@ import {
 } from "./audiobookdb.ts";
 import { searchOpenLibrarySeries } from "./openlibrary.ts";
 import { CatalogueError, type Priority } from "./catalogue-provider.ts";
-import { authorMatches, englishRelease, linkWork, normaliseTitle, titleMatches } from "./catalogue-links.ts";
+import { LINKED_ENTRIES, authorMatches, englishRelease, linkWork, normaliseTitle, titleMatches } from "./catalogue-links.ts";
 import { applyTitleEdits, handSeriesMembers, isLocalSeriesId, localSeriesHead, localSeriesIds } from "./work-metadata.ts";
 import { workVisibleTo } from "./work-library.ts";
 import { ensurePlaceholder, isPlaceholderEdition } from "./placeholder-edition.ts";
@@ -190,7 +190,7 @@ function seriesWorkMatch(userId: number, member: Pick<SeriesMember, "id" | "titl
   const provider = isOpenLibraryBookId(member.id) ? "openlibrary" : "audiobookdb";
   const externalId = provider === "openlibrary" ? openLibraryWorkOf(member.id) : member.id;
   let link = sqlite
-    .prepare(`SELECT l.work_id AS workId,${ownsWorkSql} AS owned FROM work_catalogue_links l WHERE l.provider=? AND l.external_id=? ORDER BY owned DESC,l.work_id LIMIT 1`)
+    .prepare(`SELECT l.work_id AS workId,${ownsWorkSql} AS owned FROM (${LINKED_ENTRIES}) l WHERE l.provider=? AND l.external_id=? ORDER BY owned DESC,l.work_id LIMIT 1`)
     .get(userId, provider, externalId) as { workId: string; owned: number } | undefined;
   let needsAdmin = false;
   if (!link?.owned) {

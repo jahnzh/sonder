@@ -217,6 +217,8 @@ CREATE TABLE IF NOT EXISTS recording_release_links(recording_id TEXT PRIMARY KEY
 CREATE TABLE IF NOT EXISTS work_catalogue_match(work_id TEXT PRIMARY KEY,outcome TEXT NOT NULL CHECK(outcome IN ('matched','ambiguous','missing','failed')),reason TEXT,candidates INTEGER NOT NULL DEFAULT 0,checked_at INTEGER NOT NULL);
 -- Part e: a work's links to Google Books and iTunes, beside its main link (one per provider), picked on the match page.
 CREATE TABLE IF NOT EXISTS work_provider_links(work_id TEXT NOT NULL,provider TEXT NOT NULL CHECK(provider IN ('googlebooks','itunes')),external_id TEXT NOT NULL,title TEXT NOT NULL,author TEXT NOT NULL,matched_by TEXT NOT NULL DEFAULT 'manual' CHECK(matched_by IN ('manual')),linked_at INTEGER NOT NULL,PRIMARY KEY(work_id,provider));
+-- #754: the other AudiobookDB entries of the same work as the main link (duplicates, not rivals); their releases are the work's too.
+CREATE TABLE IF NOT EXISTS work_catalogue_duplicates(work_id TEXT NOT NULL,provider TEXT NOT NULL DEFAULT 'audiobookdb' CHECK(provider IN ('audiobookdb')),external_id TEXT NOT NULL,title TEXT NOT NULL,author TEXT NOT NULL,releases INTEGER NOT NULL DEFAULT 0,linked_at INTEGER NOT NULL,PRIMARY KEY(work_id,provider,external_id));
 `);
 // The book's Edit page (#719 part a): a field the administrator edited by hand, per work or per recording, as JSON. It
 // wins over the stored value and over the catalogue's, whatever a refresh writes; deleting the row (Revert) gives the

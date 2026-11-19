@@ -113,7 +113,7 @@ export const FIXTURE = {
     series: [{ series: { id: "sr-expanse", name: "The Expanse" }, position: { label: "1", sortKey: 1 } }],
     releases: [{ id: "rl-lw-en" }, { id: "rl-lw-short" }, { id: "rl-lw-de" }],
   }),
-  // Two different books share the title and author: not sure.
+  // Two entries share the title and author: duplicates of one work (#754, owner 19 Nov), not rival candidates.
   duneA: book("bk-dune-a", "Dune", "Frank Herbert", { releases: [{ id: "rl-dune-a" }] }),
   duneB: book("bk-dune-b", "Dune", "Frank Herbert", { releases: [{ id: "rl-dune-b" }] }),
   // Only a German release.
@@ -127,6 +127,31 @@ export const FIXTURE = {
   excession: book("bk-excession", "Excession", "Iain M. Banks", { releaseDate: "1996-08-01", releases: [{ id: "rl-excession" }] }),
   wasp: book("bk-wasp", "The Wasp Factory", "Iain Banks", { releaseDate: "1984-02-16", releases: [{ id: "rl-wasp" }] }),
   wespen: book("bk-wespen", "Die Wespenfabrik", "Iain Banks", { language: { code: "de", name: "German" }, releases: [{ id: "rl-wespen" }] }),
+  // #754: the titles production's first batch match (19 Nov) left ambiguous. The work's own title carries a series
+  // prefix ("Dungeon Crawler Carl, Book 2: …") or an omnibus label ("Star Wars Omnibus: …"); AudiobookDB's does not.
+  dccOne: book("bk-dcc-1", "Dungeon Crawler Carl", "Matt Dinniman", {
+    series: [{ series: { id: "sr-dcc", name: "Dungeon Crawler Carl" }, position: { label: "1", sortKey: 1 } }],
+    releases: [{ id: "rl-dcc-1" }],
+  }),
+  dccTwo: book("bk-dcc-2", "Carl’s Doomsday Scenario", "Matt Dinniman", {
+    series: [{ series: { id: "sr-dcc", name: "Dungeon Crawler Carl" }, position: { label: "2", sortKey: 2 } }],
+    releases: [{ id: "rl-dcc-2" }],
+  }),
+  xwing: book("bk-xwing", "X-Wing: Rogue Squadron", "Michael A. Stackpole", { releases: [{ id: "rl-xwing" }] }),
+  // 'The Beautiful Place' (Dinniman) had 2 candidates: two entries of the one work, the first with two releases.
+  beautifulA: book("bk-beautiful-a", "The Beautiful Place", "Matt Dinniman", { releases: [{ id: "rl-beautiful-1" }, { id: "rl-beautiful-2" }] }),
+  beautifulB: book("bk-beautiful-b", "The Beautiful Place", "Matt Dinniman", { releases: [{ id: "rl-beautiful-3" }] }),
+  // The owner's example (19 Nov, production): three AudiobookDB entries of Meditations, one work; the one with the
+  // most releases (8) is hTJnVwadQJUM. A collection with Meditations in it is another work.
+  medDash: book("M8WaKdjCh86T", "Marcus Aurelius – Meditations", "Marcus Aurelius", { releases: [{ id: "rl-med-m8" }] }),
+  medHyphen: book("4DqnhVBTt3iG", "Marcus Aurelius - Meditations", "Marcus Aurelius", { releases: [{ id: "rl-med-4d" }] }),
+  medPlain: book("hTJnVwadQJUM", "Meditations", "Marcus Aurelius", { releases: Array.from({ length: 8 }, (_, i) => ({ id: `rl-med-h${i + 1}` })) }),
+  // A number that is part of a title, not a place in a series: the title as written still finds it.
+  fahrenheit: book("bk-fahrenheit", "Fahrenheit 451", "Ray Bradbury", { releases: [{ id: "rl-fahrenheit" }] }),
+  classics: book("bk-classics", "The Classics Collection: Meditations, The Republic and The Prince", "Marcus Aurelius", {
+    people: [person("Marcus Aurelius", "Author"), person("Plato", "Author"), person("Niccolò Machiavelli", "Author")],
+    releases: [{ id: "rl-classics" }],
+  }),
 };
 const RELEASES: Record<string, ReturnType<typeof release>> = {
   "rl-lw-en": release("rl-lw-en", "bk-leviathan", "Jefferson Mays", 72_060_000, "English", "B004GJ4ZPU", 55),
@@ -140,6 +165,17 @@ const RELEASES: Record<string, ReturnType<typeof release>> = {
   "rl-excession": release("rl-excession", "bk-excession", "Peter Kenny", 57_600_000, "English", null, 20),
   "rl-wasp": release("rl-wasp", "bk-wasp", "Peter Kenny", 28_800_000, "English", null, 12),
   "rl-wespen": release("rl-wespen", "bk-wespen", "Frank Arnold", 28_000_000, "German", null, 12),
+  "rl-dcc-1": release("rl-dcc-1", "bk-dcc-1", "Jeff Hays", 49_000_000, "English", null, 20),
+  "rl-dcc-2": release("rl-dcc-2", "bk-dcc-2", "Jeff Hays", 50_000_000, "English", null, 20),
+  "rl-xwing": release("rl-xwing", "bk-xwing", "Marc Thompson", 30_000_000, "English", null, 12),
+  "rl-beautiful-1": release("rl-beautiful-1", "bk-beautiful-a", "Jeff Hays", 20_000_000, "English", null, 10),
+  "rl-beautiful-2": release("rl-beautiful-2", "bk-beautiful-a", "Jeff Hays", 8_000_000, "English", null, 5),
+  "rl-beautiful-3": release("rl-beautiful-3", "bk-beautiful-b", "Jeff Hays", 26_000_000, "English", null, 12),
+  "rl-med-m8": release("rl-med-m8", "M8WaKdjCh86T", "Duncan Steen", 15_000_000, "English", null, 12),
+  "rl-med-4d": release("rl-med-4d", "4DqnhVBTt3iG", "Robin Homer", 16_200_000, "English", null, 12),
+  ...Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`rl-med-h${i + 1}`, release(`rl-med-h${i + 1}`, "hTJnVwadQJUM", `Narrator ${i + 1}`, 18_000_000 + i * 3_600_000, "English", null, 12)])),
+  "rl-fahrenheit": release("rl-fahrenheit", "bk-fahrenheit", "Tim Robbins", 18_600_000, "English", null, 10),
+  "rl-classics": release("rl-classics", "bk-classics", "Various", 90_000_000, "English", null, 40),
 };
 const BOOKS: Record<string, ReturnType<typeof book> & { releases?: unknown }> = Object.fromEntries(Object.values(FIXTURE).map((entry) => [entry.id, entry]));
 const ASINS: Record<string, { bookId: string; releaseId: string }> = {
