@@ -1,4 +1,4 @@
-// The Library's shelf by work (#577, spec #572 "The Library"): each chip, the Hardcover shelf and list, Search, the
+// The Library's shelf by work (#577, spec #572 "The Library"): each chip, the shelf (#721 part c1), Search, the
 // sorts, Continue, the list row's line, the empty shelf and the favourites migration, with plain data on a fixture of
 // an EPUB-only, a PDF-only, a nothing-yet, a downloading, an in-progress, a finished and a favourite book.
 import { test } from "node:test";
@@ -12,15 +12,14 @@ import {
   filterLibrary,
   LIBRARY_CHIPS,
   controlLabel,
-  hardcoverChips,
-  hardcoverInEffect,
-  listChoices,
   listLine,
   listRowLine,
   matchesSearch,
-  NO_HARDCOVER_FILTER,
-  readHardcoverFilter,
+  NO_SHELF,
+  readShelf,
+  shelfChip,
   shelfChoices,
+  underShelf,
   SORT_NAMES,
   SORT_ORDERS,
   progressFraction,
@@ -107,9 +106,9 @@ function work(workId: string, title: string, author: string, parts: Partial<Libr
 }
 
 // The fixture: one of each kind the ticket names, and a book read in the reader (In progress by its ebook's place).
-const epubOnly = work("w-epub", "Piranesi", "Susanna Clarke", { ebooks: [ebook("e-epub", "epub")], addedAt: 7, hardcover: hardcover(1, [10]) });
+const epubOnly = work("w-epub", "Piranesi", "Susanna Clarke", { ebooks: [ebook("e-epub", "epub")], addedAt: 7, hardcover: hardcover(1, [10]), wantToRead: true });
 const pdfOnly = work("w-pdf", "Capitalist Realism", "Mark Fisher", { ebooks: [ebook("e-pdf", "pdf")], addedAt: 6 });
-const nothing = work("w-nothing", "Kindred", "Octavia E. Butler", { addedAt: 5, hardcover: hardcover(1, []) });
+const nothing = work("w-nothing", "Kindred", "Octavia E. Butler", { addedAt: 5, hardcover: hardcover(1, []), wantToRead: true });
 const downloading = work("w-downloading", "Snow Crash", "Neal Stephenson", {
   addedAt: 4,
   mediaState: { state: "queued", holdReason: null, acquisition: { id: "a", status: "downloading", progress: 0.43, error: null } },
@@ -133,7 +132,7 @@ const input = (parts: Partial<ShelfInput> = {}): ShelfInput => ({
   favorites: ["w-favorite", "w-pdf"],
   // Kept and complete on this device: the PDF and the finished audiobook.
   onDevice: new Set(["w-pdf", "w-finished"]),
-  hardcover: { shelf: "all", list: "all" },
+  shelf: NO_SHELF,
   ...parts,
 });
 const ids = (works: LibraryWork[]) => works.map((w) => w.workId);
@@ -165,13 +164,19 @@ test("In progress counts this device's newer place laid over the stored work", (
   assert.deepEqual(ids(filterLibrary([favorite], input({ chip: "In progress" }))), []);
 });
 
-test("Hardcover's shelf and list narrow the shelf, together and with a chip", () => {
-  assert.deepEqual(under("All books", { hardcover: { shelf: "1", list: "all" } }), ["w-epub", "w-nothing"]);
-  assert.deepEqual(under("All books", { hardcover: { shelf: "all", list: "11" } }), ["w-listening", "w-finished"]);
-  assert.deepEqual(under("All books", { hardcover: { shelf: "2", list: "11" } }), ["w-listening"]);
-  assert.deepEqual(under("All books", { hardcover: { shelf: "1", list: "11" } }), []);
-  assert.deepEqual(under("Not started", { hardcover: { shelf: "1", list: "all" } }), ["w-epub", "w-nothing"]);
-  assert.deepEqual(under("Finished", { hardcover: { shelf: "all", list: "10" } }), []);
+test("the shelf narrows the books, and narrows with a chip: Want to read by the list, Reading and Finished by progress", () => {
+  assert.deepEqual(under("All books", { shelf: "want-to-read" }), ["w-epub", "w-nothing"]);
+  assert.deepEqual(under("All books", { shelf: "reading" }), ["w-listening", "w-reading"]);
+  assert.deepEqual(under("All books", { shelf: "finished" }), ["w-finished"]);
+  assert.deepEqual(under("Not started", { shelf: "want-to-read" }), ["w-epub", "w-nothing"]);
+  assert.deepEqual(under("Favorites", { shelf: "want-to-read" }), []);
+  assert.deepEqual(under("In progress", { shelf: "finished" }), []);
+  // Hardcover's shelf of a work no longer decides anything: the listening book is on Hardcover's Currently reading.
+  assert.equal(underShelf({ ...listening, wantToRead: false }, "want-to-read"), false);
+  // A work stored by an older build has no `wantToRead`: it is not on Want to read.
+  const { wantToRead: _, ...older } = epubOnly;
+  assert.equal(underShelf(older as LibraryWork, "want-to-read"), false);
+  assert.equal(underShelf(older as LibraryWork, "all"), true);
 });
 
 test("Search: every word in the title or the author, case and accents ignored", () => {
@@ -241,12 +246,12 @@ test("Continue: the book in progress with the newest place, only on All with no 
   const finishedLater = work("w-done", "Done", "A", { recordings: [recording("r-done", place("r-done", 2, 599.9, 99999))], finished: true });
   assert.equal(continueWork([finishedLater, listening])?.workId, "w-listening");
   assert.equal(continueWork([pdfOnly, nothing, favorite]), null);
-  assert.equal(continueShown(ALL_CHIP, "", { shelf: "all", list: "all" }), true);
-  assert.equal(continueShown("In progress", "", { shelf: "all", list: "all" }), false);
-  assert.equal(continueShown(ALL_CHIP, "frank", { shelf: "all", list: "all" }), false);
-  assert.equal(continueShown(ALL_CHIP, "  ", { shelf: "all", list: "all" }), true);
-  assert.equal(continueShown(ALL_CHIP, "", { shelf: "1", list: "all" }), false);
-  assert.equal(continueShown(ALL_CHIP, "", { shelf: "all", list: "10" }), false);
+  assert.equal(continueShown(ALL_CHIP, "", "all"), true);
+  assert.equal(continueShown("In progress", "", "all"), false);
+  assert.equal(continueShown(ALL_CHIP, "frank", "all"), false);
+  assert.equal(continueShown(ALL_CHIP, "  ", "all"), true);
+  assert.equal(continueShown(ALL_CHIP, "", "want-to-read"), false);
+  assert.equal(continueShown(ALL_CHIP, "", "reading"), false);
 });
 
 test("the list row's line: each place line, and the download's line while the first file is on its way", () => {
@@ -261,12 +266,12 @@ test("the list row's line: each place line, and the download's line while the fi
 test("an empty shelf: No books with what is in use and Clear filters; an empty library: No books yet and Find a book", () => {
   assert.deepEqual(emptyShelf(0, input()), { title: "No books yet", inUse: [], action: "find" });
   assert.deepEqual(emptyShelf(8, input({ chip: "Finished" })), { title: "No books", inUse: ["Finished"], action: "clear" });
-  assert.deepEqual(emptyShelf(8, input({ chip: "Favorites", query: " frank ", hardcover: { shelf: "1", list: "10" } }), { shelf: "Want to read", list: "Summer" }), {
+  assert.deepEqual(emptyShelf(8, input({ chip: "Favorites", query: " frank ", shelf: "want-to-read" })), {
     title: "No books",
-    inUse: ["Favorites", "Want to read", "Summer", "“frank”"],
+    inUse: ["Favorites", "Want to read", "“frank”"],
     action: "clear",
   });
-  assert.deepEqual(emptyShelf(8, input({ hardcover: { shelf: "4", list: "all" } })).inUse, ["Hardcover shelf"]);
+  assert.deepEqual(emptyShelf(8, input({ shelf: "finished" })).inUse, ["Finished"]);
 });
 
 test("the chip, sort and view read back from the device; earlier values map to their chips", () => {
@@ -321,19 +326,6 @@ test("the Book page's Favorite toggles the work", () => {
 });
 
 // The sort-and-view control (#578; boards LibrarySort.dc.html, LibraryShelf.dc.html, LibraryList.dc.html).
-const names = {
-  shelves: [
-    { id: 1, name: "Want to read" },
-    { id: 2, name: "Currently reading" },
-    { id: 3, name: "Read" },
-    { id: 4, name: "Paused" },
-    { id: 5, name: "Did not finish" },
-  ],
-  lists: [
-    { id: 10, name: "Summer", count: 2 },
-    { id: 11, name: "Culture", count: 7 },
-  ],
-};
 
 test("each sort with ties by title, from the picker's names", () => {
   assert.deepEqual(SORT_ORDERS.map((order) => SORT_NAMES[order]), ["Recently added", "Title", "Author", "Progress"]);
@@ -352,54 +344,38 @@ test("the control's text and name for each sort and view", () => {
   assert.deepEqual(controlLabel("progress", "grid"), { text: "Progress · Grid", name: "Sort and view: progress, grid" });
 });
 
-test("the Hardcover group's lists: All shelves and Hardcover's five shelves; All lists and each list with its count", () => {
-  assert.deepEqual(shelfChoices(names).map((c) => [c.value, c.label]), [
+test("the Shelf group's list: All shelves, Want to read, Reading and Finished", () => {
+  assert.deepEqual(shelfChoices().map((c) => [c.value, c.label]), [
     ["all", "All shelves"],
-    ["1", "Want to read"],
-    ["2", "Currently reading"],
-    ["3", "Read"],
-    ["4", "Paused"],
-    ["5", "Did not finish"],
-  ]);
-  assert.deepEqual(listChoices(names), [
-    { value: "all", label: "All lists" },
-    { value: "10", label: "Summer", detail: "2" },
-    { value: "11", label: "Culture", detail: "7" },
+    ["want-to-read", "Want to read"],
+    ["reading", "Reading"],
+    ["finished", "Finished"],
   ]);
 });
 
-test("a shelf, a list and both with a chip: the books left and the clear chips under the heading", () => {
-  // Shelf alone.
-  assert.deepEqual(under("All books", { hardcover: { shelf: "1", list: "all" } }), ["w-epub", "w-nothing"]);
-  assert.deepEqual(hardcoverChips({ shelf: "1", list: "all" }, names), [{ kind: "shelf", text: "Want to read", name: "Clear the Hardcover shelf: Want to read" }]);
-  // List alone.
-  assert.deepEqual(under("All books", { hardcover: { shelf: "all", list: "11" } }), ["w-listening", "w-finished"]);
-  assert.deepEqual(hardcoverChips({ shelf: "all", list: "11" }, names), [{ kind: "list", text: "Culture", name: "Clear the Hardcover list: Culture" }]);
-  // Both, and with a chip: each narrows the others.
-  assert.deepEqual(under("All books", { hardcover: { shelf: "2", list: "11" } }), ["w-listening"]);
-  assert.deepEqual(under("In progress", { hardcover: { shelf: "2", list: "11" } }), ["w-listening"]);
-  assert.deepEqual(under("Finished", { hardcover: { shelf: "2", list: "11" } }), []);
-  assert.deepEqual(under("Not started", { hardcover: { shelf: "1", list: "all" } }), ["w-epub", "w-nothing"]);
-  assert.deepEqual(hardcoverChips({ shelf: "2", list: "11" }, names), [
-    { kind: "shelf", text: "Currently reading", name: "Clear the Hardcover shelf: Currently reading" },
-    { kind: "list", text: "Culture", name: "Clear the Hardcover list: Culture" },
-  ]);
-  // None in use: no chip. A shelf whose name is not read yet keeps a generic one.
-  assert.deepEqual(hardcoverChips(NO_HARDCOVER_FILTER, names), []);
-  assert.deepEqual(hardcoverChips({ shelf: "1", list: "99" }, null).map((c) => c.text), ["Hardcover shelf", "Hardcover list"]);
-  // Without Hardcover connected the kept filter narrows nothing and shows no chip.
-  assert.deepEqual(hardcoverInEffect({ shelf: "1", list: "11" }, false), NO_HARDCOVER_FILTER);
-  assert.deepEqual(hardcoverInEffect({ shelf: "1", list: "11" }, true), { shelf: "1", list: "11" });
+test("a shelf in use is a chip under the heading that names it and clears it; none for All", () => {
+  assert.deepEqual(shelfChip("want-to-read"), { text: "Want to read", name: "Clear the shelf: Want to read" });
+  assert.deepEqual(shelfChip("reading"), { text: "Reading", name: "Clear the shelf: Reading" });
+  assert.deepEqual(shelfChip("finished"), { text: "Finished", name: "Clear the shelf: Finished" });
+  assert.equal(shelfChip(NO_SHELF), null);
 });
 
-test("the Hardcover filters read back from the device: ids kept, anything else no filter", () => {
-  assert.deepEqual(readHardcoverFilter(JSON.stringify({ shelf: "1", list: "8803" })), { shelf: "1", list: "8803" });
-  assert.deepEqual(readHardcoverFilter(JSON.stringify({ shelf: "1" })), { shelf: "1", list: "all" });
-  // The old strip's "Linked to Hardcover" is gone from the picker.
-  assert.deepEqual(readHardcoverFilter(JSON.stringify({ shelf: "linked", list: "all" })), NO_HARDCOVER_FILTER);
-  assert.deepEqual(readHardcoverFilter(null), NO_HARDCOVER_FILTER);
-  assert.deepEqual(readHardcoverFilter("not json"), NO_HARDCOVER_FILTER);
-  assert.deepEqual(readHardcoverFilter("[1,2]"), NO_HARDCOVER_FILTER);
+test("the shelf read back from the device; an earlier build's Hardcover shelf read once as the shelf it stood for", () => {
+  for (const shelf of ["want-to-read", "reading", "finished"] as const) assert.equal(readShelf(shelf), shelf);
+  assert.equal(readShelf("all"), NO_SHELF);
+  assert.equal(readShelf("bogus"), NO_SHELF);
+  assert.equal(readShelf(null), NO_SHELF);
+  // No shelf stored yet: the Hardcover filter an earlier build kept.
+  assert.equal(readShelf(null, JSON.stringify({ shelf: "1", list: "all" })), "want-to-read");
+  assert.equal(readShelf(null, JSON.stringify({ shelf: "2", list: "8803" })), "reading");
+  assert.equal(readShelf(null, JSON.stringify({ shelf: "3", list: "all" })), "finished");
+  assert.equal(readShelf(null, JSON.stringify({ shelf: "4", list: "all" })), NO_SHELF);
+  assert.equal(readShelf(null, JSON.stringify({ shelf: "all", list: "11" })), NO_SHELF);
+  assert.equal(readShelf(null, "not json"), NO_SHELF);
+  assert.equal(readShelf(null, "[1,2]"), NO_SHELF);
+  // A shelf stored by this build wins over the earlier filter, All included.
+  assert.equal(readShelf("all", JSON.stringify({ shelf: "1", list: "all" })), NO_SHELF);
+  assert.equal(readShelf("finished", JSON.stringify({ shelf: "1", list: "all" })), "finished");
 });
 
 test("the list row's second line: the author and each place line, or the download's line alone", () => {

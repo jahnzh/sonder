@@ -300,6 +300,17 @@ export const userWorkLibraryOrigin = sqliteTable(
   },
   (t) => [primaryKey({ columns: [t.userId, t.workId] })],
 );
+/** Sonder's own Want to read (#721 part c1), per user and work: "manual" from a Book page or Discover, "hardcover" from the one-time copy of Hardcover's shelf. */
+export const userWantToRead = sqliteTable(
+  "user_want_to_read",
+  {
+    userId: integer("user_id").notNull(),
+    workId: text("work_id").notNull(),
+    source: text("source").notNull(),
+    addedAt: integer("added_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.workId] })],
+);
 export const accountRequests = sqliteTable("account_requests", { id: integer("id").primaryKey(), email: text("email").notNull(), username: text("username").notNull(), note: text("note"), status: text("status").notNull().default("pending"), createdAt: integer("created_at").notNull(), reviewedAt: integer("reviewed_at"), inviteId: integer("invite_id") });
 export const accountInvites = sqliteTable("account_invites", { id: integer("id").primaryKey(), token: text("token").notNull().unique(), email: text("email").notNull(), username: text("username").notNull(), accountRequestId: integer("account_request_id").notNull(), createdAt: integer("created_at").notNull(), expiresAt: integer("expires_at").notNull(), claimedAt: integer("claimed_at") });
 
