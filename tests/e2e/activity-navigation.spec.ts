@@ -23,8 +23,9 @@ const asMember = (page: Page) =>
     route.fulfill({ json: { required: true, authenticated: true, user: { id: 1, username: "reader", role: "user" } } }),
   );
 
-const tabBar = (page: Page) => page.getByRole("navigation", { name: "Mobile navigation" });
-const rail = (page: Page) => page.getByRole("navigation", { name: "Main navigation" });
+// One navigation, "Main": the tab bar on a phone, the rail at desktop width (#581).
+const tabBar = (page: Page) => page.getByRole("navigation", { name: "Main", exact: true });
+const rail = tabBar;
 /** The Activity tab; its name gains the dot's name when the dot is lit. */
 const activityTab = (nav: ReturnType<typeof tabBar>) => nav.getByRole("button", { name: /^Activity/ });
 const settingsTab = (page: Page) => tabBar(page).getByRole("button", { name: /^Settings/ });
@@ -37,7 +38,7 @@ test("the administrator: Activity in the tab bar where Downloads was, with the d
   await answer(page, 2);
   await page.goto("/#library");
   const tabs = tabBar(page).getByRole("button");
-  await expect(tabs).toHaveText(["My library", "Discover", "Activity", "Settings"]);
+  await expect(tabs).toHaveText(["Library", "Discover", "Activity", "Settings"]);
   await expect(tabBar(page).getByRole("button", { name: "Downloads" })).toHaveCount(0);
   await expect(activityTab(tabBar(page)).getByRole("img", { name: dot })).toBeVisible();
   await expect(settingsTab(page).getByRole("img", { name: dot })).toHaveCount(0);
@@ -51,7 +52,7 @@ test("the administrator: Activity in the tab bar where Downloads was, with the d
   await expect(page.getByRole("heading", { name: "On this device", exact: true })).toHaveCount(0);
   await expect(parts(page).getByRole("radio")).toHaveText(["Now", "This device", "Server"]);
   await expect(parts(page).getByRole("radio", { checked: true })).toHaveText("Now");
-  await expect(activityTab(tabBar(page))).toHaveClass(/selected/);
+  await expect(activityTab(tabBar(page))).toHaveAttribute("aria-current", "page");
   await noOverflow(page);
 
   await parts(page).getByRole("radio", { name: "Server" }).click();
@@ -79,24 +80,24 @@ test("the administrator at desktop width: Activity in the rail with the dot, Set
   await page.setViewportSize(DESKTOP);
   await page.goto("/#library");
   const items = rail(page).getByRole("button");
-  await expect(items).toHaveText([/^My library/, "Discover", "Activity"]);
+  await expect(items).toHaveText(["Library", "Discover", "Activity", "Settings"]);
   await expect(activityTab(rail(page)).getByRole("img", { name: dot })).toBeVisible();
-  const settings = page.locator(".sidebar-bottom").getByRole("button", { name: /^Settings/ });
+  const settings = rail(page).getByRole("button", { name: /^Settings/ });
   await expect(settings).toHaveAccessibleName("Settings");
   await expect(settings.getByRole("img", { name: dot })).toHaveCount(0);
 
   await activityTab(rail(page)).click();
   await expect(page).toHaveURL(/#activity$/);
   await expect(heading(page)).toBeVisible();
-  await expect(activityTab(rail(page))).toHaveClass(/selected/);
-  await expect(settings).not.toHaveClass(/selected/);
+  await expect(activityTab(rail(page))).toHaveAttribute("aria-current", "page");
+  await expect(settings).not.toHaveAttribute("aria-current", "page");
   await noOverflow(page);
   await parts(page).getByRole("radio", { name: "Server" }).click();
   await expect(page).toHaveURL(/#activity\/server$/);
   await expect(page.getByTestId("activity-server")).toBeVisible();
   // Server is still the Activity place: the rail shows it, not Settings.
-  await expect(activityTab(rail(page))).toHaveClass(/selected/);
-  await expect(settings).not.toHaveClass(/selected/);
+  await expect(activityTab(rail(page))).toHaveAttribute("aria-current", "page");
+  await expect(settings).not.toHaveAttribute("aria-current", "page");
   await noOverflow(page);
 });
 
@@ -119,14 +120,14 @@ test("#activity and #activity/server show the same part on a reload", async ({ p
 test("#downloads opens Now in place of its entry, so Back does not return to it", async ({ page }) => {
   await answer(page, 0);
   await page.goto("/#discover");
-  await expect(page.locator(".topbar .breadcrumb strong")).toHaveText("Discover");
+  await expect(page.getByRole("navigation", { name: "Main", exact: true }).locator('[aria-current="page"]')).toHaveText("Discover");
   await page.goto("/#downloads");
   await expect(heading(page)).toBeVisible();
   await expect(parts(page).getByRole("radio", { checked: true })).toHaveText("Now");
   await expect.poll(() => hash(page)).toBe("#activity");
   await page.goBack();
   await expect(page).toHaveURL(/#discover$/);
-  await expect(page.locator(".topbar .breadcrumb strong")).toHaveText("Discover");
+  await expect(page.getByRole("navigation", { name: "Main", exact: true }).locator('[aria-current="page"]')).toHaveText("Discover");
   // Forward is the redirect's entry, now Activity: no #downloads is left in the history.
   await page.goForward();
   await expect(page).toHaveURL(/#activity$/);
@@ -136,7 +137,7 @@ test("#downloads opens Now in place of its entry, so Back does not return to it"
 test("switching between Now and Server adds no step to Back", async ({ page }) => {
   await answer(page, 0);
   await page.goto("/#library");
-  await expect(page.locator(".topbar .breadcrumb strong")).toHaveText("Library");
+  await expect(page.getByRole("navigation", { name: "Main", exact: true }).locator('[aria-current="page"]')).toHaveText("Library");
   await activityTab(tabBar(page)).click();
   await expect(heading(page)).toBeVisible();
   const length = await page.evaluate(() => history.length);
@@ -148,7 +149,7 @@ test("switching between Now and Server adds no step to Back", async ({ page }) =
   expect(await page.evaluate(() => history.length)).toBe(length);
   await page.goBack();
   await expect(page).toHaveURL(/#library$/);
-  await expect(page.locator(".topbar .breadcrumb strong")).toHaveText("Library");
+  await expect(page.getByRole("navigation", { name: "Main", exact: true }).locator('[aria-current="page"]')).toHaveText("Library");
 });
 
 test("someone who is not the administrator: Activity in the tab bar, Now and This device, no Server", async ({ page }) => {
@@ -159,7 +160,7 @@ test("someone who is not the administrator: Activity in the tab bar, Now and Thi
     return route.fulfill({ json: { ...quiet, attention: 3, processes: down(3) } });
   });
   await page.goto("/#library");
-  await expect(tabBar(page).getByRole("button")).toHaveText(["My library", "Discover", "Activity", "Settings"]);
+  await expect(tabBar(page).getByRole("button")).toHaveText(["Library", "Discover", "Activity", "Settings"]);
   await activityTab(tabBar(page)).click();
   await expect(page).toHaveURL(/#activity$/);
   await expect(heading(page)).toBeVisible();
@@ -189,8 +190,8 @@ test("someone who is not the administrator at desktop width: Activity in the rai
   await page.goto("/#activity/server");
   await expect(heading(page)).toBeVisible();
   await expect.poll(() => hash(page)).toBe("#activity");
-  await expect(rail(page).getByRole("button")).toHaveText([/^My library/, "Discover", "Activity"]);
-  await expect(activityTab(rail(page))).toHaveClass(/selected/);
+  await expect(rail(page).getByRole("button")).toHaveText(["Library", "Discover", "Activity", "Settings"]);
+  await expect(activityTab(rail(page))).toHaveAttribute("aria-current", "page");
   await expect(parts(page).getByRole("radio")).toHaveText(["Now", "This device"]);
   await noOverflow(page);
 });

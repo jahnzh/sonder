@@ -296,7 +296,7 @@ test("the default speed from Settings shows in the foot's Speed once saved, and 
     await expect(speed(room)).toHaveAccessibleName("Speed 1 times");
     // Settings › Playback saves the default when it is changed: ten steps up with Page Up, six more.
     await page.goto("/");
-    await page.locator(".mobile-nav").getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button", { name: "Settings", exact: true }).click();
     await page.getByRole("button", { name: /^Playback\b/ }).click();
     const stepper = page.getByRole("spinbutton", { name: "Default speed", exact: true });
     await stepper.focus();
@@ -317,7 +317,7 @@ test("the default speed from Settings shows in the foot's Speed once saved, and 
     // shows it on screen again.
     // Back to 1× in Settings clears it, also after a reload.
     await page.goto("/");
-    await page.locator(".mobile-nav").getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button", { name: "Settings", exact: true }).click();
     await page.getByRole("button", { name: /^Playback\b/ }).click();
     await stepper.focus();
     await page.keyboard.press("PageDown");

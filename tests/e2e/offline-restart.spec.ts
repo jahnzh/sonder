@@ -41,20 +41,20 @@ async function saveOnDevice(
   await page.evaluate(() => navigator.serviceWorker.ready);
   await page.reload();
   await page.waitForFunction(() => !!navigator.serviceWorker.controller);
-  // The import dialog is the navigation's Add an audiobook (the Library's plus opens Discover, #577).
-  await page.getByRole("button", { name: "Open navigation", exact: true }).click();
-  await page.getByRole("button", { name: "Add an audiobook", exact: true }).click();
-  await page.locator("input[type=file]").setInputFiles(
-    Array.from({ length: chapters }, (_, i) => ({
-      name: chapters > 1 ? `${title} ${i + 1}.wav` : `${title}.wav`,
-      mimeType: "audio/wav",
-      buffer: wave(),
-    })),
-  );
-  await page.getByRole("textbox", { name: "Book title", exact: true }).fill(title);
-  await page.getByRole("textbox", { name: "Author", exact: true }).fill("Sonder test");
-  await page.getByRole("button", { name: "Add to my library", exact: true }).click();
-  await expect(page.getByRole("dialog")).toBeHidden();
+  // The navigation's Add an audiobook and its import dialog went with the drawer (#581): the book comes in through the
+  // import route, and the Library reads it again.
+  const imported = await page.request.post("/api/import", {
+    multipart: Object.fromEntries([
+      ["title", title],
+      ["author", "Sonder test"],
+      ...Array.from({ length: chapters }, (_, i) => [
+        `file${i}`,
+        { name: chapters > 1 ? `${title} ${i + 1}.wav` : `${title}.wav`, mimeType: "audio/wav", buffer: wave() },
+      ]),
+    ]),
+  });
+  expect(imported.ok()).toBe(true);
+  await page.evaluate(() => window.dispatchEvent(new Event("sonder:library-changed")));
   await page.getByRole("button", { name: `About ${title}`, exact: true }).click();
   // The Book page's Keep on this device switch saves the book: the saver saves the chosen recording (#550).
   await page.getByRole("switch", { name: "Keep on this device", exact: true }).click();

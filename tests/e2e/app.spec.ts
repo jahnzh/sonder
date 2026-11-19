@@ -235,24 +235,17 @@ test("import, complete device download, service-worker ranges and offline relaun
   });
   await page.reload();
   await page.waitForFunction(() => !!navigator.serviceWorker.controller);
-  // The import dialog is the navigation's Add an audiobook (the Library's plus opens Discover, #577).
-  await page.getByRole("button", { name: "Open navigation", exact: true }).click();
-  await page.getByRole("button", { name: "Add an audiobook", exact: true }).click();
-  await page.locator("input[type=file]").setInputFiles({
-    name: "A tiny offline story.wav",
-    mimeType: "audio/wav",
-    buffer: wave(),
+  // The navigation's Add an audiobook and its import dialog went with the drawer (#581; a book's files are imported in
+  // its Get sheet, get-import.spec.ts): the book comes in through the import route, and the Library reads it again.
+  const imported = await page.request.post("/api/import", {
+    multipart: {
+      title: story,
+      author: "Sonder test",
+      files: { name: "A tiny offline story.wav", mimeType: "audio/wav", buffer: wave() },
+    },
   });
-  await page
-    .getByRole("textbox", { name: "Book title", exact: true })
-    .fill(story);
-  await page
-    .getByRole("textbox", { name: "Author", exact: true })
-    .fill("Sonder test");
-  await page
-    .getByRole("button", { name: "Add to my library", exact: true })
-    .click();
-  await expect(page.getByRole("dialog")).toBeHidden();
+  expect(imported.ok()).toBe(true);
+  await page.evaluate(() => window.dispatchEvent(new Event("sonder:library-changed")));
   await expect(
     page.getByRole("button", { name: `About ${story}`, exact: true }),
   ).toBeVisible();
@@ -271,9 +264,8 @@ test("import, complete device download, service-worker ranges and offline relaun
   importedWorks.push(book.workId);
   await context.setOffline(true);
   await page.reload();
-  await expect(
-    page.getByText("You’re offline. Downloaded books are available."),
-  ).toBeVisible();
+  // The shell's offline line (#581) in place of the offline banner.
+  await expect(page.getByRole("status").filter({ hasText: "No connection · Books on this device still play" })).toBeVisible();
   // On device (#577): Keep on and complete.
   await page.getByRole("group", { name: "Filter your library", exact: true }).getByRole("button", { name: "On device", exact: true }).click();
   await expect(page.locator(".library-tile")).toHaveCount(1);

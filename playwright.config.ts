@@ -167,6 +167,8 @@ const desktopProjects = [
               /(^|\/)now-playing-ebook-only\.spec\.ts$/,
               // Discover finds books (#575).
               /(^|\/)discover\.spec\.ts$/,
+              // The shell: the tab bar, the rail and the offline line (#581).
+              /(^|\/)shell\.spec\.ts$/,
               // A stuck download says why and offers Cancel (#716).
               /(^|\/)activity-cancel\.spec\.ts$/,
             ]
