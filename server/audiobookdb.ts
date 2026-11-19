@@ -174,14 +174,23 @@ function positionOf(value: unknown): { position: string | null; sort: number | n
   const sort = numberOf(value);
   return { position: text(value), sort };
 }
+/**
+ * A book's series. A live search answer (recorded 19 Nov, #760) names them twice: `seriesWithId` (id, title, ordinal and
+ * a structured position) and `series` as bare names; a bare name is kept only when no structured entry has it.
+ */
 function seriesOf(entry: Json): CatalogueSeriesRef[] {
-  const list = [...arrayOf(entry.series), ...arrayOf(entry.seriesMemberships), ...(isObject(entry.series) ? [entry.series] : [])];
-  return list.filter(isObject).flatMap((item) => {
+  const list = [...arrayOf(entry.seriesWithId), ...arrayOf(entry.series), ...arrayOf(entry.seriesMemberships), ...(isObject(entry.series) ? [entry.series] : [])];
+  const found = list.flatMap((item): CatalogueSeriesRef[] => {
+    if (!isObject(item)) {
+      const name = text(item);
+      return name ? [{ id: null, name, position: null, sort: null }] : [];
+    }
     const series = isObject(item.series) ? item.series : item;
     const name = nameOf(series) ?? text(series.title);
     if (!name) return [];
-    return [{ id: idOf(series), name, ...positionOf(item.position ?? series.position ?? item.sequence) }];
+    return [{ id: idOf(series), name, ...positionOf(item.position ?? series.position ?? item.sequence ?? item.ordinal) }];
   });
+  return found.filter((series, index) => series.id !== null || !found.some((other, at) => at !== index && other.name === series.name && (other.id !== null || at < index)));
 }
 function yearOf(entry: Json): number | null {
   for (const value of [entry.year, entry.releaseYear, entry.publishedYear, entry.releaseDate, entry.publishedDate, entry.firstPublished]) {

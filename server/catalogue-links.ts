@@ -43,7 +43,8 @@ import type { BackgroundProcess } from "./background-runner.ts";
 // ("Dungeon Crawler Carl, Book 2: …"), an omnibus label ("Star Wars Omnibus: …"), an author's name ("Marcus
 // Aurelius – Meditations"), a subtitle or a bracketed note are taken off, and a matching author. Those entries are
 // duplicates of the one work, never rival candidates; only entries that are different works (another title, another
-// author, another place in the series) leave a work ambiguous.
+// author, another place in the series) leave a work ambiguous. #760: an entry's title may follow words of its series'
+// name; results under another title are not candidates, so a work they alone answer is missing.
 const fold = (value: string) =>
   value
     .normalize("NFKD")
@@ -141,6 +142,36 @@ function writtenSearchTitle(title: string): string {
 export function titleMatches(workTitle: string, candidate: string, authors: string[] = []): boolean {
   return titleMatch(workTitle, candidate, authors) !== null;
 }
+/**
+ * The title as an entry's series names it (#760): "X-Wing Rogue Squadron" is the entry "Rogue Squadron" of the series
+ * "Star Wars: X-Wing - Legends". The work's title (prefixes off) must end with the entry's whole title, and the words
+ * before it must be words of one of the entry's series names, in order.
+ */
+export function seriesTitleMatches(workTitle: string, book: Pick<CatalogueBook, "title" | "series">, authors: string[] = []): boolean {
+  const own = titleKeys(workTitle, authors).whole;
+  const theirs = titleKeys(book.title, authors).whole;
+  const names = book.series.map((series) => ` ${fold(series.name)} `).filter((name) => name.trim());
+  return [...own].some((key) =>
+    [...theirs].some((title) => {
+      if (!key.endsWith(` ${title}`)) return false;
+      const head = key.slice(0, -title.length - 1).trim();
+      return names.some((name) => name.includes(` ${head} `));
+    }),
+  );
+}
+/** The names in one stored author field, as written: "A, B & C" is three names, "Corey, James S. A." one. */
+export function authorNames(author: string): string[] {
+  const parts = author
+    .split(/\s*(?:;|&|\band\b)\s*/)
+    .flatMap((part) => {
+      const pieces = part.split(/\s*,\s*/).filter(Boolean);
+      // "Last, First" stays one name: commas separate names only when every piece is a whole name.
+      return pieces.length > 1 && pieces.every((piece) => /\S\s+\S/.test(piece)) ? pieces : [part];
+    })
+    .map((name) => name.trim())
+    .filter(Boolean);
+  return parts.length ? parts : [author.trim()].filter(Boolean);
+}
 /** The work's author (one or several, as stored) and one of the candidate's authors are the same person. */
 export function authorMatches(workAuthor: string, candidates: string[]): boolean {
   const keys = new Set(authorKeys(workAuthor));
@@ -182,12 +213,16 @@ export type Decision =
  */
 export function decide(work: { title: string; author: string; position?: number | null }, results: CatalogueBook[]): Decision {
   const unique = [...new Map(results.map((book) => [book.id, book])).values()];
-  const fitting = unique.flatMap((book) => {
-    if (!authorMatches(work.author, book.authors)) return [];
-    const strength = titleMatch(work.title, book.title, [work.author, ...book.authors]);
+  const titled = unique.flatMap((book) => {
+    const authors = [work.author, ...book.authors];
+    const strength = titleMatch(work.title, book.title, authors) ?? (seriesTitleMatches(work.title, book, authors) ? "main" : null);
     return strength ? [{ book, strength }] : [];
   });
-  if (!fitting.length) return results.length ? { outcome: "ambiguous", candidates: results.length } : { outcome: "missing" };
+  const fitting = titled.filter((entry) => authorMatches(work.author, entry.book.authors));
+  // Nothing by the work's author fits: only entries of the same title (another author's book) are candidates. A search
+  // answer of other titles by other authors (#760: "Airborn" and "Hollywood Scandal" for "The Beautiful Place Matt
+  // Dinniman") is not this book: missing, not ambiguous.
+  if (!fitting.length) return titled.length ? { outcome: "ambiguous", candidates: titled.length } : { outcome: "missing" };
   const whole = fitting.filter((entry) => entry.strength === "whole");
   let same = (whole.length ? whole : fitting).map((entry) => entry.book);
   const position = work.position ?? null;
@@ -530,6 +565,16 @@ export async function matchWork(workId: string, priority: Priority = "background
   if (decision.outcome !== "matched") {
     const byTitle = decide(facts, await searchAudiobookDbBooks(title, { priority }));
     if (byTitle.outcome === "matched" || decision.outcome === "missing") decision = byTitle;
+  }
+  // Several authors (#760: an omnibus with four writers): the search with all their names finds little, so the title
+  // with each author's surname, up to four. One shared author is enough for a match (`authorMatches`).
+  const names = authorNames(work.author);
+  if (names.length > 1) {
+    for (const name of names.slice(0, 4)) {
+      if (decision.outcome === "matched") break;
+      const byAuthor = decide(facts, await searchAudiobookDbBooks(`${title} ${name.split(/\s+/).at(-1)}`, { priority }));
+      if (byAuthor.outcome === "matched" || decision.outcome === "missing") decision = byAuthor;
+    }
   }
   if (decision.outcome === "matched") {
     // Every entry of the work, with its releases: the one with the most is the link, the others its duplicates.
