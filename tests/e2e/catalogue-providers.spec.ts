@@ -85,7 +85,7 @@ for (const [size, viewport] of [["phone", { width: 390, height: 844 }], ["deskto
       await box.press("Enter");
       const google = pageEl.getByRole("radiogroup", { name: "Google Books" });
       await expect(google.getByRole("radio", { name: /Quiet Harbour/ })).toBeVisible();
-      await expect(google.getByRole("radio", { name: /Stiller Hafen/ })).toHaveCount(0);
+      await expect(google.getByRole("radio"), "the German edition is left out").toHaveCount(1);
       await expect(pageEl.getByRole("radiogroup", { name: "AudiobookDB" }).getByRole("radio", { name: /Quiet Harbour/ })).toBeVisible();
       await google.getByRole("radio", { name: /Quiet Harbour/ }).click();
       await matchButton.click();

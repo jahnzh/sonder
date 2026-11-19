@@ -133,7 +133,8 @@ const volume = (id: string, title: string, authors: string[], language: string, 
 });
 export const GOOGLE_VOLUMES = [
   volume("gbQuiet01", "Quiet Harbour", ["Mira Sand"], "en", "2021-03-02"),
-  volume("gbQuietDe", "Stiller Hafen", ["Mira Sand"], "de", "2022"),
+  // The German edition under the same title: only the English check leaves it out.
+  volume("gbQuietDe", "Quiet Harbour", ["Mira Sand"], "de", "2022"),
   volume("gbLeviat1", "Leviathan Wakes", ["James S. A. Corey"], "en", "2011-06-15"),
 ];
 

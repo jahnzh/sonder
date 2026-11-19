@@ -87,7 +87,7 @@ test("Google Books: the volumes search with the app's User-Agent and no key, Eng
   assert.equal(url.searchParams.get("key"), null, "no key");
   assert.equal(request.headers["user-agent"], provider.CATALOGUE_USER_AGENT);
   assert.match(request.headers["user-agent"], /^Sonder\/\S+ \(\+https:\/\/sonder\.pecori\.no\)$/);
-  // The German volume Google sends anyway is left out by the shared English check.
+  // The German edition Google sends anyway (same title, language "de") is left out by the shared English check.
   assert.deepEqual(results, [
     {
       provider: "googlebooks",
