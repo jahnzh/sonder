@@ -17,7 +17,7 @@ import {
   relativeSeekTarget,
   absoluteSeekTarget,
 } from "./chapters";
-import { heldPosition, landingStep, LANDING_RECHECK_MS, type Landing } from "./seek-landing";
+import { heldPosition, landingSought, landingStep, LANDING_RECHECK_MS, type Landing } from "./seek-landing";
 import type { Book, Track, Progress, PlaybackSourceChoice } from "./types";
 import {
   deviceFault,
@@ -793,6 +793,18 @@ export function PlayerProvider({
   useEffect(() => {
     const el = audio.current;
     el.preload = "metadata";
+    // Every seek of the element, the player's or one made on the element itself (the live checks seek it so), is
+    // the place a held load's seek now waits for (#730). Kept held, the load's old target stayed the place: a paused
+    // seek left the reader on the held passage, or the landing sought back to it. The write is caught here, not at
+    // `seeking`: Firefox already reports a device copy's short landing there (src/seek-landing.ts).
+    Object.defineProperty(el, "currentTime", {
+      configurable: true,
+      get: () => Reflect.get(HTMLMediaElement.prototype, "currentTime", el) as number,
+      set: (value: number) => {
+        landing.current = landingSought(landing.current, generation.current, Number(value), Date.now());
+        Reflect.set(HTMLMediaElement.prototype, "currentTime", value, el);
+      },
+    });
     const liveLoad = () => {
       const load = streamLoad.current;
       return load && load.generation === generation.current ? load : null;
@@ -1064,6 +1076,7 @@ export function PlayerProvider({
       el.removeEventListener("waiting", waiting);
       el.removeEventListener("stalled", stalling);
       el.removeEventListener("seeked", seeked);
+      delete (el as { currentTime?: number }).currentTime;
     el.removeEventListener("progress", checkLanding);
     clearTimeout(landingCheck);
       watchdog.cancel();

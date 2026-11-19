@@ -2464,14 +2464,8 @@ input[type="range"]::-moz-range-thumb {
   overflow: hidden;
   white-space: nowrap;
 }
+/* The update notice's place is the shell's (shell.css): above the mini player and the offline line (#733). */
 .app-update {
-  position: fixed;
-  top: 76px;
-  right: 16px;
-  left: 16px;
-  margin-left: auto;
-  max-width: 620px;
-  z-index: 150;
   display: flex;
   align-items: center;
   gap: 12px;
