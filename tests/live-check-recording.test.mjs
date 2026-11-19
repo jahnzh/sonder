@@ -103,6 +103,7 @@ function server(listing, answers = {}) {
       if (path === "/api/books") answer = listing.books;
       else if (path === "/api/ebooks") answer = listing.ebooks;
       else if (path === "/api/alignments") answer = { available: true, localOnly: true, jobs: listing.jobs };
+      else if (path === "/api/library") answer = listing.works ?? [];
       else if (path === "/api/appearance") answer = {};
       else {
         const id = /^\/api\/alignments\/([^/]+)\/map$/.exec(path)?.[1];
@@ -128,7 +129,7 @@ test("the incident: the only aligned recording was finished (last second of the 
     assert.equal(error.reason, "1 aligned recording(s) in the library, none qualifies: recording-torbox-137435781: the saved position is 1 s before the end of the book (needs more than 300 s)");
     return true;
   });
-  assert.deepEqual(requests, ["/api/books", "/api/ebooks", "/api/alignments"], "no map is fetched for a recording that cannot qualify");
+  assert.deepEqual(requests, ["/api/books", "/api/ebooks", "/api/alignments", "/api/library"], "no map is fetched for a recording that cannot qualify");
 });
 
 test("a mapped recording at a saved position in the middle of its book is picked with its EPUB, map and sequence", async () => {
@@ -276,7 +277,7 @@ test("a map body that is not JSON, or a map of another recording, fails the chec
 test("a map request that throws (a timeout) fails the check with the request named", async () => {
   const b = book("slow", { progress: { position: 42 } });
   const listing = listingOf([{ book: b }]);
-  const context = { request: { get: async (path) => { if (path.endsWith("/map")) throw new Error("apiRequestContext.get: Timeout 30000ms exceeded."); return { status: () => 200, text: async () => JSON.stringify(path === "/api/books" ? listing.books : path === "/api/ebooks" ? listing.ebooks : { jobs: listing.jobs }) }; } } };
+  const context = { request: { get: async (path) => { if (path.endsWith("/map")) throw new Error("apiRequestContext.get: Timeout 30000ms exceeded."); return { status: () => 200, text: async () => JSON.stringify(path === "/api/books" ? listing.books : path === "/api/ebooks" ? listing.ebooks : path === "/api/library" ? [] : { jobs: listing.jobs }) }; } } };
   await assert.rejects(rec.selectReaderRecording(rec.requestFrom(context)), (error) => !(error instanceof NoSuitableRecording) && error.message === "GET /api/alignments/job-slow-upload-slow/map failed: apiRequestContext.get: Timeout 30000ms exceeded.");
 });
 
@@ -332,7 +333,7 @@ test("a stale map excludes that map only: another map of the same recording is t
   assert.equal(pick.recordingId, b.recordingId);
   assert.equal(pick.job.id, jobB.id);
   assert.equal(pick.ebook.id, "epub-b");
-  assert.deepEqual(requests.slice(3), [mapPath(jobA), mapPath(jobB)]);
+  assert.deepEqual(requests.slice(4), [mapPath(jobA), mapPath(jobB)]);
 });
 
 test("a map with no usable passage on the loaded file excludes that map, and another map of the same recording is used", async () => {
@@ -427,4 +428,66 @@ test("only the selection functions throw NoSuitableRecording; the scripts turn n
     assert.equal((source.match(/NO_SUITABLE_RECORDING_EXIT/g) || []).length, 2, `${name}: imported once, set once, under instanceof NoSuitableRecording`);
     assert.match(source, /if\s*\(\s*error instanceof NoSuitableRecording\s*\)\s*\{/, name);
   }
+});
+
+// #730 third round. A work of GET /api/library as tests/browser-server.ts answers it (tests/e2e/reader-second-track.spec.ts),
+// cut to the fields the selection reads: Now playing's Read opens `chosenEbookId` (the shared default) over this
+// device's choice, which is all the check can set.
+function work(b, { chosenEbookId = null, ebooks } = {}) {
+  return {
+    workId: b.workId,
+    title: b.title,
+    author: b.author,
+    inLibrary: true,
+    chosenRecordingId: b.recordingId,
+    chosenEbookId,
+    ebooks: ebooks ?? [{ id: `upload-${b.id}`, format: "epub", size: 2286, available: true, check: null, place: null }],
+  };
+}
+const edition = (id, extra = {}) => ({ id, format: "epub", size: 2286, available: true, check: null, place: null, ...extra });
+
+test("#730: with a shared default edition, the check samples that edition's map, not a newer one of another edition", async () => {
+  const b = book("phlebas", { tracks: [{ id: "torbox-139759793-1", duration: 29377.84 }, { id: "torbox-139759793-0", duration: 29739.33 }], progress: { track: 1, position: 28540.56 } });
+  const intervals = (paragraph) => sentences("torbox-139759793-0", 0, 600).map((i) => ({ ...i, paragraphId: `${paragraph}:${i.start}` }));
+  const spare = job(b, { ebookId: "libgen-spare", status: "ready", updatedAt: 1794748752999, intervals: intervals(11) });
+  const shared = job(b, { ebookId: "libgen-shared", status: "partial", updatedAt: 1794748752000, intervals: intervals(12) });
+  const ebooks = [ebook(b, { id: "libgen-spare" }), ebook(b, { id: "libgen-shared" })];
+  const listing = { ...listingOf([{ book: b, ebooks, jobs: [spare, shared] }]), works: [work(b, { chosenEbookId: "libgen-shared", ebooks: [edition("libgen-spare"), edition("libgen-shared")] })] };
+  // Without the shared default the ready, newer map comes first, as before.
+  assert.deepEqual(rec.readerPairs({ ...listing, works: [work(b, { ebooks: [edition("libgen-spare"), edition("libgen-shared")] })] }).pairs.map((p) => p.job.ebookId), ["libgen-spare", "libgen-shared"]);
+  assert.deepEqual(rec.readerPairs(listing).pairs.map((p) => p.job.ebookId), ["libgen-shared"]);
+  const pick = await select(listing);
+  assert.equal(pick.ebook.id, "libgen-shared");
+  assert.equal(pick.job.id, shared.id);
+});
+
+test("#730: a shared default without a finished map of the recording rejects the recording, naming the edition", async () => {
+  const b = book("shared-unmapped");
+  const listing = { ...listingOf([{ book: b, ebooks: [ebook(b), ebook(b, { id: "libgen-other" })] }]), works: [work(b, { chosenEbookId: "libgen-other", ebooks: [edition(`upload-${b.id}`), edition("libgen-other")] })] };
+  const result = rec.readerPairs(listing);
+  assert.deepEqual(result.pairs, []);
+  assert.match(result.rejected[0].reason, /Read opens the shared default EPUB libgen-other, which has no finished map of this recording/);
+  await assert.rejects(select(listing), (error) => error instanceof NoSuitableRecording && /libgen-other/.test(error.message));
+});
+
+test("#730: a shared default Read cannot open (no file on the server, not an EPUB) leaves the device's choice to the check", () => {
+  for (const shared of [edition("libgen-gone", { available: false }), edition("libgen-pdf", { format: "pdf" })]) {
+    const b = book(`shared-${shared.id}`);
+    const listing = { ...listingOf([{ book: b }]), works: [work(b, { chosenEbookId: shared.id, ebooks: [edition(`upload-${b.id}`), shared] })] };
+    assert.equal(rec.sharedEdition(listing.works, b.workId), null);
+    assert.deepEqual(rec.readerPairs(listing).pairs.map((p) => p.job.ebookId), [`upload-${b.id}`]);
+  }
+  assert.equal(rec.sharedEdition([], "work-none"), null);
+});
+
+test("#730: GET /api/library must answer a list of works; another shape fails the check", async () => {
+  const b = book("library-shape");
+  await assert.rejects(select(listingOf([{ book: b }]), {}, { "/api/library": { works: [] } }), (error) => !(error instanceof NoSuitableRecording) && /GET \/api\/library answered with an unexpected shape/.test(error.message));
+  await assert.rejects(select(listingOf([{ book: b }]), {}, { "/api/library": { status: 500, body: {} } }), (error) => !(error instanceof NoSuitableRecording) && error.message === "GET /api/library answered 500");
+});
+
+test("#730: the reader check stops when Read opened another EPUB than the sampled map's", () => {
+  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../scripts/verify-integrated-reader.mjs"), "utf8");
+  assert.match(source, /room\.getAttribute\('data-ebook'\)/);
+  assert.match(source, /if\(opened!==ebook\.id\)throw Error/);
 });

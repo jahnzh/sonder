@@ -1710,7 +1710,7 @@ export function ReaderView({
     if (seen && tappedControl(event.target)) setTimeout(() => messages.tapped(seen), 0);
   };
   return (
-    <div className={`reader-room ${inline ? "inline-reader" : ""}`} data-controls-visible={controls} data-appearance={appearanceOpen ? "docked" : undefined} data-contents={showContents} data-current-passage={follow ? currentInterval?.paragraphId : undefined}>
+    <div className={`reader-room ${inline ? "inline-reader" : ""}`} data-controls-visible={controls} data-appearance={appearanceOpen ? "docked" : undefined} data-contents={showContents} data-ebook={id} data-current-passage={follow ? currentInterval?.paragraphId : undefined}>
       {loading && (
         <p className="reader-loading" role="status">
           <Loader2 className="spin" /> Opening your book…

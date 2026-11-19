@@ -3,7 +3,7 @@
 // the check's own sequence, does not qualify.
 //
 // What answers lead to "no suitable recording" (exit 3), and what fails the check (exit 1), before any page opens:
-// - GET /api/books, /api/ebooks, /api/alignments: read successfully and holding no qualifying candidate -> exit 3.
+// - GET /api/books, /api/ebooks, /api/alignments, /api/library: read successfully and holding no qualifying candidate -> exit 3.
 //   Any other answer (non-2xx, a body that is not JSON, an unexpected shape, a request that throws or times out) -> exit 1.
 // - GET /api/alignments/:id/map: 404 or 410 (the map is gone or stale, server/alignment.ts) excludes that one map.
 //   Any other non-2xx, a body that is not JSON, or a map of another recording -> exit 1.
@@ -127,6 +127,20 @@ function readerJobs(book, ebooks, jobs) {
     .sort(jobOrder);
 }
 
+/**
+ * The work's shared default edition (ADR 0004) as GET /api/library lists it, when Read can open it: an EPUB of the
+ * work whose file is on the server. Now playing's Read opens the chosen edition (`chosenEbook`, src/ebook-choice.ts):
+ * the shared default before this device's choice, which is all the check sets (`reader-ebook:<work>`). With a shared
+ * default, the reader follows that edition's map, so the check samples no other (#730 third round: it sampled another
+ * edition's map, and the reader showed that edition's passage numbers, 12:4 for the sampled 11:3). Null without one.
+ */
+export function sharedEdition(works, workId) {
+  const work = (works ?? []).find((w) => w?.workId === workId);
+  const shared = work?.chosenEbookId;
+  if (!shared) return null;
+  return (work.ebooks ?? []).some((e) => e.id === shared && e.format === "epub" && e.available) ? shared : null;
+}
+
 // deploy.sh's old order: a ready map before a partial one, then the most recently updated.
 function jobOrder(a, b) {
   return Number(b.status === "ready") - Number(a.status === "ready") || (b.updatedAt || 0) - (a.updatedAt || 0);
@@ -136,10 +150,11 @@ function jobOrder(a, b) {
  * The (recording, map) pairs the reader check can try, from the listing alone, in the order it tries them: the
  * preferred recording first, then a ready map before a partial one, then the most recently updated. A recording with
  * several maps gives one pair per map whose intervals support readerSequence.
- * listing: {books, ebooks, jobs} as GET /api/books, GET /api/ebooks and GET /api/alignments (its `jobs`) return them.
+ * listing: {books, ebooks, jobs, works} as GET /api/books, GET /api/ebooks, GET /api/alignments (its `jobs`) and
+ * GET /api/library return them. A work with a shared default edition gives only that edition's maps (`sharedEdition`).
  * Returns {pairs: [{book, job, ebook}], rejected: [{recordingId, jobId?, reason}], aligned: Set<recordingId>}.
  */
-export function readerPairs({ books, ebooks, jobs }, { preferred = null } = {}) {
+export function readerPairs({ books, ebooks, jobs, works = [] }, { preferred = null } = {}) {
   const pairs = [];
   const rejected = [];
   const aligned = new Set();
@@ -151,12 +166,18 @@ export function readerPairs({ books, ebooks, jobs }, { preferred = null } = {}) 
       if (book.recordingId === preferred) rejected.push({ recordingId: book.recordingId, reason: "the book is not in the library" });
       continue;
     }
-    const mapped = readerJobs(book, ebooks, jobs);
-    if (!mapped.length) {
+    const finished = readerJobs(book, ebooks, jobs);
+    if (!finished.length) {
       if (book.recordingId === preferred) rejected.push({ recordingId: book.recordingId, reason: "no finished EPUB alignment map" });
       continue;
     }
     aligned.add(book.recordingId);
+    const shared = sharedEdition(works, book.workId);
+    const mapped = shared ? finished.filter((j) => j.ebookId === shared) : finished;
+    if (!mapped.length) {
+      rejected.push({ recordingId: book.recordingId, reason: `Read opens the shared default EPUB ${shared}, which has no finished map of this recording` });
+      continue;
+    }
     const reason = positionReason(savedStart(book));
     if (reason) {
       rejected.push({ recordingId: book.recordingId, reason });
@@ -228,6 +249,7 @@ const SHAPES = {
 export const LISTING_SHAPES = {
   "/api/books": SHAPES.list("books with recordingId and tracks", SHAPES.book),
   "/api/ebooks": SHAPES.list("ebooks with an id", SHAPES.ebook),
+  "/api/library": SHAPES.list("works with a workId", (w) => isObject(w) && typeof w.workId === "string"),
   "/api/alignments": (body) => (isObject(body) && Array.isArray(body.jobs) && body.jobs.every(SHAPES.job) ? null : "expected {jobs: [...]} with an id and recordingId per job"),
   "/api/appearance": (body) => (isObject(body) ? null : "expected an object"),
 };
@@ -269,6 +291,7 @@ export async function selectReaderRecording(get, { preferred = null } = {}) {
     books: await getJSON(get, "/api/books"),
     ebooks: await getJSON(get, "/api/ebooks"),
     jobs: (await getJSON(get, "/api/alignments")).jobs,
+    works: await getJSON(get, "/api/library"),
   };
   const { pairs, rejected, aligned } = readerPairs(listing, { preferred });
   for (const { book, job, ebook } of pairs) {

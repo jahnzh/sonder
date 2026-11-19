@@ -1336,3 +1336,27 @@ test("gap case: a back to narration before the first sentence drops what it kept
   t.clock.advance(MANUAL_SAVE_DELAY_MS * 4);
   assert.deepEqual(t.saved, []);
 });
+
+// #730 third round, production's figures (Consider Phlebas, recording-torbox-139759793): the tracks are played '-1'
+// then '-0' (by file name) and the element plays '-0', the second. A paused seek to 26 s there is passage 11:3, and
+// 12:4 only from 5657.8825 s on: the place's track and time become the right passage whatever the ids' order.
+test("narrated sentence: on the second of tracks listed '-1' then '-0', a time in a passage of '-0' is that passage", () => {
+  const { following } = setup();
+  const first = "torbox-139759793-1", second = "torbox-139759793-0";
+  const map = {
+    recordingId: "recording-torbox-139759793",
+    intervals: [
+      sentence("23:2", second, 28686.5, 28707.2),
+      sentence("12:4", second, 5657.8825, 5663.8225),
+      sentence("11:3", second, 18.2025, 27.5625),
+      sentence("10:9", first, 29300, 29310),
+    ],
+  };
+  const place = (trackId: string, position: number) => ({ recordingId: map.recordingId, tracks: [first, second], trackId, position });
+  assert.equal(following.narratedSentence(map, place(second, 26))?.paragraphId, "11:3");
+  assert.equal(following.narratedSentence(map, place(second, 5657.88))?.paragraphId, "11:3");
+  assert.equal(following.narratedSentence(map, place(second, 5660))?.paragraphId, "12:4");
+  assert.equal(following.narratedSentence(map, place(second, 28700))?.paragraphId, "23:2");
+  // Before '-0''s first sentence, the last one of '-1' stays.
+  assert.equal(following.narratedSentence(map, place(second, 10))?.paragraphId, "10:9");
+});
