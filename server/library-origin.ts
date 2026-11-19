@@ -96,8 +96,11 @@ export function removeUserLibraryRow(userId: number, bookId: string) {
       and(eq(s.userLibrary.userId, userId), eq(s.userLibrary.bookId, bookId)),
     )
     .run();
-  if (edition && !userStillHasWorkInLibrary(userId, edition.workId))
+  if (edition && !userStillHasWorkInLibrary(userId, edition.workId)) {
     deleteLibraryOrigin(userId, edition.workId);
+    // Want to read is a shelf of the library (#721 part c1): a work that leaves the library leaves it too.
+    sqlite.prepare("DELETE FROM user_want_to_read WHERE user_id=? AND work_id=?").run(userId, edition.workId);
+  }
 }
 
 /** Whether this work counts as introduced through this series for removal defaults. */

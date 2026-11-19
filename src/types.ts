@@ -109,6 +109,8 @@ export type LibraryWork = {
    * is. Absent on a work on the server.
    */
   catalogue?: { provider: "audiobookdb" | "openlibrary"; id: string };
+  /** On the user's own Want to read (#721 part c1); absent from a server before it and from works stored by an older build. */
+  wantToRead?: boolean;
 };
 export type WorkEbook = {
   id: string;
@@ -162,6 +164,8 @@ export type WorkResult = {
   hasEbook: boolean;
   /** The Hardcover book the work is matched to, if any. */
   hardcoverId: number | null;
+  /** On the user's own Want to read (#721 part c1); absent from a server before it. */
+  wantToRead?: boolean;
 };
 export type WorkSeries = { id: number | null; name: string; position: number | null; saved: boolean };
 export type WorkMediaState = {

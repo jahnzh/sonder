@@ -1,6 +1,7 @@
 // Discover (#575, spec #572 "Discover"; boards Discover.dc.html, DiscoverResults.dc.html, DiscoverNothing.dc.html,
 // DiscoverSeries.dc.html): what the page shows for the answers it has, as plain data. The page sends the requests and
 // renders the rows; everything it decides about them is here, so it is tested without a browser.
+import { WANT_TO_READ } from "../status-lines";
 import type { WorkResult } from "../types";
 
 /**
@@ -32,7 +33,14 @@ export type SeriesResult = {
 /** A request's answer while the page waits for it, once it came, or when it failed (with the provider's reason). */
 export type Answer<T> = { state: "waiting" } | { state: "done"; value: T } | { state: "failed"; reason?: string | null; missingKey?: boolean };
 
-export type DiscoverRow = { workId: string; title: string; status: string; cover: string | null };
+export type DiscoverRow = {
+  workId: string;
+  title: string;
+  status: string;
+  cover: string | null;
+  /** On the user's own Want to read (#721 part c1): the row's action takes it off; otherwise it puts it on. */
+  wantToRead: boolean;
+};
 
 export type BookResults = {
   /** "On the server": null until its answer arrives or when it failed. */
@@ -63,13 +71,15 @@ export function hasLine(work: Pick<WorkResult, "hasAudiobook" | "hasEbook">): st
 
 const joined = (...parts: (string | null | undefined)[]) => parts.filter((part) => !!part).join(" · ");
 
-/** A work on the server: its author, then "In your library" or what the server has. */
+/** A work on the server: its author, then "Want to read", "In your library" or what the server has. */
 export function serverRow(work: WorkResult): DiscoverRow {
+  const wanted = !!work.wantToRead && work.inLibrary;
   return {
     workId: work.workId,
     title: work.title,
-    status: joined(work.author, work.inLibrary ? "In your library" : hasLine(work)),
+    status: joined(work.author, wanted ? WANT_TO_READ : work.inLibrary ? "In your library" : hasLine(work)),
     cover: work.cover || null,
+    wantToRead: wanted,
   };
 }
 
@@ -80,6 +90,7 @@ export function catalogueRow(hit: CatalogueHit): DiscoverRow {
     title: hit.title || "Untitled",
     status: joined(hit.authors.join(", ") || "Unknown author", hit.year ? String(hit.year) : null),
     cover: hit.cover || null,
+    wantToRead: false,
   };
 }
 
@@ -95,6 +106,30 @@ export function sameBook(a: Pick<CatalogueHit, "title" | "authors">, b: Pick<Cat
   if (fold(a.title) !== fold(b.title)) return false;
   const names = new Set(a.authors.map(fold));
   return !a.authors.length || !b.authors.length || b.authors.some((name) => names.has(fold(name)));
+}
+
+/**
+ * A row as the user's taps on its Want to read action left it (#721 part c1), before the next search reads the
+ * answers again: a book put on it says so in its line ("<author> · Want to read"), one taken off says "In your
+ * library" (it stays there).
+ */
+export function withWantToRead(row: DiscoverRow, tapped: boolean | undefined): DiscoverRow {
+  if (tapped === undefined) return row;
+  const author = row.status.split(" · ")[0];
+  return { ...row, wantToRead: tapped, status: joined(author, tapped ? WANT_TO_READ : "In your library") };
+}
+
+/**
+ * The work a row's Want to read action names (#721 part c2): a catalogue row's own id until its first PUT made a work
+ * for it (`made`, the answered work ids by row), then that work.
+ */
+export function wantToReadTarget(rowWorkId: string, made: Readonly<Record<string, string>>): string {
+  return made[rowWorkId] ?? rowWorkId;
+}
+
+/** The name of a row's Want to read action. */
+export function wantToReadActionName(row: Pick<DiscoverRow, "title" | "wantToRead">): string {
+  return row.wantToRead ? `Remove ${row.title} from Want to read` : `Add ${row.title} to Want to read`;
 }
 
 /** The server's works with the ones in the user's library first, each order kept otherwise. */

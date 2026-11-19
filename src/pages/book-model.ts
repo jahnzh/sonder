@@ -294,3 +294,11 @@ export function keepState(facts: {
   return { on: true, line: kept(audio), resumable: audio === "partial", ...plain };
 }
 
+/**
+ * Want to read's action on the Book page (#721 part c1): a book in the library has a row that puts it on the user's
+ * Want to read or takes it off; a book outside it has a second button beside Add to library, which adds it too.
+ */
+export function wantToReadAction(work: Pick<LibraryWork, "inLibrary" | "wantToRead">): { label: string; on: boolean } {
+  if (!work.inLibrary) return { label: "Want to read", on: true };
+  return work.wantToRead ? { label: "Remove from Want to read", on: false } : { label: "Add to Want to read", on: true };
+}

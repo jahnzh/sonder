@@ -168,6 +168,7 @@ export async function catalogueLook(workId: string, book: { provider: CatalogueP
     series: [],
     mediaState: { state: "missing", holdReason: null, acquisition: null },
     hardcover: null,
+    wantToRead: false,
     catalogue: { provider: book.provider, id: book.id },
   };
 }

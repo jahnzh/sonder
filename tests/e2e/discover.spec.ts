@@ -24,8 +24,8 @@ type WorkResult = { workId: string; title: string; author: string; inLibrary: bo
 const discover = (page: Page) => page.getByRole("region", { name: "Discover", exact: true });
 const field = (page: Page, name = "Search for a book") => discover(page).getByRole("searchbox", { name, exact: true });
 const group = (page: Page, caption: string) => discover(page).getByRole("list", { name: caption, exact: true });
-/** A group's rows: each is one button, named by its title and its line. */
-const rowsOf = (page: Page, caption: string) => group(page, caption).getByRole("button");
+/** A group's rows: each is one button, named by its title and its line (beside it its Want to read action, #721 part c1). */
+const rowsOf = (page: Page, caption: string) => group(page, caption).locator("li > button");
 /** The group has this one row. */
 async function onlyRow(rows: ReturnType<typeof rowsOf>, name: string) {
   await expect(rows).toHaveCount(1);
@@ -401,3 +401,49 @@ test("without a connection: Searching needs a connection.", async ({ page, conte
   await context.setOffline(false);
   await expect(discover(page).getByText("Searching needs a connection.", { exact: true })).toHaveCount(0);
 });
+
+// Want to read on a catalogue row (#721 parts c1 and c2): the row's own action makes the provider book's work through
+// its placeholder and puts it on Want to read; a second tap takes it off the work the first one made.
+for (const [words, title, author, groupName] of [
+  ["leviathan wakes", "Leviathan Wakes", "James S. A. Corey", "From AudiobookDB"],
+  ["quiet shelf", "The Quiet Shelf", "Nora Reader", "From Open Library"],
+] as const)
+  test(`${groupName}: a row's Want to read action makes the book's work, puts it on Want to read and takes it off`, async ({ page }) => {
+    await page.goto("/#discover");
+    await search(page, words);
+    const row = group(page, groupName).getByRole("listitem").filter({ hasText: title });
+    await expect(row).toHaveCount(1);
+    const add = row.getByRole("button", { name: `Add ${title} to Want to read`, exact: true });
+    await expect(add).toHaveAttribute("aria-pressed", "false");
+    const put = page.waitForResponse((response) => response.request().method() === "PUT" && /\/want-to-read$/.test(new URL(response.url()).pathname));
+    await add.click();
+    const answer = (await (await put).json()) as { ok: boolean; workId: string };
+    expect(answer.ok).toBe(true);
+    await expect(page.getByText("Added to Want to read", { exact: true })).toBeVisible();
+    const remove = row.getByRole("button", { name: `Remove ${title} from Want to read`, exact: true });
+    await expect(remove).toHaveAttribute("aria-pressed", "true");
+    await expect(row.locator(".part-book-row-status")).toHaveText(`${author} · Want to read`);
+    const made = await (await page.request.get(`/api/works/${encodeURIComponent(answer.workId)}`)).json();
+    expect([made.inLibrary, made.wantToRead, made.catalogue, made.recordings]).toEqual([true, true, undefined, []]);
+    await noOverflow(page);
+    if (test.info().project.name === "chromium") await page.screenshot({ path: `${OUT}/discover-want-to-read-${groupName === "From AudiobookDB" ? "audiobookdb" : "openlibrary"}-phone.png` });
+    await page.setViewportSize(DESKTOP);
+    await noOverflow(page);
+    if (test.info().project.name === "chromium") await page.screenshot({ path: `${OUT}/discover-want-to-read-${groupName === "From AudiobookDB" ? "audiobookdb" : "openlibrary"}-desktop.png` });
+
+    const deleted = page.waitForResponse((response) => response.request().method() === "DELETE" && /\/want-to-read$/.test(new URL(response.url()).pathname));
+    await remove.click();
+    const off = await deleted;
+    expect(off.status()).toBe(200);
+    expect(new URL(off.url()).pathname).toBe(`/api/works/${encodeURIComponent(answer.workId)}/want-to-read`);
+    await expect(page.getByText("Removed from Want to read", { exact: true })).toBeVisible();
+    await expect(add).toHaveAttribute("aria-pressed", "false");
+    await expect(row.locator(".part-book-row-status")).toHaveText(`${author} · In your library`);
+    const after = await (await page.request.get(`/api/works/${encodeURIComponent(answer.workId)}`)).json();
+    expect([after.inLibrary, after.wantToRead]).toEqual([true, false]);
+    // Read again, the book is the server's, in the library.
+    await search(page, words);
+    await onlyRow(rowsOf(page, "On the server"), `${title} ${author} · In your library`);
+    await expect(group(page, groupName)).toHaveCount(0);
+    expect((await page.request.delete(`/api/works/${encodeURIComponent(answer.workId)}/library`)).ok()).toBe(true);
+  });

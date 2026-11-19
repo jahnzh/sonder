@@ -226,3 +226,51 @@ test("an older client's add of a work on the server is unchanged; the Hardcover 
   // Without a Hardcover token, an id work-hc-<n> is an unknown work, as before this change.
   assert.equal((await call(other, "GET", "/api/works/work-hc-1002")).statusCode, 404);
 });
+
+// Want to read on a catalogue row (#721 parts c1 and c2): c1's PUT on a provider id makes the work as Add to library
+// does, puts it on the user's own Want to read, and answers the work it put there; DELETE leaves it in the library.
+test("Want to read on a provider book makes its work through the placeholder; the shelf is the user's own", async () => {
+  const wantedIn = async (cookie: string, q: string) =>
+    ((await call(cookie, "GET", `/api/works?q=${q}`)).json().works as { workId: string; wantToRead?: boolean }[]).filter((w) => w.wantToRead).map((w) => w.workId);
+  const put = await call(reader, "PUT", "/api/works/work-abdb-bk-dune-a/want-to-read", {});
+  assert.equal(put.statusCode, 200, put.body);
+  assert.deepEqual(put.json(), { ok: true, workId: "work-abdb-bk-dune-a" });
+  assert.equal(sqlite.prepare("SELECT narrator FROM audio_editions WHERE work_id='work-abdb-bk-dune-a'").pluck().get(), "Audio not added");
+  assert.deepEqual(sqlite.prepare("SELECT provider,external_id AS id FROM work_catalogue_links WHERE work_id='work-abdb-bk-dune-a'").get(), { provider: "audiobookdb", id: "bk-dune-a" });
+  const mine = (await call(reader, "GET", "/api/works/work-abdb-bk-dune-a")).json();
+  assert.deepEqual([mine.inLibrary, mine.wantToRead], [true, true]);
+  assert.deepEqual(await wantedIn(reader, "dune"), ["work-abdb-bk-dune-a"]);
+  // The second account learns nothing of it: the book is still a look for them, on no shelf of theirs.
+  const theirs = (await call(other, "GET", "/api/works/work-abdb-bk-dune-a")).json();
+  assert.deepEqual([theirs.inLibrary, theirs.wantToRead, theirs.catalogue], [false, false, { provider: "audiobookdb", id: "bk-dune-a" }]);
+  assert.deepEqual(await wantedIn(other, "dune"), []);
+  assert.ok(!(await call(other, "GET", "/api/library")).body.includes("work-abdb-bk-dune-a"));
+  // Their DELETE on it is a 404 and leaves the reader's mark.
+  assert.equal((await call(other, "DELETE", "/api/works/work-abdb-bk-dune-a/want-to-read")).statusCode, 404);
+  assert.deepEqual(await wantedIn(reader, "dune"), ["work-abdb-bk-dune-a"]);
+  // Taken off: it stays in the reader's library.
+  assert.equal((await call(reader, "DELETE", "/api/works/work-abdb-bk-dune-a/want-to-read")).statusCode, 200);
+  const off = (await call(reader, "GET", "/api/works/work-abdb-bk-dune-a")).json();
+  assert.deepEqual([off.inLibrary, off.wantToRead], [true, false]);
+  // An Open Library book without an audiobook goes the same way.
+  const quiet = await call(other, "PUT", "/api/works/work-ol-OL27448W/want-to-read");
+  assert.deepEqual(quiet.json(), { ok: true, workId: "work-ol-OL27448W" });
+  assert.equal(sqlite.prepare("SELECT source_label FROM audio_editions WHERE work_id='work-ol-OL27448W'").pluck().get(), "Open Library");
+  assert.deepEqual(await wantedIn(other, "quiet"), ["work-ol-OL27448W"]);
+  assert.deepEqual(await wantedIn(reader, "quiet"), []);
+  // A book the provider does not have is not put on it.
+  assert.equal((await call(reader, "PUT", "/api/works/work-abdb-bk-nobody/want-to-read")).statusCode, 404);
+});
+
+test("the administrator's Want to read on a provider book links the work on the server and answers it, the id a second tap takes off", async () => {
+  work("w-harbour", "Quiet Harbour", "Mira Sand");
+  const put = await call(admin, "PUT", "/api/works/work-abdb-bk-feral/want-to-read");
+  assert.deepEqual(put.json(), { ok: true, workId: "w-harbour" });
+  assert.equal(sqlite.prepare("SELECT count(*) FROM works WHERE id='work-abdb-bk-feral'").pluck().get(), 0);
+  assert.equal((await call(admin, "GET", "/api/works/w-harbour")).json().wantToRead, true);
+  // The row's own id names no work the administrator may take off; the answered one does (`wantToReadTarget`).
+  assert.equal((await call(admin, "DELETE", "/api/works/work-abdb-bk-feral/want-to-read")).statusCode, 404);
+  assert.equal((await call(admin, "DELETE", "/api/works/w-harbour/want-to-read")).statusCode, 200);
+  assert.equal((await call(admin, "GET", "/api/works/w-harbour")).json().wantToRead, false);
+  assert.equal((await call(reader, "GET", "/api/works/w-harbour")).json().wantToRead, false);
+});

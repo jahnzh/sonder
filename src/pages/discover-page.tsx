@@ -12,6 +12,9 @@ import { Group } from "../parts/Group";
 import { PageHeader } from "../parts/PageHeader";
 import { Segmented } from "../parts/Segmented";
 import { api, ApiError } from "../lib";
+import { refreshLibraryWorks } from "../library-works-store";
+import { wantToReadNote } from "../status-lines";
+import type { Notify } from "./shared";
 import { pageData, setPageData } from "../navigation";
 import { writeAddress } from "../routes";
 import type { WorkResult } from "../types";
@@ -21,6 +24,9 @@ import {
   searchWords,
   seriesLine,
   startRows,
+  wantToReadActionName,
+  wantToReadTarget,
+  withWantToRead,
   type Answer,
   type DiscoverRow,
   type CatalogueHit,
@@ -29,6 +35,15 @@ import {
 } from "./discover-model";
 import { SeriesListItem } from "./library-series";
 import "./discover-page.css";
+
+/** Want to read's mark: a bookmark, filled while the book is on it. */
+function WantToReadIcon({ on }: { on: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill={on ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 4h12v16l-6-4-6 4z" />
+    </svg>
+  );
+}
 
 /** The Library's plus (or Find a series) asked for the search: Discover shown next focuses its field on that segment. */
 let searchAsked: DiscoverSegment | null = null;
@@ -99,6 +114,7 @@ export function DiscoverPage({
   onSeries,
   onRecording,
   onConnect,
+  notify,
 }: {
   admin: boolean;
   online: boolean;
@@ -109,6 +125,8 @@ export function DiscoverPage({
   onSeries: (id: number) => void;
   onRecording: (query: string) => void;
   onConnect: () => void;
+  /** Says what a row's Want to read action did. */
+  notify?: Notify;
 }) {
   const [{ state: first, rerun }] = useState(initialState);
   const [state, setState] = useState<State>(first);
@@ -225,8 +243,52 @@ export function DiscoverPage({
     if (!value.trim()) searchId.current++;
   };
 
+  // Want to read on a row (#721 part c1): the row's own action, by work id, until the answers are read again.
+  const [tapped, setTapped] = useState<Record<string, boolean>>({});
+  const [wanting, setWanting] = useState<string | null>(null);
+  // A catalogue row's work (`work-abdb-<id>`, `work-ol-<id>`, #721 part c2) is made by its first PUT: the answered work
+  // id is the one a second tap takes off Want to read.
+  const [made, setMade] = useState<Record<string, string>>({});
+  const toggleWantToRead = async (row: DiscoverRow) => {
+    const on = !row.wantToRead;
+    const target = wantToReadTarget(row.workId, made);
+    setWanting(row.workId);
+    try {
+      const answer = await api<{ workId?: string }>(`/works/${encodeURIComponent(target)}/want-to-read`, { method: on ? "PUT" : "DELETE" });
+      if (on && answer?.workId && answer.workId !== row.workId) setMade((m) => ({ ...m, [row.workId]: answer.workId! }));
+      setTapped((t) => ({ ...t, [row.workId]: on }));
+      notify?.(wantToReadNote(on));
+      window.dispatchEvent(new Event("sonder:library-changed"));
+      await refreshLibraryWorks().catch(() => {});
+    } catch (error) {
+      notify?.((error as Error).message, true);
+    } finally {
+      setWanting(null);
+    }
+  };
   const rows = (list: DiscoverRow[]) =>
-    list.map((row) => <BookRow key={row.workId} title={row.title} status={row.status} cover={row.cover} onClick={() => onBook(row.workId)} />);
+    list.map((listed) => {
+      const row = withWantToRead(listed, tapped[listed.workId]);
+      return (
+        <BookRow
+          key={row.workId}
+          title={row.title}
+          status={row.status}
+          cover={row.cover}
+          onClick={() => onBook(row.workId)}
+          action={
+            <Button
+              kind="quiet"
+              label={wantToReadActionName(row)}
+              aria-pressed={row.wantToRead}
+              disabled={!online || wanting === row.workId}
+              icon={<WantToReadIcon on={row.wantToRead} />}
+              onClick={() => void toggleWantToRead(row)}
+            />
+          }
+        />
+      );
+    });
   const failed = (line: string, retry: () => void, reason: string | null = null) => (
     <div className="discover-failed" role="alert">
       <p className="discover-failed-text type-label">
