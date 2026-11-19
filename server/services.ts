@@ -1,3 +1,4 @@
+import { ProxyAgent } from "undici";
 import { parse } from "node-html-parser";
 import { db } from "./db.ts";
 import { settings } from "./schema.ts";
@@ -96,6 +97,29 @@ export async function torboxUrl(
     throw error;
   }
 }
+let abbProxy: { url: string; agent: ProxyAgent } | undefined;
+/** The HTTP proxy AudioBookBay requests go through, when `ABB_PROXY_URL` names one (#755). */
+function abbDispatcher() {
+  const url = process.env.ABB_PROXY_URL?.trim();
+  if (!url) return undefined;
+  if (abbProxy?.url !== url) abbProxy = { url, agent: new ProxyAgent(url) };
+  return abbProxy.agent;
+}
+/** A request to the mirror: through the proxy when one is set, and a connection failure says so in words. */
+async function abbFetch(url: string | URL, headers?: Record<string, string>) {
+  const dispatcher = abbDispatcher();
+  try {
+    return await fetch(url, {
+      headers,
+      signal: AbortSignal.timeout(20000),
+      ...(dispatcher ? { dispatcher } : {}),
+    } as RequestInit);
+  } catch {
+    throw new Error(
+      "The mirror could not be reached. Retry, or try another mirror in Settings.",
+    );
+  }
+}
 function abbFacts(text: string) {
   const value = text.replace(/\s+/g, " ").trim();
   const field = (pattern: RegExp) => pattern.exec(value)?.[1]?.trim() || null;
@@ -171,9 +195,8 @@ export async function abbReleaseSearch(q: string, pageNumber = 1) {
   const url = new URL(pageNumber === 1 ? "/" : `/page/${pageNumber}/`, base);
   // This mirror redirects mixed-case search values to its front page.
   url.searchParams.set("s", q.toLocaleLowerCase());
-  const response = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0 (compatible; Sonder/0.1)" },
-    signal: AbortSignal.timeout(20000),
+  const response = await abbFetch(url, {
+    "User-Agent": "Mozilla/5.0 (compatible; Sonder/0.1)",
   });
   if (!response.ok)
     throw new Error(
@@ -254,9 +277,8 @@ export function parseAbbRelease(
 }
 export async function abbRelease(slug: string) {
   const base = getSetting("abbUrl") || "https://audiobookbay.lu";
-  const response = await fetch(`${base}/abss/${encodeURIComponent(slug)}/`, {
-    headers: { "User-Agent": "Mozilla/5.0 (compatible; Sonder/0.1)" },
-    signal: AbortSignal.timeout(20000),
+  const response = await abbFetch(`${base}/abss/${encodeURIComponent(slug)}/`, {
+    "User-Agent": "Mozilla/5.0 (compatible; Sonder/0.1)",
   });
   if (!response.ok)
     throw new Error("Could not read this release’s source page.");
@@ -264,9 +286,7 @@ export async function abbRelease(slug: string) {
 }
 export async function abbMagnet(slug: string) {
   const base = getSetting("abbUrl") || "https://audiobookbay.lu";
-  const response = await fetch(`${base}/abss/${encodeURIComponent(slug)}/`, {
-    signal: AbortSignal.timeout(20000),
-  });
+  const response = await abbFetch(`${base}/abss/${encodeURIComponent(slug)}/`);
   if (!response.ok) throw new Error("Could not read this book’s source page.");
   const html = await response.text();
   const root = parse(html);
