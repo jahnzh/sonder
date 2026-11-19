@@ -574,6 +574,13 @@ test("at desktop width with two pages side by side the turn comes when the narra
  test.setTimeout(240000);
  test.skip(!!testInfo.project.use.isMobile,"a desktop window");
  await page.setViewportSize({width:1440,height:900});
+ // The desktop board (#595, DesktopReader.dc.html) draws the text as one column of 620 px, too narrow for epub.js's
+ // two pages (from 800 px). The reader still turns a pair as one step wherever epub.js lays one out, so this test
+ // widens the text's column to 960 px and keeps that rule under test.
+ await page.addInitScript(()=>{
+  const wide=()=>{const style=document.createElement("style");style.textContent=".inline-reader .reader-page-area > .reader-viewport{flex:0 1 960px !important}";document.head.append(style);};
+  if(document.head)wide();else document.addEventListener("DOMContentLoaded",wide,{once:true});
+ });
  // The chapter with pictures: its tall pictures spread it over many pairs of pages.
  const {book,chapter,text}=await turnBook(page,`Two pages ${testInfo.repeatEachIndex} ${randomUUID()}`);
  const intervals=chapter(2);
@@ -581,6 +588,11 @@ test("at desktop width with two pages side by side the turn comes when the narra
   let room=await openAt(page,book,intervals[0],intervals[0].start+.01);
   // Wide enough for epub.js to lay out two pages side by side: one turn moves both (the page step is the pair).
   expect(await room.locator(".reader-viewport").evaluate(host=>host.clientWidth)).toBeGreaterThanOrEqual(800);
+  // and it does: each of epub.js's columns (a page) is at most half the viewport.
+  expect(await room.locator(".reader-viewport").evaluate(host=>{
+   const body=host.querySelector("iframe")?.contentDocument?.body;
+   return body?parseFloat(getComputedStyle(body).columnWidth)/host.clientWidth:1;
+  })).toBeLessThanOrEqual(.5);
   // A sentence that runs from the first page of a pair onto the second, and one that leaves the second page of a pair.
   let inside:{interval:any;sentence:string}|null=null,leaving:{interval:any;next:any;sentence:string}|null=null;
   for(const [at,interval] of intervals.entries()){
