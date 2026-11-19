@@ -238,6 +238,10 @@ test("an old reader link left before the server answered moves nothing; one type
   assert.deepEqual(browser.hashes, ["#library", "#discover", "#library"]);
   const typed = nav.shownEditionLink()!;
   assert.equal(typed.ebookId, "e2");
+  // A late answer for the first link does not move the second one's entry.
+  nav.followEditionLink(link.key, { name: "read", workId: "w1" });
+  assert.deepEqual(browser.hashes, ["#library", "#discover", "#library"]);
+  assert.equal(nav.shownEditionLink()?.key, typed.key);
   nav.followEditionLink(typed.key, { name: "read", workId: "w2" });
   assert.deepEqual(browser.hashes, ["#library", "#discover", "#read/w2"]);
   // A link answered with nothing (the ebook is gone): the Library stays in its place.

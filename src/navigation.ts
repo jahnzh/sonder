@@ -312,7 +312,8 @@ export function shownEditionLink(): { ebookId: string; key: string } | null {
  * not return to the link. Nothing moves when the app has left that entry meanwhile.
  */
 export function followEditionLink(key: string, route: Route) {
-  if (!editionLink || editionLink.key !== key || current?.key !== key) return;
+  // `editionLink` belongs to the entry shown (show() sets both), so its key is the current entry's.
+  if (!editionLink || editionLink.key !== key) return;
   navigate(route, { replace: true });
 }
 /** The old reader link was answered with nothing to open: the Library stays in its place, and the link is done. */

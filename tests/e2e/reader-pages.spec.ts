@@ -5,6 +5,7 @@ import { readerFixture } from "../reader-fixture";
 import { showControls } from "./reader-bands";
 import { highlightShown, textShown } from "./reader-view";
 import {openRead} from "./now-playing";
+import { gotoRead } from "./read-face";
 // Chapters, Bookmarks and Search as pages (#590, spec #586; boards Chapters.dc.html, ReaderBookmarks.dc.html,
 // ReaderSearch.dc.html): `#book/<workId>/chapters`, `/bookmarks`, `/search`, each a Page with one Title, "Back to the
 // book" and the book's title. A row opens the reader there, paged away, and Back to narration returns.
@@ -58,11 +59,11 @@ async function openFollowing(page: Page, book: any, map: any) {
   await expect.poll(() => highlightShown(room), { timeout: 20000 }).toBe(true);
   return { room, interval };
 }
-const standaloneRoom = (page: Page) => page.locator(".reader-room:not(.inline-reader)");
+const standaloneRoom = (page: Page) => page.locator(".reader-room");
 async function openStandalone(page: Page, ebook: string) {
-  await page.goto(`/#reader/${ebook}`);
+  await gotoRead(page, ebook);
   const room = standaloneRoom(page);
-  await expect(page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").getByText("Alice was beginning", { exact: false })).toBeVisible();
+  await expect(page.frameLocator(".reader-room .reader-viewport iframe").getByText("Alice was beginning", { exact: false })).toBeVisible();
   return room;
 }
 const head = (room: Locator) => room.locator(".reader-topbar");
@@ -108,7 +109,7 @@ test("each page opens from the reader and its back button returns to the same pl
     // The reader is still there under the page, hidden: Back finds it where it was.
     await expect(room).toBeHidden();
     await back(page).click();
-    await expect.poll(() => hashOf(page)).toBe(`#reader/${ebook}`);
+    await expect.poll(() => hashOf(page)).toBe(`#read/${encodeURIComponent(book.workId)}`);
     await expect(room.locator(".reader-viewport")).toBeVisible();
     expect(await placeOf(room)).toEqual(before);
   }
@@ -120,17 +121,17 @@ test("each page opens from the reader and its back button returns to the same pl
   expect(await hashOf(page)).toBe(`#book/${encodeURIComponent(book.workId)}/bookmarks`);
   expect(await page.evaluate(() => history.length)).toBe(length);
   await back(page).click();
-  await expect.poll(() => hashOf(page)).toBe(`#reader/${ebook}`);
+  await expect.poll(() => hashOf(page)).toBe(`#read/${encodeURIComponent(book.workId)}`);
   expect(await placeOf(room)).toEqual(before);
   // The phone's own Back from a page does the same.
   await openSearch(page, room);
   await page.goBack();
-  await expect.poll(() => hashOf(page)).toBe(`#reader/${ebook}`);
+  await expect.poll(() => hashOf(page)).toBe(`#read/${encodeURIComponent(book.workId)}`);
   expect(await placeOf(room)).toEqual(before);
   // A section opens the same reader there, with an entry of its own: Back shows Chapters again.
   await openChapters(page, room);
   await page.getByRole("list", { name: "Chapters", exact: true }).getByRole("button", { name: "The Pool of Tears" }).click();
-  await expect.poll(() => hashOf(page)).toBe(`#reader/${ebook}`);
+  await expect.poll(() => hashOf(page)).toBe(`#read/${encodeURIComponent(book.workId)}`);
   await expect.poll(() => textShown(room, SECOND)).toBe(true);
   await expect(room.locator(".reader-viewport")).toBeVisible();
   await page.goBack();
@@ -205,7 +206,7 @@ test("from Now playing: a section, a result and a bookmark open the reader there
 });
 
 test("a reload of Search runs it again, and a row then opens the reader there", async ({ page }) => {
-  const { ebook } = await fixture(page, "Pages reload");
+  const { ebook, book } = await fixture(page, "Pages reload");
   const room = await openStandalone(page, ebook);
   await openSearch(page, room);
   const field = page.getByRole("searchbox", { name: "Search this book", exact: true });
@@ -216,7 +217,7 @@ test("a reload of Search runs it again, and a row then opens the reader there", 
   await expect(page.locator(".reader-pages-count")).toHaveText("1 sentence");
   // After the reload the reader is not under the page: the row opens it on its own, there.
   await page.getByRole("list", { name: "Sentences" }).getByRole("button").click();
-  await expect.poll(() => hashOf(page)).toBe(`#reader/${ebook}`);
+  await expect.poll(() => hashOf(page)).toBe(`#read/${encodeURIComponent(book.workId)}`);
   await expect.poll(() => textShown(standaloneRoom(page), SECOND), { timeout: 20000 }).toBe(true);
   // Back from that reader shows the search again.
   await page.goBack();
@@ -239,12 +240,12 @@ test("a link straight to a page goes back to the Book page", async ({ page }) =>
   await page.goto("about:blank");
   await page.goto(`/#book/${encodeURIComponent(book.workId)}/chapters`);
   await page.getByRole("list", { name: "Chapters", exact: true }).getByRole("button", { name: "The Pool of Tears" }).click();
-  await expect.poll(() => hashOf(page)).toBe(`#reader/${ebook}`);
+  await expect.poll(() => hashOf(page)).toBe(`#read/${encodeURIComponent(book.workId)}`);
   await expect.poll(() => textShown(standaloneRoom(page), SECOND), { timeout: 20000 }).toBe(true);
 });
 
 test("removing a bookmark from the page removes it from the reader's head", async ({ page }) => {
-  const { ebook } = await fixture(page, "Pages remove");
+  const { ebook, book } = await fixture(page, "Pages remove");
   const room = await openStandalone(page, ebook);
   await showControls(page, room);
   const toggle = room.locator(".reader-bookmark-toggle");
@@ -260,7 +261,7 @@ test("removing a bookmark from the page removes it from the reader's head", asyn
   await expect(page.getByText("No bookmarks. The bookmark button at the top saves the sentence in view.", { exact: true })).toBeVisible();
   await expect.poll(async () => (await (await page.request.get(`/api/reader/${ebook}`)).json()).bookmarks.length).toBe(0);
   await back(page).click();
-  await expect.poll(() => hashOf(page)).toBe(`#reader/${ebook}`);
+  await expect.poll(() => hashOf(page)).toBe(`#read/${encodeURIComponent(book.workId)}`);
   await showControls(page, room);
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
   await expect(toggle).toHaveAccessibleName("Bookmark current sentence");

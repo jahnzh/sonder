@@ -6,9 +6,10 @@ import { defaultAppearance } from "../../src/appearance";
 import { skipOnMobile } from "./mobile";
 import { closeAppearance, openAppearance, setStepper } from "./reader-appearance";
 import { playFromLibrary } from "./library-play";
+import { gotoRead } from "./read-face";
 // Tapping the middle of the page shows the reader's top bar and slider.
 async function showControls(page: Page) {
-  const room = page.locator(".reader-room:not(.inline-reader)");
+  const room = page.locator(".reader-room");
   if (await room.locator(".reader-topbar").isVisible()) return;
   const box = (await room.locator(".reader-viewport").boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
@@ -16,7 +17,7 @@ async function showControls(page: Page) {
 }
 async function openChapters(page: Page) {
   await showControls(page);
-  await page.locator(".reader-room:not(.inline-reader) .reader-player").getByRole("button", { name: "Chapters", exact: true }).click();
+  await page.locator(".reader-room .reader-player").getByRole("button", { name: "Chapters", exact: true }).click();
 }
 
 test("appearance presets and custom colors persist without interrupting audio", async ({
@@ -112,11 +113,11 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   );
   expect(upload.ok()).toBe(true);
   const id = (await upload.json()).id;
-  await page.goto(`/#reader/${id}`);
+  await gotoRead(page, id);
   await expect(
-    page.getByRole("dialog", { name: "Reader" }),
+    page.getByRole("dialog", { name: "Now playing", exact: true }),
   ).toBeVisible();
-  const frame = page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe");
+  const frame = page.frameLocator(".reader-room .reader-viewport iframe");
   await expect(
     frame.getByText("Alice was beginning to get very tired", { exact: false }),
   ).toBeVisible();
@@ -124,7 +125,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
     await page.evaluate(() => (window as any).__epubScriptExecuted),
   ).toBeUndefined();
   // reader-frame.spec.ts checks the frame's sandbox and that EPUB scripts stay blocked in every engine.
-  await page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").locator("body").click({ position: { x: 340, y: 100 } });
+  await page.frameLocator(".reader-room .reader-viewport iframe").locator("body").click({ position: { x: 340, y: 100 } });
   await expect
     .poll(
       async () =>
@@ -138,7 +139,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   // The More sheet is gone (#592): Read from audio is the foot's Back to narration; Listen from here is the
   // long-press further down.
   await showControls(page);
-  const reader = page.locator(".reader-room:not(.inline-reader)");
+  const reader = page.locator(".reader-room");
   await expect(reader.locator(".reader-topbar").getByRole("button", { name: "More", exact: true })).toHaveCount(0);
   await expect(reader.locator(".reader-player").getByRole("button", { name: "Back to narration", exact: true })).toBeVisible();
   await page
@@ -153,7 +154,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await expect(page.getByRole("heading", { level: 1, name: "Bookmarks", exact: true })).toBeVisible();
   await expect(page.getByRole("list", { name: "Bookmarks", exact: true }).getByRole("listitem")).toHaveCount(1);
   await page.getByRole("button", { name: "Back to the book", exact: true }).click();
-  await expect(page.locator(".reader-room:not(.inline-reader) .reader-viewport iframe")).toBeVisible();
+  await expect(page.locator(".reader-room .reader-viewport iframe")).toBeVisible();
   await expect
     .poll(
       async () =>
@@ -162,14 +163,15 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
     )
     .toBe(checkpoint.locator.cfi);
   await page.setViewportSize({ width: 430, height: 844 });
-  await expect(page.locator(".reader-room:not(.inline-reader) .reader-viewport iframe")).toBeVisible();
+  await expect(page.locator(".reader-room .reader-viewport iframe")).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
-  // Appearance docked under the text (#588).
-  const standaloneRoom = page.locator(".reader-room:not(.inline-reader)");
-  const docked = await openAppearance(page, standaloneRoom);
-  await docked.getByRole("radio", { name: "Sepia", exact: true }).click();
-  await setStepper(standaloneRoom, "Size", 23);
-  await closeAppearance(standaloneRoom);
+  // Appearance docked under the text (#588). The reader's own Theme went with the reader on its own (#613 part 2):
+  // the Read face takes the app's look, and the panel has no Theme row.
+  const room = page.locator(".reader-room");
+  const docked = await openAppearance(page, room);
+  await expect(docked.getByRole("radiogroup", { name: "Theme", exact: true })).toHaveCount(0);
+  await setStepper(room, "Size", 23);
+  await closeAppearance(room);
   // Linking queued a backfill job; cancel it so the reading sync is prepared from the Reading sync page (#541).
   await expect
     .poll(
@@ -227,14 +229,16 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await syncButtons.first().click();
   await expect(sync).toHaveAttribute("data-state", /^(ready|partial)$/, { timeout: 15000 });
   await expect(page.getByRole("button", { name: "Mark alignment reviewed", exact: true })).toHaveCount(0);
-  await page.goto(`/#reader/${id}`);
-  await expect(page.locator(".reader-room:not(.inline-reader) .reader-viewport iframe")).toBeVisible();
+  await gotoRead(page, id);
+  await expect(page.locator(".reader-room .reader-viewport iframe")).toBeVisible();
   await showControls(page);
   await page.getByRole("button", { name: "Chapters", exact: true }).click();
+  // In Now playing's Read face the narrated book's Chapters rows also name where the narration is (#590).
   await page
-    .getByRole("button", { name: "Down the Rabbit-Hole", exact: true })
+    .getByRole("list", { name: "Chapters", exact: true })
+    .getByRole("button", { name: /Down the Rabbit-Hole/ })
     .click();
-  const sentence = page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").locator("p").first();
+  const sentence = page.frameLocator(".reader-room .reader-viewport iframe").locator("p").first();
   const box = (await sentence.boundingBox())!;
   await page.mouse.move(box.x + 30, box.y + 10);
   await page.mouse.down(); await page.waitForTimeout(650); await page.mouse.up();
@@ -265,8 +269,8 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
       `reader-file:${id}`,
     ),
   ).toBe(false);
-  await page.goto(`/#reader/${id}`);
-  await expect(page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").locator("body")).toBeVisible();
+  await gotoRead(page, id);
+  await expect(page.frameLocator(".reader-room .reader-viewport iframe").locator("body")).toBeVisible();
   await page.evaluate(() => navigator.serviceWorker.ready);
   await expect
     .poll(() => page.evaluate(() => !!navigator.serviceWorker.controller))
@@ -275,7 +279,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await context.setOffline(true);
   await page.reload();
   await expect(
-    page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").locator("body"),
+    page.frameLocator(".reader-room .reader-viewport iframe").locator("body"),
   ).toBeVisible();
   await showControls(page);
   await expect(page.getByRole("button", { name: "Save ebook offline", exact: true })).toHaveCount(0);
@@ -288,9 +292,9 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await page.goBack();
   await page.goBack();
   await expect(
-    page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").locator("body"),
+    page.frameLocator(".reader-room .reader-viewport iframe").locator("body"),
   ).toBeVisible();
-  await page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").locator("body").click({ position: { x: 340, y: 100 } });
+  await page.frameLocator(".reader-room .reader-viewport iframe").locator("body").click({ position: { x: 340, y: 100 } });
   await showControls(page);
   await page
     .getByRole("button", { name: "Bookmark current sentence", exact: true })
@@ -330,10 +334,10 @@ test("an image-only cover opens at the first readable EPUB section on a narrow p
   const book = await (await page.request.get(`/api/reader/${id}`)).json();
   expect(book.sections[0].index).toBe(1);
   await page.setViewportSize({ width: 320, height: 740 });
-  await page.goto(`/#reader/${id}`);
+  await gotoRead(page, id);
   await expect(
     page
-      .frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe")
+      .frameLocator(".reader-room .reader-viewport iframe")
       .getByText("Alice was beginning to get very tired", { exact: false }),
   ).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
@@ -389,12 +393,14 @@ test("a bookmark the server rejects is dropped with a notice and later bookmarks
     }
     return route.continue();
   });
-  await page.goto(`/#reader/${id}`);
-  const reader = page.getByRole("dialog", { name: "Reader" });
+  await gotoRead(page, id);
+  const reader = page.getByRole("dialog", { name: "Now playing", exact: true });
   await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
   await showControls(page);
+  // A book with only this ebook reads in Now playing's Read face with no narration (#594): the head bookmarks the
+  // page's first sentence.
   const add = reader.getByRole("button", {
-    name: "Bookmark current sentence",
+    name: "Bookmark the first sentence on this page",
     exact: true,
   });
   await add.click();
@@ -459,7 +465,7 @@ test("a reader setting does not save an appearance preview", async ({
       );
       location.hash = `reader/${id}`;
     }, id);
-    const reader = page.getByRole("dialog", { name: "Reader" });
+    const reader = page.getByRole("dialog", { name: "Now playing", exact: true });
     await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
     await showControls(page);
     // From Appearance docked under the text (#588).
@@ -534,8 +540,8 @@ test("Keep my place while offline keeps the conflict until reconnected and then 
   });
   expect(upload.ok()).toBe(true);
   const { id } = await upload.json();
-  await page.goto(`/#reader/${id}`);
-  const reader = page.getByRole("dialog", { name: "Reader" });
+  await gotoRead(page, id);
+  const reader = page.getByRole("dialog", { name: "Now playing", exact: true });
   const frame = reader.frameLocator(".reader-viewport iframe");
   await expect(
     frame.getByText("Alice was beginning to get very tired", { exact: false }),
@@ -620,8 +626,8 @@ test("a 409 with no server checkpoint rebases to revision 0 and saves instead of
       }),
     );
   }, id);
-  await page.goto(`/#reader/${id}`);
-  const reader = page.getByRole("dialog", { name: "Reader" });
+  await gotoRead(page, id);
+  const reader = page.getByRole("dialog", { name: "Now playing", exact: true });
   const frame = reader.frameLocator(".reader-viewport iframe");
   await expect(
     frame.getByText("Alice was beginning to get very tired", { exact: false }),
