@@ -62,6 +62,28 @@ export function passageAt(intervals, trackId, time) {
   return intervals.find((i) => i.trackId === trackId && i.start <= time && i.end > time);
 }
 
+/**
+ * The narrated sentence the reader follows at a place of the recording (`narratedSentence` in src/reader-following.ts,
+ * which a .mjs script cannot import; tests/live-check-recording.test.mjs holds the two to the same answers): of the
+ * map's intervals in narration order (the recording's file order, then start), the last one that starts at or before
+ * the place. Null before the map's first sentence: there the reader has nothing to follow, and the administrator's
+ * Back to narration is on, to locate the passage from the audio (#592). #744: with the saved position before a partial
+ * map's first sentence (an unmapped intro, or no saved progress: the first file at 0) the check found it on there.
+ */
+export function narratedAt(intervals, trackIds, trackId, position) {
+  const rank = new Map(trackIds.map((id, index) => [id, index]));
+  const track = rank.get(trackId);
+  if (track === undefined) return null;
+  let best = null;
+  for (const [index, interval] of intervals.entries()) {
+    const at = rank.get(interval.trackId);
+    if (at === undefined || at > track || (at === track && !(interval.start <= position))) continue;
+    // The later in narration order wins; of equal places, the later in the map.
+    if (!best || at > best.at || (at === best.at && interval.start >= best.interval.start)) best = { at, interval, index };
+  }
+  return best?.interval ?? null;
+}
+
 // Where the check presses Play so the narration visibly advances: a moment a passage is highlighted, with a different
 // passage beginning within FOLLOW_ADVANCE_SECONDS, and the whole wait more than TRACK_END_MARGIN_SECONDS before the end
 // of the file. Of those, the one nearest the old target (20 s before the middle sample) is used.
@@ -86,7 +108,7 @@ function followStart(intervals, trackId, middle, playEnd) {
 /**
  * What the reader check does with one map, from the map's intervals and the book's saved position. Selection uses it
  * to ask "does this map support the check?" and the check uses its positions to seek. Returns
- * {start: {trackId, position}, trackId, samples: [{section, paragraphId, position, middle}], middle, follow: {start,
+ * {start: {trackId, position}, startNarrated, trackId, samples: [{section, paragraphId, position, middle}], middle, follow: {start,
  * passage, next, nextAt}} or {reason}.
  * - The file that loads is the one holding the saved position; the check seeks only within it.
  * - Each sample is a mapped passage longer than 4 s (pickMappedIntervals); the check seeks 1 s before its end and
@@ -116,7 +138,10 @@ export function readerSequence(intervals, book) {
   const follow = followStart(intervals, track.id, middle, playEnd);
   if (!follow)
     return { reason: `on file ${track.id} no highlighted passage is followed within ${FOLLOW_ADVANCE_SECONDS} s by another, more than ${TRACK_END_MARGIN_SECONDS} s before the end of the file, so the narration cannot be seen to advance` };
-  return { start: { trackId: track.id, position: start.position }, trackId: track.id, samples, middle, follow };
+  // Whether the reader has a narrated sentence to follow at the saved position (narratedAt); without one the check moves
+  // to the first sample before it asserts that the reader follows (#744).
+  const startNarrated = !!narratedAt(intervals, (book.tracks || []).map((t) => t.id), track.id, start.position);
+  return { start: { trackId: track.id, position: start.position }, startNarrated, trackId: track.id, samples, middle, follow };
 }
 
 /**

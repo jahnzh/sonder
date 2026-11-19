@@ -662,3 +662,42 @@ test("#742 round 2: the reader check opens Read from the player holding the sele
   assert.match(between, /\.player-dock \.dock-book.*toContainText\(book\.title\)/);
   assert.match(source.slice(read), /if\(readWork!==book\.workId\)throw Error/);
 });
+
+// #744: the reader check asserted "Back to narration is off while following" at the saved position. Before a partial
+// map's first sentence (an unmapped intro, or no saved progress: the first file at 0) the reader has no narrated
+// sentence there, and the administrator's Back to narration is on to locate the passage (#592), so the check reported
+// "the reader follows nothing". readerSequence now says whether the saved position has a narrated sentence, by the
+// reader's own rule, and the check moves to its first mapped sample first when it has none.
+test("narratedAt gives the reader's narrated sentence (narratedSentence) at every place, and none before the first sentence (#744)", async () => {
+  const { createReaderFollowing } = await import("../src/reader-following.ts");
+  const following = createReaderFollowing({ onManualSave() {}, onRetry() {}, onClearFollowError() {} });
+  const tracks = ["t0", "t1", "t2"];
+  const intervals = [
+    mapped("t1", 40, 46, "b"), mapped("t0", 30, 36, "a"), mapped("t1", 40, 47, "b2"), mapped("t1", 90, 96, "c"),
+    mapped("gone", 1, 2, "x"), mapped("t2", 5, 9, "d"),
+  ];
+  const map = { recordingId: "r", intervals };
+  for (const trackId of [...tracks, "other"])
+    for (const position of [0, 5, 29.9, 30, 35, 39.9, 40, 41, 90, 200]) {
+      const reader = following.narratedSentence(map, { recordingId: "r", tracks, trackId, position });
+      assert.equal(rec.narratedAt(intervals, tracks, trackId, position), reader, `${trackId} at ${position}`);
+    }
+  assert.equal(rec.narratedAt(intervals, tracks, "t0", 10), null, "before the map's first sentence");
+  assert.equal(rec.narratedAt(intervals, tracks, "t1", 10)?.paragraphId, "a", "an earlier file's sentence is still narrated");
+});
+
+test("readerSequence says whether the saved position has a narrated sentence: not before a partial map's first one (#744)", () => {
+  // The Butcher's Masquerade shape: no saved progress, so the first file at 0, and the map's first sentence after an
+  // unmapped intro.
+  const fresh = book("butcher", { tracks: [{ duration: 3000 }] });
+  const intro = rec.readerSequence(sentences(fresh.tracks[0].id, 45, 600), fresh);
+  assert.equal(intro.reason, undefined, intro.reason);
+  assert.equal(intro.startNarrated, false);
+  assert.ok(intro.samples[0].position > 45, "the check moves to a mapped sample before it asserts the reader follows");
+  const listened = book("listened", { tracks: [{ duration: 3000 }], progress: { track: 0, position: 300 } });
+  assert.equal(rec.readerSequence(sentences(listened.tracks[0].id, 45, 600), listened).startNarrated, true);
+  // A sentence on an earlier file is narrated at the start of the next one.
+  const tracks = [{ duration: 600 }, { duration: 3000 }];
+  const into = book("into744", { tracks, progress: { track: 1, position: 5 } });
+  assert.equal(rec.readerSequence([mapped(into.tracks[0].id, 500, 503), ...sentences(into.tracks[1].id, 10, 400)], into).startNarrated, true);
+});

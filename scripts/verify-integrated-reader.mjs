@@ -105,10 +105,17 @@ try {
  // here, so no "Reading mode" group may be on the page.
  await expect(page.getByRole('group',{name:'Reading mode',exact:true})).toHaveCount(0);
  for(const name of ['Page','Lyrics','Word'])await expect(full.getByRole('button',{name,exact:true})).toHaveCount(0);
- // Following the narration, Back to narration has nothing to return to.
- await expect(room.getByRole('button',{name:'Back to narration',exact:true}),`Back to narration is on: the reader follows nothing of map ${pick.job.id} (EPUB ${ebook.id}, status ${pick.job.status})`).toBeDisabled();
+ // Following the narration, Back to narration has nothing to return to. Before the map's first sentence (an unmapped
+ // intro, a partial map) the reader has no sentence to follow and the administrator's Back to narration is on to locate
+ // the passage (#592): there the check first moves the paused audio to its first mapped sample, in the saved file (#744).
+ if(!sequence.startNarrated){
+  const first=sequence.samples[0];
+  await page.evaluate(position=>{const a=window.__audio.find(a=>a.src);a.currentTime=position;},first.position);
+  await expect(room,`no narrated sentence at the saved position ${sequence.start.position.toFixed(1)} s; after a seek to the mapped sample ${first.paragraphId} at ${first.position} s the reader highlights another passage`).toHaveAttribute('data-current-passage',first.paragraphId);
+ }
+ await expect(room.getByRole('button',{name:'Back to narration',exact:true}),`Back to narration is on: the reader follows nothing of map ${pick.job.id} (EPUB ${ebook.id}, status ${pick.job.status}) at ${(await actual()).position.toFixed(1)} s of file ${sequence.trackId}`).toBeDisabled();
  await page.screenshot({path:'artifacts/live-reader-options-mobile.png'});
- report.checks.push({name:'Now playing opens its Read face with the EPUB; the head has no More, there is no view switch, Back to narration is off while following',ebookId:ebook.id});
+ report.checks.push({name:'Now playing opens its Read face with the EPUB; the head has no More, there is no view switch, Back to narration is off while following',ebookId:ebook.id,startNarrated:sequence.startNarrated});
  // Sample the audio element directly and check that Page mode follows.
  const seek=position=>page.evaluate(position=>{const a=window.__audio.find(a=>a.src);a.currentTime=position;},position);
  // Seeking the audio element stays within the loaded file: the file of the saved position, whose passages the sequence samples.
