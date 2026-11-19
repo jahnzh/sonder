@@ -522,6 +522,12 @@
     min-height: 0;
     margin: 0;
   }
+  /* Two pages side by side (#762): in Page mode, when the text area between the arrows has room for two pages of the
+     text's measure, the host spans both (its width set by the reader, src/reader-spread.ts) and epub.js lays out a
+     spread. The dock and the footer keep their own widths. */
+  .reader-room .reader-page-area > .reader-viewport[data-spread] {
+    flex: 0 1 var(--reader-spread);
+  }
   /* The page arrows in the margins, beside the text. */
   .reader-edge {
     position: static;

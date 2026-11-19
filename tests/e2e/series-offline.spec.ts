@@ -8,6 +8,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { savedSeriesRow, showSavedSeries } from "./library-series";
 import { connectAudiobookDb } from "./series-save";
+import { cutOffByWebKit } from "./mobile";
 
 const OUT = "OUT";
 mkdirSync(OUT, { recursive: true });
@@ -88,7 +89,10 @@ const rowTexts = async (page: Page) => [
 test("a saved series opened once shows offline after a reload with its books' lines and its buttons off; back online it is read again; one never opened shows the Library", async ({ page, context }) => {
   restore = await saveBoth(page);
   const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
+  // WebKit reports the library read that going offline cuts off as a page error, though the app catches it (#570).
+  page.on("pageerror", (error) => {
+    if (!cutOffByWebKit(error.message)) errors.push(error.message);
+  });
 
   // The service worker controls the page, so a reload without a connection still has the app.
   await page.goto("/#library");
@@ -190,96 +194,106 @@ test("on a desktop without a connection the stored list stands beside the stored
   await context.setOffline(false);
 });
 
-test("the Dexie upgrade to the stored series keeps every earlier table and its rows", async ({ page }) => {
-  // What the app would read again from the server replaces the stored works and Keep entries: the server is not
-  // answered here, so the rows of the earlier version are what the upgrade left.
-  await page.route(/\/api\/(library|keep)(\/|\?|$)/, (route) => route.abort());
-  await page.goto("/build.json");
-  // Dexie opens IndexedDB at ten times its version: 60 is a device that last ran db.version(6), before the series table.
-  const rows: Record<string, unknown> = {
-    books: { id: "old-book", workId: "old-work", recordingId: "old-recording", title: "Old book" },
-    progress: { recordingId: "old-recording", trackId: "old-track", position: 12.5, duration: 300, updatedAt: 12345 },
-    preferences: { key: "favorites", value: ["old-book"] },
-    downloads: { trackId: "old-track", recordingId: "old-recording", name: "Track 1.mp3", size: 4, storage: "chunks", completedAt: 1, mime: "audio/mpeg" },
-    downloadParts: { trackId: "old-part", recordingId: "old-recording", loaded: 4, total: 8, mime: "audio/mpeg", version: "v1" },
-    positionHistory: { recordingId: "old-recording", entries: [{ trackId: "old-track", position: 40, timestamp: Date.now(), kind: "seek" }] },
-    works: { workId: "old-work", title: "Old book", inLibrary: true, recordings: [], ebooks: [], readingSync: [], series: [] },
-    keep: { workId: "old-work", on: true, updatedAt: 1 },
-  };
-  const seeded = await page.evaluate(async (rows) => {
-    const keys: Record<string, string | string[]> = {
-      books: "id",
-      progress: "recordingId",
-      preferences: "key",
-      downloads: "trackId",
-      downloadParts: "trackId",
-      downloadChunks: ["trackId", "offset"],
-      positionHistory: "recordingId",
-      works: "workId",
-      keep: "workId",
+test.describe(() => {
+  // It answers the library and Keep reads with page.route, which a service worker in control bypasses in WebKit
+  // (mobile-iphone-series-sw, #570); the upgrade needs no service worker.
+  test.use({ serviceWorkers: "block" });
+  test("the Dexie upgrade to the stored series keeps every earlier table and its rows", async ({ page }, info) => {
+    // Playwright's WebKit context is ephemeral and its IndexedDB refuses a Blob (NO_BLOB_STORE in mobile.ts): there the
+    // download's chunk is stored as bytes, so the upgrade is still checked in WebKit (#570).
+    const blobs = info.project.use.browserName !== "webkit" && info.project.use.defaultBrowserType !== "webkit";
+    // What the app would read again from the server replaces the stored works and Keep entries: the server is not
+    // answered here, so the rows of the earlier version are what the upgrade left.
+    await page.route(/\/api\/(library|keep)(\/|\?|$)/, (route) => route.abort());
+    await page.goto("/build.json");
+    // Dexie opens IndexedDB at ten times its version: 60 is a device that last ran db.version(6), before the series table.
+    const rows: Record<string, unknown> = {
+      books: { id: "old-book", workId: "old-work", recordingId: "old-recording", title: "Old book" },
+      progress: { recordingId: "old-recording", trackId: "old-track", position: 12.5, duration: 300, updatedAt: 12345 },
+      preferences: { key: "favorites", value: ["old-book"] },
+      downloads: { trackId: "old-track", recordingId: "old-recording", name: "Track 1.mp3", size: 4, storage: "chunks", completedAt: 1, mime: "audio/mpeg" },
+      downloadParts: { trackId: "old-part", recordingId: "old-recording", loaded: 4, total: 8, mime: "audio/mpeg", version: "v1" },
+      positionHistory: { recordingId: "old-recording", entries: [{ trackId: "old-track", position: 40, timestamp: Date.now(), kind: "seek" }] },
+      works: { workId: "old-work", title: "Old book", inLibrary: true, recordings: [], ebooks: [], readingSync: [], series: [] },
+      keep: { workId: "old-work", on: true, updatedAt: 1 },
     };
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open("sonder", 60);
-      request.onupgradeneeded = () => {
-        for (const [name, keyPath] of Object.entries(keys)) {
-          const store = request.result.createObjectStore(name, { keyPath });
-          if (name === "downloads" || name === "downloadParts") store.createIndex("recordingId", "recordingId");
-          if (name === "downloadChunks") store.createIndex("trackId", "trackId");
-        }
+    const seeded = await page.evaluate(async ({ rows, blobs }) => {
+      const keys: Record<string, string | string[]> = {
+        books: "id",
+        progress: "recordingId",
+        preferences: "key",
+        downloads: "trackId",
+        downloadParts: "trackId",
+        downloadChunks: ["trackId", "offset"],
+        positionHistory: "recordingId",
+        works: "workId",
+        keep: "workId",
       };
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction([...Object.keys(rows), "downloadChunks"], "readwrite");
-      for (const [name, row] of Object.entries(rows)) tx.objectStore(name).put(row);
-      // The download's one chunk, as many bytes as the download says it has.
-      tx.objectStore("downloadChunks").put({ trackId: "old-track", offset: 0, blob: new Blob(["test"]) });
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-    const state = { version: db.version, hasSeries: db.objectStoreNames.contains("seriesAnswers") };
-    db.close();
-    return state;
-  }, rows);
-  expect(seeded).toEqual({ version: 60, hasSeries: false });
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open("sonder", 60);
+        request.onupgradeneeded = () => {
+          for (const [name, keyPath] of Object.entries(keys)) {
+            const store = request.result.createObjectStore(name, { keyPath });
+            if (name === "downloads" || name === "downloadParts") store.createIndex("recordingId", "recordingId");
+            if (name === "downloadChunks") store.createIndex("trackId", "trackId");
+          }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction([...Object.keys(rows), "downloadChunks"], "readwrite");
+        for (const [name, row] of Object.entries(rows)) tx.objectStore(name).put(row);
+        // The download's one chunk, as many bytes as the download says it has.
+        tx.objectStore("downloadChunks").put({ trackId: "old-track", offset: 0, blob: blobs ? new Blob(["test"]) : new TextEncoder().encode("test").buffer });
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+      const state = { version: db.version, hasSeries: db.objectStoreNames.contains("seriesAnswers") };
+      db.close();
+      return state;
+    }, { rows, blobs });
+    expect(seeded).toEqual({ version: 60, hasSeries: false });
 
-  await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Library", exact: true, level: 1 })).toBeVisible();
-  await expect
-    .poll(() => page.evaluate(() => new Promise<number>((resolve) => {
-      const request = indexedDB.open("sonder");
-      request.onsuccess = () => {
-        resolve(request.result.version);
-        request.result.close();
-      };
-    })))
-    .toBe(80);
-  const upgraded = await page.evaluate(async (names) => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open("sonder");
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    const found: Record<string, unknown[]> = {};
-    for (const name of names)
-      found[name] = await new Promise<unknown[]>((resolve, reject) => {
-        const read = db.transaction(name).objectStore(name).getAll();
+    await page.goto("/");
+    await expect(page.getByRole("heading", { name: "Library", exact: true, level: 1 })).toBeVisible();
+    await expect
+      .poll(() => page.evaluate(() => new Promise<number>((resolve) => {
+        const request = indexedDB.open("sonder");
+        request.onsuccess = () => {
+          resolve(request.result.version);
+          request.result.close();
+        };
+      })))
+      .toBe(80);
+    const upgraded = await page.evaluate(async (names) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open("sonder");
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const found: Record<string, unknown[]> = {};
+      for (const name of names)
+        found[name] = await new Promise<unknown[]>((resolve, reject) => {
+          const read = db.transaction(name).objectStore(name).getAll();
+          read.onsuccess = () => resolve(read.result);
+          read.onerror = () => reject(read.error);
+        });
+      const chunk = await new Promise<{ blob: Blob | ArrayBuffer } | undefined>((resolve, reject) => {
+        const read = db.transaction("downloadChunks").objectStore("downloadChunks").get(["old-track", 0]);
         read.onsuccess = () => resolve(read.result);
         read.onerror = () => reject(read.error);
       });
-    const chunk = await new Promise<{ blob: Blob } | undefined>((resolve, reject) => {
-      const read = db.transaction("downloadChunks").objectStore("downloadChunks").get(["old-track", 0]);
-      read.onsuccess = () => resolve(read.result);
-      read.onerror = () => reject(read.error);
-    });
-    const state = { version: db.version, stores: [...db.objectStoreNames].sort(), found, chunk: await chunk?.blob.text() };
-    db.close();
-    return state;
-  }, Object.keys(rows));
-  expect(upgraded.version).toBe(80);
-  expect(upgraded.stores).toEqual([...Object.keys(rows), "downloadChunks", "seriesAnswers"].sort());
-  expect(upgraded.chunk).toBe("test");
-  // The books table is the app's copy of `GET /api/books`, written again on every read: its rows are the server's.
-  for (const [name, row] of Object.entries(rows)) if (name !== "books") expect(upgraded.found[name], name).toContainEqual(expect.objectContaining(row as Record<string, unknown>));
+      const state = { version: db.version, stores: [...db.objectStoreNames].sort(), found, chunk: chunk?.blob instanceof Blob ? await chunk.blob.text() : chunk ? new TextDecoder().decode(chunk.blob) : undefined };
+      db.close();
+      return state;
+    }, Object.keys(rows));
+    expect(upgraded.version).toBe(80);
+    expect(upgraded.stores).toEqual([...Object.keys(rows), "downloadChunks", "seriesAnswers"].sort());
+    expect(upgraded.chunk).toBe("test");
+    // The books table is the app's copy of `GET /api/books`, written again on every read: its rows are the server's.
+    // In WebKit the chunk is bytes, not a Blob, so the device copy's check (getDownloadedBlob) drops the download's row
+    // once the app reads it, after the upgrade: Chromium and Firefox keep guarding that row.
+    for (const [name, row] of Object.entries(rows)) if (name !== "books" && (blobs || name !== "downloads")) expect(upgraded.found[name], name).toContainEqual(expect.objectContaining(row as Record<string, unknown>));
+  });
 });
