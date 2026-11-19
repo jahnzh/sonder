@@ -69,27 +69,17 @@ textarea {
   color: var(--text);
   border-color: var(--border);
 }
-.settings-section-icon,
-.connection-tag,
-.quiet-tag {
-  background: var(--raised);
-  color: var(--text);
-}
-.settings-form label,
-.settings-section h2,
 .book-title {
   color: var(--text);
 }
 .inline-error,
-.error-text,
-.text-danger {
+.error-text {
   color: var(--danger);
 }
 
 [data-density="compact"] .book-grid {
   gap: 20px 14px;
 }
-[data-density="compact"] .settings-section,
 [data-density="compact"] .book-list-row,
 [data-density="compact"] .release-card {
   padding-block: 14px;

@@ -4,14 +4,16 @@
 
    The foot of a phone is a stack from the bottom: the tab bar, the mini player when there is one, the offline line
    while there is no connection. Each part's height is a variable on .app-shell, so the page's padding, the offline
-   line and the toast sit above whatever is shown. */
+   line, the update notice and the toast sit above whatever is shown. */
 .app-shell {
   --rail-width: 220px;
   --shell-tab-bar: calc(var(--height-bar) + env(safe-area-inset-bottom));
   --shell-player: 0px;
   --shell-offline: 0px;
+  /* The update notice's height with its gaps, set by AppUpdate.tsx while it shows (#733). */
+  --shell-update: 0px;
   min-height: 100vh;
-  padding-bottom: calc(var(--shell-tab-bar) + var(--shell-player) + var(--shell-offline));
+  padding-bottom: calc(var(--shell-tab-bar) + var(--shell-player) + var(--shell-offline) + var(--shell-update));
 }
 .app-shell:has(.player-dock) {
   --shell-player: var(--player-height);
@@ -126,12 +128,25 @@
   color: var(--text);
 }
 
-/* Messages outside the reader: above the mini player and the offline line. */
+/* The update notice (#733): a message of the shell like the toast, above the mini player and the offline line and
+   never over the page's content: the page's padding keeps its height (--shell-update) free. */
+.app-update {
+  position: fixed;
+  z-index: 100;
+  left: var(--space-16);
+  right: var(--space-16);
+  bottom: calc(var(--shell-tab-bar) + var(--shell-player) + var(--shell-offline) + var(--space-16));
+  box-sizing: border-box;
+  margin-left: auto;
+  max-width: 620px;
+}
+
+/* Messages outside the reader: above the mini player, the offline line and the update notice. */
 .toast {
   position: fixed;
   z-index: 100;
   left: 50%;
-  bottom: calc(var(--shell-tab-bar) + var(--shell-player) + var(--shell-offline) + var(--space-16));
+  bottom: calc(var(--shell-tab-bar) + var(--shell-player) + var(--shell-offline) + var(--shell-update) + var(--space-16));
   transform: translateX(-50%);
   box-sizing: border-box;
   width: max-content;
@@ -241,6 +256,9 @@
     bottom: var(--shell-player);
     z-index: 62;
     border-right: 1px solid var(--border);
+  }
+  .app-update {
+    left: calc(var(--rail-width) + var(--space-16));
   }
   .toast {
     left: calc(var(--rail-width) + (100% - var(--rail-width)) / 2);

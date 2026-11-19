@@ -68,6 +68,7 @@ import {
   ensureMediaStorage,
   torrentDownloadDir,
 } from "./storage.ts";
+import { serverStorage, type StorageProbe } from "./server-storage.ts";
 import { acquireReplacing, acquisitionsLoop, cancelAcquisition, controlAcquisition } from "./acquisitions.ts";
 import { acquireForNewBook } from "./new-book.ts";
 import { retrySeriesAcquisitionJob, seriesAcquisitionLoop } from "./series-acquisition.ts";
@@ -181,6 +182,8 @@ export async function createApp(options?: {
   logger?: FastifyServerOptions["logger"];
   /** Tests: run the background loops by hand (see `server/background-runner.ts`). */
   background?: BackgroundOptions;
+  /** Tests: the media drive's check and sizes for `GET /api/settings` (see `server/server-storage.ts`). */
+  storage?: StorageProbe;
 }) {
   checkPoolHostsSetting();
   ensureMediaStorage();
@@ -520,6 +523,8 @@ export async function createApp(options?: {
     localConfigured: transmissionConfigured(),
     storageLabel: "4 TB media drive",
     authenticationEnabled: !!process.env.APP_PASSWORD,
+    // The media drive for Settings › Library and storage (#580); the administrator's answer only.
+    storage: serverStorage({ warn: (message) => req.log.warn(message), ...options?.storage }),
   }));
   app.patch("/api/settings", async (req) => {
     // Any user may save or clear their own Hardcover token here (#15); every other setting is the admin's.

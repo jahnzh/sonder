@@ -1,8 +1,8 @@
 // Settings › App (board SettingsApp.dc.html): Version, Updates (the update notice's own check), Installed or
 // Install, and Reset this device.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { DeviceResetRow } from "../../components/DeviceReset";
-import { reloadForUpdate, runningBuild, useAvailableUpdate } from "../../app-update";
+import { claimUpdateNotice, reloadForUpdate, runningBuild, useAvailableUpdate } from "../../app-update";
 import { usePlayer } from "../../player";
 import { Button } from "../../parts/Button";
 import { Group } from "../../parts/Group";
@@ -22,6 +22,8 @@ export function AppPage({ installable, onInstall, notify }: { installable: boole
   const player = usePlayer();
   const [reloading, setReloading] = useState(false);
   const installed = runsInstalled();
+  // The Updates row has its own Reload: the shell's update notice stays away while this page shows (#733).
+  useEffect(() => claimUpdateNotice(), []);
   return (
     <>
       <Group caption="This app" note={!installed && !installable ? INSTALL_BY_MENU : undefined}>

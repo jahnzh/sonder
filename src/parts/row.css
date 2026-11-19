@@ -49,6 +49,9 @@ button.part-row:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.part-row-value[data-failed] {
+  color: var(--danger);
+}
 .part-row-chevron {
   flex: none;
 }

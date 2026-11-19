@@ -10,6 +10,7 @@ import { SAVED_SERIES_701, SERIES_701_REMOVAL } from "./navigation-fixtures";
 import { tempDir } from "../temp-dir";
 import { openSavedSeries, savedSeriesList, seriesChip, showSavedSeries } from "./library-series";
 import { playFromContinue } from "./library-play";
+import { inSortPicker } from "./library-view";
 
 // Addresses and the page stack (#484, ADR 0020): the browser's history is the stack, Back means the same for the
 // phone's gesture and the browser's button, and every address that works today keeps working.
@@ -410,7 +411,13 @@ test.describe("with answers from the test", () => {
     const answered = await connectedLibrary(page);
     await page.goto("/#library");
     await expect(page.getByRole("button", { name: `About ${prefix} 7`, exact: true })).toBeVisible();
-    await expect(page.getByText("Hardcover is connected.", { exact: false })).toBeVisible();
+    // Hardcover's answer is read for the sort-and-view picker's Hardcover group (#578: the Library's Hardcover strip
+    // is gone); nothing of it stands above the list while no Hardcover filter is in use.
+    await expect.poll(() => answered.hardcover).toBeGreaterThan(0);
+    await inSortPicker(page, async (picker) => {
+      await expect(picker.locator(".part-picker-caption", { hasText: "Hardcover" })).toBeVisible();
+    });
+    await expect(page.locator(".library-hardcover-chips")).toHaveCount(0);
     // The saved series are read for the Series chip (#567); under All books nothing of them stands above the list.
     await expect.poll(() => answered.series).toBeGreaterThan(0);
     await expect(savedSeriesList(page)).toHaveCount(0);
@@ -824,13 +831,16 @@ test.describe("with a password", () => {
     await expect(shown(page)).toHaveText("Discover");
     await tab(page, "Library").click();
     await expect(shown(page)).toHaveText("Library");
+    // Nothing of the administrator's Hardcover: the sort-and-view picker has no Hardcover group for the reader (#578).
+    await inSortPicker(page, async (picker) => {
+      await expect(picker.locator(".part-picker-caption")).toHaveText(["Sort", "View"]);
+    });
     // The Series chip (#567): the reader's list is not read yet, and nothing of the administrator's stands in it.
     await showSavedSeries(page);
     await expect(savedSeriesList(page)).toBeVisible();
     await expect(savedSeriesList(page).getByText("Loading…", { exact: true })).toBeVisible();
     await expect(page.getByText("The Crossing", { exact: true })).toHaveCount(0);
     await expect(savedSeriesList(page).getByRole("button", { name: /The Crossing/ })).toHaveCount(0);
-    await expect(page.getByText("Hardcover is connected.", { exact: false })).toHaveCount(0);
     releaseReader();
     await context.close();
   });

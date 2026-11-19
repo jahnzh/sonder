@@ -159,6 +159,10 @@ const desktopProjects = [
               /(^|\/)(reader-more-gone|back-to-narration)\.spec\.ts$/,
               // A device whose browser cleared Sonder's files saves its kept books again (#554).
               /(^|\/)keep-cleared\.spec\.ts$/,
+              // The Library's sort-and-view control with the Hardcover shelf and list (#578).
+              /(^|\/)library-picker\.spec\.ts$/,
+              // The Server pages of Settings: Connections, Users, Library and storage, and their rewritten guards (#580).
+              /(^|\/)(settings-server|hardcover-sync-form|users)\.spec\.ts$/,
               // A series that is not saved opens its page with Save series; the specs that saved through the dialog (#564).
               /(^|\/)series-(not-saved|discovery|acquisition)\.spec\.ts$/,
               // A Hardcover book opens its Book page before it is a work on the server (#574).
@@ -173,6 +177,8 @@ const desktopProjects = [
               /(^|\/)activity-cancel\.spec\.ts$/,
               // A calibre EPUB whose text sits inside anchors: text colour and the centre tap (#727).
               /(^|\/)reader-text-links\.spec\.ts$/,
+              // A paused seek moves the reader's highlight, on a stream and a device copy (#730).
+              /(^|\/)reader-paused-seek\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },

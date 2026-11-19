@@ -38,9 +38,78 @@ export function readSort(stored: string | null | undefined): SortOrder {
 export function readView(stored: string | null | undefined): "grid" | "list" {
   return stored === "list" ? "list" : "grid";
 }
+export type LibraryView = "grid" | "list";
 
-/** Hardcover's shelf and list filters, as `HardcoverLibraryFilters` sets them: "all", "linked" or an id. */
+/** The sorts' names in the picker (Sort's choice rows). */
+export const SORT_NAMES: Record<SortOrder, string> = { recent: "Recently added", title: "Title", author: "Author", progress: "Progress" };
+/** The sorts' short names on the control ("Recent · Grid"). */
+const SORT_SHORT: Record<SortOrder, string> = { recent: "Recent", title: "Title", author: "Author", progress: "Progress" };
+const VIEW_NAMES: Record<LibraryView, string> = { grid: "Grid", list: "List" };
+
+/** The sort-and-view control: its text ("Recent · Grid") and its name ("Sort and view: recent, grid"). */
+export function controlLabel(sort: SortOrder, view: LibraryView): { text: string; name: string } {
+  return {
+    text: `${SORT_SHORT[sort]} · ${VIEW_NAMES[view]}`,
+    name: `Sort and view: ${SORT_SHORT[sort].toLowerCase()}, ${VIEW_NAMES[view].toLowerCase()}`,
+  };
+}
+
+/** Hardcover's shelf and list filters, as the picker sets them: "all" or the shelf's or list's id. */
 export type ShelfFilter = { shelf: string; list: string };
+export const NO_HARDCOVER_FILTER: ShelfFilter = { shelf: "all", list: "all" };
+
+/**
+ * The Hardcover filters remembered on this device, read back. Anything else than an object of two strings is no
+ * filter; the earlier strip's "Linked to Hardcover" (the shelf "linked") is gone from the picker and reads as all.
+ */
+export function readHardcoverFilter(stored: string | null | undefined): ShelfFilter {
+  try {
+    const value = JSON.parse(stored ?? "null") as Partial<ShelfFilter> | null;
+    const id = (part: unknown) => (typeof part === "string" && /^\d+$/.test(part) ? part : "all");
+    return value && typeof value === "object" ? { shelf: id(value.shelf), list: id(value.list) } : NO_HARDCOVER_FILTER;
+  } catch {
+    return NO_HARDCOVER_FILTER;
+  }
+}
+
+/** Hardcover's shelves and lists as `GET /api/hardcover` names them. */
+export type HardcoverNames = {
+  shelves: readonly { id: number; name: string }[];
+  lists: readonly { id: number; name: string; count: number }[];
+};
+
+/**
+ * The Hardcover filter in effect: the one chosen while Hardcover is connected, else none (a user who disconnects
+ * keeps the choice on the device but sees every book, with no chip to clear).
+ */
+export function hardcoverInEffect(filter: ShelfFilter, connected: boolean): ShelfFilter {
+  return connected ? filter : NO_HARDCOVER_FILTER;
+}
+
+/** The Shelf list in the picker: All shelves, then Hardcover's shelves. */
+export function shelfChoices(names: HardcoverNames): { value: string; label: string }[] {
+  return [{ value: "all", label: "All shelves" }, ...names.shelves.map((shelf) => ({ value: String(shelf.id), label: shelf.name }))];
+}
+/** The List list in the picker: All lists, then each list with its count. */
+export function listChoices(names: HardcoverNames): { value: string; label: string; detail?: string }[] {
+  return [{ value: "all", label: "All lists" }, ...names.lists.map((list) => ({ value: String(list.id), label: list.name, detail: String(list.count) }))];
+}
+/** A shelf's or list's name, or the generic one while Hardcover's names are not read (or it is gone). */
+export function shelfName(filter: ShelfFilter, names: HardcoverNames | null): { shelf: string | null; list: string | null } {
+  return {
+    shelf: filter.shelf === "all" ? null : names?.shelves.find((s) => String(s.id) === filter.shelf)?.name ?? "Hardcover shelf",
+    list: filter.list === "all" ? null : names?.lists.find((l) => String(l.id) === filter.list)?.name ?? "Hardcover list",
+  };
+}
+
+/** The chips under the heading for the Hardcover filters in use: each names its filter and clears it with a tap. */
+export function hardcoverChips(filter: ShelfFilter, names: HardcoverNames | null): { kind: "shelf" | "list"; text: string; name: string }[] {
+  const named = shelfName(filter, names);
+  const chips: { kind: "shelf" | "list"; text: string; name: string }[] = [];
+  if (named.shelf) chips.push({ kind: "shelf", text: named.shelf, name: `Clear the Hardcover shelf: ${named.shelf}` });
+  if (named.list) chips.push({ kind: "list", text: named.list, name: `Clear the Hardcover list: ${named.list}` });
+  return chips;
+}
 
 export type ShelfInput = {
   chip: LibraryChip;
@@ -85,7 +154,7 @@ export function underChip(work: LibraryWork, chip: LibraryChip, favorites: reado
 
 /** Hardcover's shelf and list: both in use narrow together, and together with the chip. */
 export function underHardcover(work: LibraryWork, { shelf, list }: ShelfFilter): boolean {
-  const shelfOk = shelf === "all" || (shelf === "linked" ? !!work.hardcover : work.hardcover?.statusId === Number(shelf));
+  const shelfOk = shelf === "all" || work.hardcover?.statusId === Number(shelf);
   const listOk = list === "all" || !!work.hardcover?.listIds.includes(Number(list));
   return shelfOk && listOk;
 }
@@ -161,6 +230,12 @@ export function listLine(work: LibraryWork): string {
   const marks = coverMarks(work);
   if (marks.kind === "downloading") return downloadLine({ status: "downloading", progress: marks.percent / 100 }) ?? "";
   return placeLine(work, null);
+}
+
+/** The list row's second line: the author and the place line, or the download's line alone. */
+export function listRowLine(work: LibraryWork): string {
+  const line = listLine(work);
+  return coverMarks(work).kind === "downloading" || !work.author ? line : `${work.author} · ${line}`;
 }
 
 /** The heading over the shelf: the chip's name ("All books", "In progress", …). */

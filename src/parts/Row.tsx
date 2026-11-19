@@ -10,6 +10,8 @@ type Common = {
   label: string;
   /** What it stands at, on the right edge (Label size, muted). */
   value?: string;
+  /** The value is in the failed colour (Library and storage's "Not connected", #580). */
+  failed?: boolean;
 };
 export type RowProps = Common &
   (
@@ -86,7 +88,7 @@ export function Row(props: RowProps) {
           name
         )}
         {value && (
-          <span id={`${id}-value`} className="part-row-value type-label">
+          <span id={`${id}-value`} className="part-row-value type-label" data-failed={props.failed ? "" : undefined}>
             {value}
           </span>
         )}

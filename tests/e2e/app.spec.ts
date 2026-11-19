@@ -315,8 +315,9 @@ test("desktop layout and server/device distinction remain usable without overflo
   // Settings shows the server's connections beside the list (spec #572, list 5).
   await page.goto("/#settings/connections");
   await expect(page.getByRole("navigation", { name: "Settings", exact: true })).toBeVisible();
+  // Connections beside the list (#580): the services as groups, the old long form's sections gone.
   await expect(
-    page.getByRole("heading", { name: "Your home server", exact: true }),
+    page.getByRole("heading", { name: "TorBox", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Anna’s Archive", exact: true }),

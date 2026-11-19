@@ -1,11 +1,15 @@
 import { test, expect, type Page } from "@playwright/test";
-test("settings shows local torrent status from the real health endpoint", async ({
+// The local torrent client is Activity › Server's Torrent client row (#519); Settings › Connections lists the
+// services of spec #572 only, so the old "Your home server" section with its health line is gone (#580).
+test("Connections has no local torrent section; the real health endpoint answers", async ({
   page,
 }) => {
+  const health = await (await page.request.get("/api/torrents/health")).json();
+  expect(health.status).toBe("unconfigured");
   await page.goto("/#settings/connections");
-  const line = page.getByTestId("torrent-health");
-  await expect(line).toHaveAttribute("data-status", "unconfigured");
-  await expect(line).toContainText("Local torrents are not configured.");
+  await expect(page.locator("main").getByRole("heading", { name: "TorBox", exact: true })).toBeVisible();
+  await expect(page.getByTestId("torrent-health")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Your home server", exact: true })).toHaveCount(0);
 });
 // The Torrent client row of Activity › Server reads the activity answer, whose torrent client is the server's own
 // probe of the same health (`torrentProcessHealth`): routed here the way the server builds it for that health (#519).
@@ -19,7 +23,7 @@ const withTorrentClient = (page: Page, client: { health: string; reason: string 
     );
     return route.fulfill({ json });
   });
-test("the Torrent client row reads the VPN message with the attention mark, and settings flags it", async ({
+test("the Torrent client row reads the VPN message with the attention mark", async ({
   page,
 }) => {
   await page.route("**/api/torrents/health*", (route) =>
@@ -48,10 +52,7 @@ test("the Torrent client row reads the VPN message with the attention mark, and 
     page.getByRole("list", { name: "Needs attention", exact: true }).getByRole("listitem").filter({ hasText: /^Torrent client/ }),
   ).toContainText(VPN);
   await page.goto("/#settings/connections");
-  await expect(page.getByTestId("torrent-health")).toHaveAttribute(
-    "data-status",
-    "offline",
-  );
+  await expect(page.locator("main").getByRole("heading", { name: "TorBox", exact: true })).toBeVisible();
   // No horizontal overflow at the window's width (390 here, 393 with the iPhone profile).
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
@@ -60,6 +61,7 @@ test("the Torrent client row reads the VPN message with the attention mark, and 
   // Library and storage.
   await page.goto("/#settings/library");
   await expect(page.getByRole("heading", { name: "Library", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Server storage", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Reading sync", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /Prepare reading sync/ })).toHaveCount(0);
 });
