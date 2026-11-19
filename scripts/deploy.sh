@@ -233,10 +233,9 @@ if [ "$skip_live" -eq 0 ]; then
     status=0
     skip_file=$(mktemp) || { echo "cannot create a temporary file for $script" >&2; failed_checks+=("$script"); continue; }
     echo "live check: $script"
-    # The operator's choice of recording, when set (#774); without it each check chooses its own.
-    SONDER_VERIFY_PRODUCTION=1 SONDER_LIVE_CHECK_SKIP_FILE="$skip_file" \
-      SONDER_VERIFY_RECORDING="${SONDER_VERIFY_RECORDING:-}" SONDER_VERIFY_ALLOW_RECENT="${SONDER_VERIFY_ALLOW_RECENT:-}" \
-      node "$script" || status=$?
+    # SONDER_VERIFY_RECORDING and SONDER_VERIFY_ALLOW_RECENT, when set, reach the check from this environment (#774):
+    # do not clear them here. Without them each check chooses its own recording.
+    SONDER_VERIFY_PRODUCTION=1 SONDER_LIVE_CHECK_SKIP_FILE="$skip_file" node "$script" || status=$?
     # Exit 3 counts as skipped only together with a written reason: any other exit 3 stays a failure.
     if [ "$status" -eq "$no_suitable_exit" ] && [ -s "$skip_file" ]; then
       reason=$(head -c 2000 "$skip_file" | tr '\n' ' ')

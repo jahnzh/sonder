@@ -819,4 +819,7 @@ test("#774: the multi-user check's temporary user works on a book the administra
   // Every title with audio was played: the first is used (the user's writes stay the user's), and the report says so.
   assert.deepEqual(rec.multiUserPlayable([noTracks, gate].map(strip), [gate], NOW), { book: strip(gate), recent: "listened to in the last 48 h" });
   assert.deepEqual(rec.multiUserPlayable([strip(noTracks)], [], NOW), { book: null, recent: null });
+  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../scripts/verify-multi-user.mjs"), "utf8");
+  assert.match(source, /const \{book:playable,recent:playableRecent\}=multiUserPlayable\(qaBooks,adminCatalogue\);/);
+  assert.doesNotMatch(source, /qaBooks\.find\(b=>b\.tracks\?\.length\)/, "no chooser of its own");
 });
