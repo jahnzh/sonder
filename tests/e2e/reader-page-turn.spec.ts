@@ -39,10 +39,11 @@ test.beforeEach(async({page})=>{
  });
 });
 // A slow phone's processor, opt-in (#664): SONDER_PAGE_TURN_CPU_THROTTLE=4 slows Chromium's page four times through
-// DevTools' CPU throttling for every test here, the proof that a turn's timing holds without load on the host.
+// DevTools' CPU throttling for every test here, the proof that a turn's timing holds without load on the host. A test
+// tagged @own-throttle sets its own rates, which a second throttle would compound.
 const cpuThrottle=Number(process.env.SONDER_PAGE_TURN_CPU_THROTTLE||0);
 test.beforeEach(async({page},testInfo)=>{
- if(cpuThrottle>1&&testInfo.project.name==="chromium")await(await page.context().newCDPSession(page)).send("Emulation.setCPUThrottlingRate",{rate:cpuThrottle});
+ if(cpuThrottle>1&&testInfo.project.name==="chromium"&&!testInfo.tags.includes("@own-throttle"))await(await page.context().newCDPSession(page)).send("Emulation.setCPUThrottlingRate",{rate:cpuThrottle});
 });
 test.afterEach(async({page})=>{
  await page.unrouteAll({behavior:"wait"});
@@ -630,7 +631,7 @@ test("at desktop width with two pages side by side the turn comes when the narra
 // On a host with more work than cores (six shards on lisa, #664) the page's thread is descheduled in the middle of a
 // measurement now and then, and that sample's clock time grows by the wait: so the budgets are on the median, which
 // such samples do not move, and the search itself is held by its lookups, which no load changes.
-test("finding the break of a narrated sentence takes a few milliseconds, also with the processor slowed six times",async({page},testInfo)=>{
+test("finding the break of a narrated sentence takes a few milliseconds, also with the processor slowed six times",{tag:"@own-throttle"},async({page},testInfo)=>{
  test.setTimeout(300000);
  test.skip(testInfo.project.name!=="chromium","CPU throttling is a Chromium DevTools feature");
  await page.addInitScript(()=>{(window as any).__sonderBreakTimings=[];(window as any).__sonderBreakLookups=[];});
