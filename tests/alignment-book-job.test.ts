@@ -26,7 +26,7 @@ const schema = await import("../server/schema.ts");
 const { extractBook } = await import("../server/reader.ts");
 const alignment = await import("../server/alignment.ts");
 const { createAlignment, alignmentJob, putAlignmentJob, processAlignments, stopAlignments, resetAlignmentRunnerForTests,
-  alignmentSchedulerForTests, queueEngineRebuilds, autoQueueAlignmentForPair, autoQueueAlignmentsForWork, runAlignmentBackfill } = alignment;
+  alignmentSchedulerForTests, queueEngineRebuilds, autoQueueAlignmentForPair, autoQueueAlignmentsForWork } = alignment;
 const transition = await import("../server/alignment-transitions.ts");
 const pool = await import("../server/alignment-pool.ts");
 const { getAlignmentPoolCoordinator, resetAlignmentPoolCoordinator, setAlignmentPoolDepsForTests } = pool;
@@ -298,13 +298,12 @@ test("a cancel of a job processing on lisa stops it there and is final: no resul
   await settled(created.id, ["cancelled"]);
   await until(() => calls("lisa").includes(`DELETE /book-jobs/${workerJobId}`) && !fake.hosts.lisa.jobs.size, "lisa's job cancelled");
   // The worker would now finish; the automatic queues of the pair (the work's auto-queue after an import or an
-  // ebook-set check, Prepare for all books) leave the cancel standing, and nothing runs.
+  // ebook-set check) leave the cancel standing, and nothing runs. Prepare for all books takes every pair of this
+  // file's other recordings too: its skip of a cancelled pair is in tests/alignment-backfill.test.ts.
   fake.hosts.lisa.holdAt = null;
   fake.hosts.wsl.down = false;
   assert.equal(await autoQueueAlignmentForPair("book-ebook", created.recordingId), false);
-  await autoQueueAlignmentsForWork("book-work", { ebookId: "book-ebook" });
-  await autoQueueAlignmentsForWork("book-work", { recordingId: created.recordingId });
-  assert.ok((await runAlignmentBackfill()).skipped.cancelled >= 1);
+  await autoQueueAlignmentsForWork("book-work", { ebookId: "book-ebook", recordingId: created.recordingId });
   await processAlignments();
   await new Promise((resolve) => setTimeout(resolve, 40));
   const job = alignmentJob(created.id);
