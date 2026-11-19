@@ -97,7 +97,7 @@ export function SeriesPage({ id, admin, online, books, revision, onSaved, onRemo
   // AudiobookDB's id (#721): text; an address from before (a Hardcover number) finds no saved series.
   const seriesId = id;
   const [series, setSeries] = useState<SavedSeries | null>(() => lastRead.get(key)?.series ?? null);
-  // This account saved the series; a series that is not saved is Hardcover's, with Save series (#564).
+  // This account saved the series; a series that is not saved is AudiobookDB's, with Save series (#564).
   const [saved, setSaved] = useState(() => lastRead.get(key)?.saved ?? true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -148,7 +148,7 @@ export function SeriesPage({ id, admin, online, books, revision, onSaved, onRemo
         setUnreached(unreached);
       };
       try {
-        // Whether this account saved the series (spec #560 "The Series page"): its saved series, or Hardcover's.
+        // Whether this account saved the series (spec #560 "The Series page"): its saved series, or AudiobookDB's.
         const list = await api<{ id: string }[]>("/series", fresh);
         if (gone.current) return;
         if (list.some((item) => item.id === seriesId)) {
@@ -159,7 +159,7 @@ export function SeriesPage({ id, admin, online, books, revision, onSaved, onRemo
           void keepSeriesAnswer(seriesAnswerKey(seriesId), value);
           return;
         }
-        // Not saved by this account: the page of Hardcover's series, with Save series. A copy this device kept from
+        // Not saved by this account: the page of AudiobookDB's series, with Save series. A copy this device kept from
         // when it was saved is not this series any more.
         void forgetSeriesAnswer(seriesAnswerKey(seriesId));
         const value = await api<SavedSeries>(`/discover/series/${encodeURIComponent(seriesId)}?language=${language}`, fresh);
@@ -337,7 +337,7 @@ export function SeriesPage({ id, admin, online, books, revision, onSaved, onRemo
       )}
 
       {model?.refreshError && (
-        <div className="series-page-card" role="group" aria-label="Hardcover could not be read">
+        <div className="series-page-card" role="group" aria-label="AudiobookDB could not be read">
           <p className="type-label" role="alert">
             {model.refreshError}
           </p>

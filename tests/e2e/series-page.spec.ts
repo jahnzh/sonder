@@ -249,12 +249,11 @@ test("a failed ebook search shows Series search failed with Retry, which runs it
 
 test("the refresh error: its message with Retry over the last saved list", async ({ page }) => {
   restore = await saveCrossing(page, ["503", "504"]);
-  // A week later, without AudiobookDB's key: the page reads the series again and cannot. (The card's name is still
-  // the app's "Hardcover could not be read", src/pages/series-page.tsx.)
+  // A week later, without AudiobookDB's key: the page reads the series again and cannot.
   await disconnectAudiobookDb(page);
   await ageSeries(page, "701");
   await page.goto("/#series/701");
-  const card = region(page).getByRole("group", { name: "Hardcover could not be read", exact: true });
+  const card = region(page).getByRole("group", { name: "AudiobookDB could not be read", exact: true });
   await expect(card.getByRole("alert")).toHaveText("Add the AudiobookDB API key in Settings, then retry.");
   // The last saved list is shown.
   await expect(row(books(page), "Crossing Two")).toBeVisible();

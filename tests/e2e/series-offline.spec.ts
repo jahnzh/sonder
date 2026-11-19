@@ -136,7 +136,7 @@ test("a saved series opened once shows offline after a reload with its books' li
   for (const retry of await region(page).getByRole("button", { name: /^Retry/ }).all()) await expect(retry).toBeDisabled();
   await expect(region(page).getByRole("button", { name: "Remove series", exact: true })).toBeDisabled();
   // The refresh error card does not stand beside it.
-  await expect(region(page).getByRole("group", { name: "Hardcover could not be read", exact: true })).toHaveCount(0);
+  await expect(region(page).getByRole("group", { name: "AudiobookDB could not be read", exact: true })).toHaveCount(0);
   await page.screenshot({ path: `${OUT}/series-offline-phone.png`, fullPage: true });
 
   // The address on a reload without a connection shows the same.

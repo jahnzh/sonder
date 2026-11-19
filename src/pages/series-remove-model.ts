@@ -46,7 +46,7 @@ export type SeriesRemoveModel = {
   body: { bookIds: string[] } | Record<string, never>;
 };
 
-/** What the user ticked or unticked, by Hardcover book id; the rest stand as `selectedByDefault`. */
+/** What the user ticked or unticked, by AudiobookDB book id; the rest stand as `selectedByDefault`. */
 export type SeriesRemoveManual = Readonly<Record<string, boolean>>;
 
 /** A work's one line: why it is not chosen, else what happens to its files. */

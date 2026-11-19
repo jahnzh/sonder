@@ -244,13 +244,12 @@ test("Hardcover not connected: only the server is searched, and the line links t
   await page.screenshot({ path: `${OUT}/discover-not-connected-phone.png` });
   await line.click();
   await expect(page).toHaveURL(/#settings\/connections$/);
-  // The series search (guard 18): it says to connect Hardcover, and its link opens Connections.
+  // The series search (guard 18): series come from AudiobookDB since #721, so without Hardcover the Series segment
+  // asks for no connection (its failure without AudiobookDB's key: series-discovery.spec.ts).
   await page.goto("/#discover");
   await discover(page).getByRole("radio", { name: "Series", exact: true }).click();
-  const seriesLine = discover(page).getByRole("button", { name: "Connect Hardcover to search for series.", exact: true });
-  await expect(seriesLine).toBeVisible();
-  await seriesLine.click();
-  await expect(page).toHaveURL(/#settings\/connections$/);
+  await expect(discover(page).getByRole("radio", { name: "Series", exact: true })).toBeChecked();
+  await expect(discover(page).getByText(/Connect Hardcover/)).toHaveCount(0);
   await setHardcover(page, true);
 });
 

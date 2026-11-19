@@ -59,7 +59,6 @@ export const HARDCOVER_FAILED_LINE = "Hardcover could not be searched.";
 export const SERVER_FAILED_LINE = "The server could not be searched.";
 export const OFFLINE_SEARCH_LINE = "Searching needs a connection.";
 export const CONNECT_HARDCOVER_LINE = "Connect Hardcover in Settings to search its books too";
-export const CONNECT_HARDCOVER_SERIES_LINE = "Connect Hardcover to search for series.";
 /** Series come from AudiobookDB (#721): its search failed; the server's reason follows. */
 export const SERIES_FAILED_LINE = "AudiobookDB could not be searched";
 
