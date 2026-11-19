@@ -419,7 +419,18 @@ export type ActivityFacts =
   | { kind: "acquisition"; status: string; backend: string | null }
   | { kind: "server-copy"; status: string }
   /** A series search for the audiobook or for the ebook of a work. */
-  | { kind: "series-acquisition"; status: string; search: "audiobook" | "ebook" }
+  | {
+      kind: "series-acquisition";
+      status: string;
+      search: "audiobook" | "ebook";
+      /**
+       * A waiting search's place in the one-at-a-time queue (#717): 1 is the search running now, so the first waiting
+       * one is 2 while a search runs. Null for one not waiting, or one that waits to try a source again (`retryAt`).
+       */
+      place?: number | null;
+      /** A search put back in the queue by itself after its source could not be reached waits until then; else null. */
+      retryAt?: number | null;
+    }
   | {
       kind: "alignment";
       status: string;
