@@ -26,14 +26,15 @@ export function sameBook(
 
 /**
  * The matched work new media of `title` by `author` joins when it names no work: the one work with that title and
- * author that is matched to a catalogue book (`work_catalogue_links`) or was matched to Hardcover before its removal
- * (the kept `hardcover_links`); none when there are several or none.
+ * author that was matched to Hardcover before its removal (the kept `hardcover_links`, the rule as it always was);
+ * none when there are several or none. A catalogue link (#721) does not count: media joins such a work only when it
+ * names it, as the Book page's Get does.
  */
 export function matchedWorkForMedia(title: string, author: string) {
   const works = sqlite
     .prepare(
       `SELECT id,title,author FROM works
-       WHERE id IN (SELECT work_id FROM work_catalogue_links) OR id IN (SELECT work_id FROM hardcover_links)`,
+       WHERE id IN (SELECT work_id FROM hardcover_links)`,
     )
     .all() as { id: string; title: string; author: string }[];
   const matches = works.filter((work) => sameBook(work, { title, author }));
