@@ -1,5 +1,4 @@
-// Saves to this device: in WebKit each test needs a persistent context to store a Blob in IndexedDB (#523, #596).
-import { test, expect, type Page } from "./device-store";
+import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { parseRange } from "../../server/range";
