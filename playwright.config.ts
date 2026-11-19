@@ -51,7 +51,8 @@ const activityIphone = existsSync(webkit.executablePath())
 // run in WebKit with the iPhone profile, and in Firefox beside the lines above.
 const nowPlayingSpecs =
   /(^|\/)(now-playing-(layout|faces|ebook-only|desktop)|reader-(bands|frame|theme|follow-highlight|load-teardown|appearance|foot-setting|pages|messages|more-gone|keys|page-turn|book-text|text-links|paused-seek|second-track|long-press-mapped|check-edition)|integrated-reader|back-to-narration|one-reading-view|playback-(workflow|speed|speed-rate)|media-controls|position-history|app|audiobook-page|book-page|device-downloads|discover|keep-reading|library-series|navigation|source-progress|users|reading-sync-again)\.spec\.ts$/;
-const nowPlayingIphone = existsSync(webkit.executablePath())
+// Opt-in (SONDER_SLICE_WEBKIT=1): a slice's final check runs it; the committed check on every push does not.
+const nowPlayingIphone = process.env.SONDER_SLICE_WEBKIT === "1" && existsSync(webkit.executablePath())
   ? [{ name: "webkit-iphone-now-playing", testMatch: nowPlayingSpecs, use: { ...devices["iPhone 15"], launchOptions: {} } }]
   : [];
 const desktopProjects = [
