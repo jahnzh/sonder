@@ -100,8 +100,8 @@ test("the matcher: exact normalised title and author, ASINs in file names, and t
   const releases = [release("en", 72_060_000, "en", "B004GJ4ZPU"), release("short", 28_800_000, "en"), release("de", 72_000_000, "German")];
   assert.deepEqual(links.pickRelease({ durationMs: 72_030_000, asin: null }, releases), { release: releases[0], by: "length" });
   assert.equal(links.pickRelease({ durationMs: 1_000_000, asin: null }, releases), null);
-  // Five minutes apart on a 20-hour book is another release, not this one.
-  assert.equal(links.pickRelease({ durationMs: 72_030_000, asin: null }, [release("other", 72_330_000, "en")]), null);
+  // Fifteen minutes apart on a 20-hour book (more than 1 %) is another release, not this one.
+  assert.equal(links.pickRelease({ durationMs: 72_030_000, asin: null }, [release("other", 72_930_000, "en")]), null);
   assert.equal(links.pickRelease({ durationMs: 72_030_000, asin: null }, [release("close", 72_080_000, "en")])?.release.id, "close");
   assert.deepEqual(links.pickRelease({ durationMs: 0, asin: "B004GJ4ZPU" }, releases), { release: releases[0], by: "asin" });
   // Two English releases of about the same length: not sure.
@@ -306,6 +306,10 @@ test("a book that already has a description and a narrator keeps them on a match
   // Without a description to fill, the book is read from the cache, never asked again live for one.
   const fresh = control.calls.filter((entry) => entry.url.includes("/books/bk-leviathan")).length;
   assert.equal(fresh, 1);
+  // Linked by hand with nothing cached: the live answer carries a description, and the book's own stays.
+  resetCatalogue();
+  await links.linkWork("w-leviathan", { provider: "audiobookdb", id: "bk-leviathan" }, "manual");
+  assert.equal(sqlite.prepare("SELECT description FROM works WHERE id='w-leviathan'").pluck().get(), "My own words.");
 });
 
 // ---- The match page ----
