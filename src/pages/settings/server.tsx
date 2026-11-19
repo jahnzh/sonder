@@ -184,7 +184,6 @@ export function ConnectionsPage({ user, settings, onSaved, notify }: Props) {
         </Group>
       )}
       <HardcoverConnection settings={settings} onSaved={onSaved} notify={notify} />
-      {admin && <CatalogueConnections settings={settings} onSaved={onSaved} notify={notify} save={save} />}
       {admin && (
         <>
           <Group caption="Prowlarr" info={<InfoMark name="Prowlarr" text={tip("prowlarr")} />}>
@@ -215,6 +214,7 @@ export function ConnectionsPage({ user, settings, onSaved, notify }: Props) {
           </Group>
         </>
       )}
+      {admin && <CatalogueConnections settings={settings} onSaved={onSaved} notify={notify} save={save} />}
       <p className="part-group-note settings-page-note">{KEYS_ENCRYPTED}</p>
     </>
   );

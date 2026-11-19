@@ -121,6 +121,8 @@ const desktopProjects = [
               /(^|\/)keep-reading\.spec\.ts$/,
               // The Get audiobook sheet, and the specs that used today's release picker for a book (#601).
               /(^|\/)(get-audiobook|releases|prowlarr|reliability)\.spec\.ts$/,
+              // A book's catalogue match page and AudiobookDB in Connections (#721).
+              /(^|\/)catalogue-match\.spec\.ts$/,
               // The Series page of a saved series (#562).
               /(^|\/)series-page\.spec\.ts$/,
               // The Reading sync page's buttons (#541).

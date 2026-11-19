@@ -48,6 +48,8 @@ const { installSeriesAcquisitionFixture } = await import(
   "./series-acquisition-fixture.ts"
 );
 installSeriesAcquisitionFixture();
+// AudiobookDB and Open Library answered from recorded answers (#721): no live call.
+(await import("./audiobookdb-fixture.ts")).installAudiobookDbFixture();
 const { createApp } = await import("../server/app.ts");
 const app = await createApp();
 // The alignment fixture's hold (#542): a spec keeps a real job's worker requests waiting, then lets them go.

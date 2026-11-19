@@ -57,7 +57,7 @@ export const FIXTURE = {
   // Found by the ASIN in a file name.
   asinBook: book("bk-asin", "A Long Way Home", "Ida Vale", { releases: [{ id: "rl-asin" }] }),
   // The match page's own book (browser spec).
-  feral: book("bk-feral", "Feral Gods", "Ada North", { releases: [{ id: "rl-feral" }] }),
+  feral: book("bk-feral", "Quiet Harbour", "Mira Sand", { releases: [{ id: "rl-feral" }] }),
 };
 const RELEASES: Record<string, ReturnType<typeof release>> = {
   "rl-lw-en": release("rl-lw-en", "bk-leviathan", "Jefferson Mays", 72_060_000, "English", "B004GJ4ZPU", 55),
@@ -88,8 +88,8 @@ function searchBooks(q: string) {
 
 const OPEN_LIBRARY_DOCS = [
   { key: "/works/OL27448W", title: "The Quiet Shelf", author_name: ["Nora Reader"], first_publish_year: 1999, cover_i: 12345, language: ["eng"] },
-  { key: "/works/OL1000W", title: "Feral Gods", author_name: ["Ada North"], first_publish_year: 2021, language: ["eng"] },
-  { key: "/works/OL2000W", title: "Wilde Götter", author_name: ["Ada North"], first_publish_year: 2022, language: ["ger"] },
+  { key: "/works/OL1000W", title: "Quiet Harbour", author_name: ["Mira Sand"], first_publish_year: 2021, language: ["eng"] },
+  { key: "/works/OL2000W", title: "Wilde Götter", author_name: ["Mira Sand"], first_publish_year: 2022, language: ["ger"] },
 ];
 
 export function createControl(): FixtureControl {

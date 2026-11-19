@@ -161,10 +161,10 @@ test("searches are cached a day under the normalised query, details a week; desc
   await abdb.audiobookDbBook("bk-leviathan");
   assert.equal(control.calls.length, 3);
   // Open Library: the same rules, English only.
-  const open = await ol.searchOpenLibrary("ada north");
-  assert.deepEqual(open.map((entry) => entry.title), ["Feral Gods"]);
+  const open = await ol.searchOpenLibrary("mira sand");
+  assert.deepEqual(open.map((entry) => entry.title), ["Quiet Harbour"]);
   assert.equal(control.calls.at(-1)!.headers["user-agent"], provider.CATALOGUE_USER_AGENT);
-  await ol.searchOpenLibrary("Ada   North");
+  await ol.searchOpenLibrary("Mira   Sand");
   assert.equal(control.calls.filter((entry) => entry.url.includes("openlibrary")).length, 1);
 });
 
@@ -203,14 +203,14 @@ test("limits: Retry-After and RateLimit-Remaining hold requests back, the day's 
   // Near the day's 10,000 units.
   sqlite.prepare("INSERT OR REPLACE INTO catalogue_usage(provider,day,units) VALUES('audiobookdb',?,?)").run(provider.usageDay(now), abdb.AUDIOBOOKDB_DAILY_UNITS - abdb.AUDIOBOOKDB_SEARCH_RESERVE);
   const sent = control.calls.length;
-  await assert.rejects(abdb.searchAudiobookDbBooks("feral gods"), { kind: "daily_limit", message: abdb.DAILY_LIMIT_LINE });
+  await assert.rejects(abdb.searchAudiobookDbBooks("quiet harbour"), { kind: "daily_limit", message: abdb.DAILY_LIMIT_LINE });
   assert.equal((await abdb.searchAudiobookDbBooks("leviathan"))[0].id, "bk-leviathan", "a cached search still serves");
   assert.equal((await abdb.audiobookDbBook("bk-feral")).id, "bk-feral", "a detail still goes through the reserve");
   assert.equal(control.calls.length, sent + 1);
   // Searching on the match page says so, and Open Library still answers.
-  const answer = (await call(admin, "GET", "/api/catalogue/search?q=feral%20gods")).json();
+  const answer = (await call(admin, "GET", "/api/catalogue/search?q=quiet%20harbour")).json();
   assert.equal(answer.audiobookdb.error, abdb.DAILY_LIMIT_LINE);
-  assert.deepEqual(answer.openlibrary.results.map((entry: { title: string }) => entry.title), ["Feral Gods"]);
+  assert.deepEqual(answer.openlibrary.results.map((entry: { title: string }) => entry.title), ["Quiet Harbour"]);
 });
 
 test("a provider failure has a reason, and the library and playback do not depend on it", async () => {
@@ -308,7 +308,7 @@ test("a book that already has a description and a narrator keeps them on a match
 // ---- The match page ----
 test("the match page: search both providers, pick a book and a release, unlink; only the administrator", async () => {
   resetCatalogue();
-  const searched = await call(admin, "GET", "/api/catalogue/search?q=feral%20gods");
+  const searched = await call(admin, "GET", "/api/catalogue/search?q=quiet%20harbour");
   assert.equal(searched.statusCode, 200);
   const body = searched.json();
   assert.deepEqual(body.audiobookdb.results.map((entry: { id: string }) => entry.id), ["bk-feral"]);
