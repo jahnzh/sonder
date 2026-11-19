@@ -5,6 +5,10 @@ import { readerFixture } from "../reader-fixture";
 import { installReaderWaitBudget, READER_WAIT_MS, timedWait } from "./timing";
 import { listenFace, nowPlaying, openListen, openRead } from "./now-playing";
 import { playFromLibrary } from "./library-play";
+import { installCpuThrottle } from "./cpu-throttle";
+import { revealControls } from "./reader-controls";
+// SONDER_E2E_CPU_THROTTLE=4 runs it on a processor slowed four times (Chromium).
+installCpuThrottle(test);
 
 // Per-step expect ceilings are up to 45 s; leave room around history restores.
 installReaderWaitBudget(test);
@@ -137,19 +141,9 @@ async function importWithEbook(page: Page, title: string, tracks = 1) {
   return book;
 }
 
+// One tap that toggles the controls, repeated only when it was lost (#662: tests/e2e/reader-controls.ts).
 async function revealReaderControls(page: Page) {
-  const room = page.locator(".inline-reader");
-  await expect(room.locator(".reader-viewport iframe")).toBeVisible();
-  const topbar = room.locator(".reader-topbar");
-  // The controls can hide between the look and the tap (the reader follows a new position), so tap again until
-  // they are up.
-  await expect(async () => {
-    if (await topbar.isHidden()) {
-      const box = (await room.locator(".reader-viewport").boundingBox())!;
-      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-    }
-    await expect(topbar).toBeVisible({ timeout: 1500 });
-  }).toPass({ timeout: 15000 });
+  await revealControls(page, page.locator(".inline-reader"));
 }
 
 /** The Earlier positions row on Listen (on Read, reached by switching to Listen). */

@@ -2,6 +2,9 @@ import { test, expect, type APIRequestContext, type Page } from "@playwright/tes
 import { chooseView, listRow } from "./library-view";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
+import { installCpuThrottle } from "./cpu-throttle";
+// SONDER_E2E_CPU_THROTTLE=4 runs it on a processor slowed four times (Chromium).
+installCpuThrottle(test);
 // A book read in the reader is In progress, and one read to the end is Finished (#556; spec #548 "Books with only
 // an ebook on screen"): the Library by work (#577) takes In progress, Not started and Finished from the work, so an
 // ebook-only book counts its ebook's place. `GET /api/books` keeps saying "unread" for such a book, so these

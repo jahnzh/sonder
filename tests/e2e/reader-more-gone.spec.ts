@@ -2,8 +2,12 @@ import { test, expect, type Page, type Route } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
-import { expectTextUncovered, showControls } from "./reader-bands";
+import { expectTextUncovered } from "./reader-bands";
+import { revealControls as showControls } from "./reader-controls";
 import { openRead } from "./now-playing";
+import { installCpuThrottle } from "./cpu-throttle";
+// SONDER_E2E_CPU_THROTTLE=4 runs it on a processor slowed four times (Chromium).
+installCpuThrottle(test);
 // The reader's More sheet goes (#592, spec #586 "The More sheet goes"): no More button in the head and nothing added
 // in its place; Read from audio is Back to narration's fallback. Without a narrated sentence the administrator's
 // Back to narration locates the passage from the audio (`/api/alignments/recover`) with "Finding the place in the

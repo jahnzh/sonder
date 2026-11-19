@@ -6,6 +6,9 @@ import { readerFixture } from "../reader-fixture";
 import { listenFace, openAudiobookPage, openListen, openRead } from "./now-playing";
 import { playFromLibrary } from "./library-play";
 import { skipWithoutBlobStore } from "./mobile";
+import { installCpuThrottle } from "./cpu-throttle";
+// SONDER_E2E_CPU_THROTTLE=4 runs it on a processor slowed four times (Chromium).
+installCpuThrottle(test);
 
 // Books a test imports get a title unique to the run, so a repeat on the same server finds one
 // "Play <title>" button, and leave the library afterwards, so what a test played does not become

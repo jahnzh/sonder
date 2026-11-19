@@ -19,7 +19,7 @@ import { Row } from "../parts/Row";
 import { Segmented } from "../parts/Segmented";
 import { Stepper } from "../parts/Stepper";
 import { InfoMark } from "../parts/Tooltip";
-import { useAddress } from "../navigation";
+import { goBackFrom, useAddress } from "../navigation";
 import { useWork } from "../library-works-store";
 import { useDeviceEbookChoice } from "../ebook-device-copy";
 import { chosenEbook } from "../ebook-choice";
@@ -121,7 +121,11 @@ function NowPlayingScreen({ workId, face, open, ...props }: NowPlayingProps & { 
     if (open && book && !p.book) void p.prepare(book);
   }, [open, book?.id, p.book?.id]);
 
-  const close = () => address.goBack({ name: "book", workId });
+  // Kept mounted, the dialog also hears of a focus outside it once the close's Back has landed and before this renders
+  // again (Firefox, as the reader's iframe goes): a plain Back from there went a second step and put the Book page in
+  // place of the Library behind (#662). As the reader's page does (#590), the close moves only while the entry still
+  // shows this face, so that late close moves nothing.
+  const close = () => goBackFrom({ name: face, workId }, { name: "book", workId });
   const faceControl = <FaceSwitch workId={workId} face={face} admin={props.admin} exists={exists} />;
   const shown = known && exists(face);
   return (
