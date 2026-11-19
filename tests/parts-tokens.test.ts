@@ -1,10 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { corner, edge, height, space, text } from "../src/parts/tokens.ts";
-
-// The redesign's tokens (#486; spec #480, "Tokens"). The spec's values are written out here once more, so a change
-// to either file that drifts from the spec fails.
+// The redesign's tokens (#486; spec #480, "Tokens"). The spec's values are written out here, so a change to
+// tokens.css that drifts from the spec fails. (src/parts/tokens.ts held the same numbers; nothing imported it, and
+// #609 deleted it.)
 const css = readFileSync(new URL("../src/parts/tokens.css", import.meta.url), "utf8");
 const rootBlock = css.slice(css.indexOf(":root {"), css.indexOf("}", css.indexOf(":root {")));
 function prop(name: string, block = rootBlock): string | undefined {
@@ -24,27 +23,23 @@ function rule(selector: string): Record<string, string> {
 }
 
 test("six spacing steps: 4, 8, 12, 16, 24, 32", () => {
-  assert.deepEqual([...space], [4, 8, 12, 16, 24, 32]);
-  for (const step of space) assert.equal(prop(`space-${step}`), `${step}px`, `--space-${step}`);
+  for (const step of [4, 8, 12, 16, 24, 32]) assert.equal(prop(`space-${step}`), `${step}px`, `--space-${step}`);
   assert.equal((rootBlock.match(/--space-/g) ?? []).length, 6);
 });
 
 test("three corners: 8 for controls, 14 for groups, round", () => {
-  assert.deepEqual(corner, { control: 8, group: 14, round: 999 });
   assert.equal(prop("corner-control"), "8px");
   assert.equal(prop("corner-group"), "14px");
   assert.equal(prop("corner-round"), "999px");
 });
 
 test("three heights: control 44, row 52, bar 64", () => {
-  assert.deepEqual(height, { control: 44, row: 52, bar: 64 });
   assert.equal(prop("height-control"), "44px");
   assert.equal(prop("height-row"), "52px");
   assert.equal(prop("height-bar"), "64px");
 });
 
 test("the screen edge is 16 on a phone and 32 from 760 px on", () => {
-  assert.deepEqual(edge, { phone: 16, desktop: 32, desktopFrom: 760 });
   assert.equal(prop("edge"), "16px");
   const desktop = css.slice(css.indexOf("@media (min-width: 760px)"));
   assert.equal(prop("edge", desktop.slice(0, desktop.indexOf("}"))), "32px");
@@ -58,9 +53,8 @@ test("five text styles with the spec's face, weight, size and line height", () =
     label: ["body", 500, 14, 20, false, 0],
     caption: ["body", 600, 12, 16, true, 0.08],
   } as const;
-  assert.deepEqual(Object.keys(text), Object.keys(spec));
+  assert.deepEqual([...css.matchAll(/\.type-([a-z]+)\s*\{/g)].map((match) => match[1]).sort(), Object.keys(spec).sort());
   for (const [name, [family, weight, size, lineHeight, uppercase, tracking]] of Object.entries(spec)) {
-    assert.deepEqual(text[name as keyof typeof text], { family, weight, size, lineHeight, uppercase, tracking }, name);
     const declared = rule(`.type-${name}`);
     assert.equal(declared["font-family"], `var(--font-${family})`, name);
     assert.equal(declared["font-weight"], String(weight), name);

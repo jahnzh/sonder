@@ -1,7 +1,7 @@
 // Addresses (ADR 0020, spec #480 "Addresses and the page stack"). The one module that reads an address,
 // writes one and names a page's parent. Pure: no `window`, no React. The history wiring is in navigation.ts.
 
-/** One of the top-level areas. Activity took the Downloads slot (#516); `#downloads` is an old name for it. */
+/** One of the top-level areas. Activity took the Downloads slot (#516); `#downloads` is an old name for it (`OLD_NAMES`). */
 export type Place = "library" | "discover" | "activity" | "settings";
 export type BookPage = "audiobook" | "ebook" | "sync" | "chapters" | "bookmarks" | "search" | "match" | "edit";
 export type ActivityPart = "now" | "device" | "server";
@@ -37,7 +37,11 @@ export type Route =
   | { name: "series-add"; id: string }
   | { name: "listen"; workId: string }
   | { name: "read"; workId: string }
-  /** Old name: the reader for one ebook edition, until it opens the Read face of that ebook's book. */
+  /**
+   * The reader on its own for one ebook edition: the Book page's Read of a narrated book that is not in the player
+   * opens it, and its theme choice lives only there. Spec #608 makes `#reader/<ebook id>` an old name for the Read
+   * face of that ebook's book (`OLD_NAMES`) once nothing opens this reader any more; until then it is a page.
+   */
   | { name: "reader"; ebookId: string }
   /** The parts gallery (#486): an address of its own that no navigation links to, for the browser tests and builders. */
   | { name: "gallery" }
@@ -59,13 +63,43 @@ function decode(part: string): string | null {
   }
 }
 
-/** Reads an address (`location.hash`, with or without its `#`). Never throws. */
+/**
+ * Old names (#455, spec #608 "Old names"): addresses from before the redesign, each with the page that took its
+ * place. They keep working for good: reading one returns the route of that page, marked as a redirect, so the
+ * history entry is replaced (ADR 0020). No route, place or page exists for an old name itself.
+ */
+export const OLD_NAMES: readonly {
+  /** The first part of the old address, after its `#`. */
+  head: string;
+  /** The address of the page that took its place, as the README and the glossary name it. */
+  becomes: string;
+  /** The route it reads as, from the parts after the head; null when those parts name nothing in `place`. */
+  read: (rest: readonly string[]) => Route | null;
+  place: Place;
+}[] = [
+  // The Downloads page, which Activity replaced (#516): it opens Now.
+  // `#reader/<ebook id>` joins this table when the reader on its own is gone (see the `reader` route).
+  { head: "downloads", becomes: "#activity", read: (rest) => (rest.length ? null : { name: "activity", part: "now" }), place: "activity" },
+];
+
+/** An address as read: its route, and whether it was an old name that the history entry is to be replaced by. */
+export type ReadAddress = { route: Route; redirect: boolean };
+
+/** Reads an address and says whether it was an old name (`OLD_NAMES`). Never throws. */
+export function readLink(hash: string): ReadAddress {
+  const head = (hash.startsWith("#") ? hash.slice(1) : hash).split("/")[0];
+  return { route: readAddress(hash), redirect: OLD_NAMES.some((entry) => entry.head === head) };
+}
+
+/** Reads an address (`location.hash`, with or without its `#`). Never throws. An old name reads as its new route. */
 export function readAddress(hash: string): Route {
   const text = hash.startsWith("#") ? hash.slice(1) : hash;
   // The installed app opens "/", with no address: it starts on the Library.
   if (!text) return { name: "library" };
   const [head, ...rest] = text.split("/");
   const nothing = (place: Place): Route => ({ name: "unknown", place });
+  const old = OLD_NAMES.find((entry) => entry.head === head);
+  if (old) return old.read(rest) ?? nothing(old.place);
   switch (head) {
     case "discover": {
       const query = rest.length === 2 && rest[0] === "get" ? decode(rest[1]) : null;
@@ -74,9 +108,6 @@ export function readAddress(hash: string): Route {
     }
     case "library":
       return rest.length ? nothing(head) : { name: head };
-    // Old name: the Downloads page, which Activity replaced (#516). It opens Now; the redirect replaces the entry.
-    case "downloads":
-      return rest.length ? nothing("activity") : { name: "activity", part: "now" };
     case "settings": {
       if (!rest.length) return { name: "settings" };
       const page = rest.length === 1 ? decode(rest[0]) : null;
