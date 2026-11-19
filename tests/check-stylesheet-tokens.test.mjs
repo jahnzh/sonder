@@ -17,7 +17,7 @@ const script = fileURLToPath(new URL("../scripts/check-stylesheet-tokens.mjs", i
 const NOT_YET_CONVERTED = ["src/appearance.css", "src/player.css", "src/reader.css", "src/signin.css", "src/styles.css"];
 // Every value the boards draw that no token gives, marked `/* tokens: <reason> */` on its declaration.
 // A new exception changes this number, so it is seen in review.
-const EXCEPTIONS = 21;
+const EXCEPTIONS = 20;
 
 // A fixture `appearance.css` with the tokens' names, and values on purpose unlike the real ones: the check reads
 // names only, and only from `:root` (a variable a rule sets for itself is not a token).
