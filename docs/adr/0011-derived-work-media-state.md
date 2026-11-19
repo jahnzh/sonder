@@ -1,5 +1,7 @@
 # Work media state is derived when read
 
+**Status (2026-11-19).** The download list (the Downloads page) is gone: copies to the server show in Activity's Now and Server (#516); `#downloads` is an old name for Activity. The decision stands.
+
 A work's **media state** for a user (`missing`, `queued`, `failed`, `available`) is computed when it is read, from the work's tracks and the user's latest acquisition for it. It is no longer stored and refreshed after every change. The table `work_media_states` keeps one row per user and work as the marker that the work is **tracked** for that user, together with the **hold reason** (`unreleased`, `empty_search`), which nothing else records.
 
 The acquisition status vocabulary (`checking`, `preparing`, `downloading`, `paused`, `ready`, `error`) lives in one module together with the sets "active" and "finished" and the one function that writes an acquisition's status. Every writer calls that function, including the pause, resume and retry routes.

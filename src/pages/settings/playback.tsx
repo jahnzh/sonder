@@ -1,9 +1,8 @@
 // Settings › Playback (board SettingsPlayback.dc.html): Listening (Default speed, Progress bar shows), Reading
-// (Reading mode, Follow the narration) and Keyboard shortcuts. Each saves when changed: the speed, the progress bar
+// (Reading mode, Follow the narration) and Keyboard shortcuts, which opens its page (#614). Each saves when changed: the speed, the progress bar
 // and the reading mode in the appearance (as the old form's Save did), Follow the narration on this device.
-import { useState } from "react";
 import { useAppearance } from "../../components/Appearance";
-import { KeyboardHelpDialog } from "../../components/KeyboardHelp";
+import { useAddress } from "../../navigation";
 import { usePlayer } from "../../player";
 import { SPEED_MAX, SPEED_MIN, SPEED_STEP, formatSpeed, resolveSpeed } from "../../playback-speed";
 import { setFollowsNarration, useFollowsNarration } from "../../follow-default";
@@ -29,7 +28,7 @@ export function PlaybackPage({ notify }: { notify: Notify }) {
   const { appearance, savePlayback, saveReader } = useAppearance();
   const speed = useDefaultSpeed();
   const follows = useFollowsNarration();
-  const [keys, setKeys] = useState(false);
+  const address = useAddress();
   const failed = (error: Error) => notify(error.message, true);
   return (
     <>
@@ -82,9 +81,8 @@ export function PlaybackPage({ notify }: { notify: Notify }) {
         />
       </Group>
       <Group label="Keyboard">
-        <Row label="Keyboard shortcuts" opens onClick={() => setKeys(true)} />
+        <Row label="Keyboard shortcuts" opens onClick={() => address.navigate({ name: "settings-page", page: "keyboard" })} />
       </Group>
-      <KeyboardHelpDialog open={keys} onOpenChange={setKeys} />
     </>
   );
 }

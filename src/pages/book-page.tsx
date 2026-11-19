@@ -15,7 +15,6 @@ import { Row } from "../parts/Row";
 import { InfoMark } from "../parts/Tooltip";
 import { backName } from "../parts/back-name";
 import { usePlayer } from "../player";
-import { openReader } from "../reading";
 import { useDeviceEbookChoice, useEbookDeviceCopy } from "../ebook-device-copy";
 import { ebookSearchTarget } from "./ebook-page";
 import { keepOffAndRemove, removeBookFiles, useDeviceBook, useKeepRecord } from "../keep-runtime";
@@ -199,10 +198,9 @@ export function BookPage(props: Props) {
   };
   const read = () => {
     if (!model.readEbookId) return;
-    // The book in the player reads beside the narration: Now playing on its Read face (#593). A book without a
-    // recording reads there too, like any other book (#594).
-    if (model.readFace || p.book?.workId === workId) address.navigate({ name: "read", workId });
-    else openReader(model.readEbookId);
+    // Now playing on its Read face (#593), for every book: the reader on its own is gone (#613 part 2). A book
+    // without a recording reads there with no narration (#594, #596).
+    address.navigate({ name: "read", workId });
   };
   /**
    * Add to library (#527): the work the server added, which for a Hardcover book not on the server is the work its

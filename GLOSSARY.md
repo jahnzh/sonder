@@ -23,7 +23,7 @@ _Avoid_: Unseen work
 A book of a series that AudiobookDB does not list because it has no audio release; Open Library lists it. Its ebook can be fetched, and its audiobook is searched for once AudiobookDB lists it.
 
 **Added with a series**:
-A work that came into a user's library when they saved a series or added a work from it, as opposed to one added on its own or from Hardcover's shelves. Only these are offered for removal together with the series.
+A work that came into a user's library when they saved a series or added a work from it, as opposed to one added on its own (or, before #721, from Hardcover's shelves). Only these are offered for removal together with the series.
 _Avoid_: Introduced
 
 **Work**:
@@ -98,9 +98,9 @@ _Avoid_: Hardcover match, linked book
 Sonder's own shelf of works a user means to read or listen to, per user, in their library. Reading and Finished are not shelves kept beside it: they come from the user's own progress. At the switch from Hardcover each user's Hardcover Want to read shelf was copied into it once.
 _Avoid_: Hardcover shelf, wishlist
 
-**Hardcover book**:
-A book in Hardcover's catalogue, as Discover finds it until #721 part c2 moves Discover to AudiobookDB and Open Library. One that no work on the server is matched to opens as a book not in the library under the work id it will get (`work-hc-<id>`, ADR 0022), and becomes a work when someone adds it or gets a file for it.
-_Avoid_: Hardcover result, catalogue entry, external book
+**Catalogue book**:
+A book in AudiobookDB or Open Library, as Discover finds it. One that no work on the server is linked to opens as a book not in the library under the work id it will get (`work-abdb-<id>`, `work-ol-<id>`; ADR 0022's rule), and becomes a work when someone adds it or gets a file for it. An address `work-hc-<id>` from an older build, when Discover searched Hardcover, opens the work stored as matched to that Hardcover book; Hardcover is never asked.
+_Avoid_: Hardcover book (since #721), catalogue entry, external book
 
 ## Screens
 
@@ -271,7 +271,7 @@ What the user has to look at: for the administrator, an activity that failed in 
 _Avoid_: Error, alert, problem (for the state)
 
 **Activity source**:
-A feature's own description of its background process and its current activities, which the Activity page collects.
+A feature's own description of its background process and its current activities, which Activity's Server part collects.
 _Avoid_: Adapter, provider
 
 **Worker lease**:

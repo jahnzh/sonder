@@ -1,6 +1,6 @@
 // Settings as a list (spec #572, "Settings"; boards Settings.dc.html, DesktopSettings.dc.html): which rows each
 // account sees, in which group, and the value each row shows. Pure: plain data in, rows out, for the unit tests.
-import type { SettingsPage } from "./routes";
+import type { Route, SettingsPage } from "./routes";
 import type { Appearance } from "./appearance";
 import { formatSpeed } from "./playback-speed";
 import { freeSpace } from "./settings-server";
@@ -32,7 +32,13 @@ export const PAGE_TITLES: Record<SettingsPage, string> = {
   users: "Users",
   library: "Library and storage",
   app: "App",
+  keyboard: "Keyboard shortcuts",
 };
+
+/** Keyboard shortcuts' back button names Playback, its parent (#614); the list's own pages keep "Back to Settings". */
+export function keyboardBackNamed(route: Route): string | null {
+  return route.name === "settings-page" && route.page === "playback" ? PAGE_TITLES.playback : null;
+}
 
 export const PRESET_NAMES: Record<Appearance["preset"], string> = {
   forest: "Forest",

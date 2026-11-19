@@ -1,5 +1,7 @@
 # Plan: build and ship the interface redesign
 
+**Shipped (2026-11-19).** The redesign is finished: slice 14 ("Remove what is left", spec #608) was the last, and the deploy of its final ticket put it on production. The plan below is kept as the record and not updated.
+
 Written 2026-11-16, and revised the same day after the owner settled its decisions in three rounds of `/grill-with-docs` (49 questions, section 0.1). It turns the design on the canvas into shipped code, in slices that are each deployed on their own. Nothing here is started.
 
 - Design, 40 boards: https://claude.ai/artifact/KuDN2X7UM7jAMyq76HmBeL (private to the owner; version 17 shows the decisions below).

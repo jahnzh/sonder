@@ -121,10 +121,10 @@ function NowPlayingScreen({ workId, face, open, ...props }: NowPlayingProps & { 
     if (open && book && !p.book) void p.prepare(book);
   }, [open, book?.id, p.book?.id]);
 
-  // Kept mounted, the dialog also hears of a focus outside it once the close's Back has landed and before this renders
-  // again (Firefox, as the reader's iframe goes): a plain Back from there went a second step and put the Book page in
-  // place of the Library behind (#662). As the reader's page does (#590), the close moves only while the entry still
-  // shows this face, so that late close moves nothing.
+  // Only while the entry still shows this face: the kept-mounted dialog can hear of a focus outside it after the
+  // address has moved on (a link or a typed address), and Back from there would undo that move. The reader on its own
+  // had this guard (#590); every reader is this one now (#613 part 2). A late close from Firefox's focus
+  // change as the reader's iframe goes is the same case (#662).
   const close = () => goBackFrom({ name: face, workId }, { name: "book", workId });
   const faceControl = <FaceSwitch workId={workId} face={face} admin={props.admin} exists={exists} />;
   const shown = known && exists(face);
@@ -143,8 +143,6 @@ function NowPlayingScreen({ workId, face, open, ...props }: NowPlayingProps & { 
           <ReaderView
             key={epub.id}
             id={epub.id}
-            fromAudio={false}
-            inline
             recordingId={recording?.recordingId}
             recording={facts.recording}
             books={props.books}
