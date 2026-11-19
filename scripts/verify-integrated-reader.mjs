@@ -72,6 +72,11 @@ try {
  await page.goto('/');
  await openRead();
  await expect(page.locator('.inline-reader .reader-viewport iframe')).toBeVisible();
+ // Read opens the work's chosen edition (a shared default before this device's choice): the samples come from the
+ // map of the EPUB it shows, or every passage number below is another edition's (#730 third round).
+ await expect(room).toHaveAttribute('data-ebook',/.+/);
+ const opened=await room.getAttribute('data-ebook');
+ if(opened!==ebook.id)throw Error(`Read opened EPUB ${opened}, not ${ebook.id} of the sampled map`);
  const full=page.getByRole('dialog',{name:'Now playing',exact:true});
  // The Read face is the reader's page with one player bar, its foot (#22, #593): none of Listen's face is drawn.
  await expect(full.locator('.now-playing-listen')).toHaveCount(0);

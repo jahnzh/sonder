@@ -181,6 +181,8 @@ const desktopProjects = [
               /(^|\/)reader-text-links\.spec\.ts$/,
               // A paused seek moves the reader's highlight, on a stream and a device copy (#730).
               /(^|\/)reader-paused-seek\.spec\.ts$/,
+              // The reader's passage on a recording's second track, and the edition Read opens (#730 third round).
+              /(^|\/)reader-second-track\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },
