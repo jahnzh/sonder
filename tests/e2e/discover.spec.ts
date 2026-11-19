@@ -22,8 +22,8 @@ type WorkResult = { workId: string; title: string; author: string; inLibrary: bo
 const discover = (page: Page) => page.getByRole("region", { name: "Discover", exact: true });
 const field = (page: Page, name = "Search for a book") => discover(page).getByRole("searchbox", { name, exact: true });
 const group = (page: Page, caption: string) => discover(page).getByRole("list", { name: caption, exact: true });
-/** A group's rows: each is one button, named by its title and its line. */
-const rowsOf = (page: Page, caption: string) => group(page, caption).getByRole("button");
+/** A group's rows: each is one button, named by its title and its line (beside it its Want to read action, #721 part c1). */
+const rowsOf = (page: Page, caption: string) => group(page, caption).locator("li > button");
 const recordingRow = (page: Page) => discover(page).getByRole("button", { name: /^Search for a recording/ });
 
 async function setHardcover(page: Page, connected: boolean) {
