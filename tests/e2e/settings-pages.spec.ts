@@ -67,6 +67,8 @@ for (const [size, viewport] of [["phone", { width: 390, height: 844 }], ["deskto
         /^App\s*(Installed|Install)/,
       ]);
       await expectLaidOut(page);
+      // Beside its board for the slice's final check (#583).
+      if (test.info().project.name === "chromium") await page.screenshot({ path: `OUT/settings-list-${size}.png` });
       // On a desktop the list has Account beside it, at `#settings`.
       if (desktop) await expect(title(page, true)).toHaveText("Account");
       else await expect(title(page, false)).toHaveText("Settings");
@@ -84,6 +86,8 @@ for (const [size, viewport] of [["phone", { width: 390, height: 844 }], ["deskto
           await expect(settingsList(page)).toHaveCount(0);
         }
         await expectLaidOut(page);
+        // Beside its board for the slice's final check (#583).
+        if (test.info().project.name === "chromium") await page.screenshot({ path: `OUT/settings-page-${word}-${size}.png` });
       }
       await page.goto("/#settings");
       const length = await page.evaluate(() => history.length);

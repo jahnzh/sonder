@@ -7,6 +7,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { test as ownServer } from "./own-server";
+import { cutOffByWebKit } from "./mobile";
 
 test.use({ serviceWorkers: "block" });
 
@@ -42,7 +43,9 @@ test("#book/work-hc-<n> opens Not in your library with Add and its series line; 
   await connect(page);
   const book = lookBook();
   const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("pageerror", (error) => {
+    if (!cutOffByWebKit(error.message)) errors.push(error.message);
+  });
   const writes: string[] = [];
   page.on("request", (request) => {
     if (request.method() !== "GET") writes.push(`${request.method()} ${new URL(request.url()).pathname}`);

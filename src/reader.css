@@ -21,46 +21,6 @@
   display: flex;
   flex-direction: column;
 }
-.reader-book-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 13px;
-  padding: 6px 0 10px;
-}
-.reader-book-heading strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.reader-book-heading span {
-  color: var(--muted);
-  font-size: 12px;
-  flex-shrink: 0;
-  max-width: 45%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.reader-toolbar {
-  display: flex;
-  gap: 5px;
-  padding: 5px 0 9px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-  overflow-x: auto;
-}
-.reader-toolbar .icon-button {
-  width: 44px;
-  height: 44px;
-  color: var(--text);
-  flex: 0 0 44px;
-}
-.reader-toolbar .icon-button[aria-pressed="true"] {
-  background: var(--raised);
-  color: var(--accent);
-}
 .reader-viewport {
   flex: 1;
   min-height: 180px;
@@ -75,40 +35,6 @@
 .reader-viewport[data-jumping] .epub-container {
   opacity: 0;
 }
-.reader-navigation {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding-top: 10px;
-  flex-shrink: 0;
-}
-.reader-navigation .button {
-  min-height: 42px;
-  font-size: 12px;
-}
-.reader-navigation > span {
-  font-size: 12px;
-  color: var(--muted);
-}
-.reader-listen-controls {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.reader-listen-controls .button {
-  min-height: 42px;
-  font-size: 12px;
-}
-.reader-listen-controls .playback-source {
-  margin: 0;
-  font-size: 11px;
-}
 .reader-loading {
   position: absolute;
   top: 50%;
@@ -117,83 +43,6 @@
   display: flex;
   align-items: center;
   gap: 10px;
-}
-.reader-list-item {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  width: 100%;
-  text-align: left;
-  border-bottom: 1px solid var(--border);
-  padding: 13px 4px;
-  color: var(--text);
-  line-height: 1.7;
-  font-size: 14px;
-  overflow-wrap: anywhere;
-}
-.reader-list-item:hover {
-  color: var(--accent);
-}
-.reader-list-item span {
-  font-size: 12px;
-  color: var(--muted);
-}
-.reader-bookmark {
-  display: flex;
-  align-items: center;
-}
-.reader-appearance {
-  display: grid;
-  gap: 15px;
-}
-.reader-appearance label {
-  display: grid;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--text);
-}
-.player-reading h3 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.reader-follow {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  margin-bottom: 22px;
-  font-size: 14px;
-}
-.reader-follow input {
-  width: 20px;
-  height: 20px;
-}
-.player-reading {
-  margin: 20px 0;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-}
-.player-reading h3 {
-  font-size: 14px;
-}
-.player-reading p,
-.player-reading span {
-  font-size: 12px;
-  color: var(--muted);
-  line-height: 1.7;
-}
-.player-reading > div {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 10px;
-  margin-top: 12px;
-}
-.player-reading .button {
-  font-size: 12px;
-  min-height: 44px;
 }
 @media (max-width: 650px) {
   .reader-dialog {
@@ -205,23 +54,6 @@
   }
   .reader-dialog .dialog-heading p {
     display: none;
-  }
-  .reader-book-heading span {
-    display: none;
-  }
-  .reader-listen-controls {
-    gap: 5px;
-  }
-  .reader-listen-controls .button {
-    padding-inline: 9px;
-    font-size: 11px;
-  }
-  .reader-toolbar {
-    justify-content: space-between;
-    gap: 0;
-  }
-  .reader-toolbar .icon-button {
-    width: 40px;
   }
 }
 
@@ -536,15 +368,6 @@
 .reader-player .reader-back-narration {
   flex: 0 0 auto;
 }
-.reader-contents-item {
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-}
-.reader-contents-item[aria-current] {
-  font-weight: 600;
-}
-.reader-contents-item svg,
 .reader-desktop-contents svg {
   flex-shrink: 0;
   color: var(--accent);
@@ -566,7 +389,6 @@
 }
 .reader-edge-previous { left: 24px; }
 .reader-edge-next { right: 24px; }
-.reader-legacy-controls { display: none; }
 /* The reader's page on a desktop (#595, spec #586 "Desktop"; board DesktopReader.dc.html): from 760 the room is a
    grid of a head of 60, the contents beside the text (Hide contents remembered on the device), the text with the page
    arrows in its margins, a dock row under the text in the text's column (Appearance), and the player as the footer.

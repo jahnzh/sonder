@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { defaultAppearance, paletteFor, type Appearance } from "../../src/appearance";
+import { skipOnMobile } from "./mobile";
 
 // The Tooltip part on the gallery (#491; spec #480, "Parts"; board Tooltips.dc.html): the info mark and its
 // explanation measured in every preset, the custom palette and both densities; a tap opens it under its entry, a tap
@@ -248,6 +249,7 @@ test("on a desktop it opens on hover and closes when the pointer leaves", async 
 });
 
 test("on a desktop a pointer passing over the marks opens none; the one it rests on opens", async ({ page }) => {
+  skipOnMobile(true, "a pointer that passes over and rests on a mark is a desktop's; a phone profile has touch instead");
   // The page's clock is held, so how fast the pointer passes does not depend on the run: no time passes on the page
   // until the test lets it.
   await page.clock.install();

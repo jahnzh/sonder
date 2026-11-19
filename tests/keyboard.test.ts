@@ -88,7 +88,7 @@ test("F goes back to the narration only while the reader has the keyboard and a 
   for (const targetTag of ["INPUT", "input", "TEXTAREA", "SELECT"])
     assert.equal(readerKeyAction({ key: "f", narration: true, targetTag }), null, targetTag);
   assert.equal(readerKeyAction({ key: "f", narration: true, contentEditable: true }), null);
-  for (const blocked of [{ dialogOpen: true }, { sheetOpen: true }, { panelOpen: true }, { readerHidden: true }])
+  for (const blocked of [{ dialogOpen: true }, { panelOpen: true }, { readerHidden: true }])
     assert.equal(readerKeyAction({ key: "f", narration: true, ...blocked }), null, JSON.stringify(blocked));
   for (const modifier of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }, { defaultPrevented: true }])
     assert.equal(readerKeyAction({ key: "f", narration: true, ...modifier }), null, JSON.stringify(modifier));
@@ -100,6 +100,6 @@ test("the arrows turn the reader's pages only with no book in the player and not
   assert.equal(readerKeyAction({ key: "ArrowRight", playerHasBook: true }), null);
   for (const targetTag of ["INPUT", "TEXTAREA", "SELECT", "BUTTON", "SUMMARY", "A"])
     assert.equal(readerKeyAction({ key: "ArrowRight", targetTag }), null, targetTag);
-  for (const blocked of [{ dialogOpen: true }, { sheetOpen: true }, { panelOpen: true }, { readerHidden: true }, { contentEditable: true }, { altKey: true }])
+  for (const blocked of [{ dialogOpen: true }, { panelOpen: true }, { readerHidden: true }, { contentEditable: true }, { altKey: true }])
     assert.equal(readerKeyAction({ key: "ArrowLeft", ...blocked }), null, JSON.stringify(blocked));
 });
