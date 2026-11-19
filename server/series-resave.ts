@@ -53,14 +53,17 @@ function introducedOf(row: ResaveRow): Map<string, boolean> {
   return new Map(found.map((entry) => [entry.workId, !!entry.introduced]));
 }
 
+/** A series name to compare: folded, without a leading article (Hardcover's "The Culture" is AudiobookDB's "Culture"). */
+export const seriesName = (name: string) => normaliseTitle(name).replace(/^(the|a|an)\s+/, "");
+
 /** One saved series saved again; the outcome is stored on its row. */
 export async function resaveSeries(row: ResaveRow): Promise<Exclude<ResaveRow["status"], "pending">> {
   return (await resave(row)).status;
 }
 async function resave(row: ResaveRow): Promise<{ status: Exclude<ResaveRow["status"], "pending">; stop?: true }> {
   try {
-    const wanted = normaliseTitle(row.name);
-    const named = (await searchAudiobookDbSeries(row.name, { priority: "background" })).filter((series) => normaliseTitle(series.name) === wanted);
+    const wanted = seriesName(row.name);
+    const named = (await searchAudiobookDbSeries(row.name, { priority: "background" })).filter((series) => seriesName(series.name) === wanted);
     const byAuthor = row.author && named.length > 1 ? named.filter((series) => series.author && authorMatches(row.author!, [series.author])) : named;
     const ids = [...new Set(byAuthor.map((series) => series.id))];
     if (!ids.length) {
