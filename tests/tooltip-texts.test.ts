@@ -1,5 +1,5 @@
 /**
- * The tooltip texts (#496, spec #493 "One vocabulary"): the module holds the design's list word for word, the seven
+ * The tooltip texts (#496, spec #493 "One vocabulary"): the module holds the design's list word for word, the six
  * pause sentences equal what the server sends, and the server never imports the module.
  */
 import { test } from "node:test";
@@ -22,17 +22,16 @@ test("the module holds the design's names and texts, word for word", () => {
   }
 });
 
-test("the seven pause sentences equal the ones the server sends", () => {
+test("the six pause sentences equal the ones the server sends", () => {
   const nameOf: Record<(typeof PAUSABLE_PROCESSES)[number], keyof typeof TIPS> = {
     acquisitions: "downloadQueue",
     "server-copies": "copies",
     "series-acquisition": "seriesSearch",
-    "hardcover-sync": "hardcoverSync",
     alignment: "syncQueue",
     "ebook-set": "ebookChecks",
     backups: "backups",
   };
-  assert.equal(PAUSABLE_PROCESSES.length, 7);
+  assert.equal(PAUSABLE_PROCESSES.length, 6);
   for (const id of PAUSABLE_PROCESSES) assert.equal(TIPS[nameOf[id]], PAUSE_EFFECT[id], id);
 });
 
@@ -45,12 +44,14 @@ test("the server imports nothing from the tooltip module", () => {
   }
 });
 
-test("the Hardcover page's three tooltips are in the module, and it holds as many texts as the design's list (#529)", async () => {
+test("no tooltip is left of Hardcover's sync, page or settings, and the module holds as many texts as the design's list (#721 part d)", async () => {
   // @ts-expect-error the design's tools are plain JavaScript without declarations
   const { tipGroups } = (await import("../docs/design/redesign/tools/tips.mjs")) as { tipGroups: [string, [string, string][]][] };
-  const hardcover = tipGroups.find(([screen]) => screen === "Hardcover");
-  assert.ok(hardcover, "the design lists the Hardcover page");
-  assert.deepEqual(hardcover[1].map(([name]) => name), ["Use Hardcover position", "Hardcover edition", "Match on Hardcover"]);
-  assert.deepEqual(hardcover[1].map(([, text]) => text), [tip("hardcoverPosition"), tip("hardcoverEdition"), tip("hardcoverMatch")]);
+  assert.equal(tipGroups.find(([screen]) => screen === "Hardcover"), undefined, "the design lists no Hardcover page");
+  for (const name of ["hardcoverPosition", "hardcoverEdition", "hardcoverMatch", "hardcoverSync", "hardcoverProgress"])
+    assert.equal(name in TIPS, false, name);
+  const named = tipGroups.flatMap(([, tips]) => tips.map(([label]) => label));
+  for (const label of ["Use Hardcover position", "Hardcover edition", "Match on Hardcover", "Hardcover sync", "Sync listening and reading progress"])
+    assert.equal(named.includes(label), false, label);
   assert.equal(Object.keys(TIPS).length, Object.keys(design).length);
 });

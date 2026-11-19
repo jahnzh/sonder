@@ -1,36 +1,30 @@
 // The Server pages of Settings (#580; spec #572 "Connections", "Users", "Library and storage"; boards
 // DesktopSettings.dc.html, SettingsUsers.dc.html, SettingsLibrary.dc.html), built from the parts. A switch or a
 // choice saves when it changes; a text field (a key, an address, the library name) has its own Save. Connection
-// keys are write-only: their field is empty and says "Saved" when one is set. Someone who is not the administrator
-// has Connections with Hardcover only, and reaches neither Users nor Library and storage (the address resolves
-// those to Settings).
+// keys are write-only: their field is empty and says "Saved" when one is set. Connections, Users and Library and
+// storage are the administrator's (Hardcover, the one connection someone else had, is removed: #721 part d); the
+// address resolves them to Settings for anyone else.
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { hardcoverChanged, useHardcover } from "../../components/Hardcover";
 import { Dialog } from "../../components/ui/dialog";
 import type { Account, AccountRequest } from "../../components/SignIn";
 import { api } from "../../lib";
 import { Button } from "../../parts/Button";
 import { Group } from "../../parts/Group";
 import { Row } from "../../parts/Row";
-import { Switch } from "../../parts/Switch";
 import { InfoMark } from "../../parts/Tooltip";
-import { savedPreferencesToFollow, type SyncPreferences } from "../../hardcover-sync-draft";
 import {
   APPROVING_NOTE,
   KEYS_ENCRYPTED,
   MEDIA_DRIVE_CONNECTED,
   MEDIA_DRIVE_NOT_CONNECTED,
   NO_REQUESTS,
-  SYNC_MODES,
   approvedLine,
-  hardcoverSyncLine,
   requestAge,
   usedLine,
   usedShare,
 } from "../../settings-server";
 import { tip } from "../../tooltip-texts";
-import type { HardcoverState, Settings as SettingsData } from "../../types";
-import { ChoiceRow } from "./Choice";
+import type { Settings as SettingsData } from "../../types";
 import { CREDIT, KEY_IN_SERVER_FILE, KEY_NOT_NEEDED, batchLine, testedLine, unmatchedValue, type BatchAnswer } from "../../catalogue-page-model";
 import { useAddress } from "../../navigation";
 
@@ -128,7 +122,7 @@ async function patchSettings(body: Record<string, string>) {
   await api("/settings", { method: "PATCH", body: JSON.stringify(body) });
 }
 
-/** TorBox, Hardcover, Prowlarr, AudioBookBay and Library Genesis; Hardcover only for someone else. */
+/** TorBox, Prowlarr, AudioBookBay, Library Genesis, AudiobookDB and Open Library (the administrator's). */
 export function ConnectionsPage({ user, settings, onSaved, notify }: Props) {
   const admin = user.role === "admin";
   const [testing, setTesting] = useState<"" | "torbox" | "prowlarr">("");
@@ -183,7 +177,6 @@ export function ConnectionsPage({ user, settings, onSaved, notify }: Props) {
           )}
         </Group>
       )}
-      <HardcoverConnection settings={settings} onSaved={onSaved} notify={notify} />
       {admin && (
         <>
           <Group caption="Prowlarr" info={<InfoMark name="Prowlarr" text={tip("prowlarr")} />}>
@@ -302,119 +295,6 @@ function CatalogueConnections({ settings, onSaved, notify, save }: Omit<Props, "
           {CREDIT}
         </a>
       </p>
-    </>
-  );
-}
-
-/**
- * Hardcover: the token, the sync mode and Include my lists (each saved when chosen), and Sync now with the last
- * sync or the changes waiting (moved from the Library, #578). The mode and the lists switch are a draft that
- * follows the saved preferences only when those change (#422): a refresh of the Hardcover state that lands while
- * a pick is being saved leaves the pick shown.
- */
-function HardcoverConnection({ settings, onSaved, notify }: Omit<Props, "user">) {
-  const configured = !!settings?.hardcoverConfigured;
-  const { state, refresh } = useHardcover();
-  const [mode, setMode] = useState<HardcoverState["mode"]>("off");
-  const [lists, setLists] = useState(true);
-  const [busy, setBusy] = useState<"" | "sync" | "test">("");
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    void refresh();
-  }, [configured, refresh]);
-  useEffect(() => setNow(Date.now()), [state]);
-  const followed = useRef<SyncPreferences | null>(null);
-  useEffect(() => {
-    if (!state) return;
-    const saved = { mode: state.mode, syncLists: state.syncLists };
-    const follow = savedPreferencesToFollow(followed.current, saved);
-    followed.current = saved;
-    if (!follow) return;
-    setMode(follow.mode);
-    setLists(follow.syncLists);
-  }, [state]);
-  const savePreferences = async (next: SyncPreferences) => {
-    setMode(next.mode);
-    setLists(next.syncLists);
-    try {
-      await api("/hardcover/config", { method: "PATCH", body: JSON.stringify(next) });
-      hardcoverChanged();
-    } catch (error) {
-      notify((error as Error).message, true);
-      // Not saved: show the saved preferences again.
-      if (followed.current) {
-        setMode(followed.current.mode);
-        setLists(followed.current.syncLists);
-      }
-    }
-  };
-  const saveToken = async (hardcover: string) => {
-    try {
-      await patchSettings({ hardcover });
-      onSaved();
-      hardcoverChanged();
-      notify(hardcover ? "Hardcover token saved." : "Connection removed.");
-    } catch (error) {
-      notify((error as Error).message, true);
-    }
-  };
-  const run = async (action: "sync" | "test") => {
-    setBusy(action);
-    try {
-      if (action === "test") {
-        const account = await api<{ username: string | null }>("/hardcover/test", { method: "POST" });
-        notify(account.username ? `Connected to @${account.username}.` : "Hardcover account connected.");
-      } else {
-        const result = await api<{ imported: number; matched: number; progress: number; pending: number }>("/hardcover/sync", { method: "POST" });
-        notify(
-          `Synced ${result.imported} new books, ${result.matched} matches, and ${result.progress} reading positions.${result.pending ? ` ${result.pending} changes remain queued.` : ""}`,
-        );
-      }
-      hardcoverChanged();
-    } catch (error) {
-      notify((error as Error).message, true);
-    } finally {
-      setBusy("");
-      await refresh();
-    }
-  };
-  const ready = configured && !!state;
-  return (
-    <>
-      <Group caption="Hardcover" note={ready ? (state.lastError ?? state.listWarning ?? undefined) : undefined} noteFailed={!!(ready && state.lastError)}>
-        <Row label="Status" value={configured ? "Connected" : "Not connected"} />
-        <FieldRow label="API token" name="Hardcover API token" type="password" secret isSet={configured} onSave={saveToken} />
-        {ready && (
-          <>
-            <ChoiceRow
-              name="Sync mode"
-              options={SYNC_MODES}
-              value={mode}
-              onChange={(next) => void savePreferences({ mode: next, syncLists: lists })}
-            />
-            <Row label="Include my lists" control={<Switch label="Include my lists" on={lists} onChange={(on) => void savePreferences({ mode, syncLists: on })} />} />
-            <Row
-              label="Sync"
-              value={hardcoverSyncLine(state, now)}
-              control={
-                <Button kind="secondary" disabled={!!busy || state.mode === "off"} onClick={() => void run("sync")}>
-                  {busy === "sync" ? "Syncing…" : "Sync now"}
-                </Button>
-              }
-            />
-          </>
-        )}
-        {configured && (
-          <ActionsRow>
-            <Button kind="secondary" aria-label="Test Hardcover" disabled={!!busy} onClick={() => void run("test")}>
-              {busy === "test" ? "Testing…" : "Test"}
-            </Button>
-            <Button kind="quiet" className="settings-failed-action" aria-label="Disconnect Hardcover" onClick={() => void saveToken("")}>
-              Disconnect
-            </Button>
-          </ActionsRow>
-        )}
-      </Group>
     </>
   );
 }

@@ -170,7 +170,7 @@ export function PickerDialog({ open, title, onClose, anchor, sub, children, clas
   );
 }
 
-/** A group of the picker with its caption (Sort, View, Hardcover). */
+/** A group of the picker with its caption (Sort, View, Shelf). */
 export function PickerGroup({ caption, children }: { caption: string; children: ReactNode }) {
   return (
     <section className="part-picker-group" aria-label={caption}>

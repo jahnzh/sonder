@@ -61,15 +61,15 @@ export type NowOpens =
 /** The kinds of entry a row can show, in the order a group prefers them (`ENTRY_ORDER`). */
 export type NowEntryKind =
   | "download" | "server-copy" | "series-search" | "ebook-check" | "reading-sync" | "device-save"
-  | "hardcover" | "backup" | "process";
+  | "backup" | "process";
 const ENTRY_ORDER: NowEntryKind[] = [
-  "download", "server-copy", "series-search", "ebook-check", "reading-sync", "device-save", "hardcover", "backup", "process",
+  "download", "server-copy", "series-search", "ebook-check", "reading-sync", "device-save", "backup", "process",
 ];
 
 export type NowRow = {
   /** Stable key: `work:<id>`, or the server item or process id for a row that has no work. */
   key: string;
-  /** A book row (with a cover), or a row that is not a book (a process that is down, a Hardcover queue, a backup). */
+  /** A book row (with a cover), or a row that is not a book (a process that is down, a backup). */
   book: boolean;
   workId: string | null;
   bookId: string | null;
@@ -140,7 +140,6 @@ const ENTRY_OF: Record<ActivityItem["kind"], NowEntryKind> = {
   "series-acquisition": "series-search",
   "ebook-set": "ebook-check",
   alignment: "reading-sync",
-  hardcover: "hardcover",
   backup: "backup",
 };
 
@@ -262,11 +261,11 @@ function serverEntry(item: ActivityItem, now: number, spares: Map<string, { tota
   if (spare) group = "waiting";
   const entry = ENTRY_OF[item.kind];
   const failed = item.state === "failed";
-  // A Hardcover queue and a backup are not books: they appear only when they need attention.
-  const notBook = entry === "hardcover" || entry === "backup";
+  // A backup is not a book: it appears only when it needs attention.
+  const notBook = entry === "backup";
   if (notBook && group !== "attention") return null;
   let line: string | null;
-  // A Hardcover queue is one user's: its line names whose it is, as Server's queue line does ("… · admin").
+  // A row that is not a book names whose it is when it has a user, as Server's queue line does ("… · admin").
   if (notBook) line = withUser(item.error ?? item.stuck?.reason ?? item.detail ?? "", item.user);
   // A failed series search names which search failed and why (#717).
   else if (failed && item.facts.kind === "series-acquisition")

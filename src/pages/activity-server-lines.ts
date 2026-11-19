@@ -19,8 +19,8 @@ export const TORRENT_RUNNING_LINE = "Running";
 export const NOT_TRACKED_LINE = "Not tracked yet";
 
 /** The queues, with the words their lines count in: what runs, what waits, what is paused, what failed. */
-export type QueueId = "alignment" | "acquisitions" | "server-copies" | "series-acquisition" | "ebook-set" | "hardcover-sync" | "backups";
-const QUEUE_WORDS: Record<Exclude<QueueId, "hardcover-sync" | "backups">, { running: string; queued: string }> = {
+export type QueueId = "alignment" | "acquisitions" | "server-copies" | "series-acquisition" | "ebook-set" | "backups";
+const QUEUE_WORDS: Record<Exclude<QueueId, "backups">, { running: string; queued: string }> = {
   alignment: { running: "preparing", queued: "waiting" },
   acquisitions: { running: "downloading", queued: "waiting" },
   "server-copies": { running: "copying", queued: "waiting" },
@@ -33,19 +33,6 @@ const open = (items: ActivityItem[], processId: string) => items.filter((item) =
 /** "1 preparing · 1 waiting": what is there now, in the queue's own words; empty when nothing is. */
 function counted(process: ActivityProcess, items: ActivityItem[]): string {
   const mine = open(items, process.id);
-  if (process.id === "hardcover-sync") {
-    // One item per user and Hardcover queue; its detail starts with the number of changes it holds.
-    const users = new Map<string, number>();
-    for (const item of mine) {
-      const changes = Number(/^(\d+)/.exec(item.detail ?? "")?.[1] ?? 1) || 1;
-      const user = item.user ?? "";
-      users.set(user, (users.get(user) ?? 0) + changes);
-    }
-    const total = [...users.values()].reduce((sum, n) => sum + n, 0);
-    if (!total) return "";
-    const names = [...users.keys()].filter(Boolean);
-    return [`${total} ${total === 1 ? "change" : "changes"} waiting`, names.join(", ")].filter(Boolean).join(DOT);
-  }
   if (process.id === "backups") {
     // The schedule's own line: its last run and the next ("Last run 17 Nov 03:00 UTC: succeeded, 48.0 MB · Next run …").
     return process.reason ?? "";

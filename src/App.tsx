@@ -59,7 +59,6 @@ import { useSideBySide } from "./pages/side-by-side";
 import { ActivityDevice } from "./pages/activity-device";
 import { SettingsPage } from "./pages/settings-page";
 import { AudiobookPage } from "./pages/audiobook-page";
-import { HardcoverPage } from "./pages/hardcover-page";
 import { MatchPage } from "./pages/match-page";
 import { EbookPage } from "./pages/ebook-page";
 import { BookPage } from "./pages/book-page";
@@ -506,7 +505,6 @@ function LibraryApp({
     window.addEventListener("online", status);
     window.addEventListener("offline", status);
     window.addEventListener("sonder:library-changed", changed);
-    window.addEventListener("sonder:hardcover-changed", changed);
     window.addEventListener("sonder:downloads-changed", downloadsChanged);
     document.addEventListener("visibilitychange", visible);
     window.addEventListener("beforeinstallprompt", install);
@@ -514,7 +512,6 @@ function LibraryApp({
       window.removeEventListener("online", status);
       window.removeEventListener("offline", status);
       window.removeEventListener("sonder:library-changed", changed);
-      window.removeEventListener("sonder:hardcover-changed", changed);
       window.removeEventListener("sonder:downloads-changed", downloadsChanged);
       document.removeEventListener("visibilitychange", visible);
       window.removeEventListener("beforeinstallprompt", install);
@@ -545,7 +542,7 @@ function LibraryApp({
     leavePage(p);
     address.navigate(routeOf(p));
   };
-  // A "Connect …" link: Settings › Connections, where TorBox and Hardcover are connected.
+  // A "Connect …" link: Settings › Connections, where TorBox and the catalogue are connected.
   const openConnections = () => {
     leavePage("settings");
     address.navigate({ name: "settings-page", page: "connections" });
@@ -818,7 +815,7 @@ function LibraryApp({
                 }}
               />
             )}
-            {/* The Book page (#532), its Hardcover (#529) and Ebook (#531) pages, and the reader's Chapters, Bookmarks and Search (#590) stand in place of the place's page. */}
+            {/* The Book page (#532), its match (#721) and Ebook (#531) pages, and the reader's Chapters, Bookmarks and Search (#590) stand in place of the place's page. */}
             {audiobookWorkId ? null : pageRoute.name === "book-page" && isReaderPage(pageRoute.page) ? <ReaderPages key={`${pageRoute.workId}:${pageRoute.page === "search" ? "search" : "chapters"}`} workId={pageRoute.workId} page={pageRoute.page} books={books} /> : bookWorkId ? (
               <BookPage
                 key={bookWorkId}
@@ -851,7 +848,7 @@ function LibraryApp({
               <ReadingSyncDetailsPage key={pageRoute.workId} workId={pageRoute.workId} />
             ) : seriesRouteId !== null && !seriesBeside ? (
               seriesPage(seriesRouteId, false)
-            ) : pageRoute.name === "book-page" && pageRoute.page === "hardcover" ? <HardcoverPage key={pageRoute.workId} workId={pageRoute.workId} admin={user.role === "admin"} books={books} onChanged={() => void refresh()} /> : pageRoute.name === "book-page" && pageRoute.page === "match" ? <MatchPage key={pageRoute.workId} workId={pageRoute.workId} admin={user.role === "admin"} onChanged={() => void refresh()} /> : ebookPage ? (
+            ) : pageRoute.name === "book-page" && pageRoute.page === "match" ? <MatchPage key={pageRoute.workId} workId={pageRoute.workId} admin={user.role === "admin"} onChanged={() => void refresh()} /> : ebookPage ? (
               <EbookPage
                 key={ebookPage}
                 workId={ebookPage}
@@ -892,7 +889,8 @@ function LibraryApp({
                 key={recordingQuery !== null && !coveredPage() ? "under-sheet" : "discover"}
                 admin={user.role === "admin"}
                 online={online}
-                hardcoverConnected={!!settings?.hardcoverConfigured}
+                // Hardcover is removed (#721 part d): its search is never asked; Discover's own search is rebuilt in part c2.
+                hardcoverConnected={false}
                 settingsRead={!!settings}
                 onBook={openBook}
                 onSeries={(id) => address.navigate({ name: "series", id: String(id) })}

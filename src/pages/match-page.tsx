@@ -1,4 +1,4 @@
-// A book's catalogue match page (#721): `#book/<workId>/match`, beside the Hardcover page until Hardcover goes.
+// A book's catalogue match page (#721): `#book/<workId>/match`, in place of the Hardcover page (#721 part d).
 // The administrator sees the match (AudiobookDB book or Open Library work) with Unlink, each recording's release
 // (narrator, length, ASIN) with a picker, and a search of both providers filled with the title and author; picking a
 // result and Match links it. Anyone else is told the administrator matches books. Words: src/catalogue-page-model.ts.
@@ -25,7 +25,7 @@ import {
   type WorkCatalogue,
 } from "../catalogue-page-model";
 import "./settings/settings.css";
-import "./hardcover-page.css";
+import "./match-page.css";
 
 type Props = { workId: string; admin: boolean; onChanged: () => void };
 type Line = { text: string; failed: boolean } | null;

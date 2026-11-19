@@ -3,13 +3,13 @@
 
 /** One of the top-level areas. Activity took the Downloads slot (#516); `#downloads` is an old name for it. */
 export type Place = "library" | "discover" | "activity" | "settings";
-export type BookPage = "audiobook" | "ebook" | "sync" | "hardcover" | "chapters" | "bookmarks" | "search" | "match";
+export type BookPage = "audiobook" | "ebook" | "sync" | "chapters" | "bookmarks" | "search" | "match";
 export type ActivityPart = "now" | "device" | "server";
 /** The pages of Settings (spec #572, "Settings"): `#settings/<page>`. */
 export type SettingsPage = "account" | "appearance" | "playback" | "connections" | "users" | "library" | "app";
 export const SETTINGS_PAGES: readonly SettingsPage[] = ["account", "appearance", "playback", "connections", "users", "library", "app"];
-/** The Settings pages only the administrator has. */
-export const ADMIN_SETTINGS_PAGES: readonly SettingsPage[] = ["users", "library"];
+/** The Settings pages only the administrator has (Connections since Hardcover went, #721 part d). */
+export const ADMIN_SETTINGS_PAGES: readonly SettingsPage[] = ["connections", "users", "library"];
 export function isSettingsPage(page: string): page is SettingsPage {
   return (SETTINGS_PAGES as readonly string[]).includes(page);
 }
@@ -45,7 +45,7 @@ export type Route =
   /** An address that names nothing; it shows the first page of the place it points into. */
   | { name: "unknown"; place: Place };
 
-const BOOK_PAGES: readonly BookPage[] = ["audiobook", "ebook", "sync", "hardcover", "chapters", "bookmarks", "search", "match"];
+const BOOK_PAGES: readonly BookPage[] = ["audiobook", "ebook", "sync", "chapters", "bookmarks", "search", "match"];
 
 function decode(part: string): string | null {
   try {
@@ -95,6 +95,9 @@ export function readAddress(hash: string): Route {
       if (rest.length === 1) return { name: "book", workId };
       if (rest.length === 2 && (BOOK_PAGES as readonly string[]).includes(rest[1]))
         return { name: "book-page", workId, page: rest[1] as BookPage };
+      // The Hardcover page an older build linked to (#529) is gone (#721 part d): its address opens the match page
+      // that took the place of its Change match.
+      if (rest.length === 2 && rest[1] === "hardcover") return { name: "book-page", workId, page: "match" };
       if (rest.length === 3 && rest[1] === "sync" && rest[2] === "details") return { name: "sync-details", workId };
       if (rest.length === 3 && rest[1] === "get" && (rest[2] === "audiobook" || rest[2] === "ebook"))
         return { name: "get", workId, kind: rest[2] };
@@ -279,9 +282,9 @@ export function step(from: Route, to: Route): "push" | "replace" | "none" {
 
 /** Pages with a screen in this build. Every other address behaves like one that names nothing until its slice lands. */
 function built(route: Route): boolean {
-  // The Audiobook page (#530), a book's Hardcover page (#529) and its Ebook page (#531); the book's other pages come with their own tickets.
-  if (route.name === "book-page" && (route.page === "audiobook" || route.page === "hardcover" || route.page === "ebook")) return true;
-  // A book's catalogue match page (#721), beside the Hardcover page for now.
+  // The Audiobook page (#530) and its Ebook page (#531); the book's other pages come with their own tickets.
+  if (route.name === "book-page" && (route.page === "audiobook" || route.page === "ebook")) return true;
+  // A book's catalogue match page (#721), in place of the Hardcover page (#721 part d).
   if (route.name === "book-page" && route.page === "match") return true;
   // The reader's pages: Chapters, Bookmarks and Search (#590).
   if (route.name === "book-page" && (route.page === "chapters" || route.page === "bookmarks" || route.page === "search")) return true;

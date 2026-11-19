@@ -167,7 +167,7 @@ export function storeLibraryWorks(
 let started = false;
 /**
  * Starts the loader once: a read now, again when the app comes back to the foreground or online, when a
- * work changes (`sonder:library-changed`, `sonder:hardcover-changed`), and every six seconds while a work in
+ * work changes (`sonder:library-changed`), and every six seconds while a work in
  * the store is moving (`workIsMoving`).
  */
 export function startLibraryWorks() {
@@ -181,7 +181,6 @@ export function startLibraryWorks() {
   });
   window.addEventListener("online", read);
   window.addEventListener("sonder:library-changed", read);
-  window.addEventListener("sonder:hardcover-changed", read);
   setInterval(() => {
     if (document.visibilityState !== "visible" || !navigator.onLine || snapshot.owner !== userId()) return;
     if ([...snapshot.works.values()].some(workIsMoving)) read();

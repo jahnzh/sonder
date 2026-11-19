@@ -33,7 +33,7 @@ export default {
       </Sample>
       <Sample id="row-disabled" state="Disabled">
         <Group label="Disabled">
-          <Row label="Hardcover" value="Not connected" opens disabled onClick={() => act("Hardcover pressed")} />
+          <Row label="AudiobookDB" value="Not connected" opens disabled onClick={() => act("AudiobookDB pressed")} />
         </Group>
       </Sample>
       <Sample id="row-long" state="A long label">

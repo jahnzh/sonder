@@ -154,7 +154,7 @@ function WorkerRow({
 const READING_SYNC_QUEUES: Array<[QueueId, TipName]> = [["alignment", "syncQueue"]];
 const DOWNLOAD_QUEUES_BEFORE: Array<[QueueId, TipName]> = [["acquisitions", "downloadQueue"]];
 const DOWNLOAD_QUEUES_AFTER: Array<[QueueId, TipName]> = [["server-copies", "copies"], ["series-acquisition", "seriesSearch"]];
-const OTHER_QUEUES: Array<[QueueId, TipName]> = [["ebook-set", "ebookChecks"], ["hardcover-sync", "hardcoverSync"], ["backups", "backups"]];
+const OTHER_QUEUES: Array<[QueueId, TipName]> = [["ebook-set", "ebookChecks"], ["backups", "backups"]];
 
 export function ActivityServer({
   online,
