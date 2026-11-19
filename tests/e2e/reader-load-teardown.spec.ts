@@ -1,5 +1,6 @@
 import {test,expect,type Page} from "@playwright/test";
 import JSZip from "jszip";
+import { gotoRead } from "./read-face";
 // The reader torn down while epub.js is still opening its book (#427). Destroying an epub.js book whose
 // navigation or opening is still pending made epub.js's own later callbacks throw page errors such as
 // "Cannot read properties of undefined (reading 'navigation')", "(reading 'package')" or "(reading 'displayOptions')".
@@ -36,7 +37,7 @@ function recordErrors(page:Page){
  page.on("pageerror",error=>errors.push(`${error.message} @ ${(error.stack||"").split("\n").slice(1,3).map(line=>line.trim()).join(" < ")}`));
  return errors;
 }
-const reader=(page:Page)=>page.getByRole("dialog",{name:"Reader"});
+const reader=(page:Page)=>page.getByRole("dialog", { name: "Now playing", exact: true });
 const pages=(page:Page)=>reader(page).locator(".reader-viewport iframe");
 // The reader's manifest has arrived, so the next render starts opening the EPUB.
 const manifestLoaded=(page:Page,id:string)=>page.waitForResponse(response=>response.url().endsWith(`/api/reader/${encodeURIComponent(id)}`)&&response.request().method()==="GET");
@@ -56,14 +57,14 @@ test("closing and reopening the reader while a large book opens throws no page e
  for(let cycle=0;cycle<CYCLES;cycle++){
   const before=errors.length;
   const loaded=manifestLoaded(page,id);
-  if(cycle===0)await page.goto(`/#reader/${id}`);
-  else await page.evaluate(id=>{location.hash=`#reader/${id}`;},id);
+  if(cycle===0)await gotoRead(page, id);
+  else await gotoRead(page, id, "hash");
   await loaded;
   await page.waitForTimeout(delay(cycle));
   // Closing unmounts the reader; opening it again mounts a new one.
   await page.evaluate(()=>{location.hash="#library";});
   await expect(reader(page)).toBeHidden();
-  await page.evaluate(id=>{location.hash=`#reader/${id}`;},id);
+  await gotoRead(page, id, "hash");
   await settle(page);
   await page.evaluate(()=>{location.hash="#library";});
   await expect(reader(page)).toBeHidden();

@@ -8,9 +8,10 @@ import { bandBoxes, expectTextUncovered, showControls } from "./reader-bands";
 import { appearancePanel, closeAppearance, expectDockedUncovered, insideBand, openAppearance, setStepper } from "./reader-appearance";
 import { installReaderWaitBudget, READER_WAIT_MS } from "./timing";
 import { openRead } from "./now-playing";
+import { gotoRead } from "./read-face";
 // Appearance docked under the text (#588; spec #586 "Appearance docked under the text"; board
 // ReaderAppearance.dc.html): Aa docks the panel in place of the foot, the text is laid out again in what is left with
-// the narrated sentence in view, and closing it brings the foot back. In the standalone reader and in Now playing.
+// the narrated sentence in view, and closing it brings the foot back. In Now playing's Read face (the reader on its own went, #613 part 2).
 
 test.use({ serviceWorkers: "block" });
 installReaderWaitBudget(test);
@@ -39,8 +40,9 @@ async function withReader(page: Page, reader: object, run: () => Promise<void>) 
   await page.request.put("/api/appearance", { data: { ...appearance, reader: { ...appearance.reader, ...reader } } });
   try { await run(); } finally { await page.request.put("/api/appearance", { data: appearance }); }
 }
-type Where = "standalone" | "now playing";
-const roomOf = (page: Page, where: Where) => page.locator(where === "standalone" ? ".reader-room:not(.inline-reader)" : ".reader-room.inline-reader");
+// The reader on its own went (#613 part 2): every reader is Now playing's Read face.
+type Where = "now playing";
+const roomOf = (page: Page, _where: Where) => page.locator(".reader-room.inline-reader");
 // The book in the player, paused at `interval`, and the reader open on it, following the narrated sentence.
 async function openAt(page: Page, where: Where, book: any, ebook: string, interval: any) {
   await page.goto("about:blank");
@@ -49,15 +51,8 @@ async function openAt(page: Page, where: Where, book: any, ebook: string, interv
   expect(saved.ok()).toBe(true);
   await page.goto("/");
   await expect(page.locator(".player-dock .dock-book")).toBeVisible();
-  // Now playing loads the resumed recording's track; for the standalone reader it is closed again, the book
-  // staying in the player, as the reader-bands spec does.
+  // Now playing loads the resumed recording's track and shows its Read face.
   await openRead(page);
-  if (where === "standalone") {
-    await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.getByRole("dialog", { name: "Now playing", exact: true })).toBeHidden();
-    await page.goto(`/#reader/${ebook}`);
-  }
   const room = roomOf(page, where);
   await expect(room).toHaveAttribute("data-current-passage", interval.paragraphId, { timeout: READER_WAIT_MS.followHighlight });
   await followed(room);
@@ -157,7 +152,7 @@ async function sentenceLow(page: Page, where: Where, book: any, ebook: string, m
 // Which sentences start on the shown page.
 const shownSentences = async (room: Locator, manifest: any) => (await sentenceTops(room, manifest)).found.map((line) => line.id);
 
-for (const where of ["standalone", "now playing"] as const)
+for (const where of ["now playing"] as const)
   test(`docking Appearance in the ${where} reader lays the view out once and keeps the narrated sentence near the foot in view`, async ({ page }) => {
     const { book, ebook, map, manifest } = await fixture(page, `Dock ${where}`);
     await withReader(page, { mode: "paginated" }, async () => {
@@ -212,7 +207,7 @@ for (const where of ["standalone", "now playing"] as const)
       expect(after.foot).toEqual(before.foot);
       await expect.poll(async () => { const now = await highlightLines(room); return now.length > 0 && insideBand(now[0]!, after.text); }, { timeout: READER_WAIT_MS.followHighlight }).toBe(true);
       await expect(room).toHaveAttribute("data-current-passage", interval.paragraphId);
-      await page.screenshot({ path: `artifacts/588-appearance-${where === "standalone" ? "standalone" : "now-playing"}-pages-closed.png` });
+      await page.screenshot({ path: `artifacts/588-appearance-now-playing-pages-closed.png` });
     });
   });
 
@@ -221,24 +216,26 @@ test("the panel as on ReaderAppearance.dc.html at 390 by 844: the rows, their na
   const first = map.intervals.filter((i: any) => i.section === 0).sort((a: any, b: any) => a.start - b.start)[0];
   for (const mode of ["paginated", "scroll"] as const)
     await withReader(page, { mode }, async () => {
-      const room = await openAt(page, "standalone", book, ebook, first);
+      const room = await openAt(page, "now playing", book, ebook, first);
       const panel = await openAppearance(page, room);
       // One heading and the close button; rows in the board's order.
       await expect(panel.getByRole("heading", { name: "Reader appearance", exact: true })).toBeVisible();
       const close = panel.getByRole("button", { name: "Close appearance", exact: true });
       expect((await close.boundingBox())!.height).toBeCloseTo(44, 0);
       const rows = panel.getByRole("listitem");
-      await expect(rows).toHaveCount(8);
+      // No Theme row: it went with the reader on its own (#613 part 2).
+      await expect(rows).toHaveCount(7);
       const labels = await rows.locator(".part-row-label").allTextContents();
-      expect(labels).toEqual(["Reading mode", "Follow the narration", "Theme", "Font", "Size", "Line height", "Margins", "Line width"]);
+      expect(labels).toEqual(["Reading mode", "Follow the narration", "Font", "Size", "Line height", "Margins", "Line width"]);
       // Each row is 52 high; the panel is at most half the window and scrolls inside.
       for (const row of await rows.all()) expect((await row.boundingBox())!.height).toBeCloseTo(52, 0);
       const docked = await expectDockedUncovered(room);
       expect(docked.panel.height).toBeLessThanOrEqual(844 / 2 + 0.5);
       const list = panel.getByRole("list", { name: "Reader appearance" });
-      const scrolls = await list.evaluate((element) => element.scrollHeight > element.clientHeight && getComputedStyle(element).overflowY === "auto");
+      // Seven rows since the Theme row went (#613 part 2): they may fit, and the list still scrolls when they do not.
+      const scrolls = await list.evaluate((element) => getComputedStyle(element).overflowY === "auto");
       expect(scrolls).toBe(true);
-      // The controls: Reading mode (Pages, Scroll), the Follow switch, the theme swatches, the fonts and the steppers.
+      // The controls: Reading mode (Pages, Scroll), the Follow switch, the fonts and the steppers.
       const reading = panel.getByRole("radiogroup", { name: "Reading mode", exact: true });
       await expect(reading.getByRole("radio")).toHaveText(["Pages", "Scroll"]);
       await expect(reading.getByRole("radio", { name: mode === "paginated" ? "Pages" : "Scroll", exact: true })).toHaveAttribute("aria-checked", "true");
@@ -246,8 +243,8 @@ test("the panel as on ReaderAppearance.dc.html at 390 by 844: the rows, their na
       expect(mark.width).toBeCloseTo(168, 0);
       expect(mark.height).toBeCloseTo(44, 0);
       await expect(panel.getByRole("switch", { name: "Follow the narration", exact: true })).toHaveAttribute("aria-checked", "true");
-      await expect(panel.getByRole("radiogroup", { name: "Theme", exact: true }).getByRole("radio")).toHaveCount(4);
-      for (const name of ["App", "Dark", "Light", "Sepia"]) await expect(panel.getByRole("radio", { name, exact: true })).toHaveCount(1);
+      await expect(panel.getByRole("radiogroup", { name: "Theme", exact: true })).toHaveCount(0);
+      for (const name of ["App", "Dark", "Light", "Sepia"]) await expect(panel.getByRole("radio", { name, exact: true })).toHaveCount(0);
       const font = panel.getByRole("radiogroup", { name: "Font", exact: true });
       await expect(font.getByRole("radio")).toHaveText(["Serif", "Sans", "System"]);
       expect((await font.boundingBox())!.width).toBeCloseTo(216, 0);
@@ -278,7 +275,7 @@ test("switching Reading mode in the panel keeps the place and the highlight; Fol
   const intervals = map.intervals.filter((i: any) => i.section === 0).sort((a: any, b: any) => a.start - b.start);
   const interval = intervals[4];
   await withReader(page, { mode: "paginated" }, async () => {
-    const room = await openAt(page, "standalone", book, ebook, interval);
+    const room = await openAt(page, "now playing", book, ebook, interval);
     const panel = await openAppearance(page, room);
     await settled(room);
     await followed(room);
@@ -321,7 +318,9 @@ test("switching Reading mode in the panel keeps the place and the highlight; Fol
 
 // Behaviour 14 of spec #586 from the docked panel: the reader's presets and settings persist without interrupting
 // the narration.
-test("the reader's theme, font and size persist from the docked panel without interrupting the narration", async ({ page }) => {
+// The reader's own theme went with the reader on its own (#613 part 2): a stored theme an older build wrote is ignored,
+// and the text takes the app's look.
+test("the reader's font and size persist from the docked panel without interrupting the narration; a stored theme is ignored", async ({ page }) => {
   test.skip(test.info().project.name.includes("firefox"), "plays audio, which the suite's Firefox cannot (#656)");
   await page.addInitScript(() => {
     const audio: HTMLAudioElement[] = [];
@@ -337,28 +336,27 @@ test("the reader's theme, font and size persist from the docked panel without in
     const start = (await audioTime())!;
     await expect.poll(async () => (await audioTime())!.time).toBeGreaterThan(start.time + 0.2);
   };
-  await withReader(page, { mode: "paginated", theme: "app", font: "serif", size: 19 }, async () => {
-    const room = await openAt(page, "standalone", book, ebook, first);
+  await withReader(page, { mode: "paginated", theme: "sepia", font: "serif", size: 19 }, async () => {
+    const room = await openAt(page, "now playing", book, ebook, first);
     await showControls(page, room);
     await room.locator(".reader-player").getByRole("button", { name: "Play narration", exact: true }).click();
     await stillPlaying();
     const panel = await openAppearance(page, room);
     await stillPlaying();
-    await panel.getByRole("radio", { name: "Sepia", exact: true }).click();
     await panel.getByRole("radiogroup", { name: "Font", exact: true }).getByRole("radio", { name: "Sans", exact: true }).click();
     await setStepper(room, "Size", 22);
-    const frameBody = page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").first().locator("body");
-    await expect(frameBody).toHaveCSS("background-color", "rgb(242, 230, 205)");
+    const frameBody = page.frameLocator(".reader-room .reader-viewport iframe").first().locator("body");
+    // The app's ground (the dark preset's), not the stored sepia page.
+    await expect(frameBody).toHaveCSS("background-color", "rgb(16, 21, 16)");
     await expect.poll(async () => (await (await page.request.get("/api/appearance")).json()).reader).toMatchObject({ theme: "sepia", font: "sans", size: 22 });
     await stillPlaying();
     await closeAppearance(room);
     await stillPlaying();
     // After a reload the reader opens with them, and the panel shows them.
     await page.reload();
-    const again = roomOf(page, "standalone");
-    await expect(page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").first().locator("body")).toHaveCSS("background-color", "rgb(242, 230, 205)");
+    const again = roomOf(page, "now playing");
+    await expect(page.frameLocator(".reader-room .reader-viewport iframe").first().locator("body")).toHaveCSS("background-color", "rgb(16, 21, 16)");
     const reopened = await openAppearance(page, again);
-    await expect(reopened.getByRole("radio", { name: "Sepia", exact: true })).toHaveAttribute("aria-checked", "true");
     await expect(reopened.getByRole("radio", { name: "Sans", exact: true })).toHaveAttribute("aria-checked", "true");
     await expect(reopened.getByRole("spinbutton", { name: "Size", exact: true })).toHaveText("22");
   });
@@ -373,8 +371,8 @@ test("a reader setting from the docked panel does not save an appearance preview
     await page.goto("/#settings/playback");
     await page.getByRole("radiogroup", { name: "Progress bar shows", exact: true }).getByRole("radio", { name: "Current chapter", exact: true }).click();
     await expect.poll(async () => (await (await page.request.get("/api/appearance")).json()).playback.progressScope).toBe("chapter");
-    await page.evaluate((id) => { location.hash = `reader/${id}`; }, id);
-    const room = roomOf(page, "standalone");
+    await gotoRead(page, id, "hash");
+    const room = roomOf(page, "now playing");
     await expect(room.locator(".reader-viewport iframe")).toBeVisible();
     await openAppearance(page, room);
     await setStepper(room, "Size", 23);
@@ -393,8 +391,8 @@ test("a reader setting from the docked panel does not save an appearance preview
 test("Back with Appearance docked leaves the reader; the panel is not in the address", async ({ page }) => {
   const { ebook } = await fixture(page, "Back");
   await page.goto("/#library");
-  await page.goto(`/#reader/${ebook}`);
-  const room = roomOf(page, "standalone");
+  await gotoRead(page, ebook);
+  const room = roomOf(page, "now playing");
   await expect(room.locator(".reader-viewport iframe")).toBeVisible();
   const address = page.url();
   await openAppearance(page, room);
@@ -409,7 +407,7 @@ test("on a desktop Appearance docks under the text, above the player", async ({ 
   const { book, ebook, map } = await fixture(page, "Desktop");
   const first = map.intervals.filter((i: any) => i.section === 0).sort((a: any, b: any) => a.start - b.start)[0];
   await withReader(page, { mode: "paginated" }, async () => {
-    const room = await openAt(page, "standalone", book, ebook, first);
+    const room = await openAt(page, "now playing", book, ebook, first);
     const count = await resizes(room);
     const panel = await openAppearance(page, room);
     await settled(room);

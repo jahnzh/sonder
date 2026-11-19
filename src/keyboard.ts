@@ -23,7 +23,7 @@ const IGNORED_TAGS = new Set([
   "A",
 ]);
 export const BLOCKING_DIALOG_SELECTOR =
-  '[role="dialog"][data-state="open"]:not(.now-playing-screen):not(.reader-dialog)';
+  '[role="dialog"][data-state="open"]:not(.now-playing-screen)';
 /** Situations in which a key belongs to something else: a field, a dialog, a shortcut. */
 function keyIgnored({
   defaultPrevented = false,

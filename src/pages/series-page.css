@@ -53,7 +53,7 @@
    muted line cut with an ellipsis, and Dismiss (quiet) on the right. A failure of Dismiss shows under the titles. */
 .series-page-new {
   min-height: 64px;
-  padding: 10px var(--space-16);
+  padding: 10px var(--space-16); /* tokens: SeriesNew.dc.html, the New card 10 by 16 inside */
 }
 .series-page-new-text {
   flex: 1;

@@ -13,7 +13,7 @@
   /* The update notice's height with its gaps, set by AppUpdate.tsx while it shows (#733). */
   --shell-update: 0px;
   min-height: 100vh;
-  padding-bottom: calc(var(--shell-tab-bar) + var(--shell-player) + var(--shell-offline) + var(--shell-update));
+  padding-bottom: calc(var(--shell-tab-bar) + var(--shell-player) + var(--shell-offline) + var(--shell-update)); /* tokens: room for the tab bar, mini player, offline line and update notice (their heights), not a spacing */
 }
 .app-shell:has(.player-dock) {
   --shell-player: var(--player-height);
@@ -190,7 +190,7 @@
     --shell-offline: 0px;
   }
   .main-shell {
-    margin-left: var(--rail-width);
+    margin-left: var(--rail-width); /* tokens: DesktopLibrary.dc.html, the content starts after the 220 rail */
   }
   .shell-nav {
     top: 0;
