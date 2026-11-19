@@ -39,7 +39,7 @@ import { followsNarration } from "../follow-default";
 import { createReaderFollowing, type DeferredReturn, type NarrationPlace, type NarrationReturn } from "../reader-following";
 import { mapIdentityOf } from "../alignment-map-lifecycle";
 import { chapterTimeLeft, currentChapter, playbackTimeline } from "../chapters";
-import { footRestLine, headRestLine } from "../reader-bands";
+import { ebookOnlyFootLine, footControls, footRestLine, headRestLine } from "../reader-bands";
 import { ReaderAppearance } from "./ReaderAppearance";
 import { Button } from "../parts/Button";
 import { ReaderFootMessage, tappedControl, useReaderMessages, useReaderUpdate } from "./ReaderFootMessage";
@@ -336,6 +336,7 @@ export function ReaderView({
   fromAudio: initialFromAudio,
   inline = false,
   recordingId,
+  recording = true,
   books,
   onClose,
   onGone,
@@ -345,6 +346,11 @@ export function ReaderView({
   fromAudio: boolean;
   inline?: boolean;
   recordingId?: string;
+  /**
+   * Whether the work has a recording (#594). Without one (an ebook-only book, #555) the foot holds no narration: no
+   * Pause, Back to narration, transport, Speed or Sleep timer; its row is Chapters and the position in the book.
+   */
+  recording?: boolean;
   onClose?: () => void;
   /** The server says the ebook is gone and no copy of it is on this device. */
   onGone?: () => void;
@@ -1481,8 +1487,9 @@ export function ReaderView({
   // otherwise the first sentence on the page.
   const pageBookmark = book?.bookmarks.find((entry) => entry.locator.paragraphId === locator?.paragraphId);
   const toggleBookmark = () => (pageBookmark ? removeBookmark(pageBookmark, true) : void bookmark());
-  // The slider follows the book/chapter progress setting and moves the page on release.
-  const scope = appearance.playback.progressScope;
+  // The slider follows the book/chapter progress setting and moves the page on release. A work without a recording
+  // has the slider as its only way through the book: "Position in the book", the whole book (#594).
+  const scope = recording ? appearance.playback.progressScope : "book";
   const allFragments = sections.flatMap((section) => section.paragraphs);
   const scopeFragments = scope === "chapter" ? currentSection?.paragraphs || [] : allFragments;
   const scopeIndex = scopeFragments.findIndex((fragment) => fragment.id === locator?.paragraphId);
@@ -1557,6 +1564,10 @@ export function ReaderView({
     pending.back.run();
   }, [p.book?.recordingId, p.track?.id, p.position, p.error, scrubEnded]);
   const controls = controlsVisible || desktop;
+  // What the foot holds: the narration's controls, or for a work without a recording only Chapters and the slider.
+  const foot = footControls(recording);
+  const atRest = new Set(foot.rest), inRow = new Set(foot.shown);
+  const ebookLine = recording ? null : ebookOnlyFootLine(shownSection?.title, scrub !== null ? scrub / 1000 : progress);
   const [footSetting, setFootSetting] = useFootSetting(controls);
   // The foot at rest (#587): the progress line by Settings › Playback "Progress bar shows", and where the
   // narration is in its chapter, or with no narration of this book in the player, where the page is in the book.
@@ -1716,7 +1727,11 @@ export function ReaderView({
         )}
         <button
           className="icon-button reader-bookmark-toggle"
-          aria-label={pageBookmark ? "Remove bookmark from current sentence" : "Bookmark current sentence"}
+          aria-label={
+            recording
+              ? pageBookmark ? "Remove bookmark from current sentence" : "Bookmark current sentence"
+              : pageBookmark ? "Remove the bookmark from the first sentence on this page" : "Bookmark the first sentence on this page"
+          }
           aria-pressed={!!pageBookmark}
           disabled={!locator}
           onClick={toggleBookmark}
@@ -1775,15 +1790,15 @@ export function ReaderView({
       </div>
       {/* The foot (#587): its box stays whether the controls show or not. At rest the progress line, where the
           narration is and a small Play or Pause; with the controls shown the timeline and the transport row. */}
-      <section className="reader-player" aria-label="Player" data-controls={controls} data-setting={footSetting ?? undefined} data-message={message?.kind} onClickCapture={tapControls}>
+      <section className="reader-player" aria-label="Player" data-controls={controls} data-recording={recording ? undefined : "none"} data-setting={footSetting ?? undefined} data-message={message?.kind} onClickCapture={tapControls}>
         {message && (
-          <ReaderFootMessage message={message} actions={messageActions} play={p.book ? { playing: p.playing, toggle: p.toggle } : null} />
+          <ReaderFootMessage message={message} actions={messageActions} play={p.book && atRest.has("pause") ? { playing: p.playing, toggle: p.toggle } : null} />
         )}
         <div className="reader-foot-rest">
           <span className="reader-foot-line" aria-hidden="true"><i style={{ width: `${restProgress * 100}%` }} /></span>
           <div className="reader-foot-row">
             <span className="reader-foot-place">{restLine}</span>
-            {p.book && (
+            {p.book && atRest.has("pause") && (
               <Button
                 kind="quiet"
                 className="reader-foot-play"
@@ -1796,8 +1811,17 @@ export function ReaderView({
         </div>
         <div className="reader-foot-controls">
         <div className="reader-player-info">
-          <strong>{barChapter}</strong>
-          <span>{barPercent}% of {audio || scope !== "chapter" ? "book" : "chapter"}{timing}</span>
+          {ebookLine ? (
+            <>
+              <strong>{ebookLine.chapter}</strong>
+              <span>{ebookLine.place}</span>
+            </>
+          ) : (
+            <>
+              <strong>{barChapter}</strong>
+              <span>{barPercent}% of {audio || scope !== "chapter" ? "book" : "chapter"}{timing}</span>
+            </>
+          )}
         </div>
         <div className="reader-player-line" aria-hidden="true"><i style={{ width: `${barPercent}%` }} /></div>
         {audio ? (
@@ -1810,7 +1834,7 @@ export function ReaderView({
           type="range"
           min="0"
           max="1000"
-          aria-label={scope === "chapter" ? "Position in chapter" : "Position in book"}
+          aria-label={inRow.has("position") ? "Position in the book" : scope === "chapter" ? "Position in chapter" : "Position in book"}
           aria-valuetext={`${shownSection?.title || ""} · ${shownPercent}%`}
           disabled={!book || !rendered}
           value={scrub ?? Math.round(progress * 1000)}
@@ -1822,24 +1846,30 @@ export function ReaderView({
         />}
         <div className="reader-player-leading">
           <button className="icon-button reader-player-chapters" aria-label="Chapters" disabled={!book} onClick={() => openPage("chapters")}><List size={21} /></button>
-          <button
-            className="icon-button reader-back-narration"
-            aria-label="Back to narration"
-            disabled={!backAction}
-            onClick={runBack}
-          >
-            <BookToHeadphones size={20} />
-          </button>
+          {inRow.has("back-to-narration") && (
+            <button
+              className="icon-button reader-back-narration"
+              aria-label="Back to narration"
+              disabled={!backAction}
+              onClick={runBack}
+            >
+              <BookToHeadphones size={20} />
+            </button>
+          )}
         </div>
-        <div className="reader-transport">
-          <button className="icon-button" aria-label="Back 30 seconds" disabled={!p.book} onClick={()=>p.skip(-30)}><RotateCcw size={26}/><span>30</span></button>
-          <button className="reader-play" aria-label={p.playing ? "Pause narration" : "Play narration"} disabled={!p.book} onClick={p.toggle}>{p.playing ? <Pause size={24} fill="currentColor"/> : <Play size={24} fill="currentColor"/>}</button>
-          <button className="icon-button" aria-label="Forward 30 seconds" disabled={!p.book} onClick={()=>p.skip(30)}><RotateCw size={26}/><span>30</span></button>
-        </div>
-        <div className="reader-player-extras">
-          <FootSettingButtons open={footSetting} onOpen={setFootSetting} />
-        </div>
-        {footSetting && <FootSettingRow setting={footSetting} onDone={() => setFootSetting(null)} />}
+        {inRow.has("transport") && (
+          <div className="reader-transport">
+            <button className="icon-button" aria-label="Back 30 seconds" disabled={!p.book} onClick={()=>p.skip(-30)}><RotateCcw size={26}/><span>30</span></button>
+            <button className="reader-play" aria-label={p.playing ? "Pause narration" : "Play narration"} disabled={!p.book} onClick={p.toggle}>{p.playing ? <Pause size={24} fill="currentColor"/> : <Play size={24} fill="currentColor"/>}</button>
+            <button className="icon-button" aria-label="Forward 30 seconds" disabled={!p.book} onClick={()=>p.skip(30)}><RotateCw size={26}/><span>30</span></button>
+          </div>
+        )}
+        {inRow.has("speed") && inRow.has("sleep-timer") && (
+          <div className="reader-player-extras">
+            <FootSettingButtons open={footSetting} onOpen={setFootSetting} />
+          </div>
+        )}
+        {footSetting && inRow.has("speed") && <FootSettingRow setting={footSetting} onDone={() => setFootSetting(null)} />}
         </div>
       </section>
     </div>

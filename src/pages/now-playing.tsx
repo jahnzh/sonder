@@ -142,6 +142,7 @@ function NowPlayingScreen({ workId, face, open, ...props }: NowPlayingProps & { 
             fromAudio={false}
             inline
             recordingId={recording?.recordingId}
+            recording={facts.recording}
             books={props.books}
             notify={props.notify}
             onClose={close}
