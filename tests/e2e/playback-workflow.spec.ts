@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+// Saves to this device: in WebKit each test needs a persistent context to store a Blob in IndexedDB (#523, #596).
+import { test, expect, type Page } from "./device-store";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
@@ -94,119 +95,124 @@ async function report(page: Page, audiobook: ReturnType<Page["getByRole"]>, what
   await expect(dialog).toBeHidden();
 }
 
-test("chapter progress persists; precision dragging previews, slows with distance and cancels safely; wide bars expand", async ({page})=>{
-  await instrument(page);
-  const appearance=await (await page.request.get("/api/appearance")).json();
-  await page.route("**/api/books",async route=>{
-    const response=await route.fetch(), books=await response.json();
-    const alice=books.find((b:any)=>b.id==="alice");
-    alice.tracks=alice.tracks.slice(0,1);
-    alice.tracks[0].chapters=[{title:"Chapter one",start:0,end:120.12345678},{title:"Chapter two",start:120.12345678,end:300.12345678},{title:"Chapter three",start:300.12345678,end:alice.tracks[0].duration}];
-    await route.fulfill({response,json:books});
+// Both route the reader's answers (the library, a held progress save): once a service worker controls the page,
+// WebKit's requests no longer pass page.route (#523), so it is blocked for them (#596).
+test.describe("with no service worker",()=>{
+  test.use({serviceWorkers:"block"});
+  test("chapter progress persists; precision dragging previews, slows with distance and cancels safely; wide bars expand", async ({page})=>{
+    await instrument(page);
+    const appearance=await (await page.request.get("/api/appearance")).json();
+    await page.route("**/api/books",async route=>{
+      const response=await route.fetch(), books=await response.json();
+      const alice=books.find((b:any)=>b.id==="alice");
+      alice.tracks=alice.tracks.slice(0,1);
+      alice.tracks[0].chapters=[{title:"Chapter one",start:0,end:120.12345678},{title:"Chapter two",start:120.12345678,end:300.12345678},{title:"Chapter three",start:300.12345678,end:alice.tracks[0].duration}];
+      await route.fulfill({response,json:books});
+    });
+    try {
+      // Settings › Playback saves the choice when it is made (#579).
+      await page.goto("/#settings/playback");
+      const scope=page.getByRole("radiogroup",{name:"Progress bar shows",exact:true});
+      await scope.getByRole("radio",{name:"Current chapter",exact:true}).click();
+      await expect.poll(async()=>(await (await page.request.get("/api/appearance")).json()).playback.progressScope).toBe("chapter");
+      await page.reload();
+      await expect(scope.getByRole("radio",{name:"Current chapter",exact:true})).toHaveAttribute("aria-checked","true");
+      await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button",{name:"Library",exact:true}).click();
+      await playAndPause(page,"Alice’s Adventures in Wonderland");
+      await position(page,150.12345678);
+      // The mouse's pointer id differs between engines (Chromium 1, Firefox 0): synthetic events use the real one.
+      await page.evaluate(()=>addEventListener("pointerdown",event=>{(window as any).__pointerId=event.pointerId;},true));
+      const pointerId=()=>page.evaluate(()=>(window as any).__pointerId as number);
+      await openListen(page);
+      const slider=page.getByRole("slider",{name:"Seek in chapter",exact:true});
+      expect(Number(await slider.getAttribute("max"))).toBeCloseTo(180,8);
+      await expect(slider).toHaveValue("30");
+      await expect(slider).toHaveAttribute("aria-valuetext",/0:30 elapsed, 2:30 remaining in Chapter two/);
+      const box=(await slider.boundingBox())!, width=box.width-18;
+      const x=box.x+9+30/180*width, y=box.y+box.height/2;
+      await page.mouse.move(x,y); await page.mouse.down();
+      await page.mouse.move(x,y-156);
+      await expect(slider).toHaveValue("30");
+      await page.mouse.move(x+60,y-156,{steps:5});
+      const fine=Number(await slider.inputValue())-30;
+      expect(fine).toBe(Math.floor(30+60/width*180/4)-30);
+      expect((await audioState(page)).position).toBeCloseTo(150,0);
+      await page.mouse.up();
+      await expect.poll(async()=>(await audioState(page)).position).toBeCloseTo(150+fine,0);
+      await slider.fill("30");
+      await page.mouse.move(x,y); await page.mouse.down();
+      await page.mouse.move(x+60,y,{steps:5}); await page.mouse.up();
+      const normal=(await audioState(page)).position-150;
+      expect(normal/fine).toBeCloseTo(4,0);
+      await slider.fill("30");
+      await page.mouse.move(x,y); await page.mouse.down();
+      await page.mouse.move(x+30,y);
+      await slider.dispatchEvent("pointercancel",{pointerId:await pointerId()});
+      await page.mouse.up();
+      expect((await audioState(page)).position).toBeCloseTo(150,0);
+      await slider.focus(); await page.keyboard.press("ArrowRight");
+      await expect.poll(async()=>(await audioState(page)).position).toBeCloseTo(151,0);
+      // Release coordinates must not add an unseen final movement to the preview.
+      await slider.fill("30");
+      await page.mouse.move(x,y); await page.mouse.down();
+      await page.mouse.move(x+30,y-156);
+      const shown=Number(await slider.inputValue());
+      await slider.locator("..").dispatchEvent("pointerup",{pointerId:await pointerId(),clientX:x+130,clientY:y});
+      await page.mouse.up();
+      await expect.poll(async()=>(await audioState(page)).position).toBeCloseTo(120.12345678+shown,5);
+      await slider.fill("31");
+      const mobileWidth=box.width;
+      await page.screenshot({path:"artifacts/playback-chapter-mobile.png",fullPage:true});
+      await page.setViewportSize({width:1440,height:1000});
+      // Listen keeps its rows in one column of at most 560 on a wide window (#593): the bar fills it.
+      await expect.poll(async()=>(await slider.boundingBox())!.width).toBeGreaterThan(mobileWidth*1.5);
+      expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(1440);
+      await page.screenshot({path:"artifacts/playback-chapter-desktop.png",fullPage:true});
+      await listenFace(page).getByRole("button",{name:"Close now playing",exact:true}).click();
+      await page.setViewportSize({width:390,height:844});
+      await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button",{name:"Settings",exact:true}).click();
+      await page.getByRole("button",{name:/^Playback\b/}).click();
+      await page.getByRole("radiogroup",{name:"Progress bar shows",exact:true}).getByRole("radio",{name:"Whole audiobook",exact:true}).click();
+      await openListen(page);
+      await expect(page.getByRole("slider",{name:"Seek in audiobook",exact:true})).toHaveValue("151");
+      expect((await audioState(page)).paused).toBe(true);
+      await page.setViewportSize({width:320,height:740});
+      expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(320);
+    } finally { await page.request.put("/api/appearance",{data:appearance}); }
   });
-  try {
-    // Settings › Playback saves the choice when it is made (#579).
-    await page.goto("/#settings/playback");
-    const scope=page.getByRole("radiogroup",{name:"Progress bar shows",exact:true});
-    await scope.getByRole("radio",{name:"Current chapter",exact:true}).click();
-    await expect.poll(async()=>(await (await page.request.get("/api/appearance")).json()).playback.progressScope).toBe("chapter");
-    await page.reload();
-    await expect(scope.getByRole("radio",{name:"Current chapter",exact:true})).toHaveAttribute("aria-checked","true");
-    await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button",{name:"Library",exact:true}).click();
-    await playAndPause(page,"Alice’s Adventures in Wonderland");
-    await position(page,150.12345678);
-    // The mouse's pointer id differs between engines (Chromium 1, Firefox 0): synthetic events use the real one.
-    await page.evaluate(()=>addEventListener("pointerdown",event=>{(window as any).__pointerId=event.pointerId;},true));
-    const pointerId=()=>page.evaluate(()=>(window as any).__pointerId as number);
-    await openListen(page);
-    const slider=page.getByRole("slider",{name:"Seek in chapter",exact:true});
-    expect(Number(await slider.getAttribute("max"))).toBeCloseTo(180,8);
-    await expect(slider).toHaveValue("30");
-    await expect(slider).toHaveAttribute("aria-valuetext",/0:30 elapsed, 2:30 remaining in Chapter two/);
-    const box=(await slider.boundingBox())!, width=box.width-18;
-    const x=box.x+9+30/180*width, y=box.y+box.height/2;
-    await page.mouse.move(x,y); await page.mouse.down();
-    await page.mouse.move(x,y-156);
-    await expect(slider).toHaveValue("30");
-    await page.mouse.move(x+60,y-156,{steps:5});
-    const fine=Number(await slider.inputValue())-30;
-    expect(fine).toBe(Math.floor(30+60/width*180/4)-30);
-    expect((await audioState(page)).position).toBeCloseTo(150,0);
-    await page.mouse.up();
-    await expect.poll(async()=>(await audioState(page)).position).toBeCloseTo(150+fine,0);
-    await slider.fill("30");
-    await page.mouse.move(x,y); await page.mouse.down();
-    await page.mouse.move(x+60,y,{steps:5}); await page.mouse.up();
-    const normal=(await audioState(page)).position-150;
-    expect(normal/fine).toBeCloseTo(4,0);
-    await slider.fill("30");
-    await page.mouse.move(x,y); await page.mouse.down();
-    await page.mouse.move(x+30,y);
-    await slider.dispatchEvent("pointercancel",{pointerId:await pointerId()});
-    await page.mouse.up();
-    expect((await audioState(page)).position).toBeCloseTo(150,0);
-    await slider.focus(); await page.keyboard.press("ArrowRight");
-    await expect.poll(async()=>(await audioState(page)).position).toBeCloseTo(151,0);
-    // Release coordinates must not add an unseen final movement to the preview.
-    await slider.fill("30");
-    await page.mouse.move(x,y); await page.mouse.down();
-    await page.mouse.move(x+30,y-156);
-    const shown=Number(await slider.inputValue());
-    await slider.locator("..").dispatchEvent("pointerup",{pointerId:await pointerId(),clientX:x+130,clientY:y});
-    await page.mouse.up();
-    await expect.poll(async()=>(await audioState(page)).position).toBeCloseTo(120.12345678+shown,5);
-    await slider.fill("31");
-    const mobileWidth=box.width;
-    await page.screenshot({path:"artifacts/playback-chapter-mobile.png",fullPage:true});
-    await page.setViewportSize({width:1440,height:1000});
-    // Listen keeps its rows in one column of at most 560 on a wide window (#593): the bar fills it.
-    await expect.poll(async()=>(await slider.boundingBox())!.width).toBeGreaterThan(mobileWidth*1.5);
-    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(1440);
-    await page.screenshot({path:"artifacts/playback-chapter-desktop.png",fullPage:true});
-    await listenFace(page).getByRole("button",{name:"Close now playing",exact:true}).click();
-    await page.setViewportSize({width:390,height:844});
-    await page.getByRole("navigation", { name: "Main", exact: true }).getByRole("button",{name:"Settings",exact:true}).click();
-    await page.getByRole("button",{name:/^Playback\b/}).click();
-    await page.getByRole("radiogroup",{name:"Progress bar shows",exact:true}).getByRole("radio",{name:"Whole audiobook",exact:true}).click();
-    await openListen(page);
-    await expect(page.getByRole("slider",{name:"Seek in audiobook",exact:true})).toHaveValue("151");
-    expect((await audioState(page)).paused).toBe(true);
-    await page.setViewportSize({width:320,height:740});
-    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(320);
-  } finally { await page.request.put("/api/appearance",{data:appearance}); }
-});
 
-test("whole-audiobook seeking crosses real audio files and preserves pause",async({page})=>{
-  await instrument(page);
-  const title=unique("Timeline across files");
-  const id=await importBook(page,{title,author:"Playback QA",one:{name:"One.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")},two:{name:"Two.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}});
-  const book=(await (await page.request.get("/api/books")).json()).find((b:any)=>b.id===id);
-  let releaseFirst!:()=>void,held=false;
-  const firstRequest=new Promise<void>(resolve=>{releaseFirst=resolve;});
-  await page.route("**/api/progress",async route=>{
-    if(route.request().method()==="POST" && route.request().postDataJSON().recordingId===book.recordingId && !held){
-      held=true;
-      await firstRequest;
-    }
-    await route.continue();
+  test("whole-audiobook seeking crosses real audio files and preserves pause",async({page})=>{
+    await instrument(page);
+    const title=unique("Timeline across files");
+    const id=await importBook(page,{title,author:"Playback QA",one:{name:"One.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")},two:{name:"Two.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}});
+    const book=(await (await page.request.get("/api/books")).json()).find((b:any)=>b.id===id);
+    let releaseFirst!:()=>void,held=false;
+    const firstRequest=new Promise<void>(resolve=>{releaseFirst=resolve;});
+    await page.route("**/api/progress",async route=>{
+      if(route.request().method()==="POST" && route.request().postDataJSON().recordingId===book.recordingId && !held){
+        held=true;
+        await firstRequest;
+      }
+      await route.continue();
+    });
+    try {
+    await page.goto("/");
+    await playAndPause(page,title);
+    await expect.poll(()=>held).toBe(true);
+    await openListen(page);
+    const length=book.tracks[0].duration;
+    const slider=page.getByRole("slider",{name:"Seek in audiobook",exact:true});
+    await slider.fill(String(Math.round(length+100)));
+    await expect.poll(async()=>(await audioState(page)).src).toContain(book.tracks[1].id);
+    await expect.poll(async()=>(await audioState(page)).position).toBeCloseTo(100,0);
+    expect((await audioState(page)).paused).toBe(true);
+    releaseFirst();
+    await expect.poll(async()=>{
+      const current=(await(await page.request.get("/api/books")).json()).find((b:any)=>b.id===id);
+      return current.progress?.trackId;
+    }).toBe(book.tracks[1].id);
+    } finally { releaseFirst(); }
   });
-  try {
-  await page.goto("/");
-  await playAndPause(page,title);
-  await expect.poll(()=>held).toBe(true);
-  await openListen(page);
-  const length=book.tracks[0].duration;
-  const slider=page.getByRole("slider",{name:"Seek in audiobook",exact:true});
-  await slider.fill(String(Math.round(length+100)));
-  await expect.poll(async()=>(await audioState(page)).src).toContain(book.tracks[1].id);
-  await expect.poll(async()=>(await audioState(page)).position).toBeCloseTo(100,0);
-  expect((await audioState(page)).paused).toBe(true);
-  releaseFirst();
-  await expect.poll(async()=>{
-    const current=(await(await page.request.get("/api/books")).json()).find((b:any)=>b.id===id);
-    return current.progress?.trackId;
-  }).toBe(book.tracks[1].id);
-  } finally { releaseFirst(); }
 });
 
 test("playback opens the reader and title page; downloaded sources can be switched, flagged and removed",async({page})=>{

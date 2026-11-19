@@ -184,33 +184,12 @@
 }
 
 /* Reader and transport share the normal Now Playing surface. */
-
-.reader-display-options { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 0; flex-shrink: 0; font-size: 12px; }
-.reader-display-options label { display: flex; align-items: center; gap: 5px; }
-.reader-display-options select { min-height: 36px; padding: 5px; }
-.reader-display-options input { width: 62px; min-height: 36px; padding: 5px; }
-.reader-follow-toggle { margin-left: auto; min-height: 36px; padding: 5px 8px; font-size: 11px; }
-.reader-follow-toggle.selected { color: var(--accent); }
-.inline-reader .reader-listen-controls { margin-top: 4px; padding-top: 4px; }
-.inline-reader .reader-listen-controls .button { min-height: 34px; font-size: 11px; }
-.inline-reader .reader-navigation { padding-top: 5px; }
-.inline-reader .reader-navigation .button { min-height: 32px; padding: 5px 9px; }
 .inline-reader .reader-viewport {
   background: transparent;
   border: 0;
   border-radius: 0;
   box-shadow: none;
 }
-.inline-reader .reader-toolbar,
-.inline-reader .reader-listen-controls { border: 0; }
-@media (max-width: 360px) {
-  .inline-reader .reader-follow-toggle > span { display: none; }
-  .inline-reader .reader-display-options input { width: 46px; }
-}
-
-/* Reading is the default surface; secondary controls live in the options sheet. */
-
-/* Book title, options trigger and close button share the heading row so they stay aligned. */
 
 /* Center the 30-second labels on the arrow icons at every viewport size. */
 .player-dock .seek-button {

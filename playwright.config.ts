@@ -47,6 +47,14 @@ const activitySpecs = /(^|\/)(activity(-[a-z]+)?|device-save-records|torrent-hea
 const activityIphone = existsSync(webkit.executablePath())
   ? [{ name: "webkit-iphone-activity", testMatch: activitySpecs, use: { ...devices["iPhone 15"], serviceWorkers: "block" as const, launchOptions: {} } }]
   : [];
+// Every browser spec of Now playing and the reader's page, old and rewritten, the slice's final check (#596): they also
+// run in WebKit with the iPhone profile, and in Firefox beside the lines above.
+const nowPlayingSpecs =
+  /(^|\/)(now-playing-(layout|faces|ebook-only|desktop)|reader-(bands|frame|theme|follow-highlight|load-teardown|appearance|foot-setting|pages|messages|more-gone|keys|page-turn|book-text|text-links|paused-seek|second-track|long-press-mapped|check-edition)|integrated-reader|back-to-narration|one-reading-view|playback-(workflow|speed|speed-rate)|media-controls|position-history|app|audiobook-page|book-page|device-downloads|discover|keep-reading|library-series|navigation|source-progress|users|reading-sync-again)\.spec\.ts$/;
+// Opt-in (SONDER_SLICE_WEBKIT=1): a slice's final check runs it; the committed check on every push does not.
+const nowPlayingIphone = process.env.SONDER_SLICE_WEBKIT === "1" && existsSync(webkit.executablePath())
+  ? [{ name: "webkit-iphone-now-playing", testMatch: nowPlayingSpecs, use: { ...devices["iPhone 15"], launchOptions: {} } }]
+  : [];
 const desktopProjects = [
   { name: "chromium" },
   // Layout checks also run in Firefox/WebKit when those browsers are installed.
@@ -189,6 +197,8 @@ const desktopProjects = [
               /(^|\/)reader-long-press-mapped\.spec\.ts$/,
               // The live check opens the EPUB of the map it sampled, for a work with no shared default (#742 second round).
               /(^|\/)reader-check-edition\.spec\.ts$/,
+              // Every spec of Now playing and the reader's page, the slice's final check (#596).
+              nowPlayingSpecs,
               // Sonder's own Want to read on the Book page, Discover's rows and the Library's Shelf (#721 part c1).
               /(^|\/)want-to-read\.spec\.ts$/,
             ]
@@ -197,6 +207,7 @@ const desktopProjects = [
     })),
   ...pageTurnIphone,
   ...activityIphone,
+  ...nowPlayingIphone,
 ];
 export default defineConfig({
   testDir: "./tests/e2e",

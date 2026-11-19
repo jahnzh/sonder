@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+// Saves to this device: in WebKit each test needs a persistent context to store a Blob in IndexedDB (#523, #596).
+import { test, expect, type Page } from "./device-store";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { skipOnMobile } from "./mobile";
@@ -326,47 +327,52 @@ test("desktop layout and server/device distinction remain usable without overflo
     page.getByRole("heading", { name: "Library Genesis", exact: true }),
   ).toBeVisible();
 });
-test("embedded chapter controls seek within a recording without changing the physical track ID", async ({
-  page,
-}) => {
-  const own = await importOwnBook(page, "Chapter controls");
-  await page.route("**/api/books", async (route) => {
-    const response = await route.fetch();
-    const books = await response.json();
-    const mine = books.find((b: { id: string }) => b.id === own.id);
-    mine.tracks[0].chapters = [
-      { title: "At the beginning", start: 0, end: 20 },
-      { title: "A new turn", start: 20, end: 40 },
-      { title: "The long way home", start: 40, end: 640 },
-    ];
-    await route.fulfill({ response, json: books });
+// The test's chapters come from a routed /api/books: once a service worker controls the page, WebKit's requests no
+// longer pass page.route (#523), so it is blocked here.
+test.describe("with no service worker", () => {
+  test.use({ serviceWorkers: "block" });
+  test("embedded chapter controls seek within a recording without changing the physical track ID", async ({
+    page,
+  }) => {
+    const own = await importOwnBook(page, "Chapter controls");
+    await page.route("**/api/books", async (route) => {
+      const response = await route.fetch();
+      const books = await response.json();
+      const mine = books.find((b: { id: string }) => b.id === own.id);
+      mine.tracks[0].chapters = [
+        { title: "At the beginning", start: 0, end: 20 },
+        { title: "A new turn", start: 20, end: 40 },
+        { title: "The long way home", start: 40, end: 640 },
+      ];
+      await route.fulfill({ response, json: books });
+    });
+    await page.goto("/");
+    await playFromLibrary(page, own.title);
+    await expect(
+      page
+        .locator(".player-dock")
+        .getByRole("button", { name: "Pause", exact: true }),
+    ).toBeVisible();
+    // Chapters from Listen is a page of the recording's chapters (#593); a row moves the narration and returns.
+    await openListen(page);
+    await listenFace(page).getByRole("button", { name: /^Chapters / }).click();
+    await page.getByRole("list", { name: "Chapters", exact: true }).getByRole("button", { name: /At the beginning/ }).click();
+    await expect(listenFace(page).getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+    await listenFace(page).getByRole("button", { name: /^Chapters / }).click();
+    await page.getByRole("list", { name: "Chapters", exact: true }).getByRole("button", { name: /A new turn/ }).click();
+    await expect
+      .poll(async () => {
+        const b = (await (await page.request.get("/api/books")).json()).find(
+          (b: { id: string }) => b.id === own.id,
+        );
+        return b.progress?.position || 0;
+      })
+      .toBeGreaterThanOrEqual(20);
+    const saved = (await (await page.request.get("/api/books")).json()).find(
+      (b: { id: string }) => b.id === own.id,
+    );
+    expect(saved.progress.trackId).toBe(own.tracks[0].id);
+    await listenFace(page).getByRole("button", { name: /^Chapters / }).click();
+    await expect(page.getByRole("list", { name: "Chapters", exact: true }).getByRole("button", { name: /A new turn/ })).toHaveAttribute("aria-current", "true");
   });
-  await page.goto("/");
-  await playFromLibrary(page, own.title);
-  await expect(
-    page
-      .locator(".player-dock")
-      .getByRole("button", { name: "Pause", exact: true }),
-  ).toBeVisible();
-  // Chapters from Listen is a page of the recording's chapters (#593); a row moves the narration and returns.
-  await openListen(page);
-  await listenFace(page).getByRole("button", { name: /^Chapters / }).click();
-  await page.getByRole("list", { name: "Chapters", exact: true }).getByRole("button", { name: /At the beginning/ }).click();
-  await expect(listenFace(page).getByRole("button", { name: "Pause", exact: true })).toBeVisible();
-  await listenFace(page).getByRole("button", { name: /^Chapters / }).click();
-  await page.getByRole("list", { name: "Chapters", exact: true }).getByRole("button", { name: /A new turn/ }).click();
-  await expect
-    .poll(async () => {
-      const b = (await (await page.request.get("/api/books")).json()).find(
-        (b: { id: string }) => b.id === own.id,
-      );
-      return b.progress?.position || 0;
-    })
-    .toBeGreaterThanOrEqual(20);
-  const saved = (await (await page.request.get("/api/books")).json()).find(
-    (b: { id: string }) => b.id === own.id,
-  );
-  expect(saved.progress.trackId).toBe(own.tracks[0].id);
-  await listenFace(page).getByRole("button", { name: /^Chapters / }).click();
-  await expect(page.getByRole("list", { name: "Chapters", exact: true }).getByRole("button", { name: /A new turn/ })).toHaveAttribute("aria-current", "true");
 });

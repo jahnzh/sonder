@@ -3,7 +3,8 @@
 // without a connection the reader opens the EPUB and follows the narration with the kept map. An ebook arriving for a
 // kept audiobook and a map becoming ready (routed library answers) are saved without a tap. Opening an EPUB does not
 // call `persist()`.
-import { test, expect, type Page } from "@playwright/test";
+// Saves to this device: in WebKit each test needs a persistent context to store a Blob in IndexedDB (#523, #596).
+import { test, expect, type Page } from "./device-store";
 import { mkdirSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
@@ -141,7 +142,7 @@ test("a kept book with an audiobook, an EPUB and a ready reading sync is complet
   await expect
     .poll(async () => ((await (await page.request.get("/api/device/keep")).json()).records as { workId: string; completeAt: number | null }[]).find((r) => r.workId === book.workId)?.completeAt, { timeout: 10_000 })
     .toEqual(expect.any(Number));
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(page.viewportSize()!.width);
   await settled(page);
   await page.screenshot({ path: `${OUT}/keep-reading-complete-phone.png`, fullPage: true });
   await page.setViewportSize({ width: 1440, height: 900 });

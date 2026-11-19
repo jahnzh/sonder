@@ -3,7 +3,9 @@
 // and Read, the rows that open the Audiobook and Ebook pages, the series line, Mark as finished and back, Remove from
 // library (asks once, Cancel sends nothing, the work's DELETE), the heart and the Favorites filter, the This device
 // switch, a Library book without a connection, Back, and the measures against the boards at phone size and desktop.
-import { test, expect, type Page, type Request } from "@playwright/test";
+// Saves to this device: in WebKit each test needs a persistent context to store a Blob in IndexedDB (#523, #596).
+import type { Request } from "@playwright/test";
+import { test, expect, type Page } from "./device-store";
 import { mkdirSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
