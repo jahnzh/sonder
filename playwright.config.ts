@@ -75,6 +75,20 @@ const nowPlayingSpecs =
 const nowPlayingIphone = process.env.SONDER_SLICE_WEBKIT === "1" && existsSync(webkit.executablePath())
   ? [{ name: "webkit-iphone-now-playing", testMatch: nowPlayingSpecs, use: { ...devices["iPhone 15"], launchOptions: {} } }]
   : [];
+// Every browser spec that the Series slice's tickets (#561 to #569) added or changed, the slice's final check (#570):
+// also in WebKit with the iPhone profile at the suite's phone window. series-release-search went with the dialog (#569);
+// position-history and works-gallery, where the slice only raised the Dexie version, run on their own slices' projects.
+// The service worker is blocked as on mobile-iphone-slice13 (page.route), except for the specs that test it.
+const seriesSpecs =
+  /(^|\/)(series-(page|add|not-saved|discovery|acquisition|new|removal|followups|offline)|library-series|book-page|navigation)\.spec\.ts$/;
+const seriesWorkerSpecs = /(^|\/)series-offline\.spec\.ts$/;
+// Opt-in (SONDER_SLICE_WEBKIT=1): a slice's final check runs it; the committed check on every push does not.
+const seriesIphone = process.env.SONDER_SLICE_WEBKIT === "1" && existsSync(webkit.executablePath())
+  ? [
+      { name: "mobile-iphone-series", testMatch: seriesSpecs, testIgnore: seriesWorkerSpecs, use: { ...slice13Phone, serviceWorkers: "block" as const } },
+      { name: "mobile-iphone-series-sw", testMatch: seriesWorkerSpecs, use: slice13Phone },
+    ]
+  : [];
 const desktopProjects = [
   { name: "chromium" },
   // Layout checks also run in Firefox/WebKit when those browsers are installed.
@@ -231,6 +245,8 @@ const desktopProjects = [
               nowPlayingSpecs,
               // Sonder's own Want to read on the Book page, Discover's rows and the Library's Shelf (#721 part c1).
               /(^|\/)want-to-read\.spec\.ts$/,
+              // The Series slice's states beside their boards, opt-in with SONDER_SERIES_BOARDS=1 (#570).
+              /(^|\/)series-boards\.spec\.ts$/,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },
@@ -239,6 +255,7 @@ const desktopProjects = [
   ...activityIphone,
   ...slice13Iphone,
   ...nowPlayingIphone,
+  ...seriesIphone,
 ];
 export default defineConfig({
   testDir: "./tests/e2e",
