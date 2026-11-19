@@ -408,15 +408,15 @@ test("audio arriving for an ebook-only work another user asked for moves every p
   assert.deepEqual(libraryRows(KIM, "w-arrive2"), []);
 });
 
-test("audio arriving for a matched work runs the Hardcover part: the user's own Hardcover shelf status", async () => {
+test("audio arriving for a matched work keeps the placeholder's status: Hardcover's stored shelf no longer applies (#721 part d)", async () => {
   work("w-arrive-hc", "Arriving Matched");
   run("INSERT INTO hardcover_links(work_id,book_id,slug,series) VALUES('w-arrive-hc',4260,'arriving','[]')");
   assert.equal((await app.inject({ method: "PUT", url: "/api/works/w-arrive-hc/library", cookies: as(OWNER) })).statusCode, 200);
   assert.deepEqual(libraryRows(OWNER, "w-arrive-hc"), [{ id: "hc-4260", status: "unread" }]);
-  // The owner's Hardcover shelf has the book as Read.
+  // The owner's stored Hardcover shelf has the book as Read; it stays unused.
   run("INSERT INTO user_hardcover_links(user_id,book_id,user_book_id,status_id,remote_updated_at,synced_at) VALUES(?,4260,90,3,0,0)", OWNER);
   await audioArrives("w-arrive-hc", 503, OWNER);
-  assert.deepEqual(libraryRows(OWNER, "w-arrive-hc"), [{ id: "torbox-503", status: "finished" }]);
+  assert.deepEqual(libraryRows(OWNER, "w-arrive-hc"), [{ id: "torbox-503", status: "unread" }]);
 });
 
 test("the series removal hides the work's placeholder through ensurePlaceholder, never making a second", async () => {

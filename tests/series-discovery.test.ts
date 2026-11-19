@@ -15,6 +15,8 @@ const { createApp } = await import("../server/app.ts");
 const { sqlite } = await import("../server/db.ts");
 const { readerFixture } = await import("./reader-fixture.ts");
 const app = await createApp();
+// The Hardcover token and book import the series and Discover code still needs (#721 part d; removed in part b/c2).
+(await import("./hardcover-fixture-routes.ts")).registerHardcoverFixtureRoutes(app);
 const originalFetch = globalThis.fetch;
 const series = [
   { id: 11, name: "The Crossing", books_count: 3, author: { name: "Ada North" }, book_series: [{ book: { cached_image: { url: "https://covers.test/11.jpg" } } }] },
@@ -83,8 +85,8 @@ after(async () => {
 });
 
 test("preview orders works and identifies existing, unnumbered and unreleased choices", async () => {
-  await app.inject({ method: "PUT", url: "/api/hardcover/token", payload: { token: "fixture-token" } });
-  const added = await app.inject({ method: "POST", url: "/api/hardcover/books", payload: { id: 101 } });
+  await app.inject({ method: "PUT", url: "/api/__fixture/hardcover-token", payload: { token: "fixture-token" } });
+  const added = await app.inject({ method: "POST", url: "/api/__fixture/hardcover-books", payload: { id: 101 } });
   assert.equal(added.statusCode, 200, added.body);
   const response = await app.inject("/api/hardcover/series/11");
   assert.equal(response.statusCode, 200, response.body);
@@ -113,7 +115,7 @@ test("series preview picks one candidate using captured Hardcover language and p
 });
 
 test("series search distinguishes same-name Hardcover identities", async () => {
-  const token = await app.inject({ method: "PUT", url: "/api/hardcover/token", payload: { token: "fixture-token" } });
+  const token = await app.inject({ method: "PUT", url: "/api/__fixture/hardcover-token", payload: { token: "fixture-token" } });
   assert.equal(token.statusCode, 200, token.body);
   const response = await app.inject("/api/discover/series?q=Crossing");
   assert.equal(response.statusCode, 200, response.body);
@@ -240,7 +242,7 @@ test("saved series and completion are personal while catalogue works are shared"
     assert.equal((await app.inject({ url: "/api/series/11", headers })).statusCode, 400);
     const missing = await app.inject({ url: "/api/discover/series?q=Crossing", headers });
     assert.match(missing.json().error, /Hardcover API token in Settings/);
-    await app.inject({ method: "PUT", url: "/api/hardcover/token", headers, payload: { token: "second-token" } });
+    await app.inject({ method: "PUT", url: "/api/__fixture/hardcover-token", headers, payload: { token: "second-token" } });
     const saved = await app.inject({ method: "POST", url: "/api/series", headers, payload: { id: 11, bookIds: [101] } });
     assert.equal(saved.statusCode, 200, saved.body);
     const own = (await app.inject({ url: "/api/series/11", headers })).json();
@@ -328,7 +330,7 @@ test("new works stay personal until acknowledged and a recent refresh is skipped
     assert.equal(created.statusCode, 200, created.body);
     const login = await app.inject({ method: "POST", url: "/api/auth/login", payload: { username: "viewer", password: "viewer-password" } });
     const headers = { cookie: `sonder_session=${login.cookies[0].value}` };
-    await app.inject({ method: "PUT", url: "/api/hardcover/token", headers, payload: { token: "viewer-token" } });
+    await app.inject({ method: "PUT", url: "/api/__fixture/hardcover-token", headers, payload: { token: "viewer-token" } });
     const saved = await app.inject({ method: "POST", url: "/api/series", headers, payload: { id: 11, bookIds: [101] } });
     assert.equal(saved.statusCode, 200, saved.body);
     // Save marks the current catalogue as seen for this user, including 108 already listed.
@@ -360,7 +362,7 @@ test("saved mode reports needsAdmin for non-admins and dedupes shared work ids",
     assert.equal(created.statusCode, 200, created.body);
     const login = await app.inject({ method: "POST", url: "/api/auth/login", payload: { username: "member", password: "member-password" } });
     const headers = { cookie: `sonder_session=${login.cookies[0].value}` };
-    await app.inject({ method: "PUT", url: "/api/hardcover/token", headers, payload: { token: "member-token" } });
+    await app.inject({ method: "PUT", url: "/api/__fixture/hardcover-token", headers, payload: { token: "member-token" } });
     await app.inject({ method: "POST", url: "/api/library", headers, payload: { bookId: "frankenstein" } });
     const saved = await app.inject({ method: "POST", url: "/api/series", headers, payload: { id: 14, bookIds: [103] } });
     assert.equal(saved.statusCode, 200, saved.body);
@@ -447,7 +449,7 @@ test("work completion override is personal to the signed-in user", async () => {
     await app.inject({ method: "POST", url: "/api/users", headers: adminHeaders, payload: { username: "override-user", password: "override-password" } });
     const login = await app.inject({ method: "POST", url: "/api/auth/login", payload: { username: "override-user", password: "override-password" } });
     const headers = { cookie: `sonder_session=${login.cookies[0].value}` };
-    await app.inject({ method: "PUT", url: "/api/hardcover/token", headers, payload: { token: "override-token" } });
+    await app.inject({ method: "PUT", url: "/api/__fixture/hardcover-token", headers, payload: { token: "override-token" } });
     await app.inject({ method: "POST", url: "/api/series", headers, payload: { id: 11, bookIds: [101, 103] } });
     const workId = (await app.inject({ url: "/api/series/11", headers })).json().works.find((work: any) => work.id === 101).workId;
     const adminBefore = (await app.inject({ url: "/api/series/11", headers: adminHeaders })).json().completion;
@@ -518,7 +520,7 @@ test("non-admin saving an already-owned linked work does not default it for remo
     const headers = { cookie: `sonder_session=${login.cookies[0]!.value}` };
     await app.inject({
       method: "PUT",
-      url: "/api/hardcover/token",
+      url: "/api/__fixture/hardcover-token",
       headers,
       payload: { token: "member-series-token" },
     });

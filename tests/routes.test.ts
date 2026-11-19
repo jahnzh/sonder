@@ -27,7 +27,7 @@ const table: { address: string; route: Route; place: string; parent: Route | nul
   { address: "#settings", route: { name: "settings" }, place: "settings", parent: null },
   { address: "#settings/appearance", route: { name: "settings-page", page: "appearance" }, place: "settings", parent: { name: "settings" } },
   { address: "#book/w1", route: { name: "book", workId: "w1" }, place: "library", parent: { name: "library" } },
-  ...(["audiobook", "ebook", "sync", "hardcover", "chapters", "bookmarks", "search"] as const).map((page) => ({
+  ...(["audiobook", "ebook", "sync", "chapters", "bookmarks", "search", "match"] as const).map((page) => ({
     address: `#book/w1/${page}`,
     route: { name: "book-page", workId: "w1", page } as Route,
     place: "library",
@@ -204,10 +204,11 @@ test("#settings/<page>: each page, an unknown word, and the administrator's page
     // The administrator has every page.
     assert.equal(shows(address, true), address, address);
   }
-  // Someone else has every page but Users and Library and storage, which show Settings.
-  for (const page of ["account", "appearance", "playback", "connections", "app"])
+  // Someone else has every page but Connections (since Hardcover went, #721 part d), Users and Library and storage,
+  // which show Settings.
+  for (const page of ["account", "appearance", "playback", "app"])
     assert.equal(shows(`#settings/${page}`, false), `#settings/${page}`, page);
-  for (const page of ["users", "library"]) assert.equal(shows(`#settings/${page}`, false), "#settings", page);
+  for (const page of ["connections", "users", "library"]) assert.equal(shows(`#settings/${page}`, false), "#settings", page);
   // A word that names no page shows Settings, for everyone.
   for (const admin of [true, false]) {
     assert.equal(shows("#settings/reading", admin), "#settings");
@@ -259,14 +260,15 @@ test("what adds a history entry and what replaces the current one", () => {
   assert.equal(step(r("#book/w"), r("#book/w")), "none");
 });
 
-test("#book/<workId>/hardcover is built (#529) for everyone, as is the Book page (#532); its unbuilt pages are not yet", () => {
+test("#book/<workId>/hardcover, the Hardcover page an older build linked to, opens the match page (#721 part d)", () => {
   const shows = (address: string, admin: boolean) => writeAddress(resolve(readAddress(address), { admin }));
   for (const admin of [true, false]) {
-    assert.equal(shows("#book/w1/hardcover", admin), "#book/w1/hardcover");
-    assert.equal(shows("#book/hardcover%3A42/hardcover", admin), "#book/hardcover%3A42/hardcover");
+    assert.equal(shows("#book/w1/hardcover", admin), "#book/w1/match");
+    assert.equal(shows("#book/hardcover%3A42/hardcover", admin), "#book/hardcover%3A42/match");
     assert.equal(shows("#book/w1", admin), "#book/w1");
   }
-  assert.deepEqual(parentOf(readAddress("#book/w1/hardcover")), { name: "book", workId: "w1" });
+  assert.deepEqual(readAddress("#book/w1/hardcover"), { name: "book-page", workId: "w1", page: "match" });
+  assert.equal(readAddress("#book/w1/hardcover/x").name, "unknown");
 });
 
 test("#book/<workId>/sync and /sync/details are built for everyone (#540): Details' parent is Reading sync, its parent the book", () => {

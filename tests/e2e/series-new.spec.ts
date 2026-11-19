@@ -52,7 +52,7 @@ type SeriesView = { works: { id: number; title: string; new?: boolean; added: bo
  * it adds later (Crossing Three, #506): that work is new.
  */
 async function saveThenHardcoverAdds(page: Page) {
-  expect((await page.request.put(`${base}/api/hardcover/token`, { data: { token: "series-browser-token" } })).ok()).toBe(true);
+  expect((await page.request.put(`${base}/api/__fixture/hardcover-token`, { data: { token: "series-browser-token" } })).ok()).toBe(true);
   const saved = await page.request.post(`${base}/api/series`, { data: { id: 701, bookIds: [] } });
   expect(saved.ok(), await saved.text()).toBe(true);
   // Every work Hardcover listed at the save is seen.

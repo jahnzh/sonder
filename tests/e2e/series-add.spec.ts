@@ -32,7 +32,7 @@ const ALICE = "Alice’s Adventures in Wonderland";
 
 /** Alice (Hardcover 501, number 1 of The Crossing) is in the library, as the suite's Hardcover sync puts it there. */
 async function aliceInLibrary(page: Page) {
-  if (!(await libraryTitles(page)).has(ALICE)) expect((await page.request.post("/api/hardcover/books", { data: { id: 501 } })).ok()).toBe(true);
+  if (!(await libraryTitles(page)).has(ALICE)) expect((await page.request.post("/api/__fixture/hardcover-books", { data: { id: 501 } })).ok()).toBe(true);
 }
 
 /**
@@ -40,7 +40,7 @@ async function aliceInLibrary(page: Page) {
  * back to the four first works, and puts the series and the library back as it found them afterwards.
  */
 async function saveCrossing(page: Page, bookIds: number[]) {
-  expect((await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } })).ok()).toBe(true);
+  expect((await page.request.put("/api/__fixture/hardcover-token", { data: { token: "series-browser-token" } })).ok()).toBe(true);
   await aliceInLibrary(page);
   const before = await libraryTitles(page);
   const savedBefore = ((await (await page.request.get("/api/series")).json()) as { id: number }[]).some((series) => series.id === 701);
@@ -49,7 +49,7 @@ async function saveCrossing(page: Page, bookIds: number[]) {
   const saved = await page.request.post("/api/series", { data: { id: 701, bookIds } });
   expect(saved.ok(), await saved.text()).toBe(true);
   return async () => {
-    await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
+    await page.request.put("/api/__fixture/hardcover-token", { data: { token: "series-browser-token" } });
     await aliceInLibrary(page);
     const added = (await crossing(page)).works.filter((work) => work.added && !addedBefore.includes(work.id) && !before.has(work.title));
     expect((await page.request.delete("/api/series/701", { data: { bookIds: added.map((work) => work.id) } })).ok()).toBe(true);

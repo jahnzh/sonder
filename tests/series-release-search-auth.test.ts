@@ -69,6 +69,8 @@ const { sqlite, db } = await import("../server/db.ts");
 const schema = await import("../server/schema.ts");
 // The series loop never ticks on its own here.
 const app = await createApp({ background: { manual: ["series-acquisition"] } });
+// The Hardcover token and book import the series and Discover code still needs (#721 part d; removed in part b/c2).
+(await import("./hardcover-fixture-routes.ts")).registerHardcoverFixtureRoutes(app);
 
 after(async () => {
   globalThis.fetch = originalFetch;
@@ -86,7 +88,7 @@ test("non-admin session is refused on both release routes", async () => {
   ).cookies[0].value;
   await app.inject({
     method: "PUT",
-    url: "/api/hardcover/token",
+    url: "/api/__fixture/hardcover-token",
     cookies: { sonder_session: adminCookie },
     payload: { token: "fixture-token" },
   });

@@ -22,6 +22,8 @@ const { sqlite, db } = await import("../server/db.ts");
 const schema = await import("../server/schema.ts");
 const { setSeriesAcquisitionDeps, resetSeriesAcquisitionDeps } = await import("../server/series-acquisition.ts");
 const app = await createApp({ background: { manual: true } });
+// The Hardcover token and book import the series and Discover code still needs (#721 part d; removed in part b/c2).
+(await import("./hardcover-fixture-routes.ts")).registerHardcoverFixtureRoutes(app);
 const originalFetch = globalThis.fetch;
 
 const SERIES = 61;
@@ -77,7 +79,7 @@ const created = await app.inject({ method: "POST", url: "/api/users", cookies: {
 assert.equal(created.statusCode, 200, created.body);
 const sam = await login({ username: "sam", password: "sam-password" });
 for (const cookie of [owner, sam]) {
-  const token = await app.inject({ method: "PUT", url: "/api/hardcover/token", cookies: { sonder_session: cookie }, payload: { token: "fixture-token" } });
+  const token = await app.inject({ method: "PUT", url: "/api/__fixture/hardcover-token", cookies: { sonder_session: cookie }, payload: { token: "fixture-token" } });
   assert.equal(token.statusCode, 200, token.body);
 }
 

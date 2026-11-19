@@ -22,15 +22,15 @@ test("discover and save chosen works from the intended series, then reopen it", 
   const addedBefore = savedBefore ? (await crossing()).works.filter((work) => work.added).map((work) => work.id) : [];
   // The series is saved through its page (#564): not saved when the test starts; it is saved back at the end.
   await unsaveSeries(page, 701);
-  await page.request.put("/api/hardcover/token", { data: { token: "" } });
+  await page.request.put("/api/__fixture/hardcover-token", { data: { token: "" } });
   await page.goto("/#discover");
   await page.getByRole("radio", { name: "Series", exact: true }).click();
   // Guard 18 (spec #572): the series search says to connect Hardcover, and its link opens Connections.
   await page.getByRole("button", { name: "Connect Hardcover to search for series.", exact: true }).click();
   await expect(page).toHaveURL(/#settings\/connections$/);
 
-  await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
-  const existing = await page.request.post("/api/hardcover/books", { data: { id: 501 } });
+  await page.request.put("/api/__fixture/hardcover-token", { data: { token: "series-browser-token" } });
+  const existing = await page.request.post("/api/__fixture/hardcover-books", { data: { id: 501 } });
   expect(existing.ok()).toBeTruthy();
   await page.reload();
   // Guard 19: two series with the same name are both listed and told apart; the chosen one opens.
@@ -116,7 +116,7 @@ test("discover and save chosen works from the intended series, then reopen it", 
   await expect(bookRow("Crossing Three").getByRole("button", { name: "Add Crossing Three", exact: true })).toHaveCount(0);
 
   // Without a token the refresh fails: its message with Retry, over the last saved list.
-  await page.request.put("/api/hardcover/token", { data: { token: "" } });
+  await page.request.put("/api/__fixture/hardcover-token", { data: { token: "" } });
   await page.reload();
   await expect(series.getByRole("alert").filter({ hasText: "Add your Hardcover API token in Settings, then retry." })).toBeVisible();
   await expect(series.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
@@ -125,7 +125,7 @@ test("discover and save chosen works from the intended series, then reopen it", 
   const offlineLibrary = (await (await page.request.get("/api/books")).json()).filter((book: { inLibrary: boolean }) => book.inLibrary);
   expect(offlineLibrary.some((book: { title: string }) => book.title === "Crossing Three")).toBe(true);
 
-  await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
+  await page.request.put("/api/__fixture/hardcover-token", { data: { token: "series-browser-token" } });
   await page.goto("/#library");
   await openSavedSeries(page, "The Crossing", "Ada North");
   await expect(page.getByRole("heading", { level: 1, name: "The Crossing" })).toBeVisible();
@@ -155,7 +155,7 @@ test("preferred series language changes defaults and preserves manual choices", 
       ],
     } });
   });
-  await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
+  await page.request.put("/api/__fixture/hardcover-token", { data: { token: "series-browser-token" } });
   await openSeriesResult(page, "Crossing", "The Crossing", "Ada North");
   await expect(page).toHaveURL(/#series\/701$/);
   // The page stands the English book at each number.

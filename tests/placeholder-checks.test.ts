@@ -29,6 +29,8 @@ const { deriveWorkMediaStates, playableWorks } = await import(
   "../server/work-media-derivation.ts"
 );
 const app = await createApp({ background: { manual: ["series-acquisition"] } });
+// The Hardcover token and book import the series and Discover code still needs (#721 part d; removed in part b/c2).
+(await import("./hardcover-fixture-routes.ts")).registerHardcoverFixtureRoutes(app);
 
 const author = "Pin Author";
 const catalogBook = (id: number, title = `Pinned volume ${id}`) => ({
@@ -180,7 +182,7 @@ async function saveSeries(bookIds: number[]) {
   const cookie = await adminCookie();
   await app.inject({
     method: "PUT",
-    url: "/api/hardcover/token",
+    url: "/api/__fixture/hardcover-token",
     cookies: { sonder_session: cookie },
     payload: { token: "fixture-token" },
   });

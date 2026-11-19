@@ -6,7 +6,7 @@ import { test, expect } from "@playwright/test";
 test.use({ serviceWorkers: "block" });
 
 test("a Hardcover result is added from its Book page, and its Hardcover page uses the catalogue's slug", async ({ page }) => {
-  expect((await page.request.put("/api/hardcover/token", { data: { token: "browser-test-token" } })).ok()).toBe(true);
+  expect((await page.request.put("/api/__fixture/hardcover-token", { data: { token: "browser-test-token" } })).ok()).toBe(true);
   await page.route("https://assets.hardcover.app/**", (route) => route.fulfill({ status: 404, body: "" }));
   await page.goto("/#discover");
   const discover = page.getByRole("region", { name: "Discover", exact: true });

@@ -9,7 +9,6 @@ import { acquisitionSource, type AcquisitionRow } from "../server/acquisitions-a
 import { serverCopySource, type CopyRow } from "../server/downloads-activity.ts";
 import { seriesAcquisitionSource, type SeriesJobRow } from "../server/series-acquisition-activity.ts";
 import { alignmentSource, type AlignmentRow } from "../server/alignment-activity.ts";
-import { hardcoverSource, isPermanentHardcoverError, type HardcoverQueueRow } from "../server/hardcover-activity.ts";
 import type { TorrentHealth } from "../src/types.ts";
 import type { AlignmentPoolStatus } from "../src/reading-types.ts";
 
@@ -22,14 +21,13 @@ type Rows = {
   copies: CopyRow[];
   seriesJobs: SeriesJobRow[];
   alignments: AlignmentRow[];
-  hardcoverQueues: HardcoverQueueRow[];
   torrent: TorrentHealth | null;
   torrentFailure: string | null;
   pool: AlignmentPoolStatus | null;
   poolFailure: string | null;
 };
 const base = (over: Partial<Omit<ActivityInput, "snapshots"> & Rows> = {}): ActivityInput => {
-  const { acquisitions = [], copies = [], seriesJobs = [], alignments = [], hardcoverQueues = [],
+  const { acquisitions = [], copies = [], seriesJobs = [], alignments = [],
     torrent = null, torrentFailure = null, pool = null, poolFailure = null, ...rest } = over;
   const none = { value: null, failure: null };
   return {
@@ -39,7 +37,6 @@ const base = (over: Partial<Omit<ActivityInput, "snapshots"> & Rows> = {}): Acti
       { source: serverCopySource, rows: copies, probe: none },
       { source: seriesAcquisitionSource, rows: seriesJobs, probe: none },
       { source: alignmentSource, rows: alignments, probe: { value: pool, failure: poolFailure } },
-      { source: hardcoverSource, rows: hardcoverQueues, probe: none },
     ],
   };
 };
@@ -191,30 +188,10 @@ test("a new reading sync that was not used is finished, needs no attention and i
   assert.deepEqual(result.items.slice(0, 2).map((item) => item.title), ["stopped", "stopped-outcome"], "only the stopped ones sort first");
 });
 
-test("Hardcover queues: permanent errors and long waits are flagged, one row per user and queue", () => {
-  const result = buildActivity(base({
-    hardcoverQueues: [
-      { userId: 1, user: "admin", queue: "status", count: 1, oldest: NOW - 5 * 24 * 60 * MIN, newest: NOW - 5 * 24 * 60 * MIN, error: "We weren't able to find that book. Was it deleted?" },
-      { userId: 2, user: "sam", queue: "reading", count: 3, oldest: NOW - 31 * MIN, newest: NOW - MIN, error: null },
-      { userId: 2, user: "sam", queue: "listening", count: 2, oldest: NOW - 5 * MIN, newest: NOW - MIN, error: "network" },
-    ],
-  }));
-  const byId = Object.fromEntries(result.items.map((item) => [item.id, item]));
-  assert.equal(byId["hardcover:status:1"].permanent, true);
-  assert.equal(byId["hardcover:status:1"].stuck?.reason, "This change cannot succeed");
-  assert.equal(byId["hardcover:reading:2"].stuck?.reason, "Unsent for 31 min");
-  assert.equal(byId["hardcover:listening:2"].permanent, false);
-  assert.equal(byId["hardcover:listening:2"].stuck, null);
-  assert.equal(byId["hardcover:listening:2"].state, "failed");
-  assert.equal(result.items.filter((item) => item.kind === "hardcover").length, 3);
-  assert.equal(isPermanentHardcoverError("We weren't able to find that book. Was it deleted?"), true);
-  assert.equal(isPermanentHardcoverError("socket hang up"), false);
-});
-
 test("processes: untracked ones are listed, loops degrade from their items, pool hosts appear only when enabled", () => {
   const none = buildActivity(base());
   assert.deepEqual(none.processes.map((process) => process.id), [
-    "acquisitions", "server-copies", "series-acquisition", "hardcover-sync", "alignment", "torrent-client", "imports",
+    "acquisitions", "server-copies", "series-acquisition", "alignment", "torrent-client", "imports",
   ], "the backups are a source now (#361), not an untracked process");
   assert.equal(none.processes.find((process) => process.id === "imports")!.notTracked, true);
   assert.equal(none.processes.find((process) => process.id === "torrent-client")!.health, "unknown");
@@ -255,7 +232,6 @@ test("only the loops can be paused, and each shows its switch state, lock and wh
     pause: {
       alignment: { paused: true, locked: false },
       "series-acquisition": { paused: false, locked: true },
-      "hardcover-sync": { paused: false, locked: false },
     },
   }));
   const byId = Object.fromEntries(result.processes.map((process) => [process.id, process]));
@@ -265,7 +241,7 @@ test("only the loops can be paused, and each shows its switch state, lock and wh
   assert.match(byId.alignment.pauseEffect ?? "", /^Off: no new reading sync starts/);
   assert.equal(byId["series-acquisition"].lockedBy, "environment");
   assert.equal(byId["series-acquisition"].paused, false);
-  assert.match(byId["hardcover-sync"].pauseEffect ?? "", /Sync now still works/);
+  assert.equal(byId["hardcover-sync"], undefined, "Hardcover sync is no longer a process (#721 part d)");
   assert.match(byId.acquisitions.pauseEffect ?? "", /keep downloading in the torrent client/);
   for (const id of ["torrent-client", "imports"]) {
     assert.equal(byId[id].pausable, false, id);
@@ -273,26 +249,6 @@ test("only the loops can be paused, and each shows its switch state, lock and wh
     assert.equal(byId[id].paused, false, id);
   }
   assert.equal(result.attention, 0, "a paused loop is not a problem by itself");
-});
-
-test("Hardcover items offer Discard for a permanent error and Retry otherwise; nothing else has actions", () => {
-  const result = buildActivity(base({
-    acquisitions: [acquisition("a")],
-    hardcoverQueues: [
-      { userId: 1, user: "admin", queue: "status", count: 1, oldest: NOW - 5 * 24 * 60 * MIN, newest: NOW - 5 * 24 * 60 * MIN, error: "We weren't able to find that book. Was it deleted?" },
-      { userId: 1, user: "admin", queue: "listening", count: 2, oldest: NOW - MIN, newest: NOW - MIN, error: "socket hang up" },
-      { userId: 1, user: "admin", queue: "reading", count: 1, oldest: NOW - MIN, newest: NOW - MIN, error: null },
-    ],
-  }));
-  const actions = Object.fromEntries(result.items.map((item) => [item.id, item.actions]));
-  assert.deepEqual(actions["hardcover:status:1"], ["discard"]);
-  assert.deepEqual(actions["hardcover:listening:1"], ["retry"]);
-  assert.deepEqual(actions["hardcover:reading:1"], ["retry"]);
-  assert.deepEqual(actions["acquisition:a"], []);
-  const titles = Object.fromEntries(result.items.filter((item) => item.kind === "hardcover").map((item) => [item.id, item.title]));
-  assert.equal(titles["hardcover:status:1"], "Hardcover shelf changes");
-  assert.equal(titles["hardcover:listening:1"], "Hardcover listening progress");
-  assert.equal(titles["hardcover:reading:1"], "Hardcover reading progress");
 });
 
 test("a probe that failed shows why instead of silently reading as healthy", () => {

@@ -19,6 +19,8 @@ const { sqlite, db } = await import("../server/db.ts");
 const schema = await import("../server/schema.ts");
 // The series loop never ticks on its own here; the tests call tickSeriesAcquisition themselves.
 const app = await createApp({ background: { manual: ["series-acquisition"] } });
+// The Hardcover token and book import the series and Discover code still needs (#721 part d; removed in part b/c2).
+(await import("./hardcover-fixture-routes.ts")).registerHardcoverFixtureRoutes(app);
 
 const books = [
   { id: 301, title: "Volume one", release_year: 2020, release_date: "2020-01-01" },
@@ -99,7 +101,7 @@ async function saveSeries(
 ) {
   await app.inject({
     method: "PUT",
-    url: "/api/hardcover/token",
+    url: "/api/__fixture/hardcover-token",
     cookies: { sonder_session: cookie },
     payload: { token: "fixture-token" },
   });

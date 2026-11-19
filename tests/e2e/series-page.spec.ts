@@ -32,14 +32,14 @@ const libraryTitles = async (page: Page) =>
  * afterwards, so a repeat on the same server (and the other series specs) starts from the same state.
  */
 async function saveCrossing(page: Page, bookIds: number[], options: { searchEbooks?: boolean } = {}) {
-  expect((await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } })).ok()).toBe(true);
+  expect((await page.request.put("/api/__fixture/hardcover-token", { data: { token: "series-browser-token" } })).ok()).toBe(true);
   const before = await libraryTitles(page);
   const savedBefore = ((await (await page.request.get("/api/series")).json()) as { id: number }[]).some((series) => series.id === 701);
   const addedBefore = savedBefore ? (await crossing(page)).works.filter((work) => work.added).map((work) => work.id) : [];
   const saved = await page.request.post("/api/series", { data: { id: 701, bookIds, ...options } });
   expect(saved.ok(), await saved.text()).toBe(true);
   return async () => {
-    await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
+    await page.request.put("/api/__fixture/hardcover-token", { data: { token: "series-browser-token" } });
     const added = (await crossing(page)).works.filter((work) => work.added && !addedBefore.includes(work.id) && !before.has(work.title));
     expect((await page.request.delete("/api/series/701", { data: { bookIds: added.map((work) => work.id) } })).ok()).toBe(true);
     if (savedBefore) expect((await page.request.post("/api/series", { data: { id: 701, bookIds: addedBefore } })).ok()).toBe(true);
@@ -244,7 +244,7 @@ test("a failed ebook search shows Series search failed with Retry, which runs it
 
 test("the refresh error: its message with Retry over the last saved list", async ({ page }) => {
   restore = await saveCrossing(page, [503, 504]);
-  expect((await page.request.put("/api/hardcover/token", { data: { token: "" } })).ok()).toBe(true);
+  expect((await page.request.put("/api/__fixture/hardcover-token", { data: { token: "" } })).ok()).toBe(true);
   await page.goto("/#series/701");
   const card = region(page).getByRole("group", { name: "Hardcover could not be read", exact: true });
   await expect(card.getByRole("alert")).toHaveText("Add your Hardcover API token in Settings, then retry.");
@@ -252,7 +252,7 @@ test("the refresh error: its message with Retry over the last saved list", async
   await expect(row(books(page), "Crossing Two")).toBeVisible();
   await expect(row(related(page), "Crossing Companion")).toBeVisible();
   // Retry reads Hardcover again (`refresh=1`); with a token the error is gone.
-  expect((await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } })).ok()).toBe(true);
+  expect((await page.request.put("/api/__fixture/hardcover-token", { data: { token: "series-browser-token" } })).ok()).toBe(true);
   const refreshed = page.waitForRequest((request) => /\/api\/series\/701\?.*refresh=1/.test(request.url()));
   await card.getByRole("button", { name: "Retry", exact: true }).click();
   await refreshed;

@@ -29,9 +29,9 @@ const libraryBooks = async (page: Page) =>
  * only book of The Crossing in the library, so the sheet offers every other one.
  */
 async function notSaved(page: Page, id: number) {
-  expect((await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } })).ok()).toBe(true);
+  expect((await page.request.put("/api/__fixture/hardcover-token", { data: { token: "series-browser-token" } })).ok()).toBe(true);
   if (!(await libraryBooks(page)).some((book) => book.title === ALICE))
-    expect((await page.request.post("/api/hardcover/books", { data: { id: 501 } })).ok()).toBe(true);
+    expect((await page.request.post("/api/__fixture/hardcover-books", { data: { id: 501 } })).ok()).toBe(true);
   const titles = (await libraryBooks(page)).map((book) => book.title);
   expect(titles).toContain(ALICE);
   expect(titles.filter((title) => /Crossing/.test(title))).toEqual([]);

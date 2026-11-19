@@ -135,6 +135,9 @@ const run = (sql: string, ...args: unknown[]) => sqlite.prepare(sql).run(...args
   hardcoverShelf(2, 3001, 1);
 }
 sqlite.prepare("INSERT INTO user_settings(user_id,key,value) VALUES(1,'shelfEbooksJoined','1')").run();
+// The switch from Hardcover (#721 part d) would run the copy for every user at startup; marked done here, so these
+// tests run the copy themselves through its route (tests/hardcover-removed.test.ts covers the switch).
+sqlite.prepare("INSERT INTO settings(key,value) VALUES('migration:hardcover-removed','0')").run();
 const { createApp } = await import("../server/app.ts");
 const app = await createApp({ background: { manual: true } });
 

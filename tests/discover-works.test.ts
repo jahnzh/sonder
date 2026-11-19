@@ -153,6 +153,8 @@ globalThis.fetch = async (input, init) => {
 sqlite.prepare("INSERT INTO user_settings(user_id,key,value) VALUES(1,'shelfEbooksJoined','1')").run();
 const { createApp } = await import("../server/app.ts");
 const app = await createApp({ background: { manual: true } });
+// The Hardcover token and book import the series and Discover code still needs (#721 part d; removed in part b/c2).
+(await import("./hardcover-fixture-routes.ts")).registerHardcoverFixtureRoutes(app);
 
 after(async () => {
   globalThis.fetch = realFetch;
@@ -310,7 +312,7 @@ test("a query of one character or more than 150 is refused", async () => {
 
 test("Hardcover's hits name the work they open and whether it is on the server", async () => {
   for (const token of [OWNER, KIM])
-    assert.equal((await request(token, "/api/hardcover/token", "PUT", { token: `hc-${token}` })).statusCode, 200);
+    assert.equal((await request(token, "/api/__fixture/hardcover-token", "PUT", { token: `hc-${token}` })).statusCode, 200);
   const search = async (token: string) => {
     const response = await request(token, "/api/discover/hardcover?q=matter%20banks");
     assert.equal(response.statusCode, 200, response.body);
@@ -350,7 +352,7 @@ test("Hardcover's hits name the work they open and whether it is on the server",
 
 test("series search says which series the user saved", async () => {
   for (const token of [SAM, KIM])
-    assert.equal((await request(token, "/api/hardcover/token", "PUT", { token: `hc-${token}` })).statusCode, 200);
+    assert.equal((await request(token, "/api/__fixture/hardcover-token", "PUT", { token: `hc-${token}` })).statusCode, 200);
   const series = async (token: string) => {
     const response = await request(token, "/api/discover/series?q=culture");
     assert.equal(response.statusCode, 200, response.body);

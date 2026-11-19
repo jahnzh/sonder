@@ -17,8 +17,8 @@ import { openSavedSeries, showSavedSeries, savedSeriesRow } from "./library-seri
 import { saveSeriesOnPage, viewSeriesFromDiscover } from "./series-save";
 
 async function saveCrossingSeries(page: import("@playwright/test").Page) {
-  await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
-  await page.request.post("/api/hardcover/books", { data: { id: 501 } });
+  await page.request.put("/api/__fixture/hardcover-token", { data: { token: "series-browser-token" } });
+  await page.request.post("/api/__fixture/hardcover-books", { data: { id: 501 } });
   // Saved through its page and Save series (#564), with Crossing Companion instead of Crossing Two.
   await viewSeriesFromDiscover(page, "Crossing", "The Crossing", "Ada North");
   await saveSeriesOnPage(page, { toggle: ["Crossing Two Book 2", "Crossing Companion Related work"] });
@@ -36,14 +36,14 @@ const CROSSING = ["Crossing Two", "Crossing Companion", "Crossing Three", "Futur
  * added them), so each test saves from the same start; Alice is back from Hardcover's shelves, as the suite starts.
  */
 async function reset(page: Page) {
-  await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
+  await page.request.put("/api/__fixture/hardcover-token", { data: { token: "series-browser-token" } });
   for (const id of [701, 702]) if ((await savedIds(page)).includes(id)) expect((await page.request.delete(`/api/series/${id}`, { data: {} })).ok()).toBe(true);
   const books = (await (await page.request.get("/api/books")).json()) as { title: string; inLibrary: boolean; workId: string }[];
   for (const workId of new Set(books.filter((book) => book.inLibrary && CROSSING.includes(book.title)).map((book) => book.workId)))
     expect((await page.request.delete(`/api/works/${encodeURIComponent(workId)}/library`)).ok()).toBe(true);
 }
 async function aliceFromShelves(page: Page) {
-  if (!(await inLibrary(page)).some((book) => book.title === ALICE)) expect((await page.request.post("/api/hardcover/books", { data: { id: 501 } })).ok()).toBe(true);
+  if (!(await inLibrary(page)).some((book) => book.title === ALICE)) expect((await page.request.post("/api/__fixture/hardcover-books", { data: { id: 501 } })).ok()).toBe(true);
 }
 /** Alice leaves the library, so a series saved next adds her (she is then Added with that series). */
 async function aliceOut(page: Page) {

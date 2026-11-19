@@ -24,6 +24,8 @@ process.env.APP_PASSWORD = "admin-password";
 const { createApp } = await import("../server/app.ts");
 const { sqlite } = await import("../server/db.ts");
 const app = await createApp({ background: { manual: true } });
+// The Hardcover token and book import the series and Discover code still needs (#721 part d; removed in part b/c2).
+(await import("./hardcover-fixture-routes.ts")).registerHardcoverFixtureRoutes(app);
 const originalFetch = globalThis.fetch;
 
 const SERIES = 51;
@@ -80,7 +82,7 @@ async function get(cookie: string, url: string) {
   return response.json();
 }
 async function save(cookie: string, bookIds: number[]) {
-  const token = await app.inject({ method: "PUT", url: "/api/hardcover/token", cookies: { sonder_session: cookie }, payload: { token: "fixture-token" } });
+  const token = await app.inject({ method: "PUT", url: "/api/__fixture/hardcover-token", cookies: { sonder_session: cookie }, payload: { token: "fixture-token" } });
   assert.equal(token.statusCode, 200, token.body);
   const response = await app.inject({ method: "POST", url: "/api/series", cookies: { sonder_session: cookie }, payload: { id: SERIES, bookIds } });
   assert.equal(response.statusCode, 200, response.body);

@@ -27,6 +27,8 @@ const { magnetHash } = await import("../server/acquisitions.ts");
 
 // The series loop never ticks on its own here; the tests call tickSeriesAcquisition themselves.
 const app = await createApp({ background: { manual: ["series-acquisition"] } });
+// The Hardcover token and book import the series and Discover code still needs (#721 part d; removed in part b/c2).
+(await import("./hardcover-fixture-routes.ts")).registerHardcoverFixtureRoutes(app);
 const originalFetch = globalThis.fetch;
 
 const books = [
@@ -157,7 +159,7 @@ after(async () => {
 });
 
 async function saveSeries(bookIds: number[], options?: { searchAudio?: boolean; searchEbooks?: boolean }) {
-  await app.inject({ method: "PUT", url: "/api/hardcover/token", payload: { token: "fixture-token" } });
+  await app.inject({ method: "PUT", url: "/api/__fixture/hardcover-token", payload: { token: "fixture-token" } });
   return app.inject({
     method: "POST",
     url: "/api/series",

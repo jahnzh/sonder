@@ -28,7 +28,7 @@ const recordingRow = (page: Page) => discover(page).getByRole("button", { name: 
 
 async function setHardcover(page: Page, connected: boolean) {
   const token = connected ? "browser-test-token" : "";
-  expect((await page.request.put("/api/hardcover/token", { data: { token } })).ok()).toBe(true);
+  expect((await page.request.put("/api/__fixture/hardcover-token", { data: { token } })).ok()).toBe(true);
 }
 async function search(page: Page, words: string, name?: string) {
   await field(page, name).fill(words);
@@ -45,8 +45,8 @@ let matterWorkId = "";
 let connectedBefore = false;
 test.beforeAll(async ({ request }) => {
   connectedBefore = !!(await (await request.get("/api/settings")).json()).hardcoverConfigured;
-  expect((await request.put("/api/hardcover/token", { data: { token: "browser-test-token" } })).ok()).toBe(true);
-  expect((await request.post("/api/hardcover/books", { data: { id: 1001 } })).ok()).toBe(true);
+  expect((await request.put("/api/__fixture/hardcover-token", { data: { token: "browser-test-token" } })).ok()).toBe(true);
+  expect((await request.post("/api/__fixture/hardcover-books", { data: { id: 1001 } })).ok()).toBe(true);
   const matter = ((await (await request.get("/api/works?q=matter%20banks")).json()) as { works: WorkResult[] }).works;
   matterWorkId = matter.find((work) => work.title === "Matter")!.workId;
   // A PUT of a work already in the library changes nothing; one left out by an earlier run joins it again.
@@ -64,7 +64,7 @@ test.beforeAll(async ({ request }) => {
 });
 test.afterAll(async ({ request }) => {
   await request.delete(`/api/works/${encodeURIComponent(matterWorkId)}/library`);
-  await request.put("/api/hardcover/token", { data: { token: connectedBefore ? "browser-test-token" : "" } });
+  await request.put("/api/__fixture/hardcover-token", { data: { token: connectedBefore ? "browser-test-token" : "" } });
 });
 test.beforeEach(async ({ page }) => {
   await page.setViewportSize(PHONE);

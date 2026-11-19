@@ -9,14 +9,14 @@ import { saveSeriesOnPage, unsaveSeries, viewSeriesFromDiscover } from "./series
  * Mark as finished); a completion set on the book is kept, and the series counts it.
  */
 test("a saved series keeps the provenance of a synced book and counts its completion", async ({ page }) => {
-  await page.request.put("/api/hardcover/token", { data: { token: "series-browser-token" } });
+  await page.request.put("/api/__fixture/hardcover-token", { data: { token: "series-browser-token" } });
   const initialBooks = await (await page.request.get("/api/books")).json();
   const seededAlice = initialBooks.find(
     (book: { title: string; inLibrary: boolean }) =>
       book.title === "Alice’s Adventures in Wonderland" && book.inLibrary,
   );
   if (seededAlice?.id) await page.request.delete(`/api/library/${seededAlice.id}`);
-  await page.request.post("/api/hardcover/books", { data: { id: 501 } });
+  await page.request.post("/api/__fixture/hardcover-books", { data: { id: 501 } });
   // Saved through its page and Save series with the defaults (#564).
   await unsaveSeries(page, 701);
   await viewSeriesFromDiscover(page, "Crossing", "The Crossing", "Ada North");

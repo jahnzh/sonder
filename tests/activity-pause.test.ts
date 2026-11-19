@@ -18,8 +18,6 @@ const pause = await import("../server/activity-pause.ts");
 const { seriesAcquisitionTickerEnabled } = await import("../server/series-acquisition.ts");
 const { processServerDownloads } = await import("../server/downloads.ts");
 const { refreshQueue } = await import("../server/acquisitions.ts");
-const { tickHardcover, setHardcoverToken } = await import("../server/hardcover.ts");
-const { setUserSetting } = await import("../server/users.ts");
 const { processAlignments, alignmentJob } = await import("../server/alignment.ts");
 const app = await createApp();
 after(async () => {
@@ -97,24 +95,6 @@ test("a paused copy queue starts nothing, and pausing during a copy lets it fini
   assert.equal(status("server_downloads", "recording_id", "ra"), "error", "the running copy finished (here: failed on its own)");
   assert.equal(status("server_downloads", "recording_id", "rb"), "queued", "the next copy waits");
   pause.setPaused("server-copies", false);
-});
-
-test("a paused Hardcover sync sends nothing until resumed", async () => {
-  const calls: string[] = [];
-  globalThis.fetch = (async (input: any, init?: any) => {
-    if (!String(input).startsWith("https://api.hardcover.app/")) return realFetch(input, init);
-    calls.push(String(init?.body ?? "").slice(0, 40));
-    return new Response("unavailable", { status: 503 });
-  }) as typeof fetch;
-  setHardcoverToken(1, "key-a");
-  setUserSetting(1, "hardcoverState", JSON.stringify({ mode: "two-way" }));
-  pause.setPaused("hardcover-sync", true);
-  await tickHardcover();
-  assert.equal(calls.length, 0, "paused: no request");
-  pause.setPaused("hardcover-sync", false);
-  await tickHardcover();
-  assert.ok(calls.length > 0, "resumed: the sync runs");
-  globalThis.fetch = realFetch;
 });
 
 test("a paused alignment processor starts no job; resumed, it picks the job up", async () => {
