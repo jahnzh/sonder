@@ -317,3 +317,44 @@ test("the live scripts keep the browser-write guard", () => {
     assert.match(source, /closeProtectedBrowser\(context,\s*browser,\s*report\)/);
   }
 });
+
+// #742: the long press on Consider Phlebas (a partly mapped edition) got no "Listening from here": the press point was
+// near the left edge of the highlight's bounding box, which for a sentence starting mid-line is the sentence before.
+test("narratedPressPoints presses inside the highlight's own lines on the page, the widest first", async () => {
+  const { narratedPressPoints } = await import("../scripts/live-reader-controls.mjs");
+  const bounds = { left: 0, top: 60, right: 390, bottom: 760 };
+  // A sentence that starts at x 250 on one line and fills the next: the union box starts at x 24.
+  const rects = [
+    { left: 250, top: 100, right: 366, bottom: 124 },
+    { left: 24, top: 124, right: 200, bottom: 148 },
+  ];
+  const points = narratedPressPoints(rects, bounds);
+  assert.deepEqual(points, [{ x: 112, y: 136 }, { x: 308, y: 112 }]);
+  // The old point (the union box's left edge + 80, top + 10) is at x 104 on the first line, left of where the sentence starts.
+  const union = { x: 24, y: 100 };
+  assert.ok(union.x + 80 < rects[0].left);
+  for (const point of points) assert.ok(rects.some((r) => point.x > r.left && point.x < r.right && point.y > r.top && point.y < r.bottom));
+});
+
+test("narratedPressPoints leaves out lines on the pages beside the shown one and clips a line to the page", async () => {
+  const { narratedPressPoints } = await import("../scripts/live-reader-controls.mjs");
+  const bounds = { left: 0, top: 60, right: 390, bottom: 760 };
+  // A sentence crossing a page: its first lines on the previous page (left of the viewport), the rest on this one;
+  // and a line that overruns the right edge.
+  const rects = [
+    { left: -366, top: 700, right: -24, bottom: 724 },
+    { left: -366, top: 724, right: -100, bottom: 748 },
+    { left: 24, top: 70, right: 120, bottom: 94 },
+    { left: 300, top: 94, right: 500, bottom: 118 },
+    { left: 24, top: 118, right: 28, bottom: 142 },
+  ];
+  assert.deepEqual(narratedPressPoints(rects, bounds), [{ x: 72, y: 82 }, { x: 345, y: 106 }]);
+  assert.deepEqual(narratedPressPoints([], bounds), []);
+});
+
+test("the reader check long-presses a point narratedPressPoint gives, not the highlight's bounding box (#742)", () => {
+  const source = fs.readFileSync(path.join(scripts, "verify-integrated-reader.mjs"), "utf8");
+  assert.match(source, /narratedPressPoint\(room\)/);
+  assert.match(source, /page\.mouse\.move\(pressAt\.x,pressAt\.y\)/);
+  assert.doesNotMatch(source, /pressBox/);
+});

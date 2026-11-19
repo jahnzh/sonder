@@ -85,11 +85,21 @@ function job(b, { ebookId = `upload-${b.id}`, status = "partial", progress = 1, 
     ...(origin ? { origin } : {}),
   };
 }
-const listingOf = (entries) => ({
-  books: entries.map((e) => e.book),
-  ebooks: entries.flatMap((e) => e.ebooks ?? [ebook(e.book)]),
-  jobs: entries.flatMap((e) => e.jobs ?? [job(e.book)]),
-});
+// GET /api/library lists each book's work with the same editions as GET /api/ebooks (in that order), and no shared
+// default, unless an entry gives its own `work`.
+const listingOf = (entries) => {
+  const ebooks = entries.flatMap((e) => e.ebooks ?? [ebook(e.book)]);
+  const works = new Map();
+  for (const e of entries)
+    if (!works.has(e.book.workId))
+      works.set(e.book.workId, e.work ?? work(e.book, { ebooks: ebooks.filter((x) => x.workId === e.book.workId).map((x) => edition(x.id, { format: x.format, available: x.available, size: x.size })) }));
+  return {
+    books: entries.map((e) => e.book),
+    ebooks,
+    jobs: entries.flatMap((e) => e.jobs ?? [job(e.book)]),
+    works: [...works.values()],
+  };
+};
 
 // A fake server for the selection functions: `answers[path]` is a body (200, JSON), {status, body|text}, or a function.
 // Paths not given answer as the listing says; every request is recorded.
@@ -277,7 +287,7 @@ test("a map body that is not JSON, or a map of another recording, fails the chec
 test("a map request that throws (a timeout) fails the check with the request named", async () => {
   const b = book("slow", { progress: { position: 42 } });
   const listing = listingOf([{ book: b }]);
-  const context = { request: { get: async (path) => { if (path.endsWith("/map")) throw new Error("apiRequestContext.get: Timeout 30000ms exceeded."); return { status: () => 200, text: async () => JSON.stringify(path === "/api/books" ? listing.books : path === "/api/ebooks" ? listing.ebooks : path === "/api/library" ? [] : { jobs: listing.jobs }) }; } } };
+  const context = { request: { get: async (path) => { if (path.endsWith("/map")) throw new Error("apiRequestContext.get: Timeout 30000ms exceeded."); return { status: () => 200, text: async () => JSON.stringify(path === "/api/books" ? listing.books : path === "/api/ebooks" ? listing.ebooks : path === "/api/library" ? listing.works : { jobs: listing.jobs }) }; } } };
   await assert.rejects(rec.selectReaderRecording(rec.requestFrom(context)), (error) => !(error instanceof NoSuitableRecording) && error.message === "GET /api/alignments/job-slow-upload-slow/map failed: apiRequestContext.get: Timeout 30000ms exceeded.");
 });
 
@@ -489,5 +499,166 @@ test("#730: GET /api/library must answer a list of works; another shape fails th
 test("#730: the reader check stops when Read opened another EPUB than the sampled map's", () => {
   const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../scripts/verify-integrated-reader.mjs"), "utf8");
   assert.match(source, /room\.getAttribute\('data-ebook'\)/);
-  assert.match(source, /if\(opened!==ebook\.id\)throw Error/);
+  assert.match(source, /if\(opened!==ebook\.id\)\{[\s\S]{0,200}throw Error\(`Read opened EPUB/);
+});
+
+// #742: the check picked The Butcher's Masquerade's job a5807734, whose reading sync was cancelled at 20% with no
+// published map, and failed at "Back to narration is off while following". Only a finished map counts: ready, or
+// partial (published as it is), as the listing serves it.
+const UNFINISHED = ["queued", "copying", "processing", "paused", "cancelled", "error"];
+
+test("#742: a job that is not a finished map (cancelled, paused, failed, running) is rejected even with intervals at progress 1", async () => {
+  for (const status of UNFINISHED) {
+    const b = book(`status-${status}`);
+    const listing = listingOf([{ book: b, jobs: [job(b, { status, progress: 1 })] }]);
+    assert.equal(rec.finishedMap(listing.jobs[0]), false, status);
+    assert.deepEqual(rec.readerPairs(listing).pairs, [], status);
+    await assert.rejects(select(listing), (error) => error instanceof NoSuitableRecording && error.reason === "no aligned recording(s) in the library", status);
+    // Named, it says which map and what it is.
+    const named = rec.readerPairs(listing, { preferred: b.recordingId }).rejected;
+    assert.deepEqual(named.map((r) => r.reason), [`no finished EPUB alignment map (map ${listing.jobs[0].id} of EPUB upload-${b.id}: ${status})`], status);
+  }
+  for (const status of ["ready", "partial"]) {
+    const b = book(`status-${status}`);
+    assert.equal(rec.finishedMap(job(b, { status })), true, status);
+    assert.equal((await select(listingOf([{ book: b, jobs: [job(b, { status })] }]))).job.status, status);
+  }
+});
+
+test("#742 incident: the cancelled job of The Butcher's Masquerade is passed over for Consider Phlebas's partial map of its shared default", async () => {
+  const butcher = book("torbox-135287188", { progress: { position: 300 } });
+  const phlebas = book("torbox-139759793", { tracks: [{ id: "torbox-139759793-1", duration: 29377.84 }, { id: "torbox-139759793-0", duration: 29739.33 }], progress: { track: 1, position: 300 } });
+  // The cancelled job is newer and has the intervals it made before it was cancelled (a listing that showed them).
+  const cancelled = job(butcher, { ebookId: "libgen-1dafeaa8", id: "a5807734", status: "cancelled", progress: 0.2, updatedAt: 1794748753999, intervals: sentences(butcher.tracks[0].id, 0, 600) });
+  const cancelledAtOne = { ...cancelled, progress: 1 };
+  const partial = job(phlebas, { ebookId: "libgen-9719e452", status: "partial", updatedAt: 1794748752000, intervals: sentences("torbox-139759793-0", 0, 600) });
+  for (const butcherJob of [cancelled, cancelledAtOne]) {
+    const listing = {
+      ...listingOf([
+        { book: butcher, ebooks: [ebook(butcher, { id: "libgen-1dafeaa8" })], jobs: [butcherJob] },
+        { book: phlebas, ebooks: [ebook(phlebas, { id: "libgen-9719e452" }), ebook(phlebas, { id: "libgen-4ee6dc25" })], jobs: [partial] },
+      ]),
+      works: [
+        work(butcher, { chosenEbookId: "libgen-1dafeaa8", ebooks: [edition("libgen-1dafeaa8")] }),
+        work(phlebas, { chosenEbookId: "libgen-9719e452", ebooks: [edition("libgen-9719e452"), edition("libgen-4ee6dc25")] }),
+      ],
+    };
+    const { get, requests } = server(listing);
+    const pick = await rec.selectReaderRecording(get);
+    assert.equal(pick.recordingId, phlebas.recordingId);
+    assert.equal(pick.ebook.id, "libgen-9719e452");
+    // The cancelled job's map is not even asked for.
+    assert.ok(!requests.includes(mapPath(butcherJob)));
+    // Named, the cancelled recording is rejected and the check falls back to the other one, saying why.
+    const preferred = await rec.selectReaderRecording(get, { preferred: butcher.recordingId });
+    assert.equal(preferred.recordingId, phlebas.recordingId);
+    assert.equal(preferred.preferred.reason, "no finished EPUB alignment map (map a5807734 of EPUB libgen-1dafeaa8: cancelled)");
+  }
+});
+
+test("#742: a shared default whose only map of the recording is cancelled rejects the recording, though another edition has a ready map", async () => {
+  const b = book("shared-cancelled");
+  const other = job(b, { ebookId: "libgen-other", status: "ready", intervals: sentences(b.tracks[0].id, 0, 600) });
+  const shared = job(b, { ebookId: "libgen-shared", status: "cancelled", intervals: sentences(b.tracks[0].id, 0, 600) });
+  const listing = {
+    ...listingOf([{ book: b, ebooks: [ebook(b, { id: "libgen-other" }), ebook(b, { id: "libgen-shared" })], jobs: [other, shared] }]),
+    works: [work(b, { chosenEbookId: "libgen-shared", ebooks: [edition("libgen-other"), edition("libgen-shared")] })],
+  };
+  const result = rec.readerPairs(listing);
+  assert.deepEqual(result.pairs, []);
+  assert.deepEqual(result.rejected.map((r) => r.reason), ["Read opens the shared default EPUB libgen-shared, which has no finished map of this recording"]);
+  await assert.rejects(select(listing), (error) => error instanceof NoSuitableRecording && /libgen-shared/.test(error.message));
+  // Without the shared default the device's choice (the ready map) is the check's.
+  assert.equal((await select({ ...listing, works: [work(b, { ebooks: [edition("libgen-other"), edition("libgen-shared")] })] })).job.id, other.id);
+});
+
+test("#742: a map in use whose rebuild was cancelled is listed with its own status and qualifies", async () => {
+  const b = book("kept-map");
+  const kept = { ...job(b, { status: "ready", intervals: sentences(b.tracks[0].id, 0, 600) }), rebuild: { status: "cancelled", progress: 0.2, engine: "ctc", error: null } };
+  assert.equal(rec.finishedMap(kept), true);
+  assert.equal((await select(listingOf([{ book: b, jobs: [kept] }]))).job.id, kept.id);
+});
+
+test("#742: a map the listing showed finished but that is no longer finished when read is excluded; the next map is tried", async () => {
+  const first = book("cancelled-since"), second = book("still-ready");
+  const a = job(first, { status: "ready", updatedAt: 900, intervals: sentences(first.tracks[0].id, 0, 600) });
+  const c = job(second, { status: "partial", updatedAt: 100, intervals: sentences(second.tracks[0].id, 0, 600) });
+  const listing = listingOf([{ book: first, jobs: [a] }, { book: second, jobs: [c] }]);
+  const pick = await select(listing, {}, { [mapPath(a)]: { ...a, status: "cancelled" } });
+  assert.equal(pick.job.id, c.id);
+  await assert.rejects(select(listingOf([{ book: first, jobs: [a] }]), {}, { [mapPath(a)]: { ...a, status: "error" } }), (error) => error instanceof NoSuitableRecording && /its map is error, not a finished map/.test(error.message));
+});
+
+// #742 second round. Production: the automatic pick took The Butcher's Masquerade (no shared default) and the guard
+// stopped it: "Read opened EPUB libgen-201c3bd3fae6ce236da1ac4fe4d3cc9a, not libgen-1dafeaa80ffb53e64eaaf4d90d458c54 of
+// the sampled map". The selection computes the edition Read opens by chosenEbook's rule (readEdition) with the device
+// choice the check sets, and the check opens Read from the player that holds the selected book (no reload).
+test("#742 round 2: readEdition answers as chosenEbook (src/ebook-choice.ts) does, for every shared default and device choice", async () => {
+  const { chosenEbook } = await import("../src/ebook-choice.ts");
+  const editions = [
+    edition("libgen-201c"),
+    edition("libgen-1daf"),
+    edition("libgen-gone", { available: false }),
+    edition("libgen-pdf", { format: "pdf" }),
+  ];
+  const ids = [null, undefined, "libgen-201c", "libgen-1daf", "libgen-gone", "libgen-pdf", "libgen-elsewhere"];
+  const orders = [editions, [...editions].reverse(), editions.slice(2), []];
+  let cases = 0;
+  for (const ebooks of orders)
+    for (const chosenEbookId of ids)
+      for (const choice of ids) {
+        const w = { workId: "work-x", chosenEbookId: chosenEbookId ?? null, ebooks };
+        assert.equal(rec.readEdition(w, choice), chosenEbook(w, choice)?.id ?? null, JSON.stringify({ order: ebooks.map((e) => e.id), chosenEbookId, choice }));
+        cases++;
+      }
+  assert.equal(cases, orders.length * ids.length * ids.length);
+});
+
+test("#742 round 2: with no shared default, the check samples the map of the EPUB its device choice opens, not the work's first EPUB", async () => {
+  const b = book("torbox-135287188", { progress: { position: 300 } });
+  const ready = job(b, { ebookId: "libgen-1dafeaa8", status: "ready", intervals: sentences(b.tracks[0].id, 0, 600) });
+  const ebooks = [ebook(b, { id: "libgen-201c3bd3" }), ebook(b, { id: "libgen-1dafeaa8" })];
+  const listing = { ...listingOf([{ book: b, ebooks, jobs: [ready] }]), works: [work(b, { ebooks: [edition("libgen-201c3bd3"), edition("libgen-1dafeaa8")] })] };
+  const pick = await select(listing);
+  assert.equal(pick.ebook.id, "libgen-1dafeaa8");
+  // What Read opens with the device choice the check sets is the sampled map's EPUB.
+  assert.equal(rec.readEdition(listing.works[0], pick.ebook.id), pick.ebook.id);
+});
+
+test("#742 round 2: a map whose EPUB Read would not open with the device choice set to it is rejected, naming the EPUB Read opens", async () => {
+  const b = book("unopenable", { progress: { position: 300 } });
+  const ready = job(b, { ebookId: "libgen-1dafeaa8", status: "ready", intervals: sentences(b.tracks[0].id, 0, 600) });
+  // GET /api/ebooks says the file is there; the work as GET /api/library lists it (what Read chooses from) does not.
+  const ebooks = [ebook(b, { id: "libgen-201c3bd3" }), ebook(b, { id: "libgen-1dafeaa8" })];
+  for (const listed of [[edition("libgen-201c3bd3"), edition("libgen-1dafeaa8", { available: false })], [edition("libgen-201c3bd3")]]) {
+    const listing = { ...listingOf([{ book: b, ebooks, jobs: [ready] }]), works: [work(b, { ebooks: listed })] };
+    const result = rec.readerPairs(listing);
+    assert.deepEqual(result.pairs, []);
+    assert.deepEqual(result.rejected.map((r) => r.reason), [`Read opens libgen-201c3bd3 of the work, not the EPUB of a finished map (map ${ready.id} of EPUB libgen-1dafeaa8: not an EPUB on the server in GET /api/library)`]);
+    await assert.rejects(select(listing), (error) => error instanceof NoSuitableRecording && /Read opens libgen-201c3bd3/.test(error.message));
+  }
+  // Of two finished maps only the one of an edition Read opens is sampled.
+  const other = job(b, { ebookId: "libgen-201c3bd3", status: "partial", updatedAt: 1, intervals: sentences(b.tracks[0].id, 0, 600) });
+  const listing = { ...listingOf([{ book: b, ebooks, jobs: [ready, other] }]), works: [work(b, { ebooks: [edition("libgen-201c3bd3")] })] };
+  assert.deepEqual(rec.readerPairs(listing).pairs.map((p) => p.job.id), [other.id]);
+});
+
+test("#742 round 2: a recording whose work is not in GET /api/library is rejected: the edition Read opens is unknown", async () => {
+  const b = book("no-work", { progress: { position: 300 } });
+  const listing = { ...listingOf([{ book: b, jobs: [job(b, { status: "ready", intervals: sentences(b.tracks[0].id, 0, 600) })] }]), works: [] };
+  assert.deepEqual(rec.readerPairs(listing).rejected.map((r) => r.reason), [`its work ${b.workId} is not in GET /api/library, so the edition Read opens is unknown`]);
+  await assert.rejects(select(listing), (error) => error instanceof NoSuitableRecording && /is not in GET \/api\/library/.test(error.message));
+});
+
+test("#742 round 2: the reader check opens Read from the player holding the selected book, not after a reload", () => {
+  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../scripts/verify-integrated-reader.mjs"), "utf8");
+  const listen = source.indexOf("getByRole('button',{name:'Listen',exact:true}).click()");
+  const read = source.indexOf("await openRead();", listen);
+  assert.ok(listen > 0 && read > listen);
+  const between = source.slice(listen, read);
+  // No navigation that reloads the app (the dock would show App.tsx's `featured`, the latest saved progress).
+  assert.doesNotMatch(between, /page\.(goto|reload)\(/);
+  assert.match(between, /location\.hash='#library'/);
+  assert.match(between, /\.player-dock \.dock-book.*toContainText\(book\.title\)/);
+  assert.match(source.slice(read), /if\(readWork!==book\.workId\)throw Error/);
 });
