@@ -153,7 +153,10 @@ test("the switch copies every user's Hardcover Want to read and then deletes eve
 test("the switch runs once: a later start copies and deletes nothing more", () => {
   run("INSERT INTO user_hardcover_links(user_id,book_id,user_book_id,status_id) VALUES(3,2002,1,1)");
   run("INSERT INTO user_settings(user_id,key,value) VALUES(3,'hardcover',?)", encrypt("pasted-again"));
-  assert.deepEqual(switchFromHardcover({ info: () => {}, warn: () => {} }), { ran: false });
+  const said: string[] = [];
+  assert.deepEqual(switchFromHardcover({ info: (message) => said.push(message), warn: (message) => said.push(message) }), { ran: false });
+  // Stopped by its marker, not by a failure: nothing is logged.
+  assert.deepEqual(said, []);
   assert.deepEqual(wanted(3), []);
   assert.deepEqual(tokens().users, [3]);
   run("DELETE FROM user_hardcover_links WHERE user_id=3 AND book_id=2002");

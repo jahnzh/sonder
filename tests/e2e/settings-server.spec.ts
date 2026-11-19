@@ -106,21 +106,20 @@ for (const [size, viewport] of [["phone", { width: 390, height: 844 }], ["deskto
   test.describe(`at ${viewport.width} by ${viewport.height}`, () => {
     test.use({ viewport });
 
-    test("Connections: each service, a field saved with its own Save, the sync mode saved when chosen, and Sync now", async ({ page }, info) => {
+    test("Connections: each service and a field saved with its own Save; no Hardcover (#721 part d); the AudiobookDB credit", async ({ page }, info) => {
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(String(error)));
       const patches: unknown[] = [];
-      const configs: unknown[] = [];
+      const hardcoverCalls: string[] = [];
       page.on("request", (request) => {
         if (request.method() === "PATCH" && request.url().endsWith("/api/settings")) patches.push(request.postDataJSON());
-        if (request.method() === "PATCH" && request.url().endsWith("/api/hardcover/config")) configs.push(request.postDataJSON());
+        if (request.url().includes("/api/hardcover")) hardcoverCalls.push(request.url());
       });
       await signIn(page, null, "admin-password", "/#settings/connections");
       await expect(pageTitle(page, desktop)).toHaveText("Connections");
       const main = page.locator("main");
       await expect(main.getByRole("heading", { level: 2 }).filter({ hasNotText: /^Connections$|^Personal$|^Server$|^This device$/ })).toHaveText([
         "TorBox",
-        "Hardcover",
         "Prowlarr",
         "AudioBookBay",
         "Library Genesis",
@@ -135,37 +134,13 @@ for (const [size, viewport] of [["phone", { width: 390, height: 844 }], ["deskto
       await expect(main.getByRole("button", { name: "About TorBox", exact: true })).toBeVisible();
       await expect(main.getByRole("button", { name: "About Prowlarr", exact: true })).toBeVisible();
 
-      // A key is write-only: Save stays off until something is typed; the field empties after it and says Saved.
-      const token = main.getByRole("textbox", { name: "Hardcover API token", exact: true });
-      const saveToken = main.getByRole("button", { name: "Save Hardcover API token", exact: true });
-      await expect(token).toHaveValue("");
-      await expect(saveToken).toBeDisabled();
-      await token.fill("browser-test-token");
-      await saveToken.click();
-      await expect(token).toHaveValue("");
-      await expect(token).toHaveAttribute("placeholder", "Saved");
-      await expect.poll(() => patches.at(-1)).toEqual({ hardcover: "browser-test-token" });
-      await expect(main.getByRole("listitem").filter({ hasText: /^Status/ }).nth(1)).toContainText("Connected");
-
-      // The sync mode is saved when chosen; Include my lists when switched.
-      const modeRow = main.getByRole("button", { name: /^Sync mode / });
-      await expect(modeRow).toBeVisible();
-      await modeRow.click();
-      await page.getByRole("dialog", { name: "Sync mode" }).getByRole("radio", { name: "Two-way", exact: true }).click();
-      await expect(page.getByRole("dialog", { name: "Sync mode" })).toHaveCount(0);
-      await expect.poll(() => configs.at(-1)).toEqual({ mode: "two-way", syncLists: true });
-      await expect(main.getByRole("button", { name: "Sync mode Two-way", exact: true })).toBeVisible();
-      const lists = main.getByRole("switch", { name: "Include my lists", exact: true });
-      await lists.click();
-      await expect.poll(() => configs.at(-1)).toEqual({ mode: "two-way", syncLists: false });
-      await lists.click();
-      await expect.poll(() => configs.at(-1)).toEqual({ mode: "two-way", syncLists: true });
-
-      // Sync now, and the last sync on its row after it.
-      const syncRow = main.getByRole("listitem").filter({ has: page.getByRole("button", { name: "Sync now", exact: true }) });
-      await syncRow.getByRole("button", { name: "Sync now", exact: true }).click();
-      await expect(page.locator(".toast")).toContainText(/Synced \d+ new books/);
-      await expect(syncRow).toContainText(/Last synced today \d\d:\d\d|\d+ changes? waiting/);
+      // Hardcover is gone: no token, no sync mode, no Sync now; the catalogue's credit links to AudiobookDB.
+      await expect(main.getByRole("textbox", { name: "Hardcover API token", exact: true })).toHaveCount(0);
+      await expect(main.getByRole("button", { name: /^Sync mode / })).toHaveCount(0);
+      await expect(main.getByRole("button", { name: "Sync now", exact: true })).toHaveCount(0);
+      const credit = main.getByRole("link", { name: "Data from AudiobookDB", exact: true });
+      await expect(credit).toBeVisible();
+      await expect(credit).toHaveAttribute("href", "https://audiobookdb.org");
 
       // An address with its own Save sends only that field, and stays as saved.
       const libgen = main.getByRole("textbox", { name: "Library Genesis address", exact: true });
@@ -179,14 +154,13 @@ for (const [size, viewport] of [["phone", { width: 390, height: 844 }], ["deskto
       await expect(main.getByRole("textbox", { name: "AudioBookBay address", exact: true })).toHaveValue("https://audiobookbay.lu");
       await expect(main.getByRole("textbox", { name: "Prowlarr address", exact: true })).toBeVisible();
       await expect(main.getByRole("textbox", { name: "TorBox API key", exact: true })).toBeVisible();
-      await expect(main.getByRole("button", { name: "Sync mode Two-way", exact: true })).toBeVisible();
       await expectLaidOut(page);
       mkdirSync(OUT, { recursive: true });
       if (info.project.name === "chromium") await page.screenshot({ path: `${OUT}/settings-connections-${size}.png`, fullPage: true });
       // Put the server back as it was for the other viewport's run.
       const api = await adminApi();
-      await api.patch("/api/hardcover/config", { data: { mode: "off", syncLists: true } });
-      await api.patch("/api/settings", { data: { libgenUrl: "https://libgen.li", hardcover: "" } });
+      await api.patch("/api/settings", { data: { libgenUrl: "https://libgen.li" } });
+      expect(hardcoverCalls).toEqual([]);
       expect(errors).toEqual([]);
     });
 
@@ -317,26 +291,24 @@ for (const [size, viewport] of [["phone", { width: 390, height: 844 }], ["deskto
       await page.unrouteAll({ behavior: "ignoreErrors" });
     });
 
-    test("someone who is not the administrator reaches none of the Server pages by address and sees Hardcover only", async ({ page }, info) => {
+    test("someone who is not the administrator reaches none of the Server pages by address, Connections included since Hardcover went", async ({ page }, info) => {
       const username = `reader${size.slice(0, 1)}${info.project.name.slice(0, 2)}`;
       await addAccount(username, "reader-password");
       await signIn(page, username, "reader-password", "/#settings");
       const list = page.getByRole("navigation", { name: "Settings", exact: true });
       await expect(list.getByRole("button", { name: /^Account\b/ })).toBeVisible();
       await expect(list.getByRole("heading", { name: "Server" })).toHaveCount(0);
-      for (const word of ["users", "library"]) {
+      await expect(list.getByRole("button", { name: /^Connections\b/ })).toHaveCount(0);
+      for (const word of ["users", "library", "connections"]) {
         await page.goto(`${base}/#settings/${word}`);
         await expect.poll(() => page.evaluate(() => location.hash)).toBe("#settings");
         await expect(list).toBeVisible();
-        await expect(page.getByRole("heading", { name: word === "users" ? "Users" : "Library and storage" })).toHaveCount(0);
+        await expect(page.getByRole("heading", { name: { users: "Users", library: "Library and storage", connections: "Connections" }[word] })).toHaveCount(0);
         await expect(page.getByRole("textbox", { name: "Library name" })).toHaveCount(0);
         await expect(page.getByRole("button", { name: "Add user" })).toHaveCount(0);
       }
-      await page.goto(`${base}/#settings/connections`);
-      await expect(pageTitle(page, desktop)).toHaveText("Connections");
       const main = page.locator("main");
-      await expect(main.getByRole("heading", { name: "Hardcover", exact: true })).toBeVisible();
-      for (const service of ["TorBox", "Prowlarr", "AudioBookBay", "Library Genesis", "AudiobookDB", "Open Library"])
+      for (const service of ["TorBox", "Hardcover", "Prowlarr", "AudioBookBay", "Library Genesis", "AudiobookDB", "Open Library"])
         await expect(main.getByRole("heading", { name: service, exact: true })).toHaveCount(0);
       await expect(main.getByRole("textbox", { name: "TorBox API key" })).toHaveCount(0);
       // Their settings carry no storage and none of the server's connections.
