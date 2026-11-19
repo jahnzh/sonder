@@ -22,7 +22,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
 import { z } from "zod";
-import { currentUserId, setUserSetting, userIsAdmin } from "./users.ts";
+import { currentUserId, listUserIds, requireAdmin, setUserSetting, userIsAdmin } from "./users.ts";
 import {
   HardcoverUpstreamError,
   hardcoverBlocks,
@@ -44,6 +44,7 @@ import { listServedAlignmentSummaries, type slimAlignmentJob } from "./alignment
 import { getWorkMediaStates } from "./work-media-state.ts";
 import { addWorkToLibrary, removeWorkFromLibrary, workVisibleByRule, workVisibleTo } from "./work-library.ts";
 import { keepOffOnEveryDevice } from "./device-keep.ts";
+import { addToWantToRead, copyHardcoverWantToRead, hardcoverCopyResult, removeFromWantToRead, wantToReadWorks } from "./want-to-read.ts";
 import type {
   Book,
   LibraryWork,
@@ -395,6 +396,7 @@ function buildWorks(userId: number, workIds: string[], hidden: Set<string>, file
   const states = mediaStates(userId, workIds);
   const series = workSeriesByWork(userId, workIds);
   const hardcoverBlocks = hardcoverForWorks(userId, workIds);
+  const wanted = wantToReadWorks(userId, workIds);
   return workIds.flatMap((workId) => {
     const work = works.get(workId);
     if (!work) return [];
@@ -423,6 +425,7 @@ function buildWorks(userId: number, workIds: string[], hidden: Set<string>, file
         series: series.get(workId) ?? [],
         mediaState: states.get(workId) ?? null,
         hardcover,
+        wantToRead: wanted.has(workId),
       },
     ];
   });
@@ -491,6 +494,7 @@ async function hardcoverLook(userId: number, bookId: number): Promise<LibraryWor
     series: [],
     mediaState: { state: "missing", holdReason: null, acquisition: null },
     hardcover,
+    wantToRead: false,
   };
 }
 
@@ -615,6 +619,7 @@ export function serverWorks(userId: number, query: string | null): WorkResult[] 
       .sort((a, b) => b.seq - a.seq);
   chosen = chosen.slice(0, WORK_RESULTS_LIMIT);
   const covers = workCovers(sqlite, userId, chosen.map((row) => row.id), hidden);
+  const wanted = wantToReadWorks(userId, chosen.map((row) => row.id));
   return chosen.map((row) => ({
     workId: row.id,
     title: row.title,
@@ -625,6 +630,7 @@ export function serverWorks(userId: number, query: string | null): WorkResult[] 
     hasAudiobook: row.hasAudiobook === 1,
     hasEbook: row.hasEbook === 1,
     hardcoverId: row.hardcoverId,
+    wantToRead: wanted.has(row.id),
   }));
 }
 
@@ -792,5 +798,49 @@ export function registerLibraryWorks(app: FastifyInstance) {
     // Keep on this device goes off for the work on every device of the user (#549).
     keepOffOnEveryDevice(userId, workId);
     return { ok: true };
+  });
+  /**
+   * Want to read (#721 part c1, `want-to-read.ts`), the user's own. `PUT` puts the work on it and,
+   * when it is not in the library, adds it first as `PUT /api/works/<workId>/library` does (a book
+   * not on the server through the work Add to library makes for it; a book without media through its
+   * placeholder); it answers `workId`, the work that was put on it. `DELETE` takes it off and leaves
+   * it in the library. Neither needs a body (an empty JSON body is accepted); a work the user may not
+   * see answers 404.
+   */
+  app.put("/api/works/:workId/want-to-read", async (req, reply) => {
+    const userId = currentUserId(req);
+    const { workId } = req.params as { workId: string };
+    const added = await workToAdd(userId, workId);
+    if (!added) return reply.code(404).send({ error: "This book could not be found." });
+    addToWantToRead(userId, added);
+    return { ok: true, workId: added };
+  });
+  app.delete("/api/works/:workId/want-to-read", async (req, reply) => {
+    const userId = currentUserId(req);
+    const { workId } = req.params as { workId: string };
+    if (!workVisibleTo(userId, workId)) return reply.code(404).send({ error: "This book could not be found." });
+    removeFromWantToRead(userId, workId);
+    return { ok: true };
+  });
+  /** The user's own result of the one-time copy of Hardcover's Want to read shelf; `copy` is null before it ran. */
+  app.get("/api/want-to-read/hardcover-copy", async (req) => ({ copy: hardcoverCopyResult(currentUserId(req)) }));
+  /**
+   * The administrator's action: the one-time copy of Hardcover's Want to read shelf
+   * (`copyHardcoverWantToRead`) for one user (`userId`) or, with no body, for every user. Each user's
+   * copy runs once. Only the administrator's own entry names works and unmatched books; another
+   * user's says only whether it ran, so the answer tells him nothing of their books.
+   */
+  app.post("/api/want-to-read/hardcover-copy", async (req, reply) => {
+    requireAdmin(req);
+    const self = currentUserId(req);
+    const { userId } = z.object({ userId: z.number().int().positive().optional() }).parse(req.body ?? {});
+    const users = userId === undefined ? listUserIds() : listUserIds().filter((id) => id === userId);
+    if (userId !== undefined && !users.length) return reply.code(404).send({ error: "This user could not be found." });
+    return {
+      results: users.map((id) => {
+        const copy = copyHardcoverWantToRead(id);
+        return id === self ? { userId: id, ...copy } : { userId: id, ran: copy.ran };
+      }),
+    };
   });
 }

@@ -66,6 +66,7 @@ export function removeMadeWork(workId: string) {
       sqlite.prepare("DELETE FROM audio_editions WHERE id=?").run(id);
     }
     sqlite.prepare("DELETE FROM user_work_library_origin WHERE work_id=?").run(workId);
+    sqlite.prepare("DELETE FROM user_want_to_read WHERE work_id=?").run(workId);
     sqlite.prepare("DELETE FROM work_media_states WHERE work_id=?").run(workId);
     sqlite.prepare("UPDATE acquisitions SET work_id=NULL WHERE work_id=?").run(workId);
     // Its catalogue link and match outcome (#721) go with it.

@@ -2,7 +2,8 @@
 // Listen face"; board NowPlaying.dc.html), against the suite's own server at a phone's 390 by 844: the face rule,
 // the addresses and history, the head, and the Listen face's rows (Plays from, Earlier positions, Keep on this
 // device, Chapters), measured against the board.
-import { test, expect, type Page } from "@playwright/test";
+// Saves to this device: in WebKit each test needs a persistent context to store a Blob in IndexedDB (#523, #596).
+import { test, expect, type Page } from "./device-store";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";

@@ -34,7 +34,7 @@ import { readerNeedsScripts } from "../reader-sandbox";
 import { backToNarration } from "../reader-back-to-narration";
 import { lookupIndex, placeAt, type LookupIndex } from "../reader-lookup";
 import { pageToShow, pagedWords, type PagedWord } from "../reader-page-turn";
-import { keyEventContext, OPEN_SHEET_SELECTOR, readerKeyAction, typingInField } from "../keyboard";
+import { keyEventContext, readerKeyAction, typingInField } from "../keyboard";
 import { followsNarration } from "../follow-default";
 import { createReaderFollowing, type DeferredReturn, type NarrationPlace, type NarrationReturn } from "../reader-following";
 import { mapIdentityOf } from "../alignment-map-lifecycle";
@@ -1379,11 +1379,11 @@ export function ReaderView({
     }
   };
   const undoListen = () => {
-    const toast = listenUndo.current;
+    const listened = listenUndo.current;
     listenUndo.current = null;
     messages.clearNotice("listening");
-    if (!toast) return;
-    const previous = toast.previous;
+    if (!listened) return;
+    const previous = listened.previous;
     const track = previous?.book.tracks.find((track) => track.id === previous.trackId);
     // The player's Undo jump must not step forward again: drop what the Listen
     // from here recorded and do not record this move back.
@@ -1484,7 +1484,6 @@ export function ReaderView({
         altKey: event.altKey,
         defaultPrevented: event.defaultPrevented,
         ...keyEventContext(event),
-        sheetOpen: !!document.querySelector(OPEN_SHEET_SELECTOR),
         panelOpen: appearanceOpen,
         // The Now Playing reader stays mounted while its dialog is closed.
         readerHidden: !!viewport.current?.closest('[data-state="closed"]'),

@@ -104,6 +104,8 @@ export type LibraryWork = {
   mediaState: WorkMediaState | null;
   /** As `Book.hardcover` in `GET /api/books`; null when the work has no Hardcover book. */
   hardcover: NonNullable<Book["hardcover"]> | null;
+  /** On the user's own Want to read (#721 part c1); absent from a server before it and from works stored by an older build. */
+  wantToRead?: boolean;
 };
 export type WorkEbook = {
   id: string;
@@ -157,6 +159,8 @@ export type WorkResult = {
   hasEbook: boolean;
   /** The Hardcover book the work is matched to, if any. */
   hardcoverId: number | null;
+  /** On the user's own Want to read (#721 part c1); absent from a server before it. */
+  wantToRead?: boolean;
 };
 /** A series of a work on AudiobookDB (#721): its id, name, number and label ("1.5"), and whether the user saved it. */
 export type WorkSeries = { id: string | null; name: string; position: number | null; positionLabel?: string | null; saved: boolean };

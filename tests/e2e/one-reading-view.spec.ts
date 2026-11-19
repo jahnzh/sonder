@@ -9,6 +9,7 @@ import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
 import {openRead} from "./now-playing";
 import {closeAppearance,openAppearance} from "./reader-appearance";
 import {tapPages} from "./reader-tap";
+import { skipOnMobile } from "./mobile";
 // One reading view (ADR 0017, #501): the reader shows the book's own text and nothing else. The Lyrics and Word
 // views are gone with their switch, their settings, the `P` key and the timing correction; `F` stays.
 test.use({serviceWorkers:"block"});
@@ -98,6 +99,7 @@ test(`a saved appearance that names the removed ${display==="segment"?"Lyrics":"
 });
 
 test("the reader offers no view switch, P does nothing and F returns to the narration",async({page})=>{
+ skipOnMobile(true,"needs a hardware keyboard (P and F)");
  const {book,map,manifest}=await fixture(page,`View keys ${test.info().repeatEachIndex}`);
  const interval=map.intervals.find((i:any)=>i.section===1);
  // A saved Lyrics choice is the case P used to act on: it switched the reader to the pages and saved that.

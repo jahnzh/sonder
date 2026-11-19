@@ -306,6 +306,12 @@ export function deviceClearedNote(noticedAt: number): string {
 
 /** A book of a series the user has not added. */
 export const NOT_IN_LIBRARY_LINE = "Not in your library";
+/** A book on the user's own Want to read (#721 part c1): the shelf's name, a Discover row's line and the Book page's row. */
+export const WANT_TO_READ = "Want to read";
+/** What Want to read's button on a Book page or a Discover row says it did (#721 part c1). */
+export function wantToReadNote(on: boolean): string {
+  return on ? "Added to Want to read" : "Removed from Want to read";
+}
 /** A queue that is switched off. */
 export const QUEUE_OFF_LINE = "Paused";
 /** A worker that is switched off. */

@@ -75,14 +75,16 @@ import { deviceImports } from "./device-import";
 import { Gallery, isGalleryRoute } from "./gallery/Gallery";
 import { refreshLibraryWorks, startLibraryWorks, useLibraryWorksStored, useStoredWorksWithPlaces } from "./library-works-store";
 import { toggleFavoriteWork, WORK_FAVORITES_KEY } from "./favorites-by-work";
-import { ALL_CHIP, readChip, readHardcoverFilter, readSort, readView, type LibraryChip, type LibraryView, type ShelfFilter, type SortOrder } from "./pages/library-filter";
+import { ALL_CHIP, readChip, readShelf, readSort, readView, type LibraryChip, type LibraryView, type ShelfFilter, type SortOrder } from "./pages/library-filter";
 
 /** The Library's chip on this device (#577), per account through `userStorageKey`. */
 const LIBRARY_CHIP_KEY = "sonder-library-chip";
 // The sort-and-view control's choices (#578), remembered on this device for this account like the chip.
 const LIBRARY_SORT_KEY = "sonder-library-sort";
 const LIBRARY_VIEW_KEY = "sonder-library-view";
+// The Hardcover shelf and list an earlier build kept; read once as the shelf it stood for (#721 part c1).
 const LIBRARY_HARDCOVER_KEY = "sonder-library-hardcover";
+const LIBRARY_SHELF_KEY = "sonder-library-shelf";
 import { bookStatus, workProgress } from "./work-progress";
 import { classifyStop, type StopCause } from "./keep";
 import { activeSaves, claimRecording, keepSaver, pauseKeep, resumeKeep, keepOffAndRemove, onKeepJob, savesInOtherTabs, startKeepSaver, stopKeepSaver, useKeptWorks } from "./keep-runtime";
@@ -278,27 +280,26 @@ function LibraryApp({
   const sideBySide = useSideBySide();
   // An address of a worker the server does not report shows Server, in the address too (#520).
   const showServer = useCallback(() => address.navigate({ name: "activity", part: "server" }, { replace: true }), [address.navigate]);
-  // The search field searches the page it is on. The Library's search is one of its filters and is remembered
-  // with them (#455); Discover's goes with its results when the page is left.
-  const [queries, setQueries] = useState({ library: "", discover: "", other: "" });
-  const queryOf = page === "library" || page === "discover" ? page : "other";
-  const query = queries[queryOf];
-  const setQuery = (value: string) => setQueries((q) => ({ ...q, [queryOf]: value }));
+  // The Library's search is one of its filters and is remembered with them (#455); Discover keeps its own query in
+  // its history entry (#575). The top bar's search field that searched the page it was on is gone (#581).
+  const [libraryQuery, setLibraryQuery] = useState("");
   // The Library's chip, remembered on this device for this account (#577; #455: not in the address).
   const chipKey = () => userStorageKey(LIBRARY_CHIP_KEY);
   const [filter, setFilter] = useState<LibraryChip>(() => readChip(localStorage.getItem(chipKey())));
   useEffect(() => {
     localStorage.setItem(chipKey(), filter);
   }, [filter]);
-  // Sort, view and the Hardcover shelf and list, remembered on this device for this account (#578; #455).
-  const [hardcoverFilter, setHardcoverFilter] = useState<ShelfFilter>(() => readHardcoverFilter(localStorage.getItem(userStorageKey(LIBRARY_HARDCOVER_KEY))));
+  // Sort, view and the shelf, remembered on this device for this account (#578; #455; #721 part c1).
+  const [shelf, setShelf] = useState<ShelfFilter>(() =>
+    readShelf(localStorage.getItem(userStorageKey(LIBRARY_SHELF_KEY)), localStorage.getItem(userStorageKey(LIBRARY_HARDCOVER_KEY))),
+  );
   const [sort, setSort] = useState<SortOrder>(() => readSort(localStorage.getItem(userStorageKey(LIBRARY_SORT_KEY))));
   const [view, setView] = useState<LibraryView>(() => readView(localStorage.getItem(userStorageKey(LIBRARY_VIEW_KEY))));
   useEffect(() => {
     localStorage.setItem(userStorageKey(LIBRARY_SORT_KEY), sort);
     localStorage.setItem(userStorageKey(LIBRARY_VIEW_KEY), view);
-    localStorage.setItem(userStorageKey(LIBRARY_HARDCOVER_KEY), JSON.stringify(hardcoverFilter));
-  }, [sort, view, hardcoverFilter]);
+    localStorage.setItem(userStorageKey(LIBRARY_SHELF_KEY), shelf);
+  }, [sort, view, shelf]);
   // The favourites by work (#577): work ids, read from this account's device database.
   const [favorites, setFavorites] = useState<string[]>([]);
   const [online, setOnline] = useState(navigator.onLine);
@@ -527,7 +528,6 @@ function LibraryApp({
   // The Library's shelf, list, Favorites, status filter and search are remembered when it is left (#455), so the
   // list Back returns to is the one its scroll position belongs to.
   const leavePage = (p: Page) => {
-    setQueries((q) => ({ library: q.library, discover: "", other: "" }));
     if (p === "library" || p === "discover") void refresh();
   };
   // Back (or any traversal) that changes the page closes the shell's dialogs and confirms nothing: they belonged
@@ -708,10 +708,6 @@ function LibraryApp({
     b.tracks.every((t) => downloads.some((d) => d.trackId === t.id));
   // The Library's On device chip (#552, #577): Keep on and complete, every needed file here.
   const keptComplete = new Set(keptWorks.filter((k) => k.needs.complete).map((k) => k.workId));
-  // Discover's shelf of the server's books (the Library reads the library by work, #577).
-  const visible = books.filter(
-    (b) => !query || `${b.title} ${b.author} ${b.genre}`.toLowerCase().includes(query.toLowerCase()),
-  );
   // Get ebook (#604): the sheet over the page it is opened from, the administrator's.
   const findEbook = (workId: string) => address.navigate({ name: "get", workId, kind: "ebook" });
   // Get audiobook (#601): the sheet over the page it is opened from, the administrator's.
@@ -868,16 +864,16 @@ function LibraryApp({
                 works={libraryWorks}
                 stored={worksStored}
                 books={books}
-                query={queries.library}
-                setQuery={(value) => setQueries((q) => ({ ...q, library: value }))}
+                query={libraryQuery}
+                setQuery={setLibraryQuery}
                 filter={filter}
                 setFilter={setFilter}
                 view={view}
                 setView={setView}
                 sort={sort}
                 setSort={setSort}
-                hardcoverFilter={hardcoverFilter}
-                setHardcoverFilter={setHardcoverFilter}
+                shelf={shelf}
+                setShelf={setShelf}
                 savedSeries={savedSeries}
                 openSeries={openSeries}
                 findSeries={findSeries}
@@ -902,6 +898,7 @@ function LibraryApp({
                 onSeries={(id) => address.navigate({ name: "series", id: String(id) })}
                 onRecording={(words) => address.navigate({ name: "discover-get", query: words })}
                 onConnect={openConnections}
+                notify={notify}
               />
             )}
             {page === "activity" && (
