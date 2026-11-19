@@ -61,6 +61,7 @@ import {
 import type { Book } from "../types";
 import type { PositionEntry } from "../position-history";
 import { useDesktop } from "../now-playing-desktop";
+import { SPREAD_GAP, SPREAD_MIN_HOST, spreadHostWidth } from "../reader-spread";
 import {
   countedBlocks,
   readerSkippedSelector,
@@ -525,6 +526,29 @@ export function ReaderView({
   // The removed views' fields (ADR 0017) do not change how the EPUB is styled; an older client that
   // still saves them must not re-theme, which would re-paginate the whole book for nothing.
   const themeKey = JSON.stringify({ ...appearance, reader: { ...appearance.reader, display: undefined, segmentWords: undefined, wordWpm: undefined } });
+  // Two pages side by side on a desktop (#762): in Page mode, when the text area between the page arrows has room for
+  // two pages of the text's measure, the host spans both (its width here) and epub.js lays out a spread; null for one
+  // page. Opening or hiding the contents, resizing the window and a change of the text's settings decide it again.
+  const pageArea = useRef<HTMLDivElement>(null);
+  const [spreadWidth, setSpreadWidth] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const area = pageArea.current;
+    if (!desktop || !area) {
+      setSpreadWidth(null);
+      return;
+    }
+    const decide = () => {
+      const style = getComputedStyle(area);
+      const gap = parseFloat(style.columnGap) || 0;
+      let available = area.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
+      for (const edge of area.querySelectorAll<HTMLElement>(".reader-edge")) available -= edge.offsetWidth + gap;
+      setSpreadWidth(spreadHostWidth(available, preferences, preferences.mode));
+    };
+    decide();
+    const observer = new ResizeObserver(decide);
+    observer.observe(area);
+    return () => observer.disconnect();
+  }, [desktop, preferences.mode, preferences.size, preferences.margin, preferences.width]);
   // The narrated sentence, decided by the following module: it stays through a gap until the next one begins.
   const narrationBack = useRef<() => void>(() => {});
   const currentInterval = following.narratedSentence(map, placeOf(p.book, p.track?.id, p.position)) ?? undefined;
@@ -722,6 +746,9 @@ export function ReaderView({
           // missing popup permission is what keeps a sanitised link from opening one as an unsanitised document.
           allowScriptedContent,
         });
+        // A spread's pages keep a gap of their own (#762); one page keeps epub.js's (a twelfth of the width). The view
+        // manager copies the rendition's settings when it starts, and `fit` keeps its copy up to date below.
+        (view as unknown as { settings: { gap?: number } }).settings.gap = host.clientWidth >= SPREAD_MIN_HOST ? SPREAD_GAP : undefined;
         rendition.current = view;
         const relocate = (location: Location) => {
           if (disposed) return;
@@ -887,6 +914,12 @@ export function ReaderView({
         }
         if (disposed) return;
         setRendered(true);
+        // The pages epub.js lays out side by side, on the host for the browser tests (#762).
+        const pageCount = (view: Rendition) => {
+          const divisor = (view as unknown as { manager?: { layout?: { divisor?: number } } }).manager?.layout?.divisor;
+          if (divisor) host.setAttribute("data-pages", String(divisor));
+        };
+        pageCount(view);
         // epub.js sizes a section's frame to its text by itself, in steps after the frame shows its document, and
         // again whenever the text's size changes (`resize` from its view manager, once per frame sized anew). The
         // text's size follows the frame's width (the font size is in vw), so each one may move the narrated
@@ -894,6 +927,7 @@ export function ReaderView({
         (view as unknown as { manager?: { on?: (type: string, listener: () => void) => void } }).manager?.on?.("resize", () => {
           if (disposed || rendition.current !== view) return;
           layoutGeneration.current++;
+          pageCount(view);
           if (pagedSentence.current) setFollowRevision((value) => value + 1);
         });
         let lastWidth=0,lastHeight=0,resizes=0;
@@ -902,7 +936,11 @@ export function ReaderView({
             if(host.clientWidth===lastWidth && host.clientHeight===lastHeight)return;
             lastWidth=host.clientWidth;lastHeight=host.clientHeight;
             settleAfterLayout(view);
+            // epub.js lays out two pages from SPREAD_MIN_HOST; only the spread host of #762 is that wide.
+            const manager = (view as unknown as { manager?: { settings?: { gap?: number } } }).manager;
+            if (manager?.settings) manager.settings.gap = host.clientWidth >= SPREAD_MIN_HOST ? SPREAD_GAP : undefined;
             view.resize(host.clientWidth, host.clientHeight);
+            pageCount(view);
             // Counted on the pages for the browser tests (#587): the view is sized to the text band when the book
             // opens and again only when the band changes, never when the controls show or hide.
             host.setAttribute("data-view-resizes", String(++resizes));
@@ -1780,11 +1818,13 @@ export function ReaderView({
           </nav>
         )}
         {/* On a desktop the page arrows stand in the margins, beside the text, not over it (#595). */}
-        <div className="reader-page-area">
+        <div className="reader-page-area" ref={pageArea}>
           {desktop && <button className="reader-edge reader-edge-previous" aria-label="Previous page" onClick={()=>turn(-1)}><ArrowLeft size={20}/></button>}
           <div
             className="reader-viewport"
             ref={viewport}
+            data-spread={spreadWidth ? "two" : undefined}
+            style={spreadWidth ? ({ "--reader-spread": `${spreadWidth}px` } as CSSProperties) : undefined}
             aria-label="Ebook pages"
           />
           {desktop && <button className="reader-edge reader-edge-next" aria-label="Next page" onClick={()=>turn(1)}><ArrowRight size={20}/></button>}

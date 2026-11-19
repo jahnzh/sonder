@@ -294,7 +294,12 @@ test("measured against the board at phone size and on a desktop: choice rows 64,
         sheet(page).getByRole("switch", { name: "Get the audiobooks" }),
         sheet(page).getByLabel("Preferred language"),
         sheet(page).getByRole("button", { name: /^Add / }),
-      ].map(async (locator) => (await locator.boundingBox())!.y),
+      // Polled: on the resize to a desktop the page moves beside the Library's list and remounts with its sheet, and
+      // WebKit (iPhone profile, #570) measured a part in between, with no box.
+      ].map(async (locator) => {
+        await expect.poll(async () => (await locator.boundingBox())?.y ?? null).not.toBeNull();
+        return (await locator.boundingBox())!.y;
+      }),
     );
     expect([...tops].sort((a, b) => a - b)).toEqual(tops);
     await noOverflow(page);
@@ -309,6 +314,8 @@ test("measured against the board at phone size and on a desktop: choice rows 64,
   await settled(page);
   await page.screenshot({ path: `${OUT}/series-add-phone.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(page.getByRole("region", { name: "Saved series", exact: true })).toBeVisible();
+  await settled(page);
   await measure();
   await settled(page);
   await page.screenshot({ path: `${OUT}/series-add-desktop.png` });
