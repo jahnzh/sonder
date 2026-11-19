@@ -19,6 +19,10 @@ export type PageHeaderProps = {
   info?: ReactNode;
   /** A name for a page the generic names do not cover (a book's title, a series' name). */
   named?: (route: Route) => string | null | undefined;
+  /** A page beside a list on a desktop (a Settings page, #614) is named by a level-2 heading under the list's Title. */
+  level?: 1 | 2;
+  /** The heading's id, for a section the heading names. */
+  titleId?: string;
 };
 
 function BackIcon() {
@@ -29,14 +33,17 @@ function BackIcon() {
   );
 }
 
-export function PageHeader({ title, back = false, parent, named, info }: PageHeaderProps) {
+export function PageHeader({ title, back = false, parent, named, info, level = 1, titleId }: PageHeaderProps) {
   const address = useAddress();
+  const Heading = level === 2 ? "h2" : "h1";
   return (
     <header className="part-page-header">
       {back && (
         <Button kind="secondary" icon={<BackIcon />} label={backName(address.backTarget(parent), named)} onClick={() => address.goBack(parent)} />
       )}
-      <h1 className="part-page-title type-title">{title}</h1>
+      <Heading id={titleId} className="part-page-title type-title">
+        {title}
+      </Heading>
       {info}
     </header>
   );
