@@ -239,6 +239,21 @@ test("Retry: each failed series search kind, or the download; the chevron only o
   assert.equal(rows[4].action, null);
 });
 
+// A failed or held media state is returned as stored while the work is playable (ADR 0011), so a book with audio
+// offers no download retry, and an empty-search hold offers none either (#395; tests/work-media-retry.test.ts guarded
+// this for src/work-media-state.ts until #609 deleted that module, which nothing imported).
+test("Retry: no download retry for a book that has audio, nor for a hold", () => {
+  const works = [book("1", 1), book("2", 2), book("3", 3)];
+  const library = libraryOf(
+    libraryWork("work-1", { finished: true, mediaState: { state: "failed", holdReason: null, acquisition: null } }),
+    libraryWork("work-2", { recordings: [], mediaState: { state: "missing", holdReason: "empty_search", acquisition: null } }),
+    libraryWork("work-3", { recordings: [], mediaState: { state: "missing", holdReason: "unreleased", acquisition: null } }),
+  );
+  const rows = seriesPageModel(series(works), facts(library)).books;
+  for (const row of rows) assert.equal(row.action, null, row.workId ?? undefined);
+  assert.equal(rows[0].failed, false);
+});
+
 test("the book to continue: the one in progress, else the first unfinished in the library with a recording, else none", () => {
   const works = [book("1", 1), book("2", 2), book("3", 3), book("4", 4)];
   // In progress: book 3 (listened to last of the two in progress).
