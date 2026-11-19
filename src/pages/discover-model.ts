@@ -4,19 +4,21 @@
 import { WANT_TO_READ } from "../status-lines";
 import type { WorkResult } from "../types";
 
-/** One hit of `GET /api/discover/hardcover`: Hardcover's search document and, since #573, the work it opens. */
-export type HardcoverHit = {
-  document: {
-    id: string | number;
-    title?: string;
-    author_names?: string[];
-    release_year?: number | null;
-    image?: { url?: string | null } | null;
-  };
-  /** The work on the server matched to the book, else `work-hc-<id>`; null for a hit without a usable id. */
-  workId?: string | null;
-  /** Whether that work is on the server. */
-  onServer?: boolean;
+/**
+ * One hit of `GET /api/discover/audiobookdb` or `GET /api/discover/openlibrary` (#721 part c2): the provider's book,
+ * the work it opens (a work on the server linked to it, else `work-abdb-<id>` / `work-ol-<id>`) and whether that work
+ * is on the server.
+ */
+export type CatalogueHit = {
+  provider: "audiobookdb" | "openlibrary";
+  id: string;
+  title: string;
+  authors: string[];
+  year: number | null;
+  /** The provider's cover address, shown by URL and never stored. */
+  cover: string | null;
+  workId: string;
+  onServer: boolean;
 };
 /** One entry of `GET /api/discover/series` (`saved` since #573). */
 export type SeriesResult = {
@@ -28,8 +30,8 @@ export type SeriesResult = {
   saved?: boolean;
 };
 
-/** A request's answer while the page waits for it, once it came, or when it failed. */
-export type Answer<T> = { state: "waiting" } | { state: "done"; value: T } | { state: "failed" };
+/** A request's answer while the page waits for it, once it came, or when it failed (with the provider's reason). */
+export type Answer<T> = { state: "waiting" } | { state: "done"; value: T } | { state: "failed"; reason?: string | null; missingKey?: boolean };
 
 export type DiscoverRow = {
   workId: string;
@@ -44,9 +46,15 @@ export type BookResults = {
   /** "On the server": null until its answer arrives or when it failed. */
   server: DiscoverRow[] | null;
   serverFailed: boolean;
-  /** "From Hardcover": null until its answer arrives, when it failed, or when Hardcover is not searched. */
-  hardcover: DiscoverRow[] | null;
-  hardcoverFailed: boolean;
+  /** "From AudiobookDB" (English audiobooks): null until its answer arrives or when it failed. */
+  audiobookdb: DiscoverRow[] | null;
+  /** AudiobookDB's failure: its reason, or null (no failure, or the server has no key). */
+  audiobookdbFailed: { reason: string | null } | null;
+  /** The server has no AudiobookDB key: the administrator gets the line to add it, nobody gets a failure. */
+  audiobookdbMissingKey: boolean;
+  /** "From Open Library" (books without an audiobook): null until its answer arrives or when it failed. */
+  openlibrary: DiscoverRow[] | null;
+  openlibraryFailed: { reason: string | null } | null;
   /** Every searched group answered and none has a book: "No books found". */
   nothing: boolean;
   /** The last row, "Search for a recording" (the administrator's). */
@@ -75,16 +83,29 @@ export function serverRow(work: WorkResult): DiscoverRow {
   };
 }
 
-/** A book from Hardcover: its author and its year. */
-export function hardcoverRow(hit: HardcoverHit & { workId: string }): DiscoverRow {
-  const year = hit.document.release_year;
+/** A book from AudiobookDB or Open Library: its authors and its year. */
+export function catalogueRow(hit: CatalogueHit): DiscoverRow {
   return {
     workId: hit.workId,
-    title: hit.document.title || "Untitled",
-    status: joined(hit.document.author_names?.join(", ") || "Unknown author", year ? String(year) : null),
-    cover: hit.document.image?.url || null,
+    title: hit.title || "Untitled",
+    status: joined(hit.authors.join(", ") || "Unknown author", hit.year ? String(hit.year) : null),
+    cover: hit.cover || null,
     wantToRead: false,
   };
+}
+
+const fold = (text: string) =>
+  text
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+/** The same book: the same title (folded) and one author in common. */
+export function sameBook(a: Pick<CatalogueHit, "title" | "authors">, b: Pick<CatalogueHit, "title" | "authors">): boolean {
+  if (fold(a.title) !== fold(b.title)) return false;
+  const names = new Set(a.authors.map(fold));
+  return !a.authors.length || !b.authors.length || b.authors.some((name) => names.has(fold(name)));
 }
 
 /**
@@ -98,6 +119,14 @@ export function withWantToRead(row: DiscoverRow, tapped: boolean | undefined): D
   return { ...row, wantToRead: tapped, status: joined(author, tapped ? WANT_TO_READ : "In your library") };
 }
 
+/**
+ * The work a row's Want to read action names (#721 part c2): a catalogue row's own id until its first PUT made a work
+ * for it (`made`, the answered work ids by row), then that work.
+ */
+export function wantToReadTarget(rowWorkId: string, made: Readonly<Record<string, string>>): string {
+  return made[rowWorkId] ?? rowWorkId;
+}
+
 /** The name of a row's Want to read action. */
 export function wantToReadActionName(row: Pick<DiscoverRow, "title" | "wantToRead">): string {
   return row.wantToRead ? `Remove ${row.title} from Want to read` : `Add ${row.title} to Want to read`;
@@ -109,38 +138,54 @@ export function libraryFirst(works: readonly WorkResult[]): WorkResult[] {
 }
 
 /**
- * The two groups of a book search. "From Hardcover" leaves out a book on the server and a work already listed under
- * "On the server" (or twice in Hardcover's answer): every work is listed once. The recording row is the administrator's.
+ * The three groups of a book search. "From AudiobookDB" leaves out a book on the server, a work already listed above
+ * it and a book with the title and author of a work the server listed (one not matched to the catalogue yet); "From Open Library" leaves those out too, and a book AudiobookDB listed (it has an audiobook): every book
+ * is listed once. The recording row is the administrator's.
  */
 export function bookResults({
   server,
-  hardcover,
-  hardcoverConnected,
+  audiobookdb,
+  openlibrary,
   admin,
 }: {
   server: Answer<readonly WorkResult[]>;
-  hardcover: Answer<readonly HardcoverHit[]>;
-  hardcoverConnected: boolean;
+  audiobookdb: Answer<readonly CatalogueHit[]>;
+  openlibrary: Answer<readonly CatalogueHit[]>;
   admin: boolean;
 }): BookResults {
   const serverRows = server.state === "done" ? libraryFirst(server.value).map(serverRow) : null;
   const listed = new Set(serverRows?.map((row) => row.workId) ?? []);
-  let hardcoverRows: DiscoverRow[] | null = null;
-  if (hardcoverConnected && hardcover.state === "done") {
-    hardcoverRows = [];
-    for (const hit of hardcover.value) {
-      if (!hit.workId || hit.onServer || listed.has(hit.workId)) continue;
+  // A work on the server not matched to the catalogue yet: the provider's book of the same title and author is it.
+  const serverBooks = server.state === "done" ? server.value.map((work) => ({ title: work.title, authors: work.author.split(/\s*[,;&]\s*/) })) : [];
+  const take = (hits: readonly CatalogueHit[], skip: (hit: CatalogueHit) => boolean = () => false) => {
+    const rows: DiscoverRow[] = [];
+    for (const hit of hits) {
+      if (!hit.workId || hit.onServer || listed.has(hit.workId) || skip(hit) || serverBooks.some((book) => sameBook(book, hit))) continue;
       listed.add(hit.workId);
-      hardcoverRows.push(hardcoverRow({ ...hit, workId: hit.workId }));
+      rows.push(catalogueRow(hit));
     }
-  }
-  const hardcoverAnswered = !hardcoverConnected || hardcover.state === "done";
-  const nothing = server.state === "done" && hardcoverAnswered && !serverRows?.length && !hardcoverRows?.length;
+    return rows;
+  };
+  const audiobookRows = audiobookdb.state === "done" ? take(audiobookdb.value) : null;
+  const audiobooks = audiobookdb.state === "done" ? audiobookdb.value : [];
+  const openLibraryRows = openlibrary.state === "done" ? take(openlibrary.value, (hit) => audiobooks.some((other) => sameBook(other, hit))) : null;
+  const missingKey = audiobookdb.state === "failed" && !!audiobookdb.missingKey;
+  const failure = (answer: Answer<unknown>) => (answer.state === "failed" ? { reason: answer.reason ?? null } : null);
+  const nothing =
+    server.state === "done" &&
+    (audiobookdb.state === "done" || missingKey) &&
+    openlibrary.state === "done" &&
+    !serverRows?.length &&
+    !audiobookRows?.length &&
+    !openLibraryRows?.length;
   return {
     server: serverRows,
     serverFailed: server.state === "failed",
-    hardcover: hardcoverRows,
-    hardcoverFailed: hardcoverConnected && hardcover.state === "failed",
+    audiobookdb: audiobookRows,
+    audiobookdbFailed: missingKey ? null : failure(audiobookdb),
+    audiobookdbMissingKey: missingKey,
+    openlibrary: openLibraryRows,
+    openlibraryFailed: failure(openlibrary),
     nothing,
     recording: admin,
   };
@@ -180,7 +225,8 @@ export type DiscoverKept = {
   /** The words last searched, null before a search. */
   searched: string | null;
   works?: WorkResult[];
-  hits?: HardcoverHit[];
+  audiobookdb?: CatalogueHit[];
+  openlibrary?: CatalogueHit[];
   series?: SeriesResult[];
 };
 
@@ -196,7 +242,9 @@ export function keptOf(data: unknown): DiscoverKept | null {
     text: kept.text,
     searched,
     works: Array.isArray(kept.works) ? kept.works : undefined,
-    hits: Array.isArray(kept.hits) ? kept.hits : undefined,
+    // An entry an earlier build kept with Hardcover's hits keeps none of them: its query runs again.
+    audiobookdb: Array.isArray(kept.audiobookdb) ? kept.audiobookdb : undefined,
+    openlibrary: Array.isArray(kept.openlibrary) ? kept.openlibrary : undefined,
     series: Array.isArray(kept.series) ? kept.series : undefined,
   };
 }
