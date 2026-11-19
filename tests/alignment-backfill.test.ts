@@ -149,10 +149,11 @@ test("backfill queues only eligible pairs, tags origin, is idempotent, and never
   }
 });
 
-test("re-queue policy: skip ready/partial/in-progress/paused, re-queue error and cancelled", async () => {
+test("re-queue policy: skip ready/partial/in-progress/paused/cancelled, re-queue error", async () => {
   enableWorker();
   try {
-    for (const status of ["ready", "partial", "queued", "processing", "copying", "paused"]) {
+    // A cancel is final (#744): the auto-queue never plans a cancelled pair again.
+    for (const status of ["ready", "partial", "queued", "processing", "copying", "paused", "cancelled"]) {
       wipe();
       seedJob("good", status);
       sqlite.prepare("DELETE FROM alignment_jobs WHERE id<>'job-good'").run();
@@ -161,7 +162,7 @@ test("re-queue policy: skip ready/partial/in-progress/paused, re-queue error and
       assert.equal(result, false, status);
       assert.deepEqual(alignmentJob("job-good"), before, `${status} is untouched`);
     }
-    for (const status of ["error", "cancelled"]) {
+    for (const status of ["error"]) {
       wipe();
       seedJob("good", status);
       const old = alignmentJob("job-good");
@@ -176,6 +177,30 @@ test("re-queue policy: skip ready/partial/in-progress/paused, re-queue error and
     }
   } finally {
     disableWorker();
+  }
+});
+
+test("a cancel is final (#744): Prepare for all books and the work's auto-queue pass a cancelled pair by; Prepare plans it", async () => {
+  wipe();
+  enableWorker();
+  try {
+    seedJob("good", "cancelled");
+    const before = alignmentJob("job-good");
+    const result = await runAlignmentBackfill();
+    assert.equal(result.queued, 0, JSON.stringify(result));
+    assert.equal(result.skipped.cancelled, 1, JSON.stringify(result));
+    await autoQueueAlignmentsForWork("work-good");
+    await autoQueueAlignmentsForWork("work-good", { ebookId: "ebook-good" });
+    await autoQueueAlignmentsForWork("work-good", { recordingId: "recording-good" });
+    assert.deepEqual(alignmentJob("job-good"), before, "the cancelled job is untouched");
+    assert.equal(rows().length, 1);
+    // The owner's own Prepare of this book still plans it again, under a new generation.
+    const prepared = await createAlignment("ebook-good", "recording-good");
+    assert.equal(prepared.id, "job-good");
+    assert.equal(prepared.status, "queued");
+  } finally {
+    disableWorker();
+    wipe();
   }
 });
 
