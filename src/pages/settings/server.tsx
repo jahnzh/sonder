@@ -31,6 +31,8 @@ import {
 import { tip } from "../../tooltip-texts";
 import type { HardcoverState, Settings as SettingsData } from "../../types";
 import { ChoiceRow } from "./Choice";
+import { CREDIT, KEY_IN_SERVER_FILE, KEY_NOT_NEEDED, batchLine, testedLine, unmatchedValue, type BatchAnswer } from "../../catalogue-page-model";
+import { useAddress } from "../../navigation";
 
 type Notify = (text: string, error?: boolean) => void;
 type Props = { user: Account; settings: SettingsData | null; onSaved: () => void; notify: Notify };
@@ -182,6 +184,7 @@ export function ConnectionsPage({ user, settings, onSaved, notify }: Props) {
         </Group>
       )}
       <HardcoverConnection settings={settings} onSaved={onSaved} notify={notify} />
+      {admin && <CatalogueConnections settings={settings} onSaved={onSaved} notify={notify} save={save} />}
       {admin && (
         <>
           <Group caption="Prowlarr" info={<InfoMark name="Prowlarr" text={tip("prowlarr")} />}>
@@ -213,6 +216,92 @@ export function ConnectionsPage({ user, settings, onSaved, notify }: Props) {
         </>
       )}
       <p className="part-group-note settings-page-note">{KEYS_ENCRYPTED}</p>
+    </>
+  );
+}
+
+/**
+ * AudiobookDB and Open Library (#721). The key is the server's AUDIOBOOKDB_API_KEY: then the row says it is set in
+ * the server's file and only Test is offered. Without one, a key saved here is used. Match library runs the batch
+ * match; the books it could not match surely are listed, each opening its match page.
+ */
+function CatalogueConnections({ settings, onSaved, notify, save }: Omit<Props, "user"> & { save: (body: Record<string, string>, done?: string) => () => Promise<void> }) {
+  const address = useAddress();
+  const configured = !!settings?.audiobookdbConfigured;
+  const fromFile = settings?.audiobookdbSource === "env";
+  const [testing, setTesting] = useState(false);
+  const [batch, setBatch] = useState<BatchAnswer | null>(null);
+  const [batchError, setBatchError] = useState<string | null>(null);
+  const read = async (method: "GET" | "POST" = "GET") => {
+    try {
+      setBatch(await api<BatchAnswer>("/catalogue/match", method === "POST" ? { method, body: "{}" } : {}));
+      setBatchError(null);
+    } catch (error) {
+      setBatchError((error as Error).message);
+    }
+  };
+  useEffect(() => {
+    void read();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // While the batch runs, its line follows it.
+  const running = !!batch?.status.running;
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setInterval(() => void read(), 2000);
+    return () => window.clearInterval(timer);
+  }, [running]); // eslint-disable-line react-hooks/exhaustive-deps
+  const test = async () => {
+    setTesting(true);
+    try {
+      notify(testedLine(await api<{ remaining: number | null; limit: number | null; unitsToday: number }>("/audiobookdb/test", { method: "POST", body: "{}" })));
+    } catch (error) {
+      notify((error as Error).message, true);
+    } finally {
+      setTesting(false);
+    }
+  };
+  const status = batch ? batchLine(batch.status) : null;
+  const failedLine = batchError ? { text: batchError, failed: true } : status;
+  return (
+    <>
+      <Group caption="AudiobookDB" note={failedLine?.text} noteFailed={failedLine?.failed}>
+        {fromFile ? (
+          <Row label="API key" value={KEY_IN_SERVER_FILE} />
+        ) : (
+          <>
+            <Row label="Status" value={configured ? "Connected" : "Not connected"} />
+            <FieldRow label="API key" name="AudiobookDB API key" type="password" secret isSet={configured} onSave={(value) => save({ audiobookdb: value }, "AudiobookDB key saved.")().catch(() => {})} />
+          </>
+        )}
+        {configured && (
+          <ActionsRow>
+            <Button kind="secondary" aria-label="Test AudiobookDB" disabled={testing} onClick={() => void test()}>
+              {testing ? "Testing…" : "Test"}
+            </Button>
+            {!fromFile && (
+              <Button kind="quiet" className="settings-failed-action" aria-label="Disconnect AudiobookDB" onClick={() => void save({ audiobookdb: "" }, "Connection removed.")().catch(() => {})}>
+                Disconnect
+              </Button>
+            )}
+          </ActionsRow>
+        )}
+        {configured && <Row label="Match library" disabled={running} onClick={() => void read("POST").then(onSaved)} />}
+      </Group>
+      {batch && batch.unmatched.length > 0 && (
+        <Group caption="Not matched">
+          {batch.unmatched.map((entry) => (
+            <Row key={entry.workId} label={entry.title} value={unmatchedValue(entry)} opens onClick={() => address.navigate({ name: "book-page", workId: entry.workId, page: "match" })} />
+          ))}
+        </Group>
+      )}
+      <Group caption="Open Library">
+        <Row label="API key" value={KEY_NOT_NEEDED} />
+      </Group>
+      <p className="part-group-note settings-page-note">
+        <a href="https://audiobookdb.org" target="_blank" rel="noopener noreferrer">
+          {CREDIT}
+        </a>
+      </p>
     </>
   );
 }

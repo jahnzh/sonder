@@ -69,7 +69,7 @@ async function workCatalogue(workId: string) {
       releasesError = error.message;
     }
   }
-  return { workId, query: matchQuery(work), link, outcome: matchOutcome(workId), recordings, releases, releasesError };
+  return { workId, title: work.title, author: work.author, query: matchQuery(work), link, outcome: matchOutcome(workId), recordings, releases, releasesError };
 }
 
 export function registerCatalogueRoutes(app: FastifyInstance) {
