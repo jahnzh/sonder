@@ -7,6 +7,7 @@ import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
 import {highlightShown,textShown} from "./reader-view";
 import {setTextSize} from "./reader-appearance";
 import {openRead} from "./now-playing";
+import { gotoRead } from "./read-face";
 // What the deleted Lyrics long-book test guarded that also holds for the book's text (#501 review): a search
 // result and a bookmark far away in a long book show their sentence on the page, and the text size setting
 // changes the size of the book's text that is drawn.
@@ -98,7 +99,7 @@ test("a search result and a bookmark far away in a long book show their sentence
 // The rule in Reader.tsx: the body's font size is clamp(max(14, size − 2) px, 4.6vw, size + 1 px), where vw is the
 // width of the book's frame; paragraphs inherit it.
 async function drawnSize(page:Page){
- return page.locator(".reader-room:not(.inline-reader) .reader-viewport").evaluate(host=>{
+ return page.locator(".reader-room .reader-viewport").evaluate(host=>{
   for(const frame of host.querySelectorAll("iframe")){
    const doc=frame.contentDocument,paragraph=doc?.querySelector("p");
    if(paragraph)return {px:parseFloat(getComputedStyle(paragraph).fontSize),frameWidth:doc!.defaultView!.innerWidth};
@@ -118,9 +119,9 @@ test("the text size setting changes the size of the book's text that is drawn, a
   const uploaded=await page.request.post(`/api/ebooks/import?workId=${book.workId}`,{multipart:{file:{name:"Size.epub",mimeType:"application/epub+zip",buffer:await readerFixture({title:`Text size ${randomUUID()}`})}}});
   expect(uploaded.ok()).toBe(true);
   const ebook=(await uploaded.json()).id;
-  await page.goto(`/#reader/${ebook}`);
-  const room=page.locator(".reader-room:not(.inline-reader)");
-  await expect(page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").locator("p").first()).toBeVisible();
+  await gotoRead(page, ebook);
+  const room=page.locator(".reader-room");
+  await expect(page.frameLocator(".reader-room .reader-viewport iframe").locator("p").first()).toBeVisible();
   const sizes:number[]=[];
   for(const size of [16,26]){
    // From Appearance docked under the text (#588).
@@ -139,7 +140,7 @@ test("the text size setting changes the size of the book's text that is drawn, a
   await expect.poll(async()=>(await(await page.request.get("/api/appearance")).json()).reader.size).toBe(26);
   // The saved size is what the reader draws when it opens again.
   await page.reload();
-  await expect(page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").locator("p").first()).toBeVisible();
+  await expect(page.frameLocator(".reader-room .reader-viewport iframe").locator("p").first()).toBeVisible();
   await expect.poll(async()=>{
    const drawn=await drawnSize(page);
    return drawn && Math.abs(drawn.px-expectedSize(26,drawn.frameWidth))<0.5;
