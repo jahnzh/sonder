@@ -131,6 +131,8 @@ function Row({ row, at, open, onServer, onDevice }: { row: NowRow; at: number } 
         marks={mark ? [mark] : []}
         progress={row.progress}
         failed={row.failed}
+        // A failed series search's line says why it failed (#717): it wraps rather than lose the reason.
+        wrap={row.failed && row.entry === "series-search"}
         trailing={row.finishedAt !== null ? finishedAgo(row.finishedAt, at) : null}
         onClick={row.opens ? () => openNowRow(row.opens, open) : undefined}
         action={

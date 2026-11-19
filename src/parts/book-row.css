@@ -113,6 +113,18 @@ button.part-book-row:focus-visible {
   align-items: center;
   padding-right: var(--space-16);
 }
+/* A status line that wraps (BookRow's wrap): the row is at least 64 high and grows with the line. */
+.part-book-row[data-wrap] {
+  height: auto;
+  min-height: var(--height-bar);
+  padding-block: var(--space-8);
+}
+.part-book-row[data-wrap] .part-book-row-line {
+  align-items: flex-start;
+}
+.part-book-row[data-wrap] .part-book-row-status {
+  white-space: normal;
+}
 /* A failed status line (Now's "Download failed"): the failed colour, its icon too. */
 .part-book-row[data-failed] .part-book-row-line {
   color: var(--danger);

@@ -69,7 +69,7 @@ import {
   torrentDownloadDir,
 } from "./storage.ts";
 import { acquireReplacing, acquisitionsLoop, cancelAcquisition, controlAcquisition } from "./acquisitions.ts";
-import { seriesAcquisitionLoop } from "./series-acquisition.ts";
+import { retrySeriesAcquisitionJob, seriesAcquisitionLoop } from "./series-acquisition.ts";
 import { getTorrentStates, transmission, transmissionConfigured } from "./transmission.ts";
 import { getTorrentHealth } from "./torrent-health.ts";
 import { searchEbooks, saveEbook, listEbooks, importEbook } from "./ebooks.ts";
@@ -364,6 +364,7 @@ export async function createApp(options?: {
     torrentStates: (hashes: string[]) => getTorrentStates(hashes),
     cancelAcquisition: (id: string) => cancelAcquisition(id),
     resumeAlignment: resumeAlignmentJob,
+    retrySeriesSearch: retrySeriesAcquisitionJob,
     pauseState,
     setPaused,
     workerHosts: {

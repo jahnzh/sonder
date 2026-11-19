@@ -821,3 +821,85 @@ test("interactive Hardcover requests overtake queued background series refreshes
     setHardcoverRequestBudgetForTests(createHardcoverRequestBudget({ intervalMs: 0 }));
   }
 });
+
+// #717: a search that could not reach its source goes back in the queue by itself, a bounded number of times.
+const LIBGEN_DOWN = "Library Genesis could not be reached. Try another mirror in Settings or open the source website.";
+const ebookJob = () =>
+  db.select().from(schema.seriesAcquisitionJobs).where(eq(schema.seriesAcquisitionJobs.kind, "ebook")).all();
+
+test("a search that could not reach its source is tried again by itself, later, a bounded number of times (#717)", async () => {
+  const { SERIES_SOURCE_AUTO_RETRIES, SERIES_SOURCE_RETRY_STEP_MS } = await import("../server/series-acquisition.ts");
+  let clock = Date.now();
+  let tries = 0;
+  setSeriesAcquisitionDeps({
+    now: () => clock,
+    fetchEbooks: async () => {
+      tries++;
+      throw new Error(LIBGEN_DOWN);
+    },
+  });
+  await saveSeries([201], { searchEbooks: true });
+  await tickSeriesAcquisition();
+  assert.equal(tries, 1);
+  let [job] = ebookJob();
+  assert.equal(job.status, "pending", "back in the queue, not failed");
+  assert.equal(job.error, LIBGEN_DOWN, "with the reason it waits");
+  assert.equal(job.autoRetries, 1);
+  assert.equal(job.retryAt, clock + SERIES_SOURCE_RETRY_STEP_MS);
+
+  await tickSeriesAcquisition();
+  assert.equal(tries, 1, "not before its time");
+  for (let attempt = 2; attempt <= SERIES_SOURCE_AUTO_RETRIES + 1; attempt++) {
+    clock = (ebookJob()[0].retryAt ?? clock) + 1;
+    await tickSeriesAcquisition();
+    assert.equal(tries, attempt);
+  }
+  [job] = ebookJob();
+  assert.equal(job.status, "failed", "after the bounded tries it waits for the owner's Retry");
+  assert.equal(job.error, LIBGEN_DOWN);
+  assert.equal(job.autoRetries, SERIES_SOURCE_AUTO_RETRIES);
+  clock += 60 * 60_000;
+  await tickSeriesAcquisition();
+  assert.equal(tries, SERIES_SOURCE_AUTO_RETRIES + 1, "a failed job is not tried again by itself");
+
+  // The owner's Retry gives the search its own tries again.
+  const retry = await app.inject({ method: "POST", url: "/api/series/31/works/201/acquisition/retry", payload: { kind: "ebook" } });
+  assert.equal(retry.statusCode, 200, retry.body);
+  [job] = ebookJob();
+  assert.equal(job.status, "pending");
+  assert.equal(job.autoRetries, 1, "the Retry's own try could not reach the source either: its first try of a fresh budget");
+});
+
+test("a failure that is not about reaching a source fails at once (#717)", async () => {
+  const { isSourceReachFailure } = await import("../server/series-acquisition.ts");
+  setSeriesAcquisitionDeps({ fetchEbooks: async () => { throw new Error("No ebook found for this book."); } });
+  await saveSeries([201], { searchEbooks: true });
+  await tickSeriesAcquisition();
+  const [job] = ebookJob();
+  assert.equal(job.status, "failed");
+  assert.equal(job.autoRetries, 0);
+  for (const reach of [LIBGEN_DOWN, "Prowlarr did not answer in time.", "This mirror is unavailable. Try another mirror", "fetch failed", "connect ECONNREFUSED 127.0.0.1:9696", "The operation was aborted due to timeout"])
+    assert.equal(isSourceReachFailure(reach), true, reach);
+  for (const other of ["No release found", "This volume could not be matched in the series.", "Library Genesis returned 403. This mirror may need browser verification.", null])
+    assert.equal(isSourceReachFailure(other), false, String(other));
+});
+
+test("a job waiting to try its source again does not hold up the queue behind it (#717)", async () => {
+  const clock = Date.now();
+  const searched: string[] = [];
+  setSeriesAcquisitionDeps({
+    now: () => clock,
+    fetchEbooks: async (workId) => {
+      searched.push(workId);
+      return { downloaded: [{ id: "libgen-deadbeef", status: "held" as const }], skipped: null, failures: [] as string[] };
+    },
+  });
+  await saveSeries([201, 202], { searchEbooks: true });
+  await tickSeriesAcquisition();
+  searched.length = 0;
+  const [first, second] = sqlite.prepare("SELECT id, work_id AS workId FROM series_acquisition_jobs WHERE kind='ebook' ORDER BY rowid").all() as { id: string; workId: string }[];
+  sqlite.prepare("UPDATE series_acquisition_jobs SET status='pending', error=?, auto_retries=1, retry_at=? WHERE id=?").run(LIBGEN_DOWN, clock + 60_000, first.id);
+  sqlite.prepare("UPDATE series_acquisition_jobs SET status='pending', error=NULL WHERE id=?").run(second.id);
+  await tickSeriesAcquisition();
+  assert.deepEqual(searched, [second.workId], "the next book is searched; the one waiting to try again is not yet");
+});
