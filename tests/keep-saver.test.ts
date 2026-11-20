@@ -238,6 +238,72 @@ test("an interrupted save resumes by itself at the next trigger, from the files 
   assert.equal(typeof d.server.get("w1")?.completeAt, "number");
 });
 
+test("a trigger that arrives while a save runs does not save it again once the network interrupted it (#783)", async () => {
+  // The Book page's tap lands while Sonder's opening run is still busy (a slow phone, a loaded check host): the run
+  // asked for meanwhile used to run straight after the interruption and fetched the failed range a second time.
+  const d = device({ tracks: 2 });
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let calls = 0;
+  const a = d.tab(1, {
+    saveTrack: async (t, signal) => {
+      signal.throwIfAborted();
+      d.saves.push(`1:${t.id}`);
+      calls++;
+      await held;
+      d.parts.push({ trackId: t.id, recordingId: t.recordingId, loaded: 4 });
+      throw new TypeError("Failed to fetch");
+    },
+  });
+  a.saver.start();
+  await settle();
+  await a.saver.tap("w1", true);
+  await settle();
+  assert.equal(calls, 1, "the tap's run is saving");
+  // Asked for while it runs: a library read that changed, the app back in the foreground.
+  void a.saver.trigger("library");
+  void a.saver.trigger("foreground");
+  release();
+  await settle();
+  assert.deepEqual(d.saves, ["1:r1-0"], "the interrupted save is not fetched again by the runs asked for during it");
+  assert.equal(d.records.get("r1")?.state, "interrupted");
+  // A trigger after the interruption resumes it, as before.
+  await a.saver.trigger("foreground");
+  await settle();
+  assert.deepEqual(d.saves, ["1:r1-0", "1:r1-0"]);
+});
+
+test("coming back online or Resume while a save runs still runs again after a network interruption (#783)", async () => {
+  for (const reason of ["online", "retry"] as const) {
+    const d = device({ tracks: 1 });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let first = true;
+    const a = d.tab(1, {
+      saveTrack: async (t, signal) => {
+        signal.throwIfAborted();
+        d.saves.push(`1:${t.id}`);
+        if (first) {
+          first = false;
+          await held;
+          throw new TypeError("Failed to fetch");
+        }
+        d.downloads.push({ trackId: t.id, recordingId: t.recordingId, size: 10 });
+      },
+    });
+    a.saver.start();
+    await settle();
+    await a.saver.tap("w1", true);
+    await settle();
+    void (reason === "retry" ? a.saver.resumeWork("w1") : a.saver.trigger(reason));
+    await settle();
+    release();
+    await settle();
+    assert.deepEqual(d.saves, ["1:r1-0", "1:r1-0"], `${reason}: saved again`);
+    assert.equal(d.records.get("r1")?.state, "finished", reason);
+  }
+});
+
 test("a paused or failed save waits for a tap; the tap saves it", async () => {
   const d = device();
   const a = d.tab(1);

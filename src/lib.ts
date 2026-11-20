@@ -9,6 +9,7 @@ import { isKeptReaderFile, type ReaderFileRecord } from "./ebook-keep";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { connection, isNoAnswer } from "./connection";
+import { deviceCopyUrl } from "./device-copy-url";
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
@@ -541,4 +542,20 @@ async function downloadedChunks(trackId: string, size: number, mime?: string) {
 export async function offlineUrl(track: Track) {
   const blob = await getDownloadedBlob(track.id);
   return blob ? URL.createObjectURL(blob) : null;
+}
+/**
+ * The URL a track's complete device copy plays from (#783): the service worker's ranges when it controls the page and
+ * holds the copy, otherwise a Blob URL (`offlineUrl`); null when there is no complete copy.
+ */
+export function deviceCopyPlayUrl(track: Track) {
+  return deviceCopyUrl(track.id, {
+    controlled: () => !!navigator.serviceWorker?.controller,
+    // No `cache: "no-store"`: offline, Firefox refuses such a request before the service worker sees it.
+    head: (url) => fetch(url, { method: "HEAD" }),
+    blobUrl: () => offlineUrl(track),
+  });
+}
+/** Lets a device copy's URL go: a Blob URL is revoked, the service worker's address needs nothing. */
+export function releaseDeviceCopyUrl(url: string | null) {
+  if (url?.startsWith("blob:")) URL.revokeObjectURL(url);
 }

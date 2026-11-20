@@ -160,6 +160,8 @@ export class KeepSaver {
   private release: (() => void) | null = null;
   private running: Promise<void> | null = null;
   private again = false;
+  /** Why the runs asked for while one runs were asked for (#783). */
+  private askedDuring = new Set<KeepTrigger>();
   /** Books whose paused or failed save a tap asked to save again. */
   private forced = new Set<string>();
   /** A library read that changed asked for a run: a failed save is tried again by itself then (#552). */
@@ -265,17 +267,24 @@ export class KeepSaver {
     } else if (message.type === "trigger" && this.leader) void this.trigger(message.reason, message.workId);
   }
 
-  /** One run at a time; a run asked for while one runs runs once more after it. */
+  /**
+   * One run at a time; a run asked for while one runs runs once more after it. Not after a save the network
+   * interrupted (#783): that run would fetch the failed range again at once, so it waits for the next trigger, unless
+   * the connection came back or a tap (the switch, Resume, Retry) asked for a book after the run had passed it.
+   */
   private run(reason: KeepTrigger): Promise<void> {
     if (this.running) {
       this.again = true;
+      this.askedDuring.add(reason);
       return this.running;
     }
     this.running = (async () => {
       try {
         do {
           this.again = false;
-          await this.runOnce(reason);
+          this.askedDuring.clear();
+          const stop = await this.runOnce(reason);
+          if (stop === "network" && !this.askedDuring.has("online") && !this.forced.size) break;
         } while (this.again && !this.stopped);
       } finally {
         this.running = null;
@@ -324,7 +333,8 @@ export class KeepSaver {
     return { keep, synced: true };
   }
 
-  private async runOnce(reason: KeepTrigger) {
+  /** "network" when a save stopped on a network interruption, so the books after it were not tried. */
+  private async runOnce(reason: KeepTrigger): Promise<"network" | void> {
     if (this.stopped) return;
     let state = await this.deps.read();
     let { keep, synced } = await this.sync(state);
@@ -404,7 +414,7 @@ export class KeepSaver {
         state = await this.deps.read();
         const done = this.needsOf(works.get(entry.workId)!, state);
         if (done.complete) await this.reportComplete(entry, keep);
-      } else if (stop.state === "interrupted" && stop.how === "network") return; // The others would fail as well.
+      } else if (stop.state === "interrupted" && stop.how === "network") return "network"; // The others would fail as well.
     }
     // The note of a cleared device ends once every kept book is complete again (#554).
     if (this.deps.setClearedAt && (await this.deps.clearedAt?.())) {
