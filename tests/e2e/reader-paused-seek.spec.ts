@@ -10,6 +10,7 @@ import {randomUUID} from "node:crypto";
 import {readerFixture} from "../reader-fixture";
 import {installReaderWaitBudget,READER_WAIT_MS} from "./timing";
 import {openRead,openListen,listenFace,showReadControls} from "./now-playing";
+import {expectPlaysDeviceCopy} from "./device-copy";
 
 test.use({viewport:{width:390,height:844}});
 installReaderWaitBudget(test);
@@ -197,8 +198,10 @@ test.describe("on a stream",()=>{
  });
 });
 
-// #593's case: a device copy plays from a Blob of 4 MiB chunks, which Firefox reads only forward, so the load's
-// seek to the saved place lands short and is held. Its fix must stay (now-playing-faces.spec.ts checks the switch).
+// #593's case: a device copy played from a Blob of 4 MiB chunks, which Firefox reads only forward, so the load's
+// seek to the saved place landed short and was held. Its fix must stay (now-playing-faces.spec.ts checks the switch).
+// With the service worker controlling the page the copy now plays from the worker's ranges (#783); paused seeks on
+// it must still move the highlight.
 test("paused seeks move the highlight on a device copy",async({page})=>{
  test.setTimeout(120_000);
  await instrument(page);
@@ -219,7 +222,7 @@ test("paused seeks move the highlight on a device copy",async({page})=>{
  await page.goto("about:blank");
  await page.goto("/");
  await openRead(page);
- await expect.poll(async()=>(await audio(page)).src).toMatch(/^blob:/);
+ await expectPlaysDeviceCopy(page,async()=>(await audio(page)).src,book.tracks[0].id);
  await expect(room(page)).toHaveAttribute("data-current-passage",saved.paragraphId,{timeout:READER_WAIT_MS.followHighlight});
  await seekTo(page,backwards);
  await seekTo(page,forwards);

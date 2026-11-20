@@ -2,7 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { parseRange } from "../../server/range";
-import { listenFace, openListen } from "./now-playing";
+import { listenFace } from "./now-playing";
 import { throttleCpu } from "./cpu-throttle";
 test.use({ serviceWorkers: "block" });
 // SONDER_CPU_THROTTLE=4 runs it on a slow processor in Chromium (#702, #707).
@@ -24,6 +24,15 @@ async function sliceLibrary(page: Page, count: number) {
     const works = await response.json();
     await route.fulfill({ status: 200, contentType: "application/json", json: works.map((w: any) => (w.workId === ALICE_WORK ? slice(w) : w)) });
   });
+}
+/** Alice's Listen face by its address (#783c): the mini player shows the book listened to last on the suite's shared
+ *  server, which an earlier spec may have made another book (it opened Sherlock's face, with no Keep line). */
+async function openAlicesListen(page: Page) {
+  await page.evaluate((workId) => {
+    location.hash = `#listen/${encodeURIComponent(workId)}`;
+  }, ALICE_WORK);
+  await expect(listenFace(page)).toBeVisible();
+  await expect(listenFace(page).getByRole("heading", { level: 1 })).toHaveText("Alice’s Adventures in Wonderland");
 }
 
 test("offline downloads retry temporary HTTP errors at different chapter boundaries", async ({
@@ -128,13 +137,17 @@ test("player downloads retain verified sections after connection failure and res
   await page.goto(`/#book/${encodeURIComponent(ALICE_WORK)}`);
   const keep = page.getByRole("switch", { name: "Keep on this device", exact: true });
   await keep.click();
+  // The line reads "Not complete · 0 of 1 files" from the tap on, before the first file arrives (keepState), so the
+  // spec waits for the save's four tries of the failing section before it reads the line (#783c: on a slow processor
+  // the line was read before the save had started).
+  await expect.poll(() => starts.filter((start) => start === 4 * 1024 * 1024).length, { timeout: 20000 }).toBe(4);
   // The connection failed: no toast (#550), the line says what is missing; the switch stays on, the row offers Resume.
   await expect(page.locator("#book-keep-line")).toHaveText("Not complete · 0 of 1 files", { timeout: 20000 });
   await expect(page.locator(".toast")).toHaveCount(0);
   await expect(keep).toHaveAttribute("aria-checked", "true");
   await expect(page.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
   // Now playing's Listen face shows the same Keep row and line (#593; the device download progress left it).
-  await openListen(page);
+  await openAlicesListen(page);
   await expect(page.locator("#listen-keep-line")).toHaveText("Not complete · 0 of 1 files", { timeout: 20000 });
   await expect(listenFace(page).getByRole("button", { name: "Resume", exact: true })).toBeVisible({ timeout: 20000 });
   expect(starts.filter((start) => start === 0)).toHaveLength(1);
@@ -164,7 +177,7 @@ test("player downloads retain verified sections after connection failure and res
   // After a reload the switch is still on and the save carries on by itself from the saved sections (#550).
   await expect(keep).toHaveAttribute("aria-checked", "true");
   await expect(page.locator("#book-keep-line")).toHaveText(/^Audiobook( and ebook)? · /, { timeout: 20000 });
-  await openListen(page);
+  await openAlicesListen(page);
   await expect(listenFace(page).getByRole("switch", { name: "Keep on this device", exact: true })).toHaveAttribute("aria-checked", "true");
   await expect(page.locator("#listen-keep-line")).toHaveText(/^Audiobook( and ebook)? · /, { timeout: 20000 });
   expect(starts.filter((start) => start === 0)).toHaveLength(1);
@@ -224,7 +237,7 @@ test("player downloads retain verified sections after connection failure and res
   await expect(page.getByRole("dialog", { name: "Get ebook", exact: true })).toHaveCount(0);
   await page.reload();
   // Listen makes the book ready to play; then the mini player names where it plays from.
-  await openListen(page);
+  await openAlicesListen(page);
   await page.getByRole("button", { name: "Close now playing", exact: true }).click();
   await expect(page.locator(".player-dock").getByLabel("Playback source")).toHaveText("Device cache", { timeout: 20000 });
 });
