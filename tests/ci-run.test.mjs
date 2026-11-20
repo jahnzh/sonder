@@ -1113,10 +1113,10 @@ test("pruneArtifacts removes commit dirs older than the limit and keeps fresh, k
     const live = writeArtifacts(base, sha40("d"), 30, { "sonder-ci-x/ci-ssh.pid": `${process.pid}\n` });
     const deadPid = Number(spawnSync("bash", ["-c", "echo $$"], { encoding: "utf8" }).stdout.trim());
     const dead = writeArtifacts(base, sha40("e"), 30, { "sonder-ci-x/ci-ssh.pid": `${deadPid}\n` });
-    // An old commit dir with one fresh run inside is still in use.
+    // An old commit dir whose run is still writing its log is in use: only the
+    // log itself (a grandchild) is fresh, appending changes no directory.
     const mixed = writeArtifacts(base, sha40("f"), 30);
-    fs.mkdirSync(path.join(mixed, "run-new"));
-    fs.writeFileSync(path.join(mixed, "run-new", "check.log"), "now\n");
+    fs.appendFileSync(path.join(mixed, "run-1", "check.log"), "now\n");
     const foreign = writeArtifacts(base, "unresolved-main", 30);
     const removed = pruneArtifacts({ root: base, hours: 6, keep: [sha40("c")] });
     assert.deepEqual(removed.sort(), [old, dead].sort());
