@@ -3,7 +3,7 @@
 // its cut exactly, odd chapter included. All text here is made up.
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir } from "./temp-dir.ts";
 const temp = tempDir("sonder-reader-recut-");
@@ -16,7 +16,7 @@ const { createApp } = await import("../server/app.ts");
 const { db, sqlite } = await import("../server/db.ts");
 const s = await import("../server/schema.ts");
 const { readerFixture } = await import("./reader-fixture.ts");
-const { extractBook, invalidateParsedBook } = await import("../server/reader.ts");
+const { extractBook, bookWithPlaces, cutEpub, invalidateParsedBook } = await import("../server/reader.ts");
 const { normalizeReaderText } = await import("../src/reading-types.ts");
 const app = await createApp();
 after(async () => {
@@ -135,4 +135,37 @@ test("a normal book's saved places are never touched", async () => {
   await extractBook(id);
   assert.equal((sqlite.prepare("SELECT data FROM user_reader_checkpoints WHERE edition_id=?").get(id) as { data: string }).data, data);
   assert.equal(sqlite.prepare("SELECT 1 FROM settings WHERE key=?").get(`reader-recut:${id}`), undefined);
+});
+
+test("cutting a book writes nothing; the carry-over is a step of its own, and says when it ran", async () => {
+  const id = await edition("recut-pure", [divChapter, looseChapter]);
+  const data = JSON.stringify({ locator: { section: 0, paragraphId: "0:2", quote: "A quoted line stands here.", progression: 0.5 }, revision: 1, eventId: "event-pure-1", deviceId: "device-1", updatedAt: 5, origin: "reading" });
+  sqlite.prepare("INSERT INTO user_reader_checkpoints(user_id,edition_id,data) VALUES(1,?,?)").run(id, data);
+  const place = () => (sqlite.prepare("SELECT data FROM user_reader_checkpoints WHERE edition_id=?").get(id) as { data: string }).data;
+  const mark = () => sqlite.prepare("SELECT value FROM settings WHERE key=?").get(`reader-recut:${id}`) as { value: string } | undefined;
+  // A database that refuses every write: the cut is still made, by extractBook and from the file alone.
+  sqlite.pragma("query_only = ON");
+  try {
+    const book = await extractBook(id);
+    assert.deepEqual(book.sections.map((section) => section.blocks), ["div", "body"]);
+    const cut = await cutEpub(readFileSync(join(temp, "media", "ebooks", `${id}.epub`)));
+    assert.deepEqual(cut.sections, book.sections);
+    assert.equal(cut.fingerprint, book.fingerprint);
+    assert.equal(cut.recut?.get("0:2")?.was, "A quoted line stands here.");
+  } finally {
+    sqlite.pragma("query_only = OFF");
+  }
+  assert.equal(place(), data, "extractBook moved nothing");
+  assert.equal(mark(), undefined);
+  // The step that carries the places logs the edition and how many it moved, once.
+  const lines: { details: Record<string, unknown>; message: string }[] = [];
+  const log = { info: (details: object, message: string) => void lines.push({ details: details as Record<string, unknown>, message }) };
+  await bookWithPlaces(id, log);
+  await bookWithPlaces(id, log);
+  assert.equal(lines.length, 1);
+  assert.deepEqual(lines[0].details, { edition: id, places: 1 });
+  assert.notEqual(place(), data);
+  assert.equal(JSON.parse(mark()!.value).places, 1);
+  // A book cut by the standard rule has no table and is never marked.
+  assert.equal((await cutEpub(readFileSync(join(temp, "media", "ebooks", "recut-normal.epub")))).recut, null);
 });

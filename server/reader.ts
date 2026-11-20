@@ -64,37 +64,9 @@ function sentencePlaces(body: HTMLElement, sentences: ReturnType<typeof sentence
     .map((block) => readerTextOffset((before.get(block) ?? "") + (/^\s*/.exec(block.text)?.[0] ?? "")));
   return sentences.map((sentence) => ({ ...sentence, place: (starts[sentence.blockIndex] ?? 0) + sentence.start }));
 }
-type Carried = Map<string, { id: string; text: string }>;
-/**
- * Moves the saved reading places and bookmarks of an edition from the standard cut to the cut it has now (ADR 0026),
- * once: the edition is marked in the same transaction, so a second run finds nothing to do. A moved reading place
- * gets the next revision, so a device that still holds the old one is told of the newer place.
- */
-function carryPlaces(id: string, carried: Carried) {
-  const key = `reader-recut:${id}`;
-  sqlite.transaction(() => {
-    if (sqlite.prepare("SELECT 1 FROM settings WHERE key=?").get(key)) return;
-    const moved = <T extends { paragraphId: string; quote?: string }>(locator: T): T | null => {
-      const to = carried.get(locator.paragraphId);
-      return to ? { ...locator, paragraphId: to.id, quote: to.text.slice(0, 300) } : null;
-    };
-    let places = 0;
-    for (const row of sqlite.prepare("SELECT user_id AS userId,data FROM user_reader_checkpoints WHERE edition_id=?").all(id) as { userId: number; data: string }[]) {
-      const checkpoint = JSON.parse(row.data) as ReadingCheckpoint;
-      const locator = moved(checkpoint.locator);
-      if (!locator) continue;
-      sqlite.prepare("UPDATE user_reader_checkpoints SET data=? WHERE edition_id=? AND user_id=?").run(JSON.stringify({ ...checkpoint, locator, revision: checkpoint.revision + 1 }), id, row.userId);
-      places++;
-    }
-    for (const row of sqlite.prepare("SELECT user_id AS userId,id AS bookmark,locator FROM user_reader_bookmarks WHERE edition_id=?").all(id) as { userId: number; bookmark: string; locator: string }[]) {
-      const locator = moved(JSON.parse(row.locator) as TextLocator);
-      if (!locator) continue;
-      sqlite.prepare("UPDATE user_reader_bookmarks SET locator=? WHERE edition_id=? AND user_id=? AND id=?").run(JSON.stringify(locator), id, row.userId, row.bookmark);
-      places++;
-    }
-    sqlite.prepare("INSERT INTO settings(key,value) VALUES(?,?)").run(key, JSON.stringify({ places, at: Date.now() }));
-  })();
-}
+/** For a book cut by another rule (ADR 0026): each sentence of its standard cut, and the sentence that holds it now. */
+type Recut = Map<string, { id: string; text: string; was: string }>;
+type Log = { info: (details: object, message: string) => void };
 const xml = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "",
@@ -106,7 +78,7 @@ const array = (value: any): any[] =>
 const text = (value: any): string => String(value?.["#text"] ?? value ?? "");
 const cache = new Map<
   string,
-  { stamp: string; book: Omit<ReaderBook, "checkpoint" | "bookmarks"> }
+  { stamp: string; book: Omit<ReaderBook, "checkpoint" | "bookmarks">; recut: Recut | null }
 >();
 export function ebookRecord(id: string) {
   if (id.startsWith("set-consensus:")) {
@@ -142,31 +114,11 @@ export function ebookRecord(id: string) {
   return row;
 }
 /**
- * Version of extractBook's cut: which text is a sentence and what id it gets. Raise it with any change to that
- * (here, `countedBlocks` or `normalizeReaderText`), so that prepared text kept on disk (server/prepared-text-cache.ts)
- * is made again from the new cut. It changes nothing in the output itself. 2: a book without paragraph elements is
- * cut by another rule (ADR 0026).
+ * The cut of an EPUB file into chapters and sentences, from the file alone: no database is read or written, so it
+ * gives the same cut wherever it runs. `recut` is set for a book cut by another rule than the standard one.
  */
-export const EXTRACTOR_VERSION = 2;
-export async function extractBook(id: string) {
-  if (id.startsWith("set-consensus:")) {
-    const workId = id.slice("set-consensus:".length);
-    const { readConsensusSentences, consensusReaderBook } = await import(
-      "./ebook-set-consensus.ts"
-    );
-    const sentences = readConsensusSentences(workId);
-    if (!sentences.length)
-      throw new Error("This work has no ebook-set consensus text yet.");
-    return consensusReaderBook(workId, sentences, "en");
-  }
-  const row = ebookRecord(id),
-    stat = statSync(row.source),
-    stamp = `${stat.size}:${stat.mtimeMs}`;
-  if (cache.get(id)?.stamp === stamp) return cache.get(id)!.book;
-  if (stat.size > 150 * 1024 * 1024)
-    throw new Error("This EPUB exceeds the reader’s 150 MB limit.");
-  const buffer = readFileSync(row.source),
-    zip = await JSZip.loadAsync(buffer);
+export async function cutEpub(buffer: Buffer) {
+  const zip = await JSZip.loadAsync(buffer);
   const entries = Object.values(zip.files);
   if (
     entries.length > 5000 ||
@@ -201,11 +153,6 @@ export async function extractBook(id: string) {
       array(pkg.manifest.item).map((item) => [item.id, item]),
     ),
     base = posix.dirname(opfPath);
-  const work = db
-    .select()
-    .from(s.works)
-    .where(eq(s.works.id, row.workId))
-    .get()!;
   const chapter = async (index: number, item: any) => {
     const href = posix.normalize(
       posix.join(base, decodeURIComponent(item.href.split("#")[0])),
@@ -241,7 +188,7 @@ export async function extractBook(id: string) {
     held += blocks.reduce((sum, text) => sum + text.length, 0);
     if (paragraphs.length) sections.push(section(index, item, body, paragraphs));
   }
-  let carried: Carried | null = null;
+  let carried: Recut | null = null;
   if (total && held / total < LOW_SHARE_BOOK) {
     // The book's paragraphs are not the standard blocks (ADR 0026): each chapter is cut by the first rule that
     // holds its text. Places saved in the standard cut are found again by where their sentence starts.
@@ -261,29 +208,103 @@ export async function extractBook(id: string) {
         // first that holds its text.
         const to = was && now ? now.filter((sentence) => sentence.place <= was[ordinal].place).at(-1) : paragraphs.find((sentence) => sentence.text.includes(old.text));
         const target = to ?? paragraphs[0];
-        if (target) carried.set(old.id, { id: target.id, text: target.text });
+        if (target) carried.set(old.id, { id: target.id, text: target.text, was: old.text });
       }
     }
   }
   if (!sections.length) throw new Error("This EPUB contains no readable text.");
+  return {
+    sections,
+    language: text(pkg.metadata?.language) || "en",
+    fingerprint: createHash("sha256").update(buffer).digest("hex"),
+    recut: carried,
+  };
+}
+/**
+ * Version of extractBook's cut: which text is a sentence and what id it gets. Raise it with any change to that
+ * (here, `countedBlocks` or `normalizeReaderText`), so that prepared text kept on disk (server/prepared-text-cache.ts)
+ * is made again from the new cut. It changes nothing in the output itself. 2: a book without paragraph elements is
+ * cut by another rule (ADR 0026).
+ */
+export const EXTRACTOR_VERSION = 2;
+export async function extractBook(id: string) {
+  if (id.startsWith("set-consensus:")) {
+    const workId = id.slice("set-consensus:".length);
+    const { readConsensusSentences, consensusReaderBook } = await import(
+      "./ebook-set-consensus.ts"
+    );
+    const sentences = readConsensusSentences(workId);
+    if (!sentences.length)
+      throw new Error("This work has no ebook-set consensus text yet.");
+    return consensusReaderBook(workId, sentences, "en");
+  }
+  const row = ebookRecord(id),
+    stat = statSync(row.source),
+    stamp = `${stat.size}:${stat.mtimeMs}`;
+  if (cache.get(id)?.stamp === stamp) return cache.get(id)!.book;
+  if (stat.size > 150 * 1024 * 1024)
+    throw new Error("This EPUB exceeds the reader’s 150 MB limit.");
+  const cut = await cutEpub(readFileSync(row.source));
+  const work = db
+    .select()
+    .from(s.works)
+    .where(eq(s.works.id, row.workId))
+    .get()!;
   const book = {
     id,
     workId: row.workId,
     title: work.title,
     author: work.author,
-    language: text(pkg.metadata?.language) || "en",
-    fingerprint: createHash("sha256").update(buffer).digest("hex"),
-    sections,
-    toc: sections.map((section) => ({
+    language: cut.language,
+    fingerprint: cut.fingerprint,
+    sections: cut.sections,
+    toc: cut.sections.map((section) => ({
       label: section.title,
       href: section.href,
       section: section.index,
     })),
   };
-  if (carried) carryPlaces(id, carried);
   if (cache.size > 6) cache.delete(cache.keys().next().value!);
-  cache.set(id, { stamp, book });
+  cache.set(id, { stamp, book, recut: cut.recut });
   return book;
+}
+/**
+ * The book, with the places saved in it carried over to its cut: what a route that answers or stores a place reads.
+ * For a book cut by another rule (ADR 0026) the reading places and bookmarks saved in its standard cut are moved
+ * to the sentence that holds them now, once: the edition is marked in the same transaction, so a second run finds
+ * nothing to do. A moved reading place gets the next revision, so a device that still holds the old one is told of
+ * the newer place.
+ */
+export async function bookWithPlaces(id: string, log?: Log) {
+  const book = await extractBook(id);
+  const recut = cache.get(id)?.recut;
+  if (!recut) return { book, recut: null };
+  const key = `reader-recut:${id}`;
+  const places = sqlite.transaction(() => {
+    if (sqlite.prepare("SELECT 1 FROM settings WHERE key=?").get(key)) return null;
+    const moved = <T extends { paragraphId: string; quote?: string }>(locator: T): T | null => {
+      const to = recut.get(locator.paragraphId);
+      return to ? { ...locator, paragraphId: to.id, quote: to.text.slice(0, 300) } : null;
+    };
+    let count = 0;
+    for (const row of sqlite.prepare("SELECT user_id AS userId,data FROM user_reader_checkpoints WHERE edition_id=?").all(id) as { userId: number; data: string }[]) {
+      const checkpoint = JSON.parse(row.data) as ReadingCheckpoint;
+      const locator = moved(checkpoint.locator);
+      if (!locator) continue;
+      sqlite.prepare("UPDATE user_reader_checkpoints SET data=? WHERE edition_id=? AND user_id=?").run(JSON.stringify({ ...checkpoint, locator, revision: checkpoint.revision + 1 }), id, row.userId);
+      count++;
+    }
+    for (const row of sqlite.prepare("SELECT user_id AS userId,id AS bookmark,locator FROM user_reader_bookmarks WHERE edition_id=?").all(id) as { userId: number; bookmark: string; locator: string }[]) {
+      const locator = moved(JSON.parse(row.locator) as TextLocator);
+      if (!locator) continue;
+      sqlite.prepare("UPDATE user_reader_bookmarks SET locator=? WHERE edition_id=? AND user_id=? AND id=?").run(JSON.stringify(locator), id, row.userId, row.bookmark);
+      count++;
+    }
+    sqlite.prepare("INSERT INTO settings(key,value) VALUES(?,?)").run(key, JSON.stringify({ places: count, at: Date.now() }));
+    return count;
+  })();
+  if (places !== null) log?.info({ edition: id, places }, "reader: the book is cut by another block rule; places saved in its standard cut were moved");
+  return { book, recut };
 }
 export function invalidateParsedBook(id: string) {
   cache.delete(id);
@@ -324,7 +345,7 @@ export function registerReader(app: FastifyInstance) {
   });
   app.get("/api/reader/:id", async (req) => {
     const { id } = req.params as { id: string };
-    const book = await extractBook(id);
+    const { book } = await bookWithPlaces(id, req.log);
     const bookmarks = sqlite
       .prepare(
         "SELECT id,label,locator,created_at AS createdAt FROM user_reader_bookmarks WHERE edition_id=? AND user_id=? ORDER BY created_at",
@@ -357,7 +378,7 @@ export function registerReader(app: FastifyInstance) {
         resolve: z.boolean().optional(),
       })
       .parse(req.body);
-    const book = await extractBook(id);
+    const { book } = await bookWithPlaces(id, req.log);
     if (
       !book.sections.some((section) =>
         section.paragraphs.some(
@@ -415,7 +436,7 @@ export function registerReader(app: FastifyInstance) {
         locator: locatorSchema,
       })
       .parse(req.body);
-    const book = await extractBook(id);
+    const { book } = await bookWithPlaces(id, req.log);
     if (
       !book.sections.some((section) =>
         section.paragraphs.some(
