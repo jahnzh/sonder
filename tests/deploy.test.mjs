@@ -26,7 +26,7 @@ function stub(dir, name, body) {
 // append their name (and any CLI arguments) to a log, so a test can see which checks ran.
 // `healthTimes`: what the stubbed curl prints as the answer time of each request in turn, the last one for good;
 // "fail" is a request that gets no answer.
-function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", tagFails = false, smokeFails = false, markerFails = false, markerFileFails = false, jobs = [], healthTimes = ["0.010"] } = {}) {
+function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", tagFails = false, smokeFails = false, markerFails = false, markerFileFails = false, jobs = [], healthTimes = ["0.010"], prepareExit = 0 } = {}) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-deploy-")));
   const repo = join(dir, "repo");
   const bin = join(dir, "bin");
@@ -71,6 +71,11 @@ function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", t
     const writeSkip = skip === undefined ? "" : `if(process.env.SONDER_LIVE_CHECK_SKIP_FILE)fs.writeFileSync(process.env.SONDER_LIVE_CHECK_SKIP_FILE, ${JSON.stringify(skip)});`;
     writeFileSync(join(repo, "scripts", name), `import fs from "node:fs";fs.appendFileSync(${JSON.stringify(log)}, [${JSON.stringify(name)}, ...process.argv.slice(2), ...${JSON.stringify(logEnv ?? [])}.map((key) => key + "=" + (process.env[key] ?? ""))].join(" ") + "\\n");${writeSkip}process.exit(${exit});\n`);
   }
+  // The command that prepares the library's text (#827): it logs that it ran, with the server it was pointed at.
+  writeFileSync(
+    join(repo, "scripts", "prepare-library.sh"),
+    `#!/usr/bin/env bash\necho "prepare-library.sh $SONDER_ADMIN_URL timeout=$SONDER_PREPARE_TIMEOUT" >> ${JSON.stringify(log)}\necho "prepare-library: 3 of 4 editions prepared"\nexit ${prepareExit}\n`,
+  );
   const calls = join(dir, "docker-calls.log");
   const built = join(dir, "built");
   // Like the real daemon: once the build has moved sonder-audiobooks:local, the previous image is gone and cannot be tagged.
@@ -123,10 +128,12 @@ function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", t
     const r = spawnSync("git", args, { cwd: repo, encoding: "utf8", env: cleanEnv() });
     assert.equal(r.status, 0, r.stderr);
   }
-  const ran = () => { try { return readFileSync(log, "utf8").split("\n").filter(Boolean); } catch { return []; } };
+  // `ran`: the live checks, in order. `everything`: those and the preparing of the library's text after them.
+  const everything = () => { try { return readFileSync(log, "utf8").split("\n").filter(Boolean); } catch { return []; } };
+  const ran = () => everything().filter((line) => !line.startsWith("prepare-library.sh"));
   const dockerCalls = () => { try { return readFileSync(calls, "utf8").split("\n").filter(Boolean); } catch { return []; } };
   const healthAsked = () => { try { return readFileSync(asked, "utf8").split("\n").filter(Boolean); } catch { return []; } };
-  return { dir, run, runProd, ran, dockerCalls, healthAsked };
+  return { dir, run, runProd, ran, everything, dockerCalls, healthAsked };
 }
 
 test("production dry run lists the image smoke before the swap", () => {
@@ -423,6 +430,63 @@ test("deploy-prod.sh refuses with no marker flag", () => {
     assert.equal(r.status, 2);
     assert.match(r.stderr, /refusing to deploy with no verification/);
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+// The library's text is prepared by the deploy, after its checks (#827, review of #829).
+test("the library's text is prepared after the live checks have passed, on the deployed server", () => {
+  const f = fixture({ "verify-a.mjs": 0, "verify-b.mjs": 0 });
+  try {
+    const r = f.run(["--no-marker"], { SONDER_DEPLOY_PORT: "3555" });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.deepEqual(f.everything(), ["verify-a.mjs", "verify-b.mjs", "prepare-library.sh http://127.0.0.1:3555 timeout=1800"]);
+    assert.ok(r.stdout.indexOf("preparing the library's text: scripts/prepare-library.sh") < r.stdout.indexOf("deployed "), r.stdout);
+    assert.match(r.stdout, /prepare-library: 3 of 4 editions prepared/);
+    assert.doesNotMatch(r.stderr, /NOT FULLY PREPARED/);
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("a library that could not be fully prepared is said loudly, in the last line too, and the deploy still exits 0", () => {
+  const f = fixture({ "verify-a.mjs": 0 }, { prepareExit: 1 });
+  try {
+    const r = f.run(["--no-marker"]);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.match(r.stdout, /deployed [0-9a-f]+ /);
+    const said = r.stderr.split("\n").filter((line) => line.startsWith("THE LIBRARY'S TEXT IS NOT FULLY PREPARED: scripts/prepare-library.sh exited 1"));
+    assert.equal(said.length, 2, r.stderr);
+    assert.equal(r.stderr.trim().split("\n").at(-1), said[1], "it is the deploy's last line");
+    assert.doesNotMatch(r.stderr, /roll back with/);
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("the library is not prepared when a live check failed, and the step can be left out", () => {
+  let f = fixture({ "verify-a.mjs": 1 });
+  try {
+    const r = f.run(["--no-marker"]);
+    assert.equal(r.status, 1);
+    assert.deepEqual(f.everything(), ["verify-a.mjs"]);
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+  f = fixture({ "verify-a.mjs": 0 });
+  try {
+    let r = f.run(["--no-marker"], { SONDER_DEPLOY_PREPARE_LIBRARY: "" });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.deepEqual(f.everything(), ["verify-a.mjs"]);
+    // Without live checks the library is still prepared: nothing else is running.
+    r = f.run(["--no-marker", "--skip-live-checks"]);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.deepEqual(f.everything(), ["verify-a.mjs", "prepare-library.sh http://127.0.0.1:3001 timeout=1800"]);
+    r = f.run(["--no-marker", "--dry-run"]);
+    assert.match(r.stdout, /  9\. prepare the library's text: scripts\/prepare-library\.sh \(after the live checks; its failure does not fail the deploy\)\n/);
+    r = f.run(["--no-marker", "--dry-run"], { SONDER_DEPLOY_PREPARE_LIBRARY: "" });
+    assert.match(r.stdout, /  9\. prepare the library's text: skipped/);
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
 });
 
 // The settle wait before the live checks (#822).
