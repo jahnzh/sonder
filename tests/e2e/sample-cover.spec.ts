@@ -1,3 +1,4 @@
+// @projects firefox
 // #763: an edition without its own cover never shows a sample book's art. With the owner's data shape (a work with
 // one covered and two uncovered editions; a catalogue placeholder with no cover anywhere), on a server of the test's
 // own so no other spec's books or places are in the way.

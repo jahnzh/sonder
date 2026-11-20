@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-series
 // The New mark on a series and Dismiss (#565, spec #560 "The Series page"; boards SeriesNew.dc.html,
 // SeriesMore.dc.html): a work AudiobookDB lists in a saved series after the user last looked is marked New in the accent
 // colour and named on the card under the intro; Dismiss sends `POST /api/series/<id>/ack` with every new work, clears

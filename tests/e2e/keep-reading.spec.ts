@@ -1,3 +1,4 @@
+// @projects firefox, webkit-iphone-now-playing, mobile-iphone-slice14
 // Keep on this device saves the ebook and the reading sync too (#551; spec #548 "On the device: what a kept book
 // needs"). A kept book with an audiobook, an EPUB and a ready reading sync is complete with all three; after a reload
 // without a connection the reader opens the EPUB and follows the narration with the kept map. An ebook arriving for a

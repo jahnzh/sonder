@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13
 import { test, expect, type Page } from "./device-store";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";

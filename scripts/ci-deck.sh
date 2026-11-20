@@ -9,7 +9,9 @@
 # Deck is busy (another sonder-ci-run-* or ci-deck.sh — use npm run ci:run);
 # 5 SSH connectivity was lost after the run began; 6 the pinned image is missing
 # and could not be pulled, or does not match the lockfile's Playwright; 7 free
-# disk on the Deck is below the threshold; 124 the wait cap was reached.
+# disk on the Deck is below the threshold; 8 the local checkout's filesystem is
+# fuller than SONDER_CI_DISK_MAX_PERCENT (default 90), recorded as disk_full
+# before the bundle is made (#791); 124 the wait cap was reached.
 # Only an unreachable Deck at the start falls back to a local run. A failure on
 # the Deck is a failure and is never rerun elsewhere.
 #
@@ -88,6 +90,8 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT" || exit 1
 # shellcheck source=lib/ci-history.sh
 source "$ROOT/scripts/lib/ci-history.sh"
+# shellcheck source=lib/ci-disk.sh
+source "$ROOT/scripts/lib/ci-disk.sh"
 
 if ! FULL_SHA=$(git rev-parse --verify "${REQUESTED_REF}^{commit}" 2>/dev/null); then
   echo "[ci-deck] Invalid commit ref: ${REQUESTED_REF}" >&2
@@ -536,6 +540,13 @@ REMOTE
 run_remote_check() {
   local rc bundle_name=repo.bundle result exit_code run_name
 
+  # A full disk fails the bundle and reads like a host failure (#791): say so.
+  ci_disk_guard "$ROOT" ci-deck
+  if [[ $? -eq 1 ]]; then
+    record_result remote disk_full "$CI_DISK_FULL_EXIT"
+    return "$CI_DISK_FULL_EXIT"
+  fi
+
   BUNDLE_PATH="$ARTIFACT_ROOT/${RUN_ID}.bundle"
   log "Creating git bundle for ${FULL_SHA}"
   if ! git bundle create "$BUNDLE_PATH" "$FULL_SHA" HEAD refs/remotes/origin/main >/dev/null 2>&1; then
@@ -763,6 +774,7 @@ if host_reachable; then
         host_tool_missing) DESCRIPTION="CI host failure: required tool missing" ;;
         host_emulator_active) DESCRIPTION="CI host failure: emulator running" ;;
         host_disk_low) DESCRIPTION="CI host failure: low disk" ;;
+        disk_full) DESCRIPTION="CI refused: disk full on the checkout's filesystem" ;;
         remote_run_died | remote_setup_failed | host_bundle_failed | container_start_failed) DESCRIPTION="CI host failure: ${RESULT//_/ }" ;;
         host_connectivity_lost) DESCRIPTION="CI host failure: SSH connectivity lost" ;;
         timeout) DESCRIPTION="CI host failure: timed out after ${MAX_WAIT}s" ;;

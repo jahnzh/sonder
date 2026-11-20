@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13-sw
 // The library by work on the device (#528, spec #526 "The library by work on the device"). No screen uses
 // `useWork` yet, so the gallery's "Works on this device" section shows what it gives a page. Runs in Chromium
 // and in Firefox (the Firefox project's `gallery.spec.ts` pattern matches this file) at the 390 x 844 window.

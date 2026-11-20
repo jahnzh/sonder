@@ -1,3 +1,4 @@
+// @projects firefox
 // The Get audiobook sheet (#601, spec #600; boards GetAudiobook.dc.html, BookGetting.dc.html):
 // `#book/<workId>/get/audiobook`, opened from the Book page and the Audiobook page, on a reload and from a link
 // (Close to the Book page); the search with the title and author; rows from AudioBookBay and Prowlarr; a tap that

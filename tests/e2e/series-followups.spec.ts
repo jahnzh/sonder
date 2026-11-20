@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13, mobile-iphone-series
 import { test, expect } from "@playwright/test";
 import { openSavedSeries } from "./library-series";
 import { connectAudiobookDb, listCrossingThree, saveSeriesOnPage, unsaveSeries, viewSeriesFromDiscover } from "./series-save";

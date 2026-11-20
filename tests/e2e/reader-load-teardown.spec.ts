@@ -1,3 +1,4 @@
+// @projects firefox, mobile-chrome, mobile-firefox, mobile-safari, webkit-iphone-now-playing, mobile-iphone-slice14
 import {test,expect,type Page} from "@playwright/test";
 import JSZip from "jszip";
 import { gotoRead } from "./read-face";

@@ -1,3 +1,4 @@
+// @projects firefox
 import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync, readFileSync } from "node:fs";
 

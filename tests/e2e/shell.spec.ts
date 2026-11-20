@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13
 import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 

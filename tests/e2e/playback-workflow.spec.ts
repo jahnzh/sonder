@@ -1,3 +1,4 @@
+// @projects firefox, mobile-chrome, mobile-firefox, mobile-safari, mobile-iphone-slice13-sw, webkit-iphone-now-playing
 // Saves to this device: in WebKit each test needs a persistent context to store a Blob in IndexedDB (#523, #596).
 import { test, expect, type Page } from "./device-store";
 import { readFileSync } from "node:fs";

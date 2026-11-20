@@ -1,3 +1,4 @@
+// @projects firefox
 // Prepare again with the reading sync in use kept (#542, spec #537 "While a row keeps a map"; boards
 // ReadingSyncAgain.dc.html and ReadingSyncKept.dc.html), with the listing routed for the states the suite's server
 // cannot make on demand: a rejected new map reads "Not used: it matched 40% of the text" under Prepare again, muted,

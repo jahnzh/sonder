@@ -358,3 +358,13 @@ test("the reader check long-presses a point narratedPressPoint gives, not the hi
   assert.match(source, /page\.mouse\.move\(pressAt\.x,pressAt\.y\)/);
   assert.doesNotMatch(source, /pressBox/);
 });
+
+// #794: the slice pass clicks only shown matches; a hidden duplicate of a control is not one.
+test("shown narrows a locator to its visible matches", async () => {
+  const { shown } = await import("../scripts/live-reader-controls.mjs");
+  const calls = [];
+  const narrowed = { name: "narrowed" };
+  const locator = { filter: (options) => { calls.push(options); return narrowed; } };
+  assert.equal(shown(locator), narrowed);
+  assert.deepEqual(calls, [{ visible: true }]);
+});

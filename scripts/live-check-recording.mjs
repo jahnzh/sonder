@@ -463,3 +463,19 @@ export async function selectReaderRecording(get, { preferred = null, allowRecent
   }
   throw new NoSuitableRecording(noneQualifies(aligned.size, "aligned recording(s) in the library", rejected.filter((r) => aligned.has(r.recordingId) || r.recordingId === preferred)));
 }
+
+/**
+ * The ebook-only book the slice pass reads (#794, scripts/verify-slice-pass.mjs): a work in the library, as GET
+ * /api/library lists it, with no recording that has a track and an EPUB Read can open (`readEdition`). Not one listened
+ * to in the last 48 hours (`recentlyListened` over GET /api/books: a placeholder recording of the work with saved
+ * progress). `preferred` (a workId) goes first when it qualifies. Returns {work, ebookId} or {reason}.
+ */
+export function ebookOnlyWork(works, books, { preferred = null, now = Date.now() } = {}) {
+  const recent = recentlyListened(books, now);
+  const candidates = (works ?? []).filter((w) => w?.inLibrary && !(w.recordings ?? []).some((r) => r?.tracks?.length) && readEdition(w, null));
+  const quiet = candidates.filter((w) => !recent.has(w.workId));
+  const work = quiet.find((w) => w.workId === preferred) ?? quiet[0];
+  if (work) return { work, ebookId: readEdition(work, null) };
+  if (candidates.length) return { reason: `${candidates.length} ebook-only book(s) in the library, each ${RECENT_LISTENING_REASON}` };
+  return { reason: "no ebook-only book with an EPUB on the server in the library" };
+}

@@ -1,3 +1,4 @@
+// @projects firefox
 // The Series slice's final check (#570): every state the ticket lists, at 390 by 844 and at desktop width, to set
 // beside its board under docs/design/redesign/project/ (rendered by docs/design/redesign/tools/check-boards.mjs). Opt-in
 // (SONDER_SERIES_BOARDS=1): it asserts only that each state is shown, the specs of #561 to #569 measure them, so the

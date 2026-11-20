@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-series
 // A series that is not saved (#564, spec #560 "The Series page" and "The Add sheet"; boards SeriesNotSaved.dc.html,
 // SeriesSave.dc.html): `#series/<id>` opens the same page with Save series as its one main action, from a book's
 // series line too, and Back returns to the book. Save series opens the sheet captioned Save series; saving shows the

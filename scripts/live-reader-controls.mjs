@@ -196,3 +196,10 @@ export async function narratedPressPoint(room) {
   const hits = await room.page().evaluate((points) => points.map(({ x, y }) => document.elementFromPoint(x, y)?.tagName === "IFRAME"), points);
   return points.find((_, index) => hits[index]) ?? null;
 }
+
+/**
+ * Only the elements of `locator` that are shown (#794). The redesign keeps hidden copies of some controls (the foot's
+ * transport while the controls are off, a phone and a desktop variant of a row), and a check that clicked the first
+ * match of a name waited on a hidden duplicate until it timed out. Every click of the slice pass goes through this.
+ */
+export const shown = (locator) => locator.filter({ visible: true });
