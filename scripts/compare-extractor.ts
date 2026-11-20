@@ -5,18 +5,17 @@
 //   npx tsx scripts/compare-extractor.ts --db <sonder.db> [--before <git ref>] [--expect <id,id,…>] [--out <report.json>]
 //
 // `--before` defaults to origin/main. `--expect` names the editions that are meant to change: exit code 1 when the
-// changed editions are not exactly those, or an edition could not be read on one side only. Without it, exit code 1
-// when anything changed. It reads and never writes the library: each side works on its own copy of the database
+// changed editions are not exactly those; without it, when anything changed. An edition that either side could not
+// read is reported as failed, never as identical, and fails the command, as does a library in which nothing was
+// read. It reads and never writes the library: each side works on its own copy of the database
 // (server/db-backup.mjs), the EPUB files are only read, and everything it writes is in a temp folder it removes.
 import { execFileSync, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { compareCuts, type Dumped, type Sentence } from "./compare-cuts.ts";
 
-type Sentence = { id: string; text: string; blockIndex: number; start: number; end: number };
-type Dumped = { id: string; title: string; failed?: string; sections?: { index: number; href: string; title: string; blocks?: string; paragraphs: Sentence[] }[]; held?: number; total?: number };
 const args = process.argv.slice(2);
 const option = (name: string) => {
   const at = args.indexOf(`--${name}`);
@@ -112,62 +111,14 @@ async function side(name: string, root: string) {
 const was = await side("old", old);
 const now = await side("new", repo);
 
-const share = (dumped: Dumped) => (dumped.total ? Math.round(((dumped.held ?? 0) / dumped.total) * 1000) / 10 : null);
-const digest = (dumped: Dumped) => createHash("sha256").update(JSON.stringify(dumped.sections ?? dumped.failed)).digest("hex");
-/** The first place two cuts of one edition part ways. */
-function firstDifference(a: Dumped, b: Dumped) {
-  if (a.failed || b.failed) return `before: ${a.failed ?? "read"}; after: ${b.failed ?? "read"}`;
-  const [left, right] = [a.sections!, b.sections!];
-  for (let at = 0; at < Math.max(left.length, right.length); at++) {
-    const [one, two] = [left[at], right[at]];
-    if (!one || !two) return `chapter ${at}: before ${one ? `file ${one.index}` : "none"}, after ${two ? `file ${two.index}` : "none"}`;
-    if (one.index !== two.index || one.href !== two.href || one.title !== two.title) return `chapter ${at}: before ${one.index} ${one.href} "${one.title}", after ${two.index} ${two.href} "${two.title}"`;
-    for (let n = 0; n < Math.max(one.paragraphs.length, two.paragraphs.length); n++) {
-      const [x, y] = [one.paragraphs[n], two.paragraphs[n]];
-      if (JSON.stringify(x) !== JSON.stringify(y))
-        return `file ${one.index}, sentence ${n}: before ${x ? `${x.id} (${x.text.length} characters, block ${x.blockIndex})` : "none"}, after ${y ? `${y.id} (${y.text.length} characters, block ${y.blockIndex})` : "none"}`;
-    }
-    if (one.blocks !== two.blocks) return `file ${one.index}: block rule before ${one.blocks ?? "standard"}, after ${two.blocks ?? "standard"}`;
-  }
-  return "the chapters and sentences are equal and something else differs";
-}
-const later = new Map(now.map((dumped) => [dumped.id, dumped]));
-const editions = was.map((a) => {
-  const b = later.get(a.id);
-  const count = (dumped?: Dumped) => dumped?.sections?.reduce((sum, section) => sum + section.paragraphs.length, 0) ?? 0;
-  const identical = !!b && digest(a) === digest(b);
-  return {
-    id: a.id,
-    title: a.title,
-    identical,
-    ...(identical ? {} : { difference: b ? firstDifference(a, b) : "not in the database copy of the second run" }),
-    sentencesBefore: count(a),
-    sentencesAfter: count(b),
-    shareBefore: share(a),
-    shareAfter: b ? share(b) : null,
-    ...(a.failed ? { failedBefore: a.failed } : {}),
-    ...(b?.failed ? { failedAfter: b.failed } : {}),
-  };
-});
-const changed = editions.filter((edition) => !edition.identical);
-const unexpected = expected ? changed.filter((edition) => !expected.includes(edition.id)).map((edition) => edition.id) : changed.map((edition) => edition.id);
-const unchanged = expected ? expected.filter((id) => !changed.some((edition) => edition.id === id)) : [];
-const oneSided = editions.filter((edition) => !!edition.failedBefore !== !!edition.failedAfter).map((edition) => edition.id);
-const summary = {
-  before: `${before} (${commit})`,
-  editions: editions.length,
-  identical: editions.length - changed.length,
-  changed: changed.map((edition) => ({ id: edition.id, title: edition.title, sentences: `${edition.sentencesBefore} → ${edition.sentencesAfter}`, shareOfText: `${edition.shareBefore} % → ${edition.shareAfter} %`, firstDifference: edition.difference })),
-  sentencesInIdenticalEditions: editions.filter((edition) => edition.identical).reduce((sum, edition) => sum + edition.sentencesAfter, 0),
-  failedOnBothSides: editions.filter((edition) => edition.failedBefore && edition.failedAfter).map((edition) => ({ id: edition.id, why: edition.failedAfter })),
-  ...(expected ? { expected, changedButNotExpected: unexpected, expectedButIdentical: unchanged } : {}),
-  readOnOneSideOnly: oneSided,
-};
+const { editions, ok, summary: counts } = compareCuts(was, now, expected);
+const summary = { before: `${before} (${commit})`, ...counts };
 const out = option("out");
 if (out) {
   mkdirSync(dirname(resolve(out)), { recursive: true });
   writeFileSync(resolve(out), JSON.stringify({ ...summary, results: editions }, null, 2));
 }
-for (const edition of editions) process.stderr.write(`${edition.identical ? "identical" : "CHANGED  "}  ${edition.id}  ${edition.sentencesAfter} sentences, ${edition.shareAfter} % of the text  ${edition.title}${edition.identical ? "" : `\n           ${edition.difference}`}\n`);
+for (const edition of editions)
+  process.stderr.write(`${edition.failed ? "FAILED   " : edition.identical ? "identical" : "CHANGED  "}  ${edition.id}  ${edition.sentencesAfter} sentences, ${edition.shareAfter} % of the text  ${edition.title}${edition.identical ? "" : `\n           ${edition.failed ?? edition.difference}`}\n`);
 process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
-process.exitCode = unexpected.length || unchanged.length || oneSided.length ? 1 : 0;
+process.exitCode = ok ? 0 : 1;
