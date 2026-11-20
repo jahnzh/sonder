@@ -1,6 +1,7 @@
 // "hardcover" is a jump an earlier build made with Use Hardcover position; nothing makes one since #721 part d, but
 // places kept on this device (24 hours) may still name it.
-export type JumpKind = "seek" | "skip" | "chapter" | "play" | "hardcover" | "recording" | "source";
+// "device" is the move a paused player makes to a newer place saved on another device (#773).
+export type JumpKind = "seek" | "skip" | "chapter" | "play" | "hardcover" | "recording" | "source" | "device";
 
 export type PositionEntry = {
   trackId: string;

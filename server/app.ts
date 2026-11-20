@@ -509,6 +509,23 @@ export async function createApp(options?: {
         .run();
     return { progress: p, conflict: false };
   });
+  // One recording's saved place for the account asking (#773): a paused player reads it when it comes into view and
+  // before it resumes, so a newer place saved on another device is not overwritten. Only the asker's own row, keyed by
+  // user and recording; null when there is none (also for an unknown recording, so nothing is learnt of others).
+  app.get("/api/progress/:recordingId", async (req, reply) => {
+    const { recordingId } = req.params as { recordingId: string };
+    const row = db
+      .select()
+      .from(s.userProgress)
+      .where(and(eq(s.userProgress.userId, currentUserId(req)), eq(s.userProgress.recordingId, recordingId)))
+      .get();
+    reply.header("Cache-Control", "no-store");
+    return {
+      progress: row
+        ? { recordingId: row.recordingId, trackId: row.trackId, position: row.position, duration: row.duration, updatedAt: row.updatedAt }
+        : null,
+    };
+  });
   app.get("/api/settings", async (req) => currentUser(req).role !== "admin" ? ({ name: getSetting("name") || "My listening space", authenticationEnabled: !!process.env.APP_PASSWORD, role: currentUser(req).role, hardcoverConfigured: !!getUserSecret(currentUserId(req), "hardcover") }) : ({
     role: currentUser(req).role,
     name: getSetting("name") || "My listening space",

@@ -94,6 +94,15 @@ export function mergeKeep(local: readonly KeepEntry[], server: readonly ServerKe
   return { records, send };
 }
 
+/**
+ * What a merge's record leaves stored (#707): a record this device wrote later than the one the run read (a tap on the
+ * switch while the run waited for the server) stays, so a run never undoes Off or On; it is sent at the run's next
+ * pass. Otherwise the merge's record.
+ */
+export function keepStored(record: KeepEntry, stored: KeepEntry | undefined): KeepEntry {
+  return stored && stored.at > record.at ? stored : record;
+}
+
 /** A track as Keep needs it. */
 export type NeededTrack = { id: string; recordingId: string; title: string; index: number; duration: number; source: string; sourceType: "local" | "remote" | "torbox" };
 /** A complete file on this device. */

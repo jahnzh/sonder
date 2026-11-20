@@ -253,6 +253,8 @@ const desktopProjects = [
               /(^|\/)reader-two-pages\.spec\.ts$/,
               // Keep on, the save finishes, then play: from the device copy (#783).
               /(^|\/)keep-plays\.spec\.ts$/,
+              // A paused player picks up a newer place saved on another device (#773).
+              /(^|\/)paused-catch-up\.spec\.ts$/,
               // The Series slice's states beside their boards, opt-in with SONDER_SERIES_BOARDS=1 (#570).
               /(^|\/)series-boards\.spec\.ts$/,
             ]

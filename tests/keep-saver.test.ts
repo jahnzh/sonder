@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { DeviceSaveRecord } from "../src/device-saves.ts";
 import type { HeldEbook, HeldMap, KeepEntry, KeepSend, KeepWork, NeededMapJob, NeededTrack, ServerKeep } from "../src/keep.ts";
+import { keepStored } from "../src/keep.ts";
 import { KeepSaver, type LockManager, type RecordChange, type SaverDeps, type SaverMessage } from "../src/keep-saver.ts";
 
 const settle = async () => {
@@ -728,4 +729,116 @@ test("no cleared note for a work never completed here, a record turned off, or a
   assert.deepEqual(a.noticedWhileSaving.filter((at) => at !== null), []);
   // The books themselves are saved as Keep says (#550): the record never completed here and the kept one.
   assert.deepEqual(d.saves.sort(), ["1:rk-0", "1:rk-1", "1:rn-0", "1:rn-1"]);
+});
+
+// device-downloads.spec.ts:90 under load: a run asked for while a save was stopped by the network tried it again at
+// once, so one tap fetched the failing range eight times instead of four.
+test("a run asked for during a save the network stopped does not try it again at once; the next run does", async () => {
+  const d = device({ tracks: 1 });
+  let tab: ReturnType<typeof d.tab> | null = null;
+  const failing = { value: true };
+  tab = d.tab(1, {
+    saveTrack: async (t, signal) => {
+      signal.throwIfAborted();
+      d.saves.push(`1:${t.id}`);
+      // A library read that changed lands while the range first fails.
+      if (d.saves.length === 1) void tab!.saver.trigger("library");
+      if (failing.value) throw new TypeError("Failed to fetch");
+      d.downloads.push({ trackId: t.id, recordingId: t.recordingId, size: 10 });
+    },
+  });
+  tab.saver.start();
+  await settle();
+  await tab.saver.tap("w1", true);
+  await settle();
+  assert.deepEqual(d.saves, ["1:r1-0"], "tried once for the tap");
+  assert.equal(d.records.get("r1")?.state, "interrupted");
+  // The next run (back in the foreground) resumes it.
+  failing.value = false;
+  await tab.saver.trigger("foreground");
+  await settle();
+  assert.deepEqual(d.saves, ["1:r1-0", "1:r1-0"]);
+  assert.equal(d.records.get("r1")?.state, "finished");
+});
+
+test("the connection coming back during a run tries a save the network stopped again in that run", async () => {
+  const d = device({ tracks: 1 });
+  let tab: ReturnType<typeof d.tab> | null = null;
+  let attempt = 0;
+  tab = d.tab(1, {
+    saveTrack: async (t, signal) => {
+      signal.throwIfAborted();
+      d.saves.push(`1:${t.id}`);
+      if (++attempt === 1) {
+        void tab!.saver.trigger("online");
+        throw new TypeError("Failed to fetch");
+      }
+      d.downloads.push({ trackId: t.id, recordingId: t.recordingId, size: 10 });
+    },
+  });
+  tab.saver.start();
+  await settle();
+  await tab.saver.tap("w1", true);
+  await settle();
+  assert.deepEqual(d.saves, ["1:r1-0", "1:r1-0"]);
+  assert.equal(d.records.get("r1")?.state, "finished");
+});
+
+/** The device's Keep store as `keep-runtime.ts` writes it: a choice newer than the run's merge stays (#707). */
+const storeAsRuntime = (d: ReturnType<typeof device>) => async (entries: KeepEntry[]) => {
+  for (const entry of entries) d.keep.set(entry.workId, { ...keepStored(entry, d.keep.get(entry.workId)) });
+};
+
+// keep-off.spec.ts:249 under load (#707): a run that read the records before Off went on to save the book.
+test("Off tapped while a run waits for the server: the run neither undoes Off nor saves the book; Off reaches the server", async () => {
+  const d = device({ tracks: 1 });
+  d.keep.set("w1", { workId: "w1", on: true, at: 5, completeAt: null, pending: false });
+  d.server.set("w1", { workId: "w1", on: true, at: 5, completeAt: null });
+  d.records.set("r1", { recordingId: "r1", workId: "w1", startedAt: 1, state: "failed", reason: "Refused." });
+  d.preferences.set("keep-rollout", true);
+  let hold: Promise<void> | null = null;
+  let release = () => {};
+  const tab = d.tab(1, {
+    storeKeep: storeAsRuntime(d),
+    isKept: async (workId) => d.keep.get(workId)?.on !== false,
+    fetchKeep: async () => {
+      await hold;
+      return [...d.server.values()];
+    },
+  });
+  tab.saver.start();
+  await settle();
+  // A library read that changed asks for a run (a failed save is tried again then); it waits for the server.
+  hold = new Promise<void>((resolve) => (release = resolve));
+  void tab.saver.trigger("library");
+  await settle();
+  await tab.saver.tap("w1", false);
+  release();
+  await settle();
+  assert.deepEqual(d.saves, [], "nothing saved after Off");
+  assert.equal(d.keep.get("w1")?.on, false, "Off stays on the device");
+  assert.equal(d.server.get("w1")?.on, false, "Off reached the server at the next pass");
+  assert.equal(d.records.get("r1")?.state, "failed", "no new save record");
+});
+
+test("Off tapped just before a run's save starts: the save writes no record and saves nothing", async () => {
+  const d = device({ tracks: 1 });
+  d.keep.set("w1", { workId: "w1", on: true, at: 5, completeAt: null, pending: false });
+  d.server.set("w1", { workId: "w1", on: true, at: 5, completeAt: null });
+  d.preferences.set("keep-rollout", true);
+  let tab: ReturnType<typeof d.tab> | null = null;
+  tab = d.tab(1, {
+    storeKeep: storeAsRuntime(d),
+    isKept: async (workId) => d.keep.get(workId)?.on !== false,
+    // The last step before the save: Off is tapped here.
+    remember: async () => {
+      await tab!.saver.tap("w1", false);
+    },
+  });
+  tab.saver.start();
+  await settle();
+  assert.deepEqual(d.saves, []);
+  assert.equal(d.records.get("r1"), undefined, "no save record");
+  assert.equal(d.keep.get("w1")?.on, false);
+  assert.equal(d.server.get("w1")?.on, false);
 });
