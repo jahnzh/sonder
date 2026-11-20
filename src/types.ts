@@ -629,3 +629,21 @@ export type RecordingChapters = {
   /** The ASIN 'Look up chapters' takes when there is no linked release: the work's (edited or the link's). */
   asin: string | null;
 };
+
+/**
+ * The sample books (#763): `public/covers/<id>.svg` is the art of the seeded book whose edition id is `<id>`
+ * (server/seed.ts). Older server builds stored one of them as the fallback of an edition without a cover of its own.
+ */
+export const SAMPLE_COVER_BOOKS = ["alice", "sherlock", "pride", "frankenstein", "time", "meditations", "gatsby", "war"] as const;
+const SAMPLE_COVER = /^\/covers\/([a-z0-9-]+)\.svg$/;
+
+/** A sample book's cover held by another edition: read as no cover (#763). */
+export function isSampleCoverOfAnother(cover: string | null | undefined, editionId: string | null | undefined): boolean {
+  const name = SAMPLE_COVER.exec(cover ?? "")?.[1];
+  return !!name && (SAMPLE_COVER_BOOKS as readonly string[]).includes(name) && name !== editionId;
+}
+
+/** The edition's own cover: "" for none, and for a sample book's cover stored for another edition (#763). */
+export function ownCover(cover: string | null | undefined, editionId: string | null | undefined): string {
+  return !cover || isSampleCoverOfAnother(cover, editionId) ? "" : cover;
+}

@@ -118,7 +118,8 @@
   padding: 0;
   flex-shrink: 0;
 }
-.dock-cover-button img {
+.dock-cover-button img,
+.dock-cover-button .dock-cover {
   width: 40px;
   height: 56px;
   border-radius: var(--corner-control);
@@ -151,7 +152,8 @@
   .dock-info .dock-book {
     flex: 1;
   }
-  .dock-cover-button img {
+  .dock-cover-button img,
+  .dock-cover-button .dock-cover {
     width: 34px;
     height: 46px;
     margin-inline: auto;

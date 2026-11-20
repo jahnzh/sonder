@@ -37,8 +37,8 @@ export function isPlaceholderEdition(database: Database, editionId: string) {
   return statement.get(editionId) === 1;
 }
 
-/** The cover of a placeholder when no Hardcover cover is given (or the one given is not an https address). */
-export const PLACEHOLDER_COVER = "/covers/meditations.svg";
+/** The cover of a placeholder when no catalogue cover is given (or the one given is not an https address): none (#763). */
+export const PLACEHOLDER_COVER = "";
 
 /**
  * The id a new placeholder of a work gets (#467, decision 1): `hc-<book id>` for a work matched on
@@ -53,7 +53,7 @@ export function placeholderIdFor(workId: string, hardcoverBookId: number | null)
  * - the work's placeholder when it has one (the first, by row order);
  * - else `hc-<book id>` for a work matched on Hardcover, else `placeholder-<workId>`, written as an
  *   audio edition "Audio not added" with the recording `recording-<edition id>` and no track, and
- *   `cover` when it is an https address (the Hardcover cover), else `/covers/meditations.svg`; its source label is
+ *   `cover` when it is an https address (the catalogue cover), else none (""; never a sample book's, #763); its source label is
  *   `sourceLabel` when given (a catalogue book's provider, #721), else "Hardcover library" or "Ebook".
  *
  * The rows are written with "do nothing on conflict" inside one transaction, so two requests for

@@ -305,3 +305,13 @@ export function useStoredWorksWithPlaces(): ReadonlyMap<string, LibraryWork> {
     return works;
   }, [own, store.works, places]);
 }
+
+/** The stored cover of a work of the signed-in user's library (#763's cover choice), or null outside it. */
+export function storedWorkCover(workId: string | null | undefined): string | null {
+  return workId && snapshot.owner === userId() ? (snapshot.works.get(workId)?.cover ?? null) : null;
+}
+/** `storedWorkCover`, read again when the stored works change. */
+export function useStoredWorkCover(workId: string | null | undefined): string | null {
+  useSyncExternalStore(subscribe, current);
+  return storedWorkCover(workId);
+}

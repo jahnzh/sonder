@@ -78,6 +78,8 @@ app.post("/api/__fixture/audiobookdb-series", async (request) => {
 });
 // A book in the library without Hardcover's import (#721): the series and Discover specs' Alice and Matter.
 (await import("./library-fixture-routes.ts")).registerLibraryFixtureRoutes(app);
+// #763: the owner's cover shape (an uncovered TorBox edition beside a covered placeholder).
+(await import("./cover-fixture-routes.ts")).registerCoverFixtureRoutes(app);
 // The Get sheet without a book (#576): its add answered without TorBox or a torrent client.
 await (await import("./new-book-browser-fixture.ts")).installNewBookFixture(app);
 await app.listen({ port: Number(process.env.PLAYWRIGHT_PORT || 4173), host: "127.0.0.1" });

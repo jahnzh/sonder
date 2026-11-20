@@ -26,6 +26,7 @@ import { addedElsewhere, addsBeforeGet, bookModel, chosenRecording, wantToReadAc
 import { wantToReadNote } from "../status-lines";
 import type { Notify } from "./shared";
 import { KeepItems } from "./keep-item";
+import { Cover } from "../parts/Cover";
 import "./book-page.css";
 
 export { KEEP_OFF_KEEPS, keepOffQuestion, earlierQuestion } from "./keep-item";
@@ -302,13 +303,8 @@ export function BookPage(props: Props) {
       {head}
 
       <div className="book-page-intro">
-        {work.cover ? (
-          <img className="book-page-cover" src={work.cover} alt="" />
-        ) : (
-          <div className="book-page-cover book-page-cover-blank type-label" aria-hidden="true">
-            {work.title}
-          </div>
-        )}
+        {/* The work's cover by the one cover choice (#763), else the generated cover. */}
+        <Cover className="book-page-cover" src={work.cover} title={work.title} author={work.author} workId={work.workId} />
         <div className="book-page-names">
           <h1 className="book-page-title type-heading">{work.title}</h1>
           <p className="book-page-muted type-label">{work.author}</p>

@@ -19,6 +19,9 @@ import { currentChapter } from "../chapters";
 import { warmPlaybackReading } from "../reading";
 import { useOpenNowPlaying } from "../pages/now-playing";
 import type { Book } from "../types";
+import { useBookCover } from "../cover-choice";
+import { useStoredWorkCover } from "../library-works-store";
+import { Cover } from "../parts/Cover";
 // The mini player (S13 draws its look). It opens Now playing (#593) on its face rule: `#listen/<workId>` or
 // `#read/<workId>`, an entry of its own that Back closes.
 export function PlayerDock({
@@ -46,6 +49,8 @@ export function PlayerDock({
   const p = usePlayer();
   const b = p.book || fallback;
   const openNowPlaying = useOpenNowPlaying(b?.workId);
+  // The one cover choice (#763): the edition's own, else the work's, else the generated cover.
+  const cover = useBookCover(b, useStoredWorkCover(b?.workId));
   useEffect(() => {
     if (!b?.workId) return;
     const cancel = warmPlaybackReading(b.workId, b.recordingId);
@@ -67,7 +72,7 @@ export function PlayerDock({
             aria-label={`Open title page for ${b.title}`}
             onClick={() => onBookDetails(b)}
           >
-            <img src={b.cover} alt="" />
+            <Cover className="dock-cover" src={cover} title={b.title} author={b.author} workId={b.workId} compact />
           </button>
           <button
             className="dock-book"

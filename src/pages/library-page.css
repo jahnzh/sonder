@@ -374,3 +374,10 @@
     flex-wrap: wrap;
   }
 }
+
+/* The generated cover fills the tile and Continue's cover (#763). */
+.library-cover .part-cover,
+.library-continue-cover .part-cover {
+  width: 100%;
+  height: 100%;
+}

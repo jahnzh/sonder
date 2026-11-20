@@ -1,0 +1,52 @@
+/* The generated cover (#763): the title and the author on the work's colour, a share of the accent over raised. */
+.part-cover {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: var(--space-4);
+  overflow: hidden;
+  padding: var(--space-8);
+  background: color-mix(in oklab, var(--accent) var(--cover-share, 30%), var(--raised));
+  color: var(--text);
+  overflow-wrap: anywhere;
+  text-align: start;
+}
+.part-cover-title {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 13px;
+  line-height: 16px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+.part-cover-author {
+  font-family: var(--font-body);
+  font-weight: 500;
+  font-size: 11px;
+  line-height: 14px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.part-cover[data-compact] {
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+}
+.part-cover-letter {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 18px;
+  line-height: 1;
+}
+/* The words are not DOM text: drawn from data-text, so getByText and the accessibility tree see none of them. */
+.part-cover-title::before,
+.part-cover-author::before,
+.part-cover-letter::before {
+  content: attr(data-text);
+  content: attr(data-text) / "";
+}
