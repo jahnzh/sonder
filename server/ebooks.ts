@@ -258,6 +258,14 @@ async function resolveDownload(source: EbookSource, md5: string) {
     );
   return new URL(mirror.download, base).href.replace(/^http:/i, "https:");
 }
+/**
+ * A new or replaced EPUB has its text prepared in the background (#827), so its first reader does not wait for it.
+ * It starts after the edition is saved and is not waited for. (Loaded here because the reader's modules load this one.)
+ */
+function prepareAhead(id: string, format: string | undefined) {
+  if (format !== "epub") return;
+  void import("./prepared-text-ahead.ts").then(({ prepareSoon }) => prepareSoon(id));
+}
 async function downloadEbook(input: EbookResult & { workId?: string }) {
   ensureMediaStorage();
   const id = `${input.source}-${input.md5}`;
@@ -386,6 +394,7 @@ async function downloadEbook(input: EbookResult & { workId?: string }) {
       return removePendingMembersLeftBehind(id, workId);
     })();
     await ebookSetMembersRemoved(left);
+    prepareAhead(id, ext);
     return { id };
   } catch (error) {
     clearTimeout(idle);
@@ -520,6 +529,7 @@ export async function importEbook(
       return removePendingMembersLeftBehind(id, workId);
     })();
     await ebookSetMembersRemoved(left);
+    prepareAhead(id, ext);
     return { id, alreadySaved: false };
   } catch (error) {
     if (

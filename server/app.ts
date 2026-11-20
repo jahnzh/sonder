@@ -44,6 +44,7 @@ import { registerAccountRequests } from "./account-requests.ts";
 import { registerInvites } from "./invites.ts";
 import { registerReader } from "./reader.ts";
 import { registerPreparedText } from "./prepared-text-cache.ts";
+import { preparedTextLoop, prepareSoon, registerPreparedAhead } from "./prepared-text-ahead.ts";
 import { registerLibraryWorks, workMetadata } from "./library-works.ts";
 import { chapterOverrides, registerRecordingChapterRoutes } from "./recording-chapters.ts";
 import { registerMetadataMatchRoutes, retryMetadataMatch } from "./metadata-match.ts";
@@ -370,6 +371,7 @@ export async function createApp(options?: {
   registerAppearance(app);
   registerReader(app);
   registerPreparedText(app);
+  registerPreparedAhead(app);
   // The background loops start in this order and stop in reverse when the app closes (ADR 0010).
   const background = backgroundRunner(app, options?.background);
   registerAlignment(app); // adds the alignment loop
@@ -977,6 +979,8 @@ export async function createApp(options?: {
   // Series on AudiobookDB (#721 part b): saved series read again daily; the Hardcover series saved again after the reset.
   background.add(savedSeriesRefreshLoop((message) => app.log.warn(message)));
   background.add(seriesResaveLoop((message) => app.log.warn(message)));
+  // Prepared text is made ahead (#827): a sweep after the start and every hour; preparing runs off this thread.
+  background.add(preparedTextLoop(app.log));
   app.post("/api/import", async (req) => {
     ensureMediaStorage();
     let title = "";

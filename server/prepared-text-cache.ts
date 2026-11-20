@@ -6,19 +6,21 @@
 // addresses, and what was served under an address never changes (it is cached for good).
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, open, readFile, readdir, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { open, readFile, readdir, rename, rm, stat, utimes } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { EXTRACTOR_VERSION, ebookRecord, extractBook } from "./reader.ts";
 import { mediaMountProblem, mediaRoot } from "./storage.ts";
-import { PREPARED_TEXT_VERSION, pictureType, prepareEpub } from "./prepared-text.ts";
+import { Worker } from "node:worker_threads";
+import { PREPARED_TEXT_VERSION, pictureType, type PreparedBookInput } from "./prepared-text.ts";
+import type { PrepareAnswer, PrepareJob, PrepareMessage } from "./prepared-text-worker.ts";
 
-type Log = { warn: (details: object, message: string) => void };
+export type Log = { warn: (details: object, message: string) => void; info?: (details: object, message: string) => void };
 const HOUR = 3_600_000;
 /** Where prepared books are kept. `PREPARED_TEXT_DIR` moves it (the library check prepares into a temp folder). */
 export const preparedDir = () => resolve(process.env.PREPARED_TEXT_DIR || join(mediaRoot, "prepared-text"));
 /** The cache may hold this much before the entries read longest ago are removed (`PREPARED_TEXT_CACHE_MB`). */
-const maxCacheBytes = () => (Number(process.env.PREPARED_TEXT_CACHE_MB) > 0 ? Number(process.env.PREPARED_TEXT_CACHE_MB) : 2048) * 1024 * 1024;
-const short = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 16);
+export const maxCacheBytes = () => (Number(process.env.PREPARED_TEXT_CACHE_MB) > 0 ? Number(process.env.PREPARED_TEXT_CACHE_MB) : 2048) * 1024 * 1024;
+export const short = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 16);
 /**
  * Names one prepared output of an EPUB file. It covers everything the output is made from that can change under a
  * kept folder: the file (its size and time, the stamp extractBook itself goes by), the preparing code
@@ -34,7 +36,7 @@ export const preparedKey = (
     [versions.prepared ?? PREPARED_TEXT_VERSION, versions.extractor ?? EXTRACTOR_VERSION, versions.icu ?? process.versions.icu, file.size, file.mtimeMs].join("|"),
   );
 /** How often a book was prepared by this process, for the tests. */
-export const preparedCounts = { built: 0 };
+export const preparedCounts = { built: 0, running: 0, mostAtOnce: 0 };
 
 const missing = (error: unknown) => (error as NodeJS.ErrnoException)?.code === "ENOENT";
 async function statOrNull(path: string) {
@@ -58,37 +60,57 @@ export async function located(id: string) {
   return { record, key, dir: join(preparedDir(), `${short(id)}-${key}`) };
 }
 
+/** The book's sentences are sent to the preparing thread this many at a time, with the event loop let round between. */
+const SENTENCES_AT_ONCE = 500;
+const nextTurn = () => new Promise<void>((resolve) => setImmediate(resolve));
+/**
+ * Prepares a book's files into `job.temp` on a thread of its own (server/prepared-text-worker.ts), so the server
+ * keeps answering meanwhile. Resolves with the bytes written; rejects with the book's own error.
+ */
+export async function prepareOffThread(job: PrepareJob, sections: PreparedBookInput["sections"]) {
+  const worker = new Worker(new URL("./prepared-text-worker.ts", import.meta.url), { workerData: job });
+  preparedCounts.running++;
+  preparedCounts.mostAtOnce = Math.max(preparedCounts.mostAtOnce, preparedCounts.running);
+  try {
+    const answer = new Promise<PrepareAnswer>((resolve, reject) => {
+      worker.once("message", resolve);
+      worker.once("error", reject);
+      worker.once("exit", (code) => reject(new Error(`The preparing step stopped before it was done (exit ${code}).`)));
+    });
+    // A rejection must have its handler before the first wait below.
+    answer.catch(() => {});
+    for (const { paragraphs, ...section } of sections)
+      for (let from = 0; from < paragraphs.length; from += SENTENCES_AT_ONCE) {
+        worker.postMessage({ type: "sentences", section, paragraphs: paragraphs.slice(from, from + SENTENCES_AT_ONCE) } satisfies PrepareMessage);
+        await nextTurn();
+      }
+    worker.postMessage({ type: "run" } satisfies PrepareMessage);
+    const result = await answer;
+    if (!result.ok) throw new Error(result.message);
+    return result.bytes;
+  } finally {
+    preparedCounts.running--;
+    await worker.terminate();
+  }
+}
+
 /**
  * Prepares the edition into its folder and returns it. The folder appears whole or not at all: the work is done in
  * a folder of its own and renamed into place, and when another server got there first, its folder is the one kept.
+ * `evict: false` (a book prepared ahead) removes the edition's older outputs but nothing else to make room.
  */
-export async function buildPrepared(id: string, log?: Log) {
+export async function buildPrepared(id: string, log?: Log, options: { evict?: boolean } = {}) {
   const { record, key, dir } = await located(id);
   const problem = process.env.PREPARED_TEXT_DIR ? null : mediaMountProblem();
   if (problem) throw Object.assign(new Error(problem), { statusCode: 503 });
-  const book = await extractBook(id);
-  const epub = await readFile(record.source);
+  // The sentences are cut here, on the server's thread: extractBook reads and (since #815) may write the database.
+  const { sections, ...book } = await extractBook(id);
   const temp = `${dir}.tmp-${process.pid}-${randomBytes(6).toString("hex")}`;
-  await mkdir(join(temp, "pictures"), { recursive: true, mode: 0o750 });
   try {
-    let bytes = 0;
-    const { manifest, parts } = await prepareEpub({
-      epub,
-      book,
-      key,
-      base: `/api/reader/${encodeURIComponent(id)}/prepared/${key}`,
-      writePicture: async (name, data) => {
-        bytes += data.length;
-        await writeFile(join(temp, "pictures", name), data);
-      },
-    });
-    for (const [index, html] of parts.entries()) {
-      bytes += Buffer.byteLength(html);
-      await writeFile(join(temp, `p${index}.html`), html);
-    }
-    const text = JSON.stringify(manifest);
-    await writeFile(join(temp, "manifest.json"), text);
-    await writeFile(join(temp, "entry.json"), JSON.stringify({ id, key, version: PREPARED_TEXT_VERSION, bytes: bytes + Buffer.byteLength(text), preparedAt: Date.now() }));
+    await prepareOffThread(
+      { source: record.source, temp, key, base: `/api/reader/${encodeURIComponent(id)}/prepared/${key}`, book: { id: book.id, fingerprint: book.fingerprint, language: book.language } },
+      sections,
+    );
     try {
       await rename(temp, dir);
     } catch (error) {
@@ -102,13 +124,13 @@ export async function buildPrepared(id: string, log?: Log) {
   }
   preparedCounts.built++;
   // A cache that cannot be tidied still serves the book.
-  await prunePrepared({ keep: dir, replaces: `${short(id)}-` }).catch((error) => log?.warn({ err: error }, "prepared text: pruning failed"));
+  await prunePrepared({ keep: dir, replaces: `${short(id)}-`, evict: options.evict }).catch((error) => log?.warn({ err: error }, "prepared text: pruning failed"));
   return { dir, key };
 }
 
 const building = new Map<string, Promise<{ dir: string; key: string }>>();
 /** The edition's prepared folder: the one on disk, or a new one. Requests that arrive together share one preparing. */
-export async function ensurePrepared(id: string, log?: Log) {
+export async function ensurePrepared(id: string, log?: Log, options: { evict?: boolean } = {}) {
   const { key, dir } = await located(id);
   const kept = await statOrNull(join(dir, "manifest.json"));
   if (kept) {
@@ -119,7 +141,7 @@ export async function ensurePrepared(id: string, log?: Log) {
   }
   let running = building.get(dir);
   if (!running) {
-    running = buildPrepared(id, log).finally(() => building.delete(dir));
+    running = buildPrepared(id, log, options).finally(() => building.delete(dir));
     building.set(dir, running);
   }
   return running;
@@ -129,7 +151,7 @@ export async function ensurePrepared(id: string, log?: Log) {
  * Removes what the cache no longer needs: work a stopped server left behind, other outputs of the edition just
  * prepared (`replaces`, its folder-name prefix), and, while the cache is over `maxBytes`, the entries read longest ago.
  */
-export async function prunePrepared(options: { maxBytes?: number; keep?: string; replaces?: string } = {}) {
+export async function prunePrepared(options: { maxBytes?: number; keep?: string; replaces?: string; evict?: boolean } = {}) {
   const root = preparedDir();
   let names: string[];
   try {
@@ -164,7 +186,7 @@ export async function prunePrepared(options: { maxBytes?: number; keep?: string;
   let total = keptBytes + entries.reduce((sum, entry) => sum + entry.bytes, 0);
   const max = options.maxBytes ?? maxCacheBytes();
   for (const entry of entries.sort((a, b) => a.readAt - b.readAt)) {
-    if (total <= max) break;
+    if (total <= max || options.evict === false) break;
     await rm(entry.dir, { recursive: true, force: true });
     total -= entry.bytes;
   }

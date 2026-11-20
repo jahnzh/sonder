@@ -192,6 +192,16 @@ Before rolling back to an image older than ADR 0011 (derived work media state, i
 
 The script prints the exact rollback command on failure and at the end of a successful run. Record every deploy in `artifacts/orca/STATE.md` (commit, backup path, image tag, markers, live-check results).
 
+## Prepare the library's text after a deploy (#827)
+
+```bash
+scripts/prepare-library.sh
+```
+
+The server prepares the text of every EPUB edition by itself, a minute after it starts and every hour (README "Prepared text"), so a deploy needs no extra step. Run the command after a deploy that changed the preparing code (`PREPARED_TEXT_VERSION`, `EXTRACTOR_VERSION`) or the Node version, when you want to know that the whole library is prepared before readers open it: it starts the sweep on the running server as the administrator (through `scripts/admin-curl.sh`), prints the count as it grows, and ends 0 when the library is prepared, or 1 with the names when a book could not be prepared or an hour passed. It changes nothing but the prepared-text cache, reads no page and saves no position; stopping it does not stop the sweep.
+
+`npx tsx scripts/measure-prepared-stall.ts --db data/sonder.db <edition id>...` measures, on a copy of the database, how long preparing those books holds the server's event loop (off the thread, as the server does it, and on it, as before #827) and what `extractBook` costs before it.
+
 ## Check prepared text against a library
 
 ```bash
