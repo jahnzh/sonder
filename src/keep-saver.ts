@@ -102,9 +102,17 @@ export type SaverDeps = {
   writePause?: (workId: string, pausedAt: number | null) => Promise<void>;
   /** Whether a work's Keep record is paused now, read from the device database (another tab may have paused it). */
   isPaused?: (workId: string) => Promise<boolean>;
+  /**
+   * Whether a work's Keep record is on now, read from the device database (#707): Off may have been tapped after the
+   * run read the records, and a save it starts or carries on then writes no file and no record.
+   */
+  isKept?: (workId: string) => Promise<boolean>;
   /** `navigator.storage.persist()`: asked only on the switch's tap. */
   persist: () => Promise<boolean>;
-  /** Stores the merged Keep records. */
+  /**
+   * Stores the merged Keep records. A choice made on this device after the run read the records (a later `at`) stays
+   * (#707, `keepStored`): the run's next pass sends it.
+   */
   storeKeep: (records: KeepEntry[]) => Promise<void>;
   /** `GET /api/device/keep`; throws without a connection. */
   fetchKeep: () => Promise<ServerKeep[]>;
@@ -160,6 +168,13 @@ export class KeepSaver {
   private release: (() => void) | null = null;
   private running: Promise<void> | null = null;
   private again = false;
+  /**
+   * The saves a network failure stopped in this run (device-downloads.spec.ts): the run's next pass, asked for while
+   * it ran, does not try them again at once; the next run does, or a tap, or the connection coming back.
+   */
+  private networkStopped = new Set<string>();
+  /** The connection came back since the last pass began: the next pass tries those saves again. */
+  private backOnline = false;
   /** Books whose paused or failed save a tap asked to save again. */
   private forced = new Set<string>();
   /** A library read that changed asked for a run: a failed save is tried again by itself then (#552). */
@@ -267,6 +282,7 @@ export class KeepSaver {
 
   /** One run at a time; a run asked for while one runs runs once more after it. */
   private run(reason: KeepTrigger): Promise<void> {
+    if (reason === "online") this.backOnline = true;
     if (this.running) {
       this.again = true;
       return this.running;
@@ -278,6 +294,7 @@ export class KeepSaver {
           await this.runOnce(reason);
         } while (this.again && !this.stopped);
       } finally {
+        this.networkStopped.clear();
         this.running = null;
       }
     })();
@@ -326,6 +343,8 @@ export class KeepSaver {
 
   private async runOnce(reason: KeepTrigger) {
     if (this.stopped) return;
+    if (this.backOnline) this.networkStopped.clear();
+    this.backOnline = false;
     let state = await this.deps.read();
     let { keep, synced } = await this.sync(state);
     // Turned off from the server (Remove from library, here or on another device): the files go now (#553).
@@ -392,6 +411,8 @@ export class KeepSaver {
       // A save the user paused waits for Resume; one that failed waits for Retry, or for a library read that changed.
       if (!forced && (entry.pausedAt || pausedAt.get(entry.workId) || record?.state === "paused")) continue;
       if (!forced && !libraryChanged && record?.state === "failed") continue;
+      // Stopped by the network in this run's last pass: it would fail again now.
+      if (!forced && this.networkStopped.has(saveId)) continue;
       if (!this.deps.online()) {
         // A save that was running when the tab closed is noted as such; it resumes when there is a connection.
         if (record?.state === "saving") await this.deps.writeRecord(saveId, work.workId, { state: "interrupted", how: "closed" });
@@ -404,7 +425,10 @@ export class KeepSaver {
         state = await this.deps.read();
         const done = this.needsOf(works.get(entry.workId)!, state);
         if (done.complete) await this.reportComplete(entry, keep);
-      } else if (stop.state === "interrupted" && stop.how === "network") return; // The others would fail as well.
+      } else if (stop.state === "interrupted" && stop.how === "network") {
+        this.networkStopped.add(saveId);
+        return; // The others would fail as well.
+      }
     }
     // The note of a cleared device ends once every kept book is complete again (#554).
     if (this.deps.setClearedAt && (await this.deps.clearedAt?.())) {
@@ -454,11 +478,10 @@ export class KeepSaver {
     // A book with only an ebook keeps its record under its EPUB's save id, so a failure waits for Retry there too.
     const write = (change: RecordChange) => this.deps.writeRecord(saveId, workId, change);
     // Paused in another tab whose message did not reach this one: the Keep record says so before each file.
+    // Off since the run read the records (#707): the save stops as Off stops it, writing nothing more.
     const pausedElsewhere = async () => {
-      if (this.deps.isPaused && (await this.deps.isPaused(workId).catch(() => false))) {
-        controller.cause = "pause";
-        controller.abort();
-      }
+      if (this.deps.isKept && !(await this.deps.isKept(workId).catch(() => true))) this.abort(controller, "off");
+      else if (this.deps.isPaused && (await this.deps.isPaused(workId).catch(() => false))) this.abort(controller, "pause");
       controller.signal.throwIfAborted();
     };
     const missingIds = new Set(needs.missing.map((track) => track.id));
@@ -476,6 +499,8 @@ export class KeepSaver {
       this.changed();
     };
     try {
+      // Before the first record: a save that Off overtook leaves none (#707).
+      await pausedElsewhere();
       await write({ state: "saving", job: null });
       publish(0, 0);
       this.changed();

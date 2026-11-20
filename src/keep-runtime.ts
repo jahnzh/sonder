@@ -6,7 +6,7 @@
  */
 import { useEffect, useState } from "react";
 import type { DeviceSaveRecord } from "./device-saves";
-import { keepRecording, keptNeeds, readerFileKey, readerMapKey, type KeptNeeds, type HeldEbook, type HeldMap, type KeepEntry, type KeepSend, type SaveStop, type ServerKeep, type StopCause } from "./keep";
+import { keepRecording, keepStored, keptNeeds, readerFileKey, readerMapKey, type KeptNeeds, type HeldEbook, type HeldMap, type KeepEntry, type KeepSend, type SaveStop, type ServerKeep, type StopCause } from "./keep";
 import { warmMap } from "./alignment-map-lifecycle";
 import { alignmentMapDeps } from "./alignment-map-deps";
 import { deviceEbookChoice, ebookDeviceCopySize } from "./ebook-device-copy";
@@ -124,21 +124,24 @@ export function startKeepSaver(account: number): KeepSaver {
       keepChanged();
     },
     isPaused: async (workId) => !!(await db.keep.get(workId))?.pausedAt,
+    isKept: async (workId) => (await db.keep.get(workId))?.on !== false,
     persist: askPersist,
     storeKeep: async (records) => {
       await db.transaction("rw", db.keep, async () => {
         // A pause belongs to the pause and resume writers (#552): a merge that read the records before another tab
         // paused or resumed must not undo it. A record that turned off has no pause.
         const stored = new Map((await db.keep.bulkGet(records.map((r) => r.workId))).flatMap((e) => (e ? [[e.workId, e] as const] : [])));
-        await db.keep.bulkPut(
-          records.map((record) => {
-            const pausedAt = record.on ? stored.get(record.workId)?.pausedAt ?? null : null;
-            // The recordings saved here (#553) belong to `remember`, likewise.
-            const recordings = record.recordings ?? stored.get(record.workId)?.recordings;
-            const ebookIds = record.ebookIds ?? stored.get(record.workId)?.ebookIds;
-            return { ...record, pausedAt, ...(recordings ? { recordings } : {}), ...(ebookIds ? { ebookIds } : {}) };
-          }),
-        );
+        const next = records.map((merged) => {
+          // A choice tapped after the run read the records stays as it is (#707).
+          const record = keepStored(merged, stored.get(merged.workId));
+          if (record !== merged) return record;
+          const pausedAt = record.on ? stored.get(record.workId)?.pausedAt ?? null : null;
+          // The recordings saved here (#553) belong to `remember`, likewise.
+          const recordings = record.recordings ?? stored.get(record.workId)?.recordings;
+          const ebookIds = record.ebookIds ?? stored.get(record.workId)?.ebookIds;
+          return { ...record, pausedAt, ...(recordings ? { recordings } : {}), ...(ebookIds ? { ebookIds } : {}) };
+        });
+        await db.keep.bulkPut(next);
       });
       keepChanged();
     },
