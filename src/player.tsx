@@ -9,7 +9,7 @@ import {
 } from "react";
 import { liveQuery } from "dexie";
 import { createProgressClock } from "./progress-clock";
-import { api, forgetPositionHistory, keepServerProgress, localDB, offlineUrl, peekPositionHistory, positionHistorySettled, prunePositionHistory, saveProgress, serverProgressOf, syncProgress, updatePositionHistory } from "./lib";
+import { api, deviceCopyPlayUrl, forgetPositionHistory, keepServerProgress, localDB, peekPositionHistory, releaseDeviceCopyUrl, positionHistorySettled, prunePositionHistory, saveProgress, serverProgressOf, syncProgress, updatePositionHistory } from "./lib";
 import { catchUpDecision, CATCH_UP_TIMEOUT_MS } from "./paused-catch-up";
 import { HISTORY_LIFETIME, planUndo, recentPositions, restored, type JumpKind, type PositionEntry } from "./position-history";
 import {
@@ -185,6 +185,7 @@ export function PlayerProvider({
   const pendingSkips = useRef<Promise<void> | null>(null);
   const [history, setHistory] = useState<{ recordingId: string; entries: PositionEntry[] } | null>(null);
   const knownDurations = useRef(new Map<string, number>());
+  // The device copy playing: a Blob URL, or the service worker's `?source=device` address (#783); null for a stream.
   const objectUrl = useRef<string | null>(null);
   const sleepEnd = useRef<number | null>(null);
   const playRequests = useRef(0);
@@ -329,11 +330,11 @@ export function PlayerProvider({
       ]);
       const target = afterUnreachable(load.step, { download, deviceFault: fault });
       if (!target) return false;
-      // offlineUrl rejects a copy whose stored bytes are incomplete.
-      const local = await offlineUrl(load.track);
+      // Null for a copy whose stored bytes are incomplete; the service worker's ranges when it holds the copy (#783).
+      const local = await deviceCopyPlayUrl(load.track);
       if (!local) return false;
       if (!current()) {
-        URL.revokeObjectURL(local);
+        releaseDeviceCopyUrl(local);
         return false;
       }
       // The probe can take seconds: honour a pause or seek made meanwhile.
@@ -343,7 +344,7 @@ export function PlayerProvider({
         pendingSeek: pendingSeek.current,
         currentTime: elementPlace(),
       });
-      if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
+      releaseDeviceCopyUrl(objectUrl.current);
       objectUrl.current = local;
       streamLoad.current = null;
       stall.current?.cancel();
@@ -487,7 +488,7 @@ export function PlayerProvider({
       el.pause();
       setLoading(true);
       setError(null);
-      const local = looksForDevice(plan) ? await offlineUrl(selected) : null;
+      const local = looksForDevice(plan) ? await deviceCopyPlayUrl(selected) : null;
       const step = startingStep(plan, !!local);
       if (!step) {
         setLoading(false);
@@ -497,7 +498,7 @@ export function PlayerProvider({
         return;
       }
       if (request !== playRequests.current || currentGeneration !== generation.current) {
-        if (local) URL.revokeObjectURL(local);
+        releaseDeviceCopyUrl(local);
         return;
       }
       recordMove(targetPosition);
@@ -506,7 +507,7 @@ export function PlayerProvider({
         recordingId: sourcePosition.book.recordingId,
         entry: { trackId: sourcePosition.track.id, position: sourcePosition.position, timestamp: Date.now(), kind: "source" },
       } : null;
-      if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
+      releaseDeviceCopyUrl(objectUrl.current);
       objectUrl.current = local;
       streamLoad.current =
         step.source === "stream" && step.recover

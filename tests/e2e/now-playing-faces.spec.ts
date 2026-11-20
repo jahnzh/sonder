@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 import { playFromContinue } from "./library-play";
+import { expectPlaysDeviceCopy } from "./device-copy";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -351,9 +352,10 @@ test("Plays from switches the source and keeps the place; the Keep switch works 
   await picker.getByRole("radio", { name: "Device copy", exact: true }).click();
   await expect(picker).toBeHidden();
   await expect(playsFrom).toHaveText("Device copy");
-  await expect.poll(async () => (await audio(page)).src).toMatch(/^blob:/);
-  // Firefox reads the device copy's Blob only forward and lands the first seek short; the player seeks again once
-  // the bytes are read, and holds the place meanwhile (src/seek-landing.ts).
+  // The device copy plays: the service worker's address of the stored chunks (#783), answered by the worker itself.
+  await expectPlaysDeviceCopy(page, async () => (await audio(page)).src, tracks[0].id);
+  // The place holds through the switch; a first seek that lands short (Firefox and a Blob URL of the copy) is sought
+  // again once the bytes are read (src/seek-landing.ts).
   await expect.poll(async () => (await audio(page)).position).toBeCloseTo(40, 0);
   expect((await audio(page)).paused).toBe(true);
   await playsFrom.click();

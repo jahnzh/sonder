@@ -101,6 +101,8 @@ function rangeResponse(file, request) {
     "Content-Length": String(end - start + 1),
     "Accept-Ranges": "bytes",
     "Cache-Control": "private, no-store",
+    // The page asks for a device copy by `?source=device` and plays it only when this worker says it answered (#783).
+    "X-Sonder-Media-Source": "device",
   };
   if (status === 206)
     headers["Content-Range"] = `bytes ${start}-${end}/${size}`;
@@ -153,6 +155,17 @@ async function media(request, event) {
   // Downloads must come from the server, so a cached fragment cannot masquerade as a whole file.
   if (request.headers.has("X-Sonder-Download")) return fetch(request);
   const choice=new URL(request.url).searchParams.get("source");
+  // The device copy by byte ranges of its stored chunks (#783): Firefox seeks a page's Blob URL of the chunks only
+  // forward, so a far place or an index at the end of the file meant reading the whole book first. Never the network:
+  // without a complete copy here the answer is 404, and the page falls back to its own Blob URL.
+  if (choice === "device") {
+    const local = await localMedia(id, request);
+    if (local) {
+      reportSource(event, id, "device");
+      return local;
+    }
+    return new Response(null, { status: 404, headers: { "Cache-Control": "private, no-store" } });
+  }
   if(choice && choice!=="auto")return fetch(request);
   const local = await localMedia(id, request);
   if (local) {

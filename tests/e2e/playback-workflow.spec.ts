@@ -7,6 +7,7 @@ import { listenFace, openAudiobookPage, openListen, openRead } from "./now-playi
 import { playFromLibrary } from "./library-play";
 import { skipWithoutBlobStore } from "./mobile";
 import { installCpuThrottle } from "./cpu-throttle";
+import {expectPlaysDeviceCopy,isDeviceCopySrc} from "./device-copy";
 // SONDER_E2E_CPU_THROTTLE=4 runs it on a processor slowed four times (Chromium).
 installCpuThrottle(test);
 
@@ -258,7 +259,8 @@ test("playback opens the reader and title page; downloaded sources can be switch
   await expect(listenFace(page)).toBeVisible();
   await expect(listenFace(page).getByRole("button",{name:"Plays from",exact:true})).toHaveText("Automatic");
   await playFromListen(page,"Device copy");
-  await expect.poll(async()=>(await audioState(page)).src).toMatch(/^blob:/);
+  // The device copy plays: the service worker's address of the stored chunks (#783), answered by the worker itself.
+  await expectPlaysDeviceCopy(page,async()=>(await audioState(page)).src,book.tracks[0].id);
   // The new source seeks to the place once it has loaded (Firefox reports the switch before the seek).
   await expect.poll(async()=>(await audioState(page)).position).toBeCloseTo(160,0);
   expect((await audioState(page)).paused).toBe(true);
@@ -285,7 +287,9 @@ test("playback opens the reader and title page; downloaded sources can be switch
   const copy=page.getByRole("dialog",{name:"Device copy",exact:true});
   await expect(copy.getByText("Device copy marked faulty",{exact:true})).toBeVisible();
   await copy.getByRole("button",{name:"Close dialog",exact:true}).click();
-  await expect.poll(async()=>(await audioState(page)).src).toContain(`/api/media/${book.tracks[0].id}`);
+  // The marked device copy no longer plays: the element streams the track instead (#783c: the device copy's own
+  // address is /api/media/<track> too, so the poll also requires a source that is not the device copy).
+  await expect.poll(async()=>{const src=(await audioState(page)).src;return src.includes(`/api/media/${book.tracks[0].id}`)&&!isDeviceCopySrc(src,book.tracks[0].id);}).toBe(true);
   expect((await audioState(page)).paused).toBe(true);
   // The page's address survives a reload, and so does the mark.
   await page.reload();
@@ -294,7 +298,7 @@ test("playback opens the reader and title page; downloaded sources can be switch
   await playFromLibrary(page, title);
   await expect(page.locator(".player-dock").getByRole("button",{name:"Pause",exact:true})).toBeVisible();
   await page.locator(".player-dock").getByRole("button",{name:"Pause",exact:true}).click();
-  expect((await audioState(page)).src).not.toMatch(/^blob:/);
+  expect(isDeviceCopySrc((await audioState(page)).src,book.tracks[0].id)).toBe(false);
   await manage(page);
   // Removing the device copy asks once, says what stays, and clears its mark.
   await manager.getByRole("button",{name:"Device copy Marked faulty",exact:true}).click();
