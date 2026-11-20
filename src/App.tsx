@@ -48,6 +48,7 @@ import type {
 import { SignIn, type Account } from "./components/SignIn";
 import { Join } from "./components/Join";
 import { PlayerDock } from "./components/Player";
+import { publishCoverBooks } from "./cover-choice";
 import { NowPlaying } from "./pages/now-playing";
 import { AppUpdate } from "./components/AppUpdate";
 import { type Page, Mark } from "./pages/shared";
@@ -244,6 +245,8 @@ function LibraryApp({
   onLogout: () => void;
 }) {
   const [books, setBooks] = useState<Book[]>([]);
+  // The rows the one cover choice reads for an edition without its own cover (#763).
+  useEffect(() => publishCoverBooks(books), [books]);
   // The library by work with this device's places (#528): the Library's Listening, Not started and Finished
   // follow the work of each entry, so a book read in the reader is In progress (#556).
   const deviceWorks = useStoredWorksWithPlaces();

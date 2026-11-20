@@ -37,6 +37,8 @@ import type { Book, Download, DownloadPart, LibraryWork } from "../types";
 import { chosenRecording } from "./book-model";
 import { KeepItems } from "./keep-item";
 import { PlaysFromRow } from "./plays-from";
+import { useBookCover } from "../cover-choice";
+import { Cover } from "../parts/Cover";
 import "./now-playing.css";
 
 type Running = Record<string, { progress: number; chapter: number; total: number }>;
@@ -123,7 +125,8 @@ function NowPlayingScreen({ workId, face, open, ...props }: NowPlayingProps & { 
 
   // Only while the entry still shows this face: the kept-mounted dialog can hear of a focus outside it after the
   // address has moved on (a link or a typed address), and Back from there would undo that move. The reader on its own
-  // had this guard (#590); every reader is this one now (#613 part 2).
+  // had this guard (#590); every reader is this one now (#613 part 2). A late close from Firefox's focus
+  // change as the reader's iframe goes is the same case (#662).
   const close = () => goBackFrom({ name: face, workId }, { name: "book", workId });
   const faceControl = <FaceSwitch workId={workId} face={face} admin={props.admin} exists={exists} />;
   const shown = known && exists(face);
@@ -275,6 +278,8 @@ function ListenFace({
   const chapter = trackId ? currentChapter(book, trackId, position) : undefined;
   const chapterTitle = (chapter?.title || book.tracks.find((t) => t.id === trackId)?.title || "").trim();
   const toggle = () => (playsThis ? p.toggle() : void p.play(book));
+  // The one cover choice (#763): the edition's own, else the work's, else the generated cover.
+  const cover = useBookCover(book, work.cover);
   const speed = useBookSpeed(book);
   const own = useHasOwnSpeed(book);
   const sleep = sleepShown(p.sleep);
@@ -290,7 +295,7 @@ function ListenFace({
   const chapterLine = desktop ? listenChapterLine(chapterTitle, chapter ? chapterTimeLeft(chapter, position, speed) : null) : chapterTitle;
   const intro = (
     <div className="now-playing-intro">
-      <img className="now-playing-cover" src={book.cover || work.cover} alt="" />
+      <Cover className="now-playing-cover" src={cover} title={work.title || book.title} author={work.author || book.author} workId={work.workId} />
       <div className="now-playing-names">
         <h1 className={desktop ? "type-title" : "type-heading"}>{work.title || book.title}</h1>
         <p className={desktop ? "type-body" : "type-label"}>{work.author || book.author}</p>

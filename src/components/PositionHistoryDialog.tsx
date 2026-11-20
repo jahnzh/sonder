@@ -13,6 +13,7 @@ const jumpKindLabel: Record<JumpKind, string> = {
   hardcover: "Hardcover",
   recording: "Recording",
   source: "Source",
+  device: "Other device",
 };
 
 /** Position history (Earlier positions on Now playing's Listen face, #593): recent jumps; a row restores one. */

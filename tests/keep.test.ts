@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import {
   classifyStop,
   isRefusal,
+  keepStored,
   keptNeeds,
   mapReady,
   mergeKeep,
@@ -304,4 +305,15 @@ test("rollout: a save of a recording that is not the chosen one turns Keep on (t
 test("rollout: a work not in the library keeps its files without Keep; a work with a record keeps its choice", () => {
   assert.deepEqual(rolloutChoices({ works: [work("w", false, ["r1"])], keep: [], downloads: [file("r1", 0)], parts: [] }), []);
   assert.deepEqual(rolloutChoices({ works: [work("w", true, ["r1"])], keep: [local("w", false, 5)], downloads: [file("r1", 0)], parts: [] }), []);
+});
+
+test("stored: a choice this device wrote after the run read its records stays; otherwise the merge's record (#707)", () => {
+  // Off tapped while the run waited for the server: the merge's On (read before) does not undo it.
+  const off = local("w1", false, 9, { pending: true });
+  assert.equal(keepStored(local("w1", true, 5), off), off);
+  // The record the merge answers is as new or newer: it is stored.
+  const merged = local("w1", true, 9, { completeAt: 12 });
+  assert.equal(keepStored(merged, local("w1", true, 9)), merged);
+  assert.equal(keepStored(merged, local("w1", false, 7)), merged);
+  assert.equal(keepStored(merged, undefined), merged);
 });

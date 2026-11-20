@@ -149,7 +149,7 @@ test("an import with no book chosen puts the new work in the importer's library 
   const workId = ebookWork(imported.json().id);
   assert.match(workId, /^work-/);
   assert.deepEqual(editionsOf(workId), [
-    { id: `placeholder-${workId}`, narrator: "Audio not added", cover: "/covers/meditations.svg", recordings: `recording-placeholder-${workId}` },
+    { id: `placeholder-${workId}`, narrator: "Audio not added", cover: "", recordings: `recording-placeholder-${workId}` },
   ]);
   assert.deepEqual(libraryRows(OWNER, workId), [{ id: `placeholder-${workId}`, status: "unread" }]);
   assert.equal(origin(OWNER, workId), "manual");
@@ -279,7 +279,7 @@ test("PUT of a work with no audio edition makes its placeholder and adds its row
   assert.equal(second.statusCode, 200, second.body);
   assert.deepEqual(first.json(), { ok: true, workId: "w-race" });
   assert.deepEqual(editionsOf("w-race"), [
-    { id: "placeholder-w-race", narrator: "Audio not added", cover: "/covers/meditations.svg", recordings: "recording-placeholder-w-race" },
+    { id: "placeholder-w-race", narrator: "Audio not added", cover: "", recordings: "recording-placeholder-w-race" },
   ]);
   assert.deepEqual(libraryRows(OWNER, "w-race"), [{ id: "placeholder-w-race", status: "unread" }]);
   assert.equal(origin(OWNER, "w-race"), "manual");
@@ -316,7 +316,7 @@ test("ensurePlaceholder: the Hardcover cover when it is an https address; anothe
   assert.equal(editionsOf("w-cover")[0].cover, "https://assets.hardcover.app/c.jpg");
   work("w-cover-plain", "Plain");
   assert.equal(ensurePlaceholder(sqlite, "w-cover-plain", { cover: "http://insecure.example/c.jpg" }), "placeholder-w-cover-plain");
-  assert.equal(editionsOf("w-cover-plain")[0].cover, "/covers/meditations.svg");
+  assert.equal(editionsOf("w-cover-plain")[0].cover, "", "no cover: never a sample book's (#763)");
   // A second work linked to book 4250: hc-4250 is w-cover's, so it gets its own.
   work("w-cover-twin", "Covered twin");
   run("INSERT INTO hardcover_links(work_id,book_id,slug,series) VALUES('w-cover-twin',4250,'covered','[]')");

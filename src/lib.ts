@@ -374,6 +374,34 @@ export async function saveProgress(p: Progress) {
   await localDB.progress.put({ ...p, pending: true });
   void syncProgress().catch(() => {});
 }
+/**
+ * The server's place for one recording (#773), or undefined when there is no answer: offline, a failed request, or none
+ * within `timeoutMs`. Reads only; the outbox of pending saves is not touched.
+ */
+export async function serverProgressOf(recordingId: string, timeoutMs: number): Promise<Progress | null | undefined> {
+  if (!navigator.onLine) return undefined;
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), timeoutMs);
+  try {
+    const answer = await api<{ progress: Progress | null }>(`/progress/${encodeURIComponent(recordingId)}`, { signal: abort.signal, cache: "no-store" });
+    return answer.progress ?? null;
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+/**
+ * Keeps a place picked up from the server (#773) as this device's last save for its recording, unless a newer one was
+ * made here meanwhile. Not pending: the server already has it.
+ */
+export async function keepServerProgress(p: Progress) {
+  const progress = localDB.progress;
+  await progress.db.transaction("rw", progress, async () => {
+    const latest = await progress.get(p.recordingId);
+    if (!latest || latest.updatedAt < p.updatedAt) await progress.put({ ...p, pending: false });
+  });
+}
 export async function loadBooks() {
   await syncProgress().catch(() => {});
   // The account's own tables, so a sign-in as another account during the read cannot carry these books
