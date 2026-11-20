@@ -5,6 +5,7 @@
  * database at import (ADR 0010), as `placeholder-edition.ts` does.
  */
 import { placeholderEditionSql } from "./placeholder-edition.ts";
+import { ownCover } from "../src/types.ts";
 
 type Database = import("better-sqlite3").Database;
 
@@ -105,6 +106,37 @@ export function fallbackCovers(database: Database, userId: number, workIds: stri
   return covers;
 }
 
+/**
+ * The work's cover (#763): the first own cover among its audio editions the user may see (the work's placeholders,
+ * which keep the catalogue link's cover, and the user's own editions; never one only another account added), the
+ * placeholder's first, then in the order they were added. A sample book's cover stored for another edition is no
+ * cover. A work with none has no entry.
+ */
+export function editionCovers(database: Database, userId: number, workIds: string[], hidden: Set<string>) {
+  const rows = database
+    .prepare(
+      `SELECT e.work_id AS workId,e.id,e.cover FROM audio_editions e
+       WHERE e.work_id IN (SELECT value FROM json_each(?)) AND e.cover<>''
+         AND (${placeholderEditionSql("e.id")} OR EXISTS(SELECT 1 FROM user_library u WHERE u.user_id=? AND u.book_id=e.id))
+       ORDER BY ${placeholderEditionSql("e.id")} DESC,e.rowid`,
+    )
+    .all(idList(workIds), userId) as { workId: string; id: string; cover: string }[];
+  const covers = new Map<string, string>();
+  for (const row of rows) {
+    const cover = ownCover(row.cover, row.id);
+    if (cover && !hidden.has(row.id) && !covers.has(row.workId)) covers.set(row.workId, cover);
+  }
+  return covers;
+}
+
+/**
+ * The one cover choice (#763): the edition's own cover; otherwise the work's (`editionCovers`); otherwise "" (the
+ * client draws the generated cover). Never another book's art.
+ */
+export function chosenCover(edition: { editionId: string; cover: string } | undefined, workCover: string | undefined) {
+  return (edition ? ownCover(edition.cover, edition.editionId) : "") || workCover || "";
+}
+
 /** What an item of the Activity list says of the book it concerns. */
 export type WorkCover = {
   /** The audio edition of the chosen recording; null when the work has none, and never a placeholder's. */
@@ -114,8 +146,8 @@ export type WorkCover = {
 
 /**
  * The cover and audio edition of each of `workIds` for `userId` by the rule of the library by work: the chosen
- * recording's, otherwise the one of the fallback edition (a placeholder's by preference), otherwise none (an empty
- * cover). A work that does not exist has no entry. The administrator sees every placeholder, so by default none is hidden: only the administrator
+ * recording's, otherwise the one of the fallback edition (a placeholder's by preference); an edition without its
+ * own cover shows the work's (`chosenCover`, #763), otherwise none (an empty cover). A work that does not exist has no entry. The administrator sees every placeholder, so by default none is hidden: only the administrator
  * reads the Activity list. `GET /api/works` (#573) passes the placeholders hidden from the user (`hiddenHardcoverPlaceholders`).
  */
 export function workCovers(database: Database, userId: number, workIds: Iterable<string>, hidden = new Set<string>()) {
@@ -138,6 +170,7 @@ export function workCovers(database: Database, userId: number, workIds: Iterable
     byWork.set(row.workId, [...(byWork.get(row.workId) ?? []), { ...row, progress: places.get(row.recordingId) ?? null }]);
   const choices = storedChoices(database, userId, ids);
   const fallbacks = fallbackCovers(database, userId, ids, hidden);
+  const own = editionCovers(database, userId, ids, hidden);
   const existing = new Set(
     (database.prepare("SELECT id FROM works WHERE id IN (SELECT value FROM json_each(?))").all(idList(ids)) as { id: string }[]).map((row) => row.id),
   );
@@ -146,9 +179,13 @@ export function workCovers(database: Database, userId: number, workIds: Iterable
     const recordings = byWork.get(workId) ?? [];
     const chosen = recordings.find((recording) => recording.recordingId === chosenRecordingId(recordings, { stored: choices.get(workId) ?? null }));
     const fallback = fallbacks.get(workId);
-    if (chosen) covers.set(workId, { bookId: chosen.editionId, cover: chosen.cover });
-    else if (fallback) covers.set(workId, { bookId: fallback.placeholder ? null : fallback.editionId, cover: fallback.cover });
-    else covers.set(workId, { bookId: null, cover: "" });
+    if (chosen) covers.set(workId, { bookId: chosen.editionId, cover: chosenCover(chosen, own.get(workId)) });
+    else if (fallback)
+      covers.set(workId, {
+        bookId: fallback.placeholder ? null : fallback.editionId,
+        cover: chosenCover({ editionId: fallback.editionId, cover: fallback.cover }, own.get(workId)),
+      });
+    else covers.set(workId, { bookId: null, cover: own.get(workId) ?? "" });
   }
   return covers;
 }

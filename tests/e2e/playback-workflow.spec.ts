@@ -6,6 +6,9 @@ import { readerFixture } from "../reader-fixture";
 import { listenFace, openAudiobookPage, openListen, openRead } from "./now-playing";
 import { playFromLibrary } from "./library-play";
 import { skipWithoutBlobStore } from "./mobile";
+import { installCpuThrottle } from "./cpu-throttle";
+// SONDER_E2E_CPU_THROTTLE=4 runs it on a processor slowed four times (Chromium).
+installCpuThrottle(test);
 
 // Books a test imports get a title unique to the run, so a repeat on the same server finds one
 // "Play <title>" button, and leave the library afterwards, so what a test played does not become
@@ -44,12 +47,18 @@ async function audioState(page: Page) {
     return {position:audio.currentTime, duration:audio.duration, paused:audio.paused, src:audio.src};
   });
 }
+// Assigned until the element reports it (#662), as position-history's setPosition: a load still on its way can seek
+// to its saved place after one assignment.
 async function position(page: Page, value: number) {
-  await page.evaluate(value => {
+  await expect.poll(async () => page.evaluate(value => {
     const audio = ((window as any).__audioElements as HTMLAudioElement[]).find(a => !!a.src)!;
-    audio.currentTime=value;
-    audio.dispatchEvent(new Event("timeupdate"));
-  }, value);
+    if (audio.readyState < 1 || !Number.isFinite(audio.duration) || audio.duration <= 0) return null;
+    if (Math.abs(audio.currentTime - value) > 1e-6) {
+      audio.currentTime=value;
+      audio.dispatchEvent(new Event("timeupdate"));
+    }
+    return audio.currentTime;
+  }, value)).toBeCloseTo(value, 5);
 }
 async function playAndPause(page: Page, title: string) {
   await playFromLibrary(page, title);
@@ -126,7 +135,7 @@ test.describe("with no service worker",()=>{
       const pointerId=()=>page.evaluate(()=>(window as any).__pointerId as number);
       await openListen(page);
       const slider=page.getByRole("slider",{name:"Seek in chapter",exact:true});
-      expect(Number(await slider.getAttribute("max"))).toBeCloseTo(180,8);
+      await expect.poll(async()=>Number(await slider.getAttribute("max"))).toBeCloseTo(180,8);
       await expect(slider).toHaveValue("30");
       await expect(slider).toHaveAttribute("aria-valuetext",/0:30 elapsed, 2:30 remaining in Chapter two/);
       const box=(await slider.boundingBox())!, width=box.width-18;

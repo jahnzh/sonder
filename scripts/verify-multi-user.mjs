@@ -8,6 +8,7 @@ import {FORBIDDEN} from './multi-user-forbidden.mjs';
 import {verifyBaseURL} from './live-check-target.mjs';
 import {adminMultiUserVerifySnapshot,assertAdminMultiUserVerifyUnchanged} from './verify-multi-user-snapshot.mjs';
 import {assertNoLeakedPlaceholders} from './multi-user-placeholders.mjs';
+import {multiUserPlayable} from './live-check-recording.mjs';
 const expect=baseExpect.configure({timeout:25000});
 // Production reads APP_PASSWORD from .env. A local test server needs one too: the check signs in as the administrator
 // and makes a second account (tests/browser-server.ts with PLAYWRIGHT_AUTH=1 and APP_PASSWORD in the environment).
@@ -57,10 +58,12 @@ try {
  const settings=await(await qa.request.get('/api/settings')).json();
  if(JSON.stringify(settings).match(/torbox|prowlarr|transmission/i))throw Error('Regular-user settings expose admin fields: '+Object.keys(settings).join(','));
  check('Admin-only routes refuse the user; settings hide admin fields',{routes:forbidden.length});
- const playable=qaBooks.find(b=>b.tracks?.length);
+ // Not a book the administrator listened to in the last 48 h, while there is another (#774).
+ const {book:playable,recent:playableRecent}=multiUserPlayable(qaBooks,adminCatalogue);
+ if(!playable)throw Error('The user sees no title with audio');
  const media=await qa.request.get(`/api/media/${encodeURIComponent(playable.tracks[0].id)}/location?source=auto`);
  if(!media.ok())throw Error('User cannot resolve media: '+media.status());
- check('User can resolve shared media',{book:playable.title});
+ check('User can resolve shared media',{book:playable.title,...(playableRecent?{recent:playableRecent}:{})});
  // Settings is a list whose rows open pages (#579, src/settings-list.ts): someone who is not the administrator
  // sees Personal (Account, Appearance, Playback) and This device (App); Connections (the administrator's since
  // Hardcover went, #721 part d), Users and Library and storage are in the Server group only the administrator has.

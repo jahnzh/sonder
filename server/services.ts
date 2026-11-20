@@ -176,7 +176,7 @@ export function parseAbbListings(
           title: split > 0 ? raw.slice(0, split) : raw,
           author: split > 0 ? raw.slice(split + 3) : "Unknown author",
           cover:
-            cover && cover.startsWith("https://") ? cover : "/covers/time.svg",
+            cover && cover.startsWith("https://") ? cover : "",
           url: new URL(`/abss/${encodeURIComponent(id)}/`, base).href,
           genre:
             post.querySelector('a[rel="category tag"]')?.textContent ||
