@@ -90,6 +90,23 @@ test("a chapter of bare divs: a sentence that runs across blocks keeps one id on
   assert.equal(result.html.split(`data-s="${first.id}"`).length - 1, 3, "two lines and the space between them");
 });
 
+test("a book cut by another block rule (ADR 0026) is tagged by that rule", async () => {
+  const lines = (word: string) => Array.from({ length: 8 }, (_item, index) => `The ${word} tide came in for the ${index + 1}th time. Nobody looked up.`);
+  const result = await prepared({
+    chapters: {
+      // Paragraphs written as <div>s, and loose text between <p>s that hold only a space.
+      "one.xhtml": `<h2>Wall</h2>${lines("morning").map((text) => `<div class="c"><span>${text}</span></div>`).join("")}<blockquote><div>A quoted line.</div></blockquote>`,
+      "two.xhtml": `<h2>Low water</h2> <p> </p>${lines("night").map((text) => `${text}<p> </p>`).join("")}`,
+    },
+  });
+  assert.deepEqual(result.book.sections.map((section) => section.blocks), ["div", "body"]);
+  assertTagged(result);
+  assert.ok(stored(result.book).length > 30);
+  assert.match(result.html, /<div><span><span data-s="0:1">The morning tide came in for the 1th time\.<\/span> <span data-s="0:2">Nobody looked up\.<\/span><\/span><\/div>/);
+  // Loose text is a paragraph of its own on the page, with its sentences tagged.
+  assert.match(result.html, /<span data-s="1:\d+">Nobody looked up\.<\/span>/);
+});
+
 test("text the extractor does not count is shown without a tag", async () => {
   const result = await prepared({
     nav: '<nav epub:type="toc"><ol><li><a href="one.xhtml">One</a></li></ol></nav>',

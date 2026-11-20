@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parse } from "node-html-parser";
 import {
+  blockShare,
+  chapterBlockRule,
   countedBlocks,
   normalizeReaderText,
   readerTextOffset,
@@ -63,4 +65,34 @@ test("a counted block has text, contains no other block and is not inside a skip
   // Blocks without text are dropped; a section without blocks is one block.
   assert.deepEqual(texts(`<p> </p><h2>Title</h2><p> </p>`), ["Title"]);
   assert.deepEqual(texts(`<div>Only loose text.</div>`), ["Only loose text."]);
+});
+test("the other block rules (ADR 0026): <div> as a block, and the whole chapter as one", () => {
+  const text = (node: ReturnType<typeof body>) => node.text;
+  const divs = `<h2>Title</h2><div><span>First paragraph.</span></div><div> </div><blockquote><div>Quoted.</div></blockquote><div><p>In a paragraph.</p></div><nav><div>Menu</div></nav>`;
+  // The standard rule does not see a <div>, whatever the other rules do.
+  assert.deepEqual(texts(divs), ["Title", "Quoted.", "In a paragraph."]);
+  const withDiv = countedBlocks(body(divs), text, "div");
+  // A <div> that holds no other block is one; the <div> around a <p> and the <blockquote> around a <div> are not.
+  assert.deepEqual(withDiv.map((node) => [node.rawTagName, normalizeReaderText(node.text)]), [["h2", "Title"], ["div", "First paragraph."], ["div", "Quoted."], ["p", "In a paragraph."]]);
+  const whole = body(divs);
+  assert.deepEqual(countedBlocks(whole, text, "body"), [whole]);
+  // A chapter without any block is one block under the standard rule, and none under the <div> rule.
+  assert.deepEqual(countedBlocks(body("Loose words only."), text, "div"), []);
+});
+test("a chapter's rule is the first whose blocks hold nine tenths of its text", () => {
+  const text = (node: ReturnType<typeof body>) => node.text;
+  const long = "These are the words of one paragraph of the chapter. ";
+  const standard = body(`<h2>Title</h2><p>${long}</p><p>${long}</p>loose`);
+  assert.ok(blockShare(standard, text) > 0.9);
+  assert.equal(chapterBlockRule(standard, text), undefined);
+  const divs = body(`<h2>Title</h2><div><span>${long}</span></div><div>${long}</div>`);
+  assert.ok(blockShare(divs, text) < 0.1);
+  assert.ok(blockShare(divs, text, "div") > 0.9);
+  assert.equal(chapterBlockRule(divs, text), "div");
+  const loose = body(`<h2>Title</h2><p> </p>${long}<p> </p>${long}<div>A short one.</div>`);
+  assert.ok(blockShare(loose, text, "div") < 0.5);
+  assert.equal(chapterBlockRule(loose, text), "body");
+  assert.equal(blockShare(loose, text, "body"), 1);
+  // A chapter without text needs no rule.
+  assert.equal(chapterBlockRule(body(`<p> </p><div></div>`), text), undefined);
 });

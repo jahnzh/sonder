@@ -66,6 +66,7 @@ import {
   countedBlocks,
   readerSkippedSelector,
   readerTextOffset,
+  type ReaderBlockRule,
   type ReaderBook,
   type ReaderSection,
   type TextLocator,
@@ -185,8 +186,8 @@ function blockText(block: Element) {
   while ((node = walker.nextNode())) text += nodeText(node);
   return text;
 }
-function blockNodes(doc: Document) {
-  return countedBlocks(doc.body || doc.documentElement, blockText);
+function blockNodes(doc: Document, rule?: ReaderBlockRule) {
+  return countedBlocks(doc.body || doc.documentElement, blockText, rule);
 }
 // The offset of a DOM position in the block's normalised text, as sentence start and end count it.
 function offsetIn(block: Element, container: Node, offset: number) {
@@ -699,7 +700,7 @@ export function ReaderView({
             const range = view.getRange(location.start.cfi),
               doc = range.startContainer.ownerDocument;
             if (!doc) return;
-            const nodes = blockNodes(doc);
+            const nodes = blockNodes(doc, section.blocks);
             let block =
               range.startContainer.nodeType === Node.ELEMENT_NODE
                 ? (range.startContainer as Element)
@@ -1165,7 +1166,7 @@ export function ReaderView({
         if (!jump.current() || rendition.current !== view) return false;
         content = shown();
       }
-      node = content && blockNodes(content.document)[fragment.blockIndex];
+      node = content && blockNodes(content.document, section.blocks)[fragment.blockIndex];
       if (!content || !node) return false;
       cfi = content.cfiFromRange(rangeAt(node, fragment.start));
       // The narrated sentence in pages mode: measured as it begins, and shown on the page of the word
@@ -1437,9 +1438,10 @@ export function ReaderView({
         if (caret) { range = doc.createRange(); range.setStart(caret.offsetNode, caret.offset); range.collapse(true); }
       }
       if (!range) return;
-      const nodes = blockNodes(doc), index = nodes.findIndex(node => node.contains(range.startContainer));
       const section = bookRef.current.sections.find(item => item.index === content.sectionIndex);
-      if (index < 0 || !section) return;
+      if (!section) return;
+      const nodes = blockNodes(doc, section.blocks), index = nodes.findIndex(node => node.contains(range.startContainer));
+      if (index < 0) return;
       let offset=0;
       try { offset=offsetIn(nodes[index],range.startContainer,range.startOffset); } catch { return; }
       const fragment=sentenceAt(section,index,offset);
