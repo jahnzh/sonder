@@ -1,5 +1,5 @@
 import { isAdmin } from "../lib";
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type EpubBook from "epubjs/types/book";
 import type Rendition from "epubjs/types/rendition";
 import type Contents from "epubjs/types/contents";
@@ -50,6 +50,8 @@ import { usePlayer, type SeekTarget } from "../player";
 import { api, forgetPositionHistory, localDB } from "../lib";
 import {
   loadReader,
+  loadPreparedReader,
+  loadReaderText,
   epubFile,
   readingState,
   saveReading,
@@ -62,8 +64,13 @@ import type { Book } from "../types";
 import type { PositionEntry } from "../position-history";
 import { useDesktop } from "../now-playing-desktop";
 import { SPREAD_GAP, SPREAD_MIN_HOST, spreadHostWidth } from "../reader-spread";
+import { preparedView } from "../reader-view-switch";
+import { createPreparedView, type PreparedTarget, type PreparedView } from "../prepared-view";
+import { PREPARED_CHANGED_EVENT, reportRefused, type PreparedBook } from "../prepared-book";
+import { sentencePlaces } from "../reader-places";
 import {
   countedBlocks,
+  normalizeReaderText,
   readerSkippedSelector,
   readerTextOffset,
   type ReaderBlockRule,
@@ -316,6 +323,11 @@ export function ReaderView({
     [controlsVisible, setControlsVisible] = useState(false),
         [scrub, setScrub] = useState<number | null>(null),
     [contentsHidden, setContentsHidden] = useState(() => localStorage.getItem("sonder-reader-contents") === "hidden");
+  // The hidden switch (#802): this device shows the server's prepared text instead of the EPUB in epub.js. Read once
+  // for the mounted reader. `source` is the prepared book it shows, and `engine` the text band's view of it.
+  const [prepared] = useState(preparedView);
+  const [source, setSource] = useState<PreparedBook | null>(null);
+  const engine = useRef<PreparedView | null>(null);
   // Appearance docked under the text in place of the foot (#588); not in the address.
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   // Sizes the view to the text band when the band changed (the ResizeObserver's work, #587); set once the book opens.
@@ -471,7 +483,8 @@ export function ReaderView({
   const [spreadWidth, setSpreadWidth] = useState<number | null>(null);
   useLayoutEffect(() => {
     const area = pageArea.current;
-    if (!desktop || !area) {
+    // The new view is one column in scroll mode whatever the saved reading mode is (pages mode is step 4 of #799).
+    if (!desktop || !area || prepared) {
       setSpreadWidth(null);
       return;
     }
@@ -490,19 +503,30 @@ export function ReaderView({
   // The narrated sentence, decided by the following module: it stays through a gap until the next one begins.
   const narrationBack = useRef<() => void>(() => {});
   const currentInterval = following.narratedSentence(map, placeOf(p.book, p.track?.id, p.position)) ?? undefined;
-  const refresh = async () => {
+  // `keepPlace`: the same book loaded again (its prepared text changed on the server) stays where it is read.
+  const refresh = async (keepPlace = false) => {
     try {
-      const value = await loadReader(id);
+      let value: ReaderBook;
+      if (prepared) {
+        const opened = await loadPreparedReader(id);
+        value = opened.book;
+        setSource(opened.prepared);
+      } else value = await loadReader(id);
       setBook(value);
       bookRef.current = value;
-      setLocator(value.checkpoint?.locator || null);
-      latest.current = value.checkpoint?.locator || null;
+      if (!(keepPlace && latest.current)) {
+        setLocator(value.checkpoint?.locator || null);
+        latest.current = value.checkpoint?.locator || null;
+      }
       const state = await readingState(id);
       setConflict(state?.conflict || null);
     } catch (error) {
-      setError((error as Error).message);
-    } finally {
+      if (prepared) messages.error(!navigator.onLine || error instanceof TypeError ? "book-offline" : "book-load");
+      else setError((error as Error).message);
       setLoading(false);
+    } finally {
+      // The new view keeps its waiting line until the text is in the band: it has no frame that fills later.
+      if (!prepared) setLoading(false);
     }
   };
   useEffect(() => {
@@ -536,11 +560,17 @@ export function ReaderView({
         setBook(updated);
       }
     };
+    // The book's file changed under the prepared text this reader shows (Search saw it): it is loaded again.
+    const changed = (event: Event) => {
+      if (prepared && (event as CustomEvent).detail.id === id) void refresh(true);
+    };
+    window.addEventListener(PREPARED_CHANGED_EVENT, changed);
     window.addEventListener("online", online);
     window.addEventListener("pagehide", persist);
     window.addEventListener("sonder:reading-conflict", conflicting);
     window.addEventListener("sonder:bookmark-rejected", rejected);
     return () => {
+      window.removeEventListener(PREPARED_CHANGED_EVENT, changed);
       window.removeEventListener("online", online);
       window.removeEventListener("pagehide", persist);
       window.removeEventListener("sonder:reading-conflict", conflicting);
@@ -549,8 +579,106 @@ export function ReaderView({
       if (manual) void saveReading(id, manual, "reading", mapRef.current?.recordingId);
     };
   }, [id]);
+  // A saved place for a sentence of the prepared book: the sentence id, no CFI. Today's reader opens such a place by
+  // its sentence, and this view reads only the sentence of a place today's reader saved, so each opens the other's.
+  const preparedLocator = (sentence: string): TextLocator | null => {
+    if (!source || source.index.ordinalOf(sentence) < 0) return null;
+    return {
+      section: source.index.sectionOf(sentence) ?? 0,
+      paragraphId: sentence,
+      quote: normalizeReaderText(engine.current?.textOf(sentence) ?? "").slice(0, 300),
+      progression: source.index.progression(sentence),
+    };
+  };
+  // The reader of the book moved the prepared text (a scroll, a turn, a link, a chapter): what the following module
+  // makes of it is what it makes of a relocation of epub.js.
+  const preparedMoved = useRef<(sentence: string | null) => void>(() => {});
+  preparedMoved.current = (sentence) => {
+    const next = sentence ? preparedLocator(sentence) : null;
+    if (!next) return;
+    if (following.relocated(next, !!latest.current, next.section) === "ignored") return;
+    latest.current = next;
+    setLocator(next);
+  };
+  const preparedLink = useRef<(target: PreparedTarget) => void>(() => {});
+  // The new view's loading failures, in the reader's words: without a connection the book cannot be read in this
+  // view yet (Keep on this device is step 6 of #799); anything else is a part or the book that could not be loaded.
+  const loadError = (error: unknown): ReaderError =>
+    !navigator.onLine || error instanceof TypeError ? "book-offline" : engine.current?.firstInView() ? "text-load" : "book-load";
+  const staleReloads = useRef(0);
+  // Raised by Retry when the book's first part could not be shown: the view is opened again.
+  const [openAttempt, setOpenAttempt] = useState(0);
+  const retryLoad = () => {
+    staleReloads.current = 0;
+    if (!source) {
+      setLoading(true);
+      void refresh(true);
+    } else if (engine.current?.firstInView() || rendered) engine.current?.retry();
+    else {
+      source.retry();
+      setLoading(true);
+      setOpenAttempt((value) => value + 1);
+    }
+  };
+  const longPress = useRef<(sentence: string) => void>(() => {});
   useEffect(() => {
-    if (!book || !viewport.current) return;
+    if (!prepared || !book || !source || !viewport.current) return;
+    let disposed = false;
+    const host = viewport.current;
+    const view = createPreparedView(host, source, {
+      onRelocated: (sentence) => preparedMoved.current(sentence),
+      onGesture: () => following.gesture(),
+      onAction: (action) => pageAction.current(action),
+      onLongPress: (sentence) => longPress.current(sentence),
+      onLink: (target) => preparedLink.current(target),
+      // The server prepared the book again: its manifest and parts are read anew, once or twice; a book that
+      // keeps answering "stale" is an error to the reader, not a loop.
+      onStale: () => {
+        if (++staleReloads.current > 2) return messages.error("book-load");
+        setLoading(true);
+        void refresh(true);
+      },
+      onLoadFailed: (error) => messages.error(loadError(error)),
+      onRefused: (part, refused) => reportRefused(id, source.manifest.key, part, refused),
+      // The band changed (Appearance docked or closed): the narrated sentence is brought into it again, as today's
+      // reader follows it again after sizing its view.
+      onBandResized: () => redrawHighlight(),
+    });
+    engine.current = view;
+    following.openingDisplay();
+    const settled = following.beginOwnDisplay();
+    const place = latest.current?.paragraphId ?? null;
+    void view
+      .open(place)
+      .then(
+        () => {
+          if (disposed) return;
+          // A book opened at its start shows its first sentence as its place, as today's reader does.
+          if (!latest.current) {
+            const first = preparedLocator(view.firstInView() ?? "");
+            latest.current = first;
+            setLocator(first);
+          }
+          setRendered(true);
+        },
+        (error) => {
+          // The reader's own words in the foot, with Retry; never the browser's sentence for a failed request.
+          if (!disposed) messages.error(loadError(error));
+        },
+      )
+      .finally(() => {
+        settled();
+        if (!disposed) setLoading(false);
+      });
+    return () => {
+      disposed = true;
+      setRendered(false);
+      view.destroy();
+      if (engine.current === view) engine.current = null;
+    };
+  }, [id, prepared, source, openAttempt]);
+  useEffect(() => {
+    if (prepared || !book || !viewport.current) return;
     let disposed = false;
     let cleanChapterFonts: (() => void) | null = null;
     // The book's open(), which the teardown waits out before destroying the book.
@@ -1022,6 +1150,32 @@ export function ReaderView({
     const ended = following.beginNavigation();
     void go(view).catch(() => {}).finally(ended);
   };
+  // A chapter's start, from the Chapters page or the contents beside the text: a navigation, which wins over a follow
+  // jump and is saved.
+  const openSection = (section: number, href: string) => {
+    if (!prepared) return navigate((view) => view.display(href), section);
+    following.navigate(section);
+    const view = engine.current;
+    if (!view) return;
+    const ended = following.beginNavigation();
+    void view
+      .showSection(section)
+      .then((first) => { if (first !== false) preparedMoved.current(first ?? view.firstInView()); })
+      .catch(() => {})
+      .finally(ended);
+  };
+  // A link of the book to another of its places is followed like a chapter chosen by hand.
+  preparedLink.current = (target) => {
+    following.navigate();
+    const view = engine.current;
+    if (!view) return;
+    const ended = following.beginNavigation();
+    void view
+      .showTarget(target)
+      .then((first) => { if (first !== false) preparedMoved.current(first); })
+      .catch(() => {})
+      .finally(ended);
+  };
   // The narrated sentence's words measured in its page, and the page to show at the narration's position;
   // null when `paragraphId` is not the narrated sentence, in scroll mode, with no page step to read, or
   // while the section's fonts are still loading: the layout is not settled then, and once they have
@@ -1128,11 +1282,47 @@ export function ReaderView({
         if (pagedSentence.current === paged && jump.current()) setFollowRevision((value) => value + 1);
       });
   };
+  // The new view's jump to a sentence (#802): the same steps as today's below, on the prepared text. The narrated
+  // sentence stays where it is while it is in view; any other place is shown at the top of the band.
+  const showPrepared = async (paragraphId: string, persist: boolean, recordingId: string | undefined) => {
+    const jump = following.startJump();
+    const view = engine.current;
+    const value = view ? preparedLocator(paragraphId) : null;
+    if (!view || !value) return false;
+    const player = playerRef.current;
+    const narrated = following.highlightedSentence(mapRef.current, placeOf(player.book, player.track?.id, player.position))?.paragraphId === paragraphId;
+    const settled = following.beginOwnDisplay();
+    let shown = false;
+    try {
+      shown = await view.show(paragraphId, narrated ? "follow" : "start");
+    } finally {
+      settled();
+    }
+    if (!shown || !jump.current() || engine.current !== view) return false;
+    // The sentence's text is read once its part is in the page.
+    const place = preparedLocator(paragraphId) ?? value;
+    latest.current = place;
+    setLocator(place);
+    if (persist) await saveReading(id, place, "listening", recordingId);
+    view.highlight(paragraphId);
+    highlight.current = paragraphId;
+    return true;
+  };
+  const clearHighlight = () => {
+    if (engine.current) {
+      engine.current.highlight(null);
+      highlight.current = null;
+    } else if (highlight.current && rendition.current) {
+      rendition.current.annotations.remove(highlight.current, "highlight");
+      highlight.current = null;
+    }
+  };
   const showFragment = async (
     paragraphId: string,
     persist = false,
     recordingId = mapRef.current?.recordingId,
   ) => {
+    if (prepared) return showPrepared(paragraphId, persist, recordingId);
     const jump = following.startJump();
     const current = bookRef.current,
       view = rendition.current;
@@ -1296,10 +1486,7 @@ export function ReaderView({
       {
         following.forgetFollowed();
         pagedSentence.current = null;
-        if (highlight.current && rendition.current) {
-          rendition.current.annotations.remove(highlight.current,"highlight");
-          highlight.current=null;
-        }
+        clearHighlight();
         return;
       }
     // The sentence the highlight marks (the following module's rule). In a gap it is still the last narrated
@@ -1318,10 +1505,9 @@ export function ReaderView({
     } else if (interval) {
       // The same narrated sentence: in pages mode the page turns inside it once the narration reaches a word on the next page.
       turnInside(key);
-    } else if (!interval && highlight.current && rendition.current) {
+    } else if (!interval && highlight.current && (rendition.current || engine.current)) {
       // Before the map's first sentence there is no narrated sentence (a jump back before it).
-      rendition.current.annotations.remove(highlight.current, "highlight");
-      highlight.current = null;
+      clearHighlight();
       following.forgetFollowed();
     }
   }, [p.position, p.track?.id, p.book?.recordingId, follow, map, mapConfirmed, rendered, followRevision]);
@@ -1376,6 +1562,11 @@ export function ReaderView({
     if (previous && track) following.backToNarration(narrationAt(previous.book, track.id, previous.position));
     else following.backToNarration();
   };
+  // The device's copy of the book for reading without a connection is today's reader's, with every sentence; the new
+  // view holds none of them (Keep on this device is step 6 of #799) and must not write its book over that copy.
+  const keepBook = async (updated: ReaderBook) => {
+    if (!prepared) await localDB.preferences.put({ key: `reader-book:${id}`, value: updated });
+  };
   const bookmark = async () => {
     if (!book || !latest.current) return;
     const entry = {
@@ -1386,7 +1577,7 @@ export function ReaderView({
     const updated = { ...book, bookmarks: [...book.bookmarks, entry] };
     setBook(updated);
     bookRef.current = updated;
-    await localDB.preferences.put({ key: `reader-book:${id}`, value: updated });
+    await keepBook(updated);
     await localDB.preferences.put({
       key: `reader-bookmarks:${id}`,
       value: updated.bookmarks,
@@ -1403,7 +1594,7 @@ export function ReaderView({
     const updated = { ...current, bookmarks: current.bookmarks.filter((bookmark) => bookmark.id !== entry.id) };
     setBook(updated);
     bookRef.current = updated;
-    void localDB.preferences.put({ key: `reader-book:${id}`, value: updated });
+    void keepBook(updated);
     void queueBookmark(id, "DELETE", entry);
   };
   // Undo of "Bookmark removed": the same bookmark, back where it was in the list, saved again.
@@ -1417,14 +1608,22 @@ export function ReaderView({
     const updated = { ...current, bookmarks };
     setBook(updated);
     bookRef.current = updated;
-    void localDB.preferences.put({ key: `reader-book:${id}`, value: updated });
+    void keepBook(updated);
     void localDB.preferences.put({ key: `reader-bookmarks:${id}`, value: updated.bookmarks });
     void queueBookmark(id, "POST", removed.entry);
   };
   const editReader = (patch: Partial<typeof preferences>) => {
     void saveReader(patch).catch(() => {});
   };
-  const turn = (direction: number) => navigate(view => direction < 0 ? view.prev() : view.next());
+  const turn = (direction: number) => {
+    if (!prepared) return navigate(view => direction < 0 ? view.prev() : view.next());
+    // One band's height of the column; the scroll it makes is reported as the reader's own move.
+    following.navigate();
+    const ended = following.beginNavigation();
+    engine.current?.turn(direction < 0 ? -1 : 1);
+    ended();
+  };
+  longPress.current = (sentence) => listenAt(sentence, true);
   pageAction.current = (action, content, event) => {
     if (action === "previous") turn(-1);
     else if (action === "next") turn(1);
@@ -1476,8 +1675,13 @@ export function ReaderView({
     window.addEventListener("keydown",key); return () => window.removeEventListener("keydown",key);
   }, [appearanceOpen]);
   const sections = book?.sections || [];
-  const sectionOf = (paragraphId?: string) =>
-    paragraphId ? sections.find((section) => section.paragraphs.some((fragment) => fragment.id === paragraphId)) : undefined;
+  // Where a sentence is in the book: from every sentence today, from the prepared manifest in the new view.
+  const heldSections = book?.sections;
+  const places = useMemo(() => source?.index ?? sentencePlaces(heldSections ?? []), [source, heldSections]);
+  const sectionOf = (paragraphId?: string) => {
+    const index = places.sectionOf(paragraphId);
+    return index === null ? undefined : sections.find((section) => section.index === index);
+  };
   const narratedSection = sectionOf(currentInterval?.paragraphId);
   const currentSection = sections.find((section) => section.index === locator?.section);
   // Bookmarks mark the sentence in view: the narrated one while following,
@@ -1487,13 +1691,13 @@ export function ReaderView({
   // The slider follows the book/chapter progress setting and moves the page on release. A work without a recording
   // has the slider as its only way through the book: "Position in the book", the whole book (#594).
   const scope = recording ? appearance.playback.progressScope : "book";
-  const allFragments = sections.flatMap((section) => section.paragraphs);
-  const scopeFragments = scope === "chapter" ? currentSection?.paragraphs || [] : allFragments;
-  const scopeIndex = scopeFragments.findIndex((fragment) => fragment.id === locator?.paragraphId);
-  const progress = scopeFragments.length > 1 ? Math.max(0, scopeIndex) / (scopeFragments.length - 1) : 0;
-  const fragmentAt = (value: number) => scopeFragments[Math.round((value / 1000) * Math.max(0, scopeFragments.length - 1))];
+  const scopeSpan = scope === "chapter" ? (currentSection ? places.sectionSpan(currentSection.index) : { start: 0, count: 0 }) : { start: 0, count: places.total };
+  const shownOrdinal = places.ordinalOf(locator?.paragraphId);
+  const scopeIndex = shownOrdinal >= scopeSpan.start && shownOrdinal < scopeSpan.start + scopeSpan.count ? shownOrdinal - scopeSpan.start : -1;
+  const progress = scopeSpan.count > 1 ? Math.max(0, scopeIndex) / (scopeSpan.count - 1) : 0;
+  const fragmentAt = (value: number) => (scopeSpan.count ? places.idAt(scopeSpan.start + Math.round((value / 1000) * Math.max(0, scopeSpan.count - 1))) : undefined);
   const scrubbing = scrub !== null ? fragmentAt(scrub) : undefined;
-  const shownSection = scrubbing ? sectionOf(scrubbing.id) : currentSection;
+  const shownSection = scrubbing ? sectionOf(scrubbing) : currentSection;
   const shownPercent = Math.round((scrub !== null ? scrub / 1000 : progress) * 100);
   const commitScrub = () => {
     if (scrub === null) return;
@@ -1502,7 +1706,7 @@ export function ReaderView({
     if (!fragment) return;
     following.pageAway();
     const place = following.manualPlace();
-    void showFragment(fragment.id, false).then(
+    void showFragment(fragment, false).then(
       () => place.save(latest.current),
       () => place.save(null),
     );
@@ -1575,7 +1779,7 @@ export function ReaderView({
   const narratedChapter = audio ? currentChapter(audio.book, audio.track.id, p.position) : undefined;
   const restLine = audio
     ? footRestLine(barChapter, { secondsLeft: narratedChapter ? chapterTimeLeft(narratedChapter, p.position, p.speed) : 0 })
-    : footRestLine(currentSection?.title, { fraction: allFragments.length > 1 ? Math.max(0, allFragments.findIndex((fragment) => fragment.id === locator?.paragraphId)) / (allFragments.length - 1) : 0 });
+    : footRestLine(currentSection?.title, { fraction: places.total > 1 ? Math.max(0, shownOrdinal) / (places.total - 1) : 0 });
   const timing = currentInterval ? " · estimated timings" : "";
   // Chapters, Bookmarks and Search (#590): pages of the book, opened from here with an entry of their own. This
   // reader stays mounted under them and publishes what they list; a row asks it to show a place, paged away.
@@ -1599,6 +1803,8 @@ export function ReaderView({
       narrated: narratedSection ? { section: narratedSection.index, secondsLeft: narratedSecondsLeft } : null,
       removeBookmark: (entry) => removeShown.current(entry),
       show: () => shown.current(),
+      // The new view holds no sentences: Search asks for them when it is opened, not the reader's open.
+      ...(prepared ? { text: () => loadReaderText(id, book.fingerprint) } : {}),
     });
   }, [book, id, host, locator?.section, narratedSection?.index, narratedSecondsLeft]);
   useEffect(() => () => publishReader({ ebookId: id, host }, null), [id, host]);
@@ -1612,7 +1818,7 @@ export function ReaderView({
   const showPlace = useRef<(place: ReaderPlace) => void>(() => {});
   showPlace.current = (place) => {
     if (place.kind === "section") {
-      navigate((view) => view.display(place.href), place.section);
+      openSection(place.section, place.href);
       return;
     }
     following.pageAway();
@@ -1637,6 +1843,21 @@ export function ReaderView({
   }, [rendered, id, host]);
 
   const showContents = desktop && !contentsHidden;
+  // The prepared text's look (prepared-text.css): the reader's Appearance and the application's colours, the values
+  // today's reader gives epub.js as its theme.
+  const preparedStyle = useMemo(() => {
+    if (!prepared) return undefined;
+    const palette = paletteFor(appearance);
+    return {
+      "--prepared-ink": mixHex(palette.text, palette.background, 0.94),
+      "--prepared-font": readerFonts[preferences.font],
+      "--prepared-size-min": `${Math.max(14, preferences.size - 2)}px`,
+      "--prepared-size-max": `${preferences.size + 1}px`,
+      "--prepared-line": String(preferences.lineHeight === 1.7 ? (window.innerWidth > 400 ? 1.55 : 1.6) : preferences.lineHeight),
+      "--prepared-margin": preferences.margin === 20 ? "clamp(20px, 6cqw, 32px)" : `${preferences.margin}px`,
+      "--prepared-measure": preferences.width === 720 ? "34em" : `${preferences.width}px`,
+    } as CSSProperties;
+  }, [prepared, themeKey]);
   // The message in the foot (#591): a place saved elsewhere, an error, a notice with Undo, an update while paused.
   const update = useReaderUpdate(viewport);
   const message = messageToShow(messages.state, {
@@ -1650,7 +1871,8 @@ export function ReaderView({
     undo: (notice: ReaderNotice) => (notice === "listening" ? undoListen() : undoRemoveBookmark()),
     retry: (failed: ReaderError) => {
       messages.clearError(failed);
-      if (failed === "locate") void fromAudio();
+      if (failed === "text-load" || failed === "book-load" || failed === "book-offline") retryLoad();
+      else if (failed === "locate") void fromAudio();
       else {
         // Back to narration, and the follow jump is tried again even when the reader was still following.
         following.backToNarration();
@@ -1748,7 +1970,7 @@ export function ReaderView({
                 key={section.index}
                 className="type-label"
                 aria-current={section.index === locator?.section ? "location" : undefined}
-                onClick={() => navigate((view) => view.display(section.href), section.index)}
+                onClick={() => openSection(section.index, section.href)}
               >
                 {section.index === narratedSection?.index && <Headphones size={16} role="img" aria-label="Narrating" />}
                 <span>{section.title}</span>
@@ -1763,7 +1985,8 @@ export function ReaderView({
             className="reader-viewport"
             ref={viewport}
             data-spread={spreadWidth ? "two" : undefined}
-            style={spreadWidth ? ({ "--reader-spread": `${spreadWidth}px` } as CSSProperties) : undefined}
+            data-view={prepared ? "prepared" : undefined}
+            style={prepared ? preparedStyle : spreadWidth ? ({ "--reader-spread": `${spreadWidth}px` } as CSSProperties) : undefined}
             aria-label="Ebook pages"
           />
           {desktop && <button className="reader-edge reader-edge-next" aria-label="Next page" onClick={()=>turn(1)}><ArrowRight size={20}/></button>}

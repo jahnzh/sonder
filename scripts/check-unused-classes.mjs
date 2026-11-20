@@ -180,11 +180,14 @@ function filesUnder(directory, test) {
   }).sort();
 }
 
-/** The words and prefixes of every `.ts`/`.tsx` file under `root/src` and of `root/index.html`. */
+/** The words and prefixes of every `.ts`/`.tsx` file under `root/src`, of `root/server/prepared-text.ts` and of `root/index.html`. */
 export function appUses(root) {
   const uses = { words: new Set(), prefixes: new Set() };
   for (const name of filesUnder(path.join(root, "src"), (file) => /\.tsx?$/.test(file) && !file.endsWith(".d.ts")))
     scriptUses(readFileSync(name, "utf8"), name, uses);
+  // The classes of prepared text (ADR 0025) are put on the book's elements by the server, which names them here.
+  const prepared = path.join(root, "server", "prepared-text.ts");
+  if (existsSync(prepared)) scriptUses(readFileSync(prepared, "utf8"), prepared, uses);
   const html = path.join(root, "index.html");
   if (existsSync(html)) htmlUses(readFileSync(html, "utf8"), uses);
   return uses;

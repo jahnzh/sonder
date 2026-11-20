@@ -1,0 +1,142 @@
+/* The new reading view's text (step 3 of #799, ADR 0025): the server's prepared parts in the application's own page.
+   The prepared HTML carries structure only; the publisher's fonts and layout are dropped on purpose, so every rule
+   of the book's look is here: the reader's Appearance (font, size, line height, margin, width, as variables the
+   reader sets on the band), the application's colours, and the spacing tokens. */
+.prepared-scroll {
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* The view keeps the lines in place itself when text is added above them. */
+  overflow-anchor: none;
+  /* Up and down scrolls the text; a sideways swipe is the reader's. */
+  touch-action: pan-y;
+  /* The text's size follows the band's width, as it followed the frame's. */
+  container-type: inline-size;
+}
+.prepared-text {
+  box-sizing: content-box;
+  max-width: var(--prepared-measure, 34em);
+  margin: 0 auto;
+  padding: var(--prepared-margin, var(--space-24)); /* tokens: the reader's own Margin setting (Appearance), a length the user chooses */
+  color: var(--prepared-ink, var(--text));
+  font-family: var(--prepared-font, serif);
+  font-size: clamp(var(--prepared-size-min, 15px), 4.6cqw, var(--prepared-size-max, 18px));
+  line-height: var(--prepared-line, 1.6);
+  text-align: left;
+  hyphens: auto;
+  overflow-wrap: break-word;
+}
+.prepared-text p,
+.prepared-text .t-p {
+  margin: 0 0 var(--space-8);
+}
+.prepared-text :is(h1, h2, h3, h4, h5, h6) {
+  margin: var(--space-32) 0 var(--space-16);
+  font-weight: 650;
+  line-height: 1.25;
+  hyphens: manual;
+  text-wrap: balance;
+}
+.prepared-text h1 { font-size: 1.5em; }
+.prepared-text h2 { font-size: 1.3em; }
+.prepared-text h3 { font-size: 1.15em; }
+.prepared-text :is(h4, h5, h6) { font-size: 1em; }
+.prepared-text section > :first-child,
+.prepared-text .prepared-part > section:first-child > :first-child {
+  margin-top: 0;
+}
+/* A chapter file starts with room above it. */
+.prepared-text section + section,
+.prepared-text .prepared-part + .prepared-part > section:first-child[data-section] {
+  margin-top: var(--space-32);
+}
+.prepared-text blockquote {
+  margin: var(--space-16) 0 var(--space-16) var(--space-24);
+}
+.prepared-text :is(ul, ol) {
+  margin: 0 0 var(--space-8);
+  padding-left: var(--space-24);
+}
+.prepared-text ul { list-style: disc; }
+.prepared-text ol { list-style: decimal; }
+.prepared-text .t-nav :is(ul, ol) { list-style: none; }
+.prepared-text dd {
+  margin-left: var(--space-24);
+}
+.prepared-text pre {
+  margin: 0 0 var(--space-8);
+  white-space: pre-wrap;
+  font-size: 0.9em;
+}
+.prepared-text hr {
+  margin: var(--space-24) auto;
+  width: 30%;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+.prepared-text :is(figure, table) {
+  margin: var(--space-16) 0;
+}
+.prepared-text figcaption,
+.prepared-text caption {
+  font-size: 0.9em;
+  color: var(--muted);
+}
+/* A picture keeps the room its width and height name while it loads, so the text does not jump. */
+.prepared-text img {
+  display: inline-block;
+  max-width: 100%;
+  height: auto;
+  vertical-align: middle;
+}
+.prepared-text table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9em;
+}
+.prepared-text :is(td, th) {
+  /* A table is held to the band's width: a long word in a cell breaks instead of being cut off at the right. */
+  overflow-wrap: anywhere;
+  padding: var(--space-4) var(--space-8);
+  vertical-align: top;
+  text-align: left;
+}
+.prepared-text :is(em, i, cite) { font-style: italic; }
+.prepared-text :is(strong, b) { font-weight: 700; }
+.prepared-text :is(sub, sup) { font-size: 0.75em; line-height: 0; }
+.prepared-text small { font-size: 0.85em; }
+.prepared-text code { font-family: ui-monospace, monospace; font-size: 0.9em; }
+.prepared-text mark { background: var(--accent-soft); color: inherit; }
+/* Only an anchor with a place to go is drawn as a link; one around whole paragraphs is the page's text (#727). */
+.prepared-text a { color: inherit; text-decoration: none; }
+.prepared-text a:is([href], [data-part]):not(:has(p, div, blockquote, li, ul, ol, dl, table, section, h1, h2, h3, h4, h5, h6, pre, figure, hr)) {
+  color: var(--accent);
+  cursor: pointer;
+}
+
+/* The server's style hints. */
+.prepared-text .t-c { text-align: center; }
+.prepared-text .t-r { text-align: right; }
+.prepared-text .t-i { font-style: italic; }
+.prepared-text .t-b { font-weight: 700; }
+.prepared-text .t-u { text-decoration: underline; }
+.prepared-text .t-sc { font-variant-caps: small-caps; }
+.prepared-text .t-up { text-transform: uppercase; }
+.prepared-text .t-ni { text-indent: 0; }
+.prepared-text .t-in1 { margin-left: var(--space-24); }
+.prepared-text .t-in2 { margin-left: calc(2 * var(--space-24)); }
+.prepared-text .t-pb { margin-top: var(--space-32); }
+.prepared-text .t-nav { margin: 0 0 var(--space-16); }
+/* A table the book wrote with its rows out of place arrives as divs (t-table, t-tr, t-td, …): one block a cell. */
+/* A printed page's number stays as the book shows it; it is a sentence like any other. */
+.prepared-text .t-pagebreak { color: var(--muted); }
+/* Text the book hides is hidden here too. It is still a sentence: following and the highlight pass over it. */
+.prepared-text .t-hide { display: none; }
+
+/* The narrated sentence: its own elements' background, nothing drawn over the text (ADR 0019). */
+.prepared-text .sonder-follow {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}

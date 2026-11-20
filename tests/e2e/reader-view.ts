@@ -11,6 +11,23 @@ export const highlightShown = (room: Locator): Promise<boolean> => narratedOnPag
 export function textShown(room: Locator, text: string) {
   return room.locator(".reader-viewport").evaluate((host, needle) => {
     const bounds = host.getBoundingClientRect();
+    // The view of prepared text (#802) has the book's text in the band itself, not in a frame.
+    if (host.getAttribute("data-view") === "prepared") {
+      const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const at = node.textContent!.indexOf(needle);
+        if (at < 0) continue;
+        const range = document.createRange();
+        range.setStart(node, at);
+        range.setEnd(node, at + needle.length);
+        for (const rect of range.getClientRects()) {
+          const width = Math.min(bounds.right, rect.right) - Math.max(bounds.left, rect.left);
+          const height = Math.min(bounds.bottom, rect.bottom) - Math.max(bounds.top, rect.top);
+          if (width > 2 && height > 2) return true;
+        }
+      }
+      return false;
+    }
     for (const frame of host.querySelectorAll("iframe")) {
       const doc = frame.contentDocument, frameBounds = frame.getBoundingClientRect();
       if (!doc?.body) continue;

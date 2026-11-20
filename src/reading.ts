@@ -10,6 +10,8 @@ import type {
   TextLocator,
 } from "./reading-types";
 import type { SavedEbook } from "./types";
+import { patiently, preparedBook, preparedChanged, type PreparedBook } from "./prepared-book";
+import { preparedView } from "./reader-view-switch";
 export type PendingReading = {
   checkpoint: ReadingCheckpoint;
   baseRevision: number;
@@ -182,6 +184,10 @@ export async function loadReader(id: string): Promise<ReaderBook> {
     if (!cached) throw error;
     book = cached.value as ReaderBook;
   }
+  return withDeviceState(id, book);
+}
+/** The book with what this device still has to send: bookmark changes that wait, and a place saved here last. */
+async function withDeviceState(id: string, book: ReaderBook): Promise<ReaderBook> {
   const pending = (await localDB.preferences.get(`reader-bookmark-queue:${id}`))
     ?.value as
     | {
@@ -207,6 +213,54 @@ export async function loadReader(id: string): Promise<ReaderBook> {
       pending: false,
     });
   return book;
+}
+/**
+ * The book as the new reading view opens it (#802, ADR 0025): the prepared manifest for what the book is, and the
+ * user's place and bookmarks from their own small route. No sentence is asked for: `sections` name the chapter
+ * files that have text, with no paragraphs, and the view reads the text from the prepared parts.
+ */
+export async function loadPreparedReader(id: string): Promise<{ book: ReaderBook; prepared: PreparedBook }> {
+  const [prepared, state] = await Promise.all([
+    preparedBook(id),
+    patiently(() => api<Pick<ReaderBook, "workId" | "title" | "author" | "checkpoint" | "bookmarks">>(`/reader/${encodeURIComponent(id)}/state`)),
+  ]);
+  const { manifest } = prepared;
+  const sections = manifest.sections
+    .filter((section) => section.first !== null)
+    .map((section) => ({ index: section.index, href: section.href, title: section.title, paragraphs: [] }));
+  const book = await withDeviceState(id, {
+    id,
+    workId: state.workId,
+    // The work's own, which an edit changes without the book's file changing.
+    title: state.title,
+    author: state.author,
+    language: manifest.language,
+    fingerprint: manifest.fingerprint,
+    sections,
+    toc: sections.map((section) => ({ label: section.title, href: section.href, section: section.index })),
+    checkpoint: state.checkpoint,
+    bookmarks: state.bookmarks,
+  });
+  return { book, prepared };
+}
+const readerTexts = new Map<string, Promise<ReaderBook["sections"]>>();
+/**
+ * Every sentence of a book, for Search in the new view, which searches on the device as today's does. Asked for
+ * when Search is opened and once for an edition's file while the page lives.
+ */
+export function loadReaderText(id: string, fingerprint: string): Promise<ReaderBook["sections"]> {
+  const key = `${id}:${fingerprint}`;
+  let text = readerTexts.get(key);
+  if (!text) {
+    text = api<ReaderBook>(`/reader/${encodeURIComponent(id)}`).then((book) => {
+      // The sentences name the file they were cut from: another one than the manifest's means the book changed.
+      if (book.fingerprint !== fingerprint) preparedChanged(id, book.fingerprint);
+      return book.sections;
+    });
+    text.catch(() => readerTexts.get(key) === text && readerTexts.delete(key));
+    readerTexts.set(key, text);
+  }
+  return text;
 }
 const bookmarkSyncs = new Set<string>();
 export async function queueBookmark(
@@ -520,16 +574,21 @@ export function warmPlaybackReading(
       }
     } catch {}
 
-    const readerBook = loadReader(ebookId).catch(() => null);
-    void readerBook.then((readerBook) => {
-      if (!cancelled && readerBook?.fingerprint) {
-        void epubFile(readerBook.id, readerBook.fingerprint).catch(() => {});
-      }
-    });
+    // With the new view chosen on this device (#802) the reader opens the prepared text: neither the book's
+    // sentences nor its EPUB file are fetched, and the manifest asked for here is the one the reader opens with.
+    const readerBook: Promise<Pick<ReaderBook, "id" | "fingerprint"> | null> = preparedView()
+      ? preparedBook(ebookId).then((book) => ({ id: ebookId, fingerprint: book.manifest.fingerprint }), () => null)
+      : loadReader(ebookId).catch(() => null);
+    if (!preparedView())
+      void readerBook.then((readerBook) => {
+        if (!cancelled && readerBook?.fingerprint) {
+          void epubFile(readerBook.id, readerBook.fingerprint).catch(() => {});
+        }
+      });
 
     if (!recordingId) return;
 
-    const deps = alignmentMapDeps();
+    const deps = alignmentMapDeps("warming");
     const checkJobAndMap = () =>
       warmMap(deps, {
         ebookId,

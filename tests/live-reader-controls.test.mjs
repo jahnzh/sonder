@@ -166,6 +166,26 @@ test("narratedOnPage says whether a highlight rectangle is on the page, not mere
   assert.equal(await narratedOnPage(pages()), false);
 });
 
+test("narratedOnPage reads the sentence's own line boxes where the highlight is the text itself (#802)", async () => {
+  // The view of prepared text marks the sentence's elements; they hold no SVG rectangles.
+  const rect = (left, top, width = 100, height = 20) => ({ left, right: left + width, top, bottom: top + height });
+  const band = (...tops) => ({
+    locator: () => ({
+      evaluate: async (fn) =>
+        fn({
+          getBoundingClientRect: () => rect(0, 0, 390, 700),
+          querySelectorAll: (selector) => (selector === ".sonder-follow" ? tops.map((top) => ({ querySelectorAll: () => [], getClientRects: () => [rect(40, top)] })) : []),
+        }),
+    }),
+  });
+  assert.equal(await narratedOnPage(band(300)), true);
+  // Scrolled out above or below the band.
+  assert.equal(await narratedOnPage(band(-200)), false);
+  assert.equal(await narratedOnPage(band(900)), false);
+  // A sentence in two elements, one of them in view.
+  assert.equal(await narratedOnPage(band(-200, 10)), true);
+});
+
 test("show does not tap when the bar is already shown (a tap would hide it)", async () => {
   const { controls, state } = controlsFor({ visible: true });
   await controls.show();

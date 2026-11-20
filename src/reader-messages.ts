@@ -14,7 +14,11 @@ export type ReaderError =
   | "bookmark-remove"
   | "no-sync"
   | "no-map"
-  | "no-recording";
+  | "no-recording"
+  /** The new reading view (#802): a part of the book, the book itself, or anything of it without a connection. */
+  | "text-load"
+  | "book-load"
+  | "book-offline";
 
 /** The notices with Undo. */
 export type ReaderNotice = "listening" | "bookmark-removed";
@@ -114,6 +118,9 @@ const errorTexts: Record<ReaderError, string> = {
   "no-map": "Prepare a matching audiobook map for this passage first.",
   // Back to narration while the player holds no recording of this book.
   "no-recording": "Choose this recording and prepare its reading sync first.",
+  "text-load": "This part of the book could not be loaded.",
+  "book-load": "This book could not be loaded.",
+  "book-offline": "This book needs a connection to be read in this view.",
 };
 
 const noticeTexts: Record<ReaderNotice, string> = {
@@ -139,5 +146,5 @@ export function messageText(message: ReaderMessage): string {
 
 /** Whether an error offers Retry: where trying again can help (showing or finding the narrated place). */
 export function errorRetries(error: ReaderError) {
-  return error === "narration" || error === "locate";
+  return error === "narration" || error === "locate" || error === "text-load" || error === "book-load" || error === "book-offline";
 }

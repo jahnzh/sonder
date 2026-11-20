@@ -98,11 +98,27 @@ function useListedBook(workId: string, page: ReaderPage) {
     void localDB.preferences.put({ key: `reader-book:${ebookId}`, value: updated });
     void queueBookmark(ebookId, "DELETE", entry);
   };
+  // A reader of prepared text holds no sentences (#802): Search loads them when it is the page shown, and shows its
+  // waiting line until they are there. Chapters and Bookmarks list from what the reader holds.
+  const loadText = opener?.text;
+  const [text, setText] = useState<{ of: string; sections: readonly ReaderSection[] } | null>(null);
+  useEffect(() => {
+    if (page !== "search" || !loadText || !ebookId) return;
+    let live = true;
+    loadText().then(
+      (sections) => live && setText({ of: ebookId, sections }),
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [page, !!loadText, ebookId]);
+  const searched = loadText && page === "search" ? (text && text.of === ebookId ? text.sections : null) : undefined;
   const missing = !opener && (status === "missing" || status === "offline" || (status === "ready" && !ebookId) || !!own?.failed);
   return {
     ebookId: ebookId ?? null,
     title: opener?.title ?? ownBook?.title ?? work?.title ?? "",
-    sections: (opener?.sections ?? ownBook?.sections ?? null) as readonly ReaderSection[] | null,
+    sections: (searched !== undefined ? searched : opener?.sections ?? ownBook?.sections ?? null) as readonly ReaderSection[] | null,
     bookmarks: (opener?.bookmarks ?? ownBook?.bookmarks ?? []) as readonly Bookmark[],
     narrated: opener?.narrated ?? null,
     missing,

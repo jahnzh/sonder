@@ -26,7 +26,7 @@ export function useReaderMap(
   // One lifecycle for the mounted reader: its server-confirmation history spans recording changes.
   const loader = useRef<ReturnType<typeof createReaderMapLoader> | null>(null);
   loader.current ??= createReaderMapLoader({
-    lifecycle: createAlignmentMapLifecycle(alignmentMapDeps()),
+    lifecycle: createAlignmentMapLifecycle(alignmentMapDeps("reader")),
     onMap: (job, confirmed) => onMapRef.current(job, confirmed),
     setInterval: (run, ms) => window.setInterval(run, ms),
     clearInterval: (timer) => window.clearInterval(timer as number),
