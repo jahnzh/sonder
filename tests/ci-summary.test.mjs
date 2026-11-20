@@ -323,3 +323,54 @@ test("prints stage durations and slowest browser tests when present", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test("a passed_with_flaky report lists new, flaky (passed alone) and known with one line per test (#792)", () => {
+  const tmp = makeTempDir();
+  try {
+    const flaky = (i) => ({project: "chromium", file: "tests/e2e/reader-frame.spec.ts", title: `flaky ${i}`, firstError: `Error: timeout ${i}`});
+    fs.writeFileSync(path.join(tmp, "report.json"), JSON.stringify({
+      sha: "a".repeat(40),
+      result: "passed_with_flaky",
+      ok: true,
+      stages: ["install", "build", "unit"].map((name) => ({name, status: "passed", durationMs: 1000}))
+        .concat([{name: "browser", status: "failed", toleratedBy: "rerun-alone", durationMs: 2000}]),
+      browserFailures: {
+        result: "passed_with_flaky",
+        new: [],
+        flaky: [flaky(1), flaky(2)],
+        known: [{project: "chromium", file: "tests/e2e/playback-workflow.spec.ts", title: "touch seeking › fine seek", kind: "environment", issue: 37}],
+      },
+      browserReruns: {max: 12, skipped: null, tests: []},
+    }));
+    const res = run([tmp]);
+    assert.equal(res.status, 0, res.stdout + res.stderr);
+    const lines = res.stdout.trim().split("\n");
+    assert.ok(lines.length < 30, `expected under 30 lines, got ${lines.length}`);
+    assert.match(res.stdout, /result: passed_with_flaky/);
+    assert.match(res.stdout, /new browser failures: 0/);
+    assert.match(res.stdout, /flaky \(passed alone\) \(2\):\n  chromium tests\/e2e\/reader-frame\.spec\.ts flaky 1 — Error: timeout 1\n  chromium tests\/e2e\/reader-frame\.spec\.ts flaky 2 — Error: timeout 2/);
+    assert.match(res.stdout, /known browser failures \(1\):\n  chromium tests\/e2e\/playback-workflow\.spec\.ts touch seeking › fine seek \(#37\)/);
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});
+
+test("a failed report whose failures exceeded the rerun bound says no test was rerun (#792)", () => {
+  const tmp = makeTempDir();
+  try {
+    fs.writeFileSync(path.join(tmp, "report.json"), JSON.stringify({
+      sha: "b".repeat(40),
+      result: "failed",
+      ok: false,
+      failedStage: "browser",
+      stages: [{name: "browser", status: "failed", durationMs: 1}],
+      browserFailures: {result: "failed", new: [{project: "chromium", file: "tests/e2e/a.spec.ts", title: "a"}], flaky: [], known: []},
+      browserReruns: {max: 12, skipped: "13 failures exceed the rerun bound of 12, so none was rerun", tests: []},
+    }));
+    const res = run([tmp]);
+    assert.match(res.stdout, /new browser failures \(1\):\n  chromium tests\/e2e\/a\.spec\.ts a\n  no reruns: 13 failures exceed the rerun bound of 12/);
+    assert.doesNotMatch(res.stdout, /flaky/);
+  } finally {
+    fs.rmSync(tmp, {recursive: true, force: true});
+  }
+});

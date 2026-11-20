@@ -320,6 +320,22 @@ test("a requested model that Orca replaced is recorded as both requested and eff
   }
 });
 
+test("a check that passed only because its failures passed alone is recorded as pass_with_flaky (#792)", () => {
+  const box = sandbox();
+  try {
+    box.stage("ctx_a", { completed: "2026-10-30 12:34:56" });
+    box.cli(["capture", "--dispatch", "ctx_a"]);
+    const report = join(box.root, "flaky-report.json");
+    writeFileSync(report, JSON.stringify({ result: "passed_with_flaky", ok: true, sha: "c".repeat(40) }));
+    const checks = box.cli(["record-check", "--dispatch", "ctx_a", "--name", "npm run check", "--report", report]).json;
+    assert.equal(checks.entries[0].result, "pass_with_flaky");
+    const byHand = box.cli(["record-check", "--dispatch", "ctx_a", "--name", "ci:ssh", "--result", "pass_with_flaky"]);
+    assert.equal(byHand.status, 0, byHand.err);
+  } finally {
+    box.cleanup();
+  }
+});
+
 test("checks stay separate from completion and from reviews, and a check that passed with known failures is not a plain pass", () => {
   const box = sandbox();
   try {

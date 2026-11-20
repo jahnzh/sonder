@@ -243,7 +243,7 @@ export function summarizeRun(artifactDir) {
       { name: "unit", status: "passed", durationMs: null },
       { name: "browser", status: "failed", durationMs: null },
     ];
-  } else if (report?.ok === true || result === "passed" || result === "passed_with_known_failures") {
+  } else if (report?.ok === true || result === "passed" || result === "passed_with_known_failures" || result === "passed_with_flaky") {
     stages = [
       { name: "install", status: "passed", durationMs: null },
       { name: "build", status: "passed", durationMs: null },
@@ -255,14 +255,21 @@ export function summarizeRun(artifactDir) {
   // Browser failures
   let newBrowserFailures = [];
   let knownBrowserFailures = [];
-  if (report?.knownFailures) {
-    if (Array.isArray(report.knownFailures.new)) {
-      newBrowserFailures = report.knownFailures.new;
+  let flakyBrowserFailures = [];
+  // browserFailures (#792) classifies every failed run, with or without a known-failures list.
+  const browserFailures = report?.browserFailures ?? report?.knownFailures;
+  if (browserFailures) {
+    if (Array.isArray(browserFailures.new)) {
+      newBrowserFailures = browserFailures.new;
     }
-    if (Array.isArray(report.knownFailures.known)) {
-      knownBrowserFailures = report.knownFailures.known;
+    if (Array.isArray(browserFailures.known)) {
+      knownBrowserFailures = browserFailures.known;
+    }
+    if (Array.isArray(browserFailures.flaky)) {
+      flakyBrowserFailures = browserFailures.flaky;
     }
   }
+  const browserRerunsSkipped = report?.browserReruns?.skipped ?? null;
 
   // Unit failures
   let unitFailures = [];
@@ -293,7 +300,9 @@ export function summarizeRun(artifactDir) {
     result,
     stages,
     newBrowserFailures,
+    flakyBrowserFailures,
     knownBrowserFailures,
+    browserRerunsSkipped,
     unitFailures,
     unitFailed,
     browserSlowestTests,
@@ -329,6 +338,18 @@ export function formatSummary(data) {
       const issuePart = f.issue ? ` (#${f.issue})` : "";
       const text = `${f.project || ""} ${f.file || ""} ${f.title || ""}${issuePart}`.trim();
       lines.push(`  ${text}`);
+    }
+  }
+
+  if (data.browserRerunsSkipped) lines.push(`  no reruns: ${data.browserRerunsSkipped}`);
+
+  // Failures that passed when rerun alone (#792): one line each, with the first error of the full run.
+  const flaky = data.flakyBrowserFailures ?? [];
+  if (flaky.length > 0) {
+    lines.push(`flaky (passed alone) (${flaky.length}):`);
+    for (const f of flaky) {
+      const error = f.firstError ? ` — ${String(f.firstError).slice(0, 120)}` : "";
+      lines.push(`  ${`${f.project || ""} ${f.file || ""} ${f.title || ""}`.trim()}${error}`);
     }
   }
 

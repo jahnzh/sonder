@@ -3,7 +3,8 @@ const ROOT = "/work/sonder";
 
 /**
  * `tests` are {project, file, title, status} with `title` as a string or an array of describe titles ending in the test title,
- * `file` as a repository path such as "tests/e2e/x.spec.ts", and status "expected", "unexpected", "flaky" or "skipped".
+ * `file` as a repository path such as "tests/e2e/x.spec.ts", status "expected", "unexpected", "flaky" or "skipped",
+ * and an optional `line` (default: 10 plus the test's index in its file).
  */
 export function playwrightReport(tests, {errors = [], stats = null} = {}) {
     const byFile = new Map();
@@ -35,6 +36,9 @@ export function playwrightReport(tests, {errors = [], stats = null} = {}) {
                 title: t.titles[t.titles.length - 1],
                 ok: !failed,
                 file: specFile,
+                // Real reports give every spec its line and column; a rerun selects the test by `file:line`.
+                line: Number.isInteger(t.line) ? t.line : 10 + fileTests.indexOf(t),
+                column: 3,
                 tests: [{
                     projectName: t.project,
                     projectId: t.project,

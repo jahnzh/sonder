@@ -35,11 +35,23 @@ The list is `{"version":1,"entries":[...]}`. Each entry has `project`, `file` (r
 | --- | --- | --- |
 | `passed` | Every stage passed. | 0 |
 | `passed_with_known_failures` | Earlier stages passed, the browser stage failed and every failing test is listed. | 0 |
-| `failed` | Any other failure: an unlisted test, a failure in an earlier stage, or a browser failure the report cannot account for (no report, run-level errors, no failing test, mismatched counts). | 1 for a browser stage under this flag; an earlier stage keeps its own exit code |
+| `passed_with_flaky` | Earlier stages passed, the browser stage failed, and every failing test is listed or passed when rerun alone (see below). Also without `--known-failures`. | 0 |
+| `failed` | Any other failure: an unlisted test that failed again alone or was not rerun, a failure in an earlier stage, or a browser failure the report cannot account for (no report, run-level errors, interrupted tests, no failing test, mismatched counts). | 1 for a browser stage under this flag; otherwise the stage keeps its own exit code |
 
 `report.json` records the final result and a `knownFailures` object: `known` (listed failures that occurred), `new` (unlisted failures), `listedPassed` and `listedNotRun` (listed tests that passed, or did not run in this environment), and a one-line `summary`, which is also printed unless `--silent`. When the browser failure is tolerated as the overall result, the stage record stays `failed` and gains `toleratedBy: "known-failures"`. After a unit failure, the browser report is still classified, but known browser failures do not make the overall run pass.
 
-Remove an entry once its cause is fixed. A `listedPassed` entry that is `environment` is a candidate for removal; an `intermittent` one may simply have passed this time. `tests/known-failures.wsl-host.json` lists the failures seen on the WSL host (`192.168.1.119`).
+### Rerun a failing test alone (#792)
+
+Under load many browser tests fail that pass on their own. So when the full browser suite fails, the check reruns each failure that is not on the known-failures list once, alone, before it calls it a failure: one `npm run test:browser -- --workers=1 --retries=0 --project=<its project> --reporter=list,json --output=test-results-rerun-<n> <file>:<line>` per test, one after the other, with the same port. Each rerun keeps its log (`stage-4-browser-rerun-<n>.log`), its JSON report (`playwright-rerun-<n>.json`) and its traces (`test-results-rerun-<n>/`) in the report directory.
+
+- A test that passes alone is `flaky (passed alone)` and keeps the first error of the full run. One that fails again, or that the rerun does not run or report, is a failure.
+- If no failure is left the result is `passed_with_flaky` (exit 0), also when some failures were known; the browser stage record stays `failed` with `toleratedBy: "rerun-alone"`.
+- The rerun is bounded: with more than `--max-reruns <n>` unlisted failures (default 12) nothing is rerun and the check fails as before. `--max-reruns 0` turns reruns off.
+- Nothing is rerun after an earlier stage failed, when the report cannot account for the failure (run-level errors, interrupted tests, mismatched counts), or for the changed-spec stages, which already run with one worker.
+
+`report.json` has `browserFailures` for every classified browser run: `result`, `summary`, and `new`, `flaky` and `known`, one entry per test; `knownFailures` gains `flaky` too. `browserReruns` records the bound, why nothing was rerun (`skipped`), and per rerun its command, exit code, outcome (`passed_alone` or `failed_again`), log and report. The printed summary and `scripts/ci-summary.sh` list new failures, flaky (passed alone) and known, one line per test, in under 30 lines. Worker history records the result as `pass_with_flaky`.
+
+Remove an entry once its cause is fixed. An `intermittent` failure does not belong on the list any more: the rerun reports it as flaky, and a listed test is never rerun, so listing it would hide a test that fails twice (`tests/known-failures.test.mjs` keeps the WSL host list free of them). A `listedPassed` entry is a candidate for removal. `tests/known-failures.wsl-host.json` lists the failures seen on the WSL host (`192.168.1.119`).
 
 This command performs local validation. CI triggers, staging and image promotion remain follow-up work on issue #23; production deployment is covered by `scripts/deploy.sh` (see [Production deployment](#production-deployment)).
 

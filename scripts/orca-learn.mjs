@@ -165,7 +165,7 @@ export function signalContributions(view) {
     for (const entry of checks.entries) {
       let value = 0;
       if (entry.result === "pass") value = 0.5;
-      else if (entry.result === "pass_with_known_failures") value = 0.25;
+      else if (entry.result === "pass_with_known_failures" || entry.result === "pass_with_flaky") value = 0.25;
       else if (entry.result === "fail" || entry.result === "aborted") value = -0.75;
       signals.push({ name: "check", value, detail: `${entry.name}:${entry.result}` });
       total += value;

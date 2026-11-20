@@ -23,7 +23,17 @@ import {
   cleanupDirectory,
   writeReportFiles,
 } from "./check-local-support.mjs";
-import { loadKnownFailures, evaluateBrowserRun, readSlowestPlaywrightTests } from "./known-failures.mjs";
+import {
+  loadKnownFailures,
+  evaluateBrowserRun,
+  readSlowestPlaywrightTests,
+  planReruns,
+  rerunPlaywrightArgs,
+  applyReruns,
+  readPlaywrightReport,
+  browserSummaryLines,
+  DEFAULT_MAX_RERUNS,
+} from "./known-failures.mjs";
 
 const STAGE_DEFINITIONS = [
   { name: "install", command: "npm", args: ["ci"], fullCommand: "npm ci" },
@@ -195,6 +205,13 @@ Options:
                          and the exit code is 0. Any other failure still fails.
                          Relative paths resolve against the calling checkout.
                          See docs/LOCAL_CHECKS.md.
+  --max-reruns <n>       Rerun each failing browser test of the full suite once, alone
+                         (--workers=1, same project), before calling it a failure, when
+                         at most n tests failed outside the known-failures list (default
+                         ${DEFAULT_MAX_RERUNS}; 0 turns reruns off). A test that passes alone is
+                         "flaky (passed alone)"; if every failure is flaky or known the
+                         result is passed_with_flaky and the exit code is 0. Above n
+                         failures nothing is rerun and the check fails as before.
   --bail                 Stop after the first failed stage
   --full                 Always run the whole browser suite (default: the scope follows the
                          changed files; SONDER_CHECK_FULL=1 does the same). See docs/LOCAL_CHECKS.md.
@@ -534,6 +551,8 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     let firstFailedStage = null;
     let toleratedStage = null;
     let gate = null;
+    let browserReruns = null;
+    const maxReruns = options.maxReruns ?? DEFAULT_MAX_RERUNS;
 
     const baseEnv = {
       ...process.env,
@@ -661,17 +680,71 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       stageResults.push(stageRecord);
 
       // A tolerated failure in the full suite must not prevent changed-spec checks.
-      if (jsonReport && knownFailures && !interruptedSignal) {
+      // A failed full suite is classified even without a known-failures list, so its failures can be rerun alone.
+      if (jsonReport && (knownFailures || !stagePassed) && !interruptedSignal) {
         gate = evaluateBrowserRun({
-          entries: knownFailures.entries,
+          entries: knownFailures?.entries ?? [],
           reportPath: playwrightReportPath,
           stageExitCode: stageRes.signal ? null : stageRes.exitCode,
           stageSignal: stageRes.signal ?? null,
         });
       }
-      if (!stagePassed && gate?.result === "passed_with_known_failures" && jsonReport) {
+      // Rerun each unlisted failure once, alone, before calling it a failure (#792). Not after an earlier
+      // stage failed: the run cannot pass then, so the reruns would only cost time.
+      if (jsonReport && !stagePassed && gate && !interruptedSignal && !firstFailedStage) {
+        const plan = planReruns(gate, { max: maxReruns });
+        browserReruns = { max: maxReruns, skipped: plan.skipped, tests: [] };
+        const reruns = [];
+        for (const [n, test] of plan.tests.entries()) {
+          if (interruptedSignal) break;
+          const rerunIndex = n + 1;
+          const rerunLogName = `stage-${stageIndex}-browser-rerun-${rerunIndex}.log`;
+          const rerunReportName = `playwright-rerun-${rerunIndex}.json`;
+          const rerunArgs = ["run", "test:browser", "--", ...rerunPlaywrightArgs(test, rerunIndex)];
+          if (!options.silent) console.log(`\n=== [Rerun ${rerunIndex}/${plan.tests.length} alone] ${test.project} ${test.file} › ${test.title} ===`);
+          let rerunRes;
+          try {
+            rerunRes = await runStageProcess({
+              command: "npm",
+              args: rerunArgs,
+              cwd: disposableDir,
+              env: {...stageEnv, PLAYWRIGHT_JSON_OUTPUT_NAME: path.join(outputDir, rerunReportName)},
+              logFilePath: path.join(outputDir, rerunLogName),
+              silent: options.silent,
+              onSpawn: (child) => {
+                activeChild = child;
+              },
+            });
+          } catch (err) {
+            rerunRes = { exitCode: 1, signal: null, durationMs: 0, stderr: err.message };
+          } finally {
+            activeChild = null;
+          }
+          const read = readPlaywrightReport(path.join(outputDir, rerunReportName));
+          reruns.push({ test, ...read });
+          browserReruns.tests.push({
+            project: test.project,
+            file: test.file,
+            title: test.title,
+            command: `npm ${rerunArgs.map((arg) => JSON.stringify(arg)).join(" ")}`,
+            exitCode: rerunRes.exitCode,
+            signal: rerunRes.signal ?? null,
+            durationMs: rerunRes.durationMs,
+            logFile: rerunLogName,
+            reportFile: rerunReportName,
+          });
+        }
+        if (reruns.length > 0 && !interruptedSignal) {
+          gate = applyReruns(gate, reruns);
+          const flakyKeys = new Set(gate.flaky.map((f) => JSON.stringify([f.project, f.file, f.title])));
+          for (const record of browserReruns.tests) {
+            record.outcome = flakyKeys.has(JSON.stringify([record.project, record.file, record.title])) ? "passed_alone" : "failed_again";
+          }
+        }
+      }
+      if (!stagePassed && jsonReport && (gate?.result === "passed_with_known_failures" || gate?.result === "passed_with_flaky")) {
         toleratedStage = stageRecord;
-        stageRecord.toleratedBy = "known-failures";
+        stageRecord.toleratedBy = gate.result === "passed_with_flaky" ? "rerun-alone" : "known-failures";
       } else if (!stagePassed) {
         firstFailedStage ??= stageRecord;
         if (!options.silent) {
@@ -712,7 +785,7 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     const finalExitCode = interruptedSignal ? (interruptedSignal === "SIGINT" ? 130 : 143)
       : blockingStage ? blockingExitCode : artifactError ? 1 : 0;
     const result = interruptedSignal ? "aborted"
-      : isOverallSuccess ? (toleratedStage ? "passed_with_known_failures" : "passed") : "failed";
+      : isOverallSuccess ? (toleratedStage ? gate.result : "passed") : "failed";
 
     const report = {
       runId,
@@ -747,9 +820,20 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
         summary: gate?.summary ?? null,
         known: gate?.knownFailures ?? [],
         new: gate?.newFailures ?? [],
+        flaky: gate?.flaky ?? [],
         listedPassed: gate?.listedPassed ?? [],
         listedNotRun: gate?.listedNotRun ?? [],
       }} : {}),
+      // Every classified browser run, with or without a known-failures list: one entry per test (#792).
+      ...(gate ? {browserFailures: {
+        result: gate.result,
+        error: gate.error ?? null,
+        summary: gate.summary,
+        new: gate.newFailures,
+        flaky: gate.flaky ?? [],
+        known: gate.knownFailures,
+      }} : {}),
+      ...(browserReruns ? {browserReruns} : {}),
       setup: {
         status: "passed",
         startedAt: setupStartedAt,
@@ -768,7 +852,8 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       } else if (!isOverallSuccess) {
         console.error(`\n[check-local] Checks failed: ${interruptedSignal || artifactError || blockingStage?.name}.`);
       }
-      if (gate) console.log(`[check-local] ${gate.summary}`);
+      if (gate) for (const line of browserSummaryLines(gate)) console.log(`[check-local] ${line}`);
+      if (browserReruns?.skipped) console.log(`[check-local] No reruns: ${browserReruns.skipped}`);
       if (browserSlowestTests.length) {
         console.log(`[check-local] Slowest browser tests:`);
         for (const [index, entry] of browserSlowestTests.entries()) {
