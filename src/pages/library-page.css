@@ -281,7 +281,7 @@
   bottom: var(--space-8);
   height: 20px;
   box-sizing: border-box;
-  padding: 0 6px;
+  padding: 0 6px; /* tokens: Library.dc.html, the cover mark's 6 inside */
   border-radius: var(--corner-round);
   background: var(--background);
   color: var(--text);

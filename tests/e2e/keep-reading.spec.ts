@@ -9,6 +9,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 import { openRead } from "./now-playing";
+import { gotoRead } from "./read-face";
 
 const OUT = "OUT";
 mkdirSync(OUT, { recursive: true });
@@ -230,8 +231,8 @@ test.describe("routed library answers", () => {
       if (navigator.storage) navigator.storage.persist = async () => ((window as any).__persistCalls++, true);
     });
     const book = await fixture(page, unique("Opened"), { map: false });
-    await page.goto(`/#reader/${book.ebookId}`);
-    await expect(page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe").getByText("The first paragraph opens here.", { exact: false })).toBeVisible({
+    await gotoRead(page, book.ebookId);
+    await expect(page.frameLocator(".reader-room .reader-viewport iframe").getByText("The first paragraph opens here.", { exact: false })).toBeVisible({
       timeout: 30_000,
     });
     // The reader's own copy of the EPUB was written: the write that used to ask.

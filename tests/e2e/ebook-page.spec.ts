@@ -76,7 +76,7 @@ async function openFromLibrary(page: Page, title: string) {
   await expect(details(page)).toBeVisible();
 }
 async function closeReader(page: Page) {
-  const room = page.locator(".reader-room:not(.inline-reader)");
+  const room = page.locator(".reader-room");
   await expect(room.locator(".reader-viewport iframe")).toBeVisible();
   if (!(await room.locator(".reader-topbar").isVisible())) {
     const box = (await room.locator(".reader-viewport").boundingBox())!;
@@ -159,7 +159,9 @@ test("the administrator's Ebook page: editions and checks, shared default and Re
   // Read with several EPUBs opens the chosen one, without a chooser.
   await openFromLibrary(page, title);
   await details(page).getByRole("button", { name: "Read", exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`#reader/${escape(encodeURIComponent(matching))}$`));
+  // In Now playing's Read face (#613 part 2), with that edition.
+  await expect(page).toHaveURL(new RegExp(`#read/${escape(encodeURIComponent(book.workId))}$`));
+  await expect(page.locator(".now-playing-screen .reader-room")).toHaveAttribute("data-ebook", matching);
   await expect(page.getByText("Choose a reading edition")).toHaveCount(0);
   await closeReader(page);
 
@@ -210,7 +212,7 @@ test("the administrator's Ebook page: editions and checks, shared default and Re
   await page.getByRole("button", { name: "Back to the book", exact: true }).click();
   await details(page).getByRole("button", { name: "Read", exact: true }).click();
   await fetched;
-  await expect(page).toHaveURL(new RegExp(`#reader/${escape(encodeURIComponent(matching))}$`));
+  await expect(page).toHaveURL(new RegExp(`#read/${escape(encodeURIComponent(book.workId))}$`));
 });
 
 test("the Ebook page measured against the board at 390 by 844 and at desktop width, and on a reload", async ({ page }) => {

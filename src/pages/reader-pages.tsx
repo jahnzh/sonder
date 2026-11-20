@@ -110,7 +110,7 @@ function useListedBook(workId: string, page: ReaderPage) {
   };
 }
 
-/** A row's tap: the reader that opened the page shows the place, or the reader on its own opens there. */
+/** A row's tap: the reader that opened the page shows the place, or Now playing's Read face opens there. */
 function useOpenAt(workId: string, ebookId: string | null) {
   const { navigate } = useAddress();
   return (place: ReaderPlace) => {
@@ -119,8 +119,8 @@ function useOpenAt(workId: string, ebookId: string | null) {
       requestPlace(opener.ebookId, opener.host, place);
       opener.show();
     } else if (ebookId) {
-      requestPlace(ebookId, "reader", place);
-      navigate({ name: "reader", ebookId });
+      requestPlace(ebookId, "now-playing", place);
+      navigate({ name: "read", workId });
     }
   };
 }

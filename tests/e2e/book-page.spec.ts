@@ -207,10 +207,11 @@ test("Listen plays the chosen recording from its place; Read opens the chosen EP
   await expect(page.getByRole("heading", { level: 1, name: "Ebook", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Back to the book", exact: true }).click();
   await expect(region(page)).toBeVisible();
-  // Read opens the chosen EPUB in the reader, without a chooser.
+  // Read opens the chosen EPUB in Now playing's Read face, without a chooser (the reader on its own is gone, #613).
   await region(page).getByRole("button", { name: "Read", exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`#reader/${encodeURIComponent(book.ebookId!)}$`));
-  await expect(page.getByRole("dialog", { name: "Reader" })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`#read/${encodeURIComponent(book.workId)}$`));
+  await expect(page.getByRole("dialog", { name: "Now playing", exact: true })).toBeVisible();
+  await expect(page.locator(".now-playing-screen .reader-room")).toHaveAttribute("data-ebook", book.ebookId!);
   await page.goBack();
   await expect(region(page)).toBeVisible();
   // Listen plays the chosen recording from its place and opens the player.

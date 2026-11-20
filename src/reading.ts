@@ -2,7 +2,6 @@ import { userStorageKey } from "./lib";
 import { alignmentJobNeedsPolling, warmMap } from "./alignment-map-lifecycle";
 import { alignmentMapDeps } from "./alignment-map-deps";
 import { ApiError, api, localDB, authDB, userId } from "./lib";
-import { navigate } from "./navigation";
 import { isKeptReaderFile, writesAsCache, type ReaderFileRecord } from "./ebook-keep";
 import type {
   AlignmentJob,
@@ -419,12 +418,6 @@ export async function saveEpubOffline(
     await record({ fingerprint: book.fingerprint, opfs: true });
   } else await record({ fingerprint: book.fingerprint, blob });
   window.dispatchEvent(new CustomEvent(EBOOK_DEVICE_EVENT, { detail: { id: book.id } }));
-}
-export function openReader(id: string, fromAudio = false) {
-  window.dispatchEvent(
-    new CustomEvent("sonder:open-reader", { detail: { id, fromAudio } }),
-  );
-  navigate({ name: "reader", ebookId: id });
 }
 
 let cachedEbooksList: SavedEbook[] | null = null;

@@ -7,6 +7,7 @@ import {
   SETTINGS_PAGES,
   isFirstPage,
   OLD_NAMES,
+  editionRoute,
   parentOf,
   placeOf,
   readAddress,
@@ -74,7 +75,6 @@ test("a parameter with reserved characters survives writing and reading", () => 
       { name: "read", workId: id },
       { name: "worker", worker: id },
       { name: "settings-page", page: id },
-      { name: "reader", ebookId: id },
     ] as Route[]) {
       const address = writeAddress(route);
       assert.equal(address.split("#").length, 2, address);
@@ -83,26 +83,36 @@ test("a parameter with reserved characters survives writing and reading", () => 
   }
 });
 
-test("the old names keep working: #downloads opens Activity's Now, #reader/<ebook id> opens that edition", () => {
+test("the old names keep working: #downloads opens Activity's Now, #reader/<ebook id> opens that edition's Read", () => {
   assert.deepEqual(readAddress("#downloads"), { name: "activity", part: "now" });
   assert.equal(writeAddress(readAddress("#downloads")), "#activity");
   assert.equal(placeOf(readAddress("#downloads")), "activity");
-  assert.deepEqual(readAddress("#reader/upload-abc123"), { name: "reader", ebookId: "upload-abc123" });
-  assert.deepEqual(readAddress("#reader/libgen-9%3A1"), { name: "reader", ebookId: "libgen-9:1" });
+  // #613 part 2: the reader on its own is gone. The link names an edition whose work only the server knows: it reads
+  // as the Library (the link's place) with that edition to look up, and the answer's work gives Now playing's Read.
+  assert.deepEqual(readLink("#reader/upload-abc123"), { route: { name: "unknown", place: "library" }, redirect: true, edition: "upload-abc123" });
+  assert.equal(readLink("#reader/libgen-9%3A1").edition, "libgen-9:1");
   // Today's reader took everything after "reader/" as the id, slashes included.
-  assert.deepEqual(readAddress("#reader/a/b"), { name: "reader", ebookId: "a/b" });
-  assert.equal(writeAddress({ name: "reader", ebookId: "upload-abc123" }), "#reader/upload-abc123");
-  assert.deepEqual(parentOf({ name: "reader", ebookId: "x" }), { name: "library" });
+  assert.equal(readLink("#reader/a/b").edition, "a/b");
+  assert.equal(readLink("reader/a/b").edition, "a/b", "without the #");
   for (const admin of [true, false]) {
     assert.deepEqual(resolve(readAddress("#downloads"), { admin }), { name: "activity", part: "now" });
-    assert.deepEqual(resolve(readAddress("#reader/e1"), { admin }), { name: "reader", ebookId: "e1" });
+    assert.deepEqual(resolve(readAddress("#reader/e1"), { admin }), { name: "library" });
   }
+  // The server's answer for the edition: its work's Read face, or nothing when it names no work (the ebook is gone).
+  assert.deepEqual(editionRoute({ workId: "w1" }), { name: "read", workId: "w1" });
+  assert.equal(writeAddress(editionRoute({ workId: "a b" })!), "#read/a%20b");
+  assert.equal(editionRoute({ workId: "" }), null);
+  assert.equal(editionRoute({}), null);
+  assert.equal(editionRoute(null), null);
+  // A reader link without an id names no edition: the Library, as any address that names nothing there.
+  for (const address of ["#reader", "#reader/", "#reader/%E0%A4%A"])
+    assert.deepEqual(readLink(address), { route: { name: "unknown", place: "library" }, redirect: true }, address);
 });
 
 test("old names (spec #608): one table; each reads as its new route, marked a redirect", () => {
   // The table names each old address once, with the address of the page that took its place.
-  assert.deepEqual(OLD_NAMES.map((entry) => [entry.head, entry.becomes]), [["downloads", "#activity"]]);
-  for (const entry of OLD_NAMES) {
+  assert.deepEqual(OLD_NAMES.map((entry) => [entry.head, entry.becomes]), [["downloads", "#activity"], ["reader", "#read/<workId>"]]);
+  for (const entry of OLD_NAMES.filter((entry) => !entry.edition)) {
     const read = readLink(`#${entry.head}`);
     assert.equal(read.redirect, true, entry.head);
     assert.equal(writeAddress(read.route), entry.becomes, entry.head);
@@ -114,27 +124,44 @@ test("old names (spec #608): one table; each reads as its new route, marked a re
     assert.deepEqual(extra, { route: { name: "unknown", place: entry.place }, redirect: true }, entry.head);
   }
   assert.deepEqual(readLink("#downloads"), { route: { name: "activity", part: "now" }, redirect: true });
+  // An old name whose page the server must find (#reader/<ebook id>) reads as its place's first page with the
+  // edition named, and becomes its new route once the server named the work.
+  for (const entry of OLD_NAMES.filter((entry) => entry.edition)) {
+    const read = readLink(`#${entry.head}/e1`);
+    assert.equal(read.redirect, true, entry.head);
+    assert.equal(read.edition, "e1", entry.head);
+    assert.equal(writeAddress(resolve(read.route, { admin: true })), writeAddress(firstPage(entry.place)), entry.head);
+    assert.deepEqual(readLink(`${entry.head}/e1`), read, entry.head);
+    assert.equal(writeAddress(editionRoute({ workId: "w1" })!), entry.becomes.replace("<workId>", "w1"), entry.head);
+  }
   // Every address of #480's table is not a redirect and reads as before.
   for (const row of table) assert.deepEqual(readLink(row.address), { route: row.route, redirect: false }, row.address);
-  for (const address of ["", "#", "#nowhere", "#Downloads", "#activity", "#reader/e1"])
+  for (const address of ["", "#", "#nowhere", "#Downloads", "#Reader/e1", "#activity", "#read/e1"]) {
     assert.equal(readLink(address).redirect, false, address);
+    assert.equal(readLink(address).edition, undefined, address);
+  }
 });
 
-test("no route or place named downloads is read, written or returned", () => {
+test("no route or place named downloads or reader is read, written or returned", () => {
   const addresses = [
     "#downloads", "#downloads/", "#downloads/x", "#downloads/a/b",
+    "#reader", "#reader/", "#reader/e1", "#reader/a/b", "#reader/libgen-9%3A1",
     ...table.map((row) => row.address),
     ...OLD_NAMES.map((entry) => `#${entry.head}`),
   ];
   for (const address of addresses) {
     for (const admin of [true, false]) {
-      const route = resolve(readAddress(address), { admin });
-      assert.notEqual(route.name, "downloads", address);
-      assert.notEqual(placeOf(route), "downloads", address);
-      assert.ok(!writeAddress(route).startsWith("#downloads"), address);
-      const parent = parentOf(route);
-      if (parent) assert.ok(!writeAddress(parent).startsWith("#downloads"), address);
-      assert.ok(!writeAddress(firstPage(placeOf(route))).startsWith("#downloads"), address);
+      const read = readLink(address);
+      for (const route of [read.route, resolve(read.route, { admin }), ...(read.edition ? [editionRoute({ workId: "w1" })!] : [])]) {
+        for (const old of ["downloads", "reader"]) {
+          assert.notEqual(route.name, old, address);
+          assert.notEqual(placeOf(route), old, address);
+          assert.ok(!writeAddress(route).startsWith(`#${old}`), address);
+          const parent = parentOf(route);
+          if (parent) assert.ok(!writeAddress(parent).startsWith(`#${old}`), address);
+          assert.ok(!writeAddress(firstPage(placeOf(route))).startsWith(`#${old}`), address);
+        }
+      }
     }
   }
 });
@@ -177,6 +204,7 @@ test("an address that names nothing reads as nothing in the place it points into
     ["#listen/w1/x", "library"],
     ["#read/", "library"],
     ["#reader/", "library"],
+    ["#reader", "library"],
     ["#book/%E0%A4%A", "library"],
   ];
   for (const [address, place] of cases) {
@@ -190,8 +218,11 @@ test("an address that names nothing reads as nothing in the place it points into
 test("what an address shows: built pages as they are, everything else the first page of its place", () => {
   const shows = (address: string, admin = true) => writeAddress(resolve(readAddress(address), { admin }));
   // Built today.
-  for (const address of ["#library", "#discover", "#settings", "#activity", "#activity/server", "#reader/e1"])
+  for (const address of ["#library", "#discover", "#settings", "#activity", "#activity/server"])
     assert.equal(shows(address), address, address);
+  // An old reader link shows the Library until the server names the edition's work.
+  assert.equal(shows("#reader/e1"), "#library");
+  assert.equal(shows("#reader/e1", false), "#library");
   // The old name of the Downloads page shows Now.
   assert.equal(shows("#downloads"), "#activity");
   assert.equal(shows("#downloads", false), "#activity");
@@ -273,8 +304,10 @@ test("first pages, and what covers a page", () => {
   assert.equal(isFirstPage({ name: "activity", part: "server" }), false);
   assert.equal(isFirstPage({ name: "book", workId: "w" }), false);
   assert.equal(isFirstPage({ name: "unknown", place: "library" }), true);
-  for (const address of ["#book/w/get/ebook", "#book/w/get/audiobook/magnet", "#series/s/add", "#listen/w", "#read/w", "#reader/e"])
+  for (const address of ["#book/w/get/ebook", "#book/w/get/audiobook/magnet", "#series/s/add", "#listen/w", "#read/w"])
     assert.equal(coversPage(readAddress(address)), true, address);
+  // An old reader link covers nothing: it reads as the Library until the Read face replaces it.
+  assert.equal(coversPage(readAddress("#reader/e")), false);
   for (const address of ["#library", "#book/w", "#series/s", "#activity", "#settings/x"])
     assert.equal(coversPage(readAddress(address)), false, address);
 });
@@ -290,7 +323,7 @@ test("what adds a history entry and what replaces the current one", () => {
   assert.equal(step(r("#book/w"), r("#listen/w")), "push");
   assert.equal(step(r("#settings"), r("#activity")), "push");
   assert.equal(step(r("#activity/server"), r("#activity/server/wsl")), "push");
-  assert.equal(step(r("#library"), r("#reader/e")), "push");
+  assert.equal(step(r("#library"), r("#read/w")), "push");
   // Replaces: Activity's parts, Listen and Read of one work.
   assert.equal(step(r("#activity"), r("#activity/device")), "replace");
   assert.equal(step(r("#activity/device"), r("#activity/server")), "replace");
@@ -352,8 +385,8 @@ test("the reader's pages: Chapters, Bookmarks and Search are built for everyone,
   assert.equal(step(r("#book/w/bookmarks"), r("#book/w/chapters")), "replace");
   assert.equal(step(r("#book/w/chapters"), r("#book/w/search")), "push");
   assert.equal(step(r("#book/w/chapters"), r("#book/v/bookmarks")), "push");
-  assert.equal(step(r("#reader/e"), r("#book/w/chapters")), "push");
-  assert.equal(step(r("#book/w/search"), r("#reader/e")), "push");
+  assert.equal(step(r("#read/w"), r("#book/w/chapters")), "push");
+  assert.equal(step(r("#book/w/search"), r("#read/w")), "push");
 });
 
 test("#discover/get/<query> (#575): a sheet over Discover, the administrator's; someone else gets Discover", () => {
