@@ -4,7 +4,7 @@
 // (`p<n>.html`) and the pictures. The key (preparedKey) is made from the EPUB file's size and time and from the
 // versions of everything that makes the output, so a changed file or changed code gives a new folder and new
 // addresses, and what was served under an address never changes (it is cached for good).
-import type { FastifyInstance, FastifyReply } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir, open, readFile, readdir, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -202,15 +202,15 @@ async function sendKept(reply: FastifyReply, id: string, key: string, file: stri
     .send(handle.createReadStream());
 }
 
-const PREPARED_ROUTE = /^\/api\/reader\/[^/]+\/prepared(?:\/|$|\?)/;
 export function registerPreparedText(app: FastifyInstance) {
   // Only a part or picture that was served is kept for good. Any refusal or failure of these routes (not signed in,
   // not found, a file that cannot be read) says so itself, whatever was set before it failed: a browser that kept
-  // an error under an address that never changes would show it for a year.
-  app.addHook("onSend", async (req, reply) => {
-    if (reply.statusCode >= 400 && PREPARED_ROUTE.test(req.url)) reply.header("Cache-Control", "no-store");
-  });
-  app.get("/api/reader/:id/prepared", async (req, reply) => {
+  // an error under an address that never changes would show it for a year. The hook is on these routes only.
+  const onSend = (_req: FastifyRequest, reply: FastifyReply, payload: unknown, done: (error: Error | null, payload?: unknown) => void) => {
+    if (reply.statusCode >= 400) reply.header("Cache-Control", "no-store");
+    done(null, payload);
+  };
+  app.get("/api/reader/:id/prepared", { onSend }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const { dir, key } = await ensurePrepared(id, req.log);
     // The key names the manifest's content, so it is its validator: an unchanged book answers 304 without a body.
@@ -220,11 +220,11 @@ export function registerPreparedText(app: FastifyInstance) {
     if (asked.split(",").some((candidate) => candidate.trim().replace(/^W\//, "") === tag)) return reply.code(304).send();
     return reply.header("Content-Type", "application/json; charset=utf-8").send(await readFile(join(dir, "manifest.json")));
   });
-  app.get("/api/reader/:id/prepared/:key/parts/:part", async (req, reply) => {
+  app.get("/api/reader/:id/prepared/:key/parts/:part", { onSend }, async (req, reply) => {
     const { id, key, part } = req.params as { id: string; key: string; part: string };
     return sendKept(reply, id, key, /^\d{1,5}$/.test(part) ? `p${Number(part)}.html` : null, "text/html; charset=utf-8");
   });
-  app.get("/api/reader/:id/prepared/:key/pictures/:name", async (req, reply) => {
+  app.get("/api/reader/:id/prepared/:key/pictures/:name", { onSend }, async (req, reply) => {
     const { id, key, name } = req.params as { id: string; key: string; name: string };
     const type = pictureType(name);
     return sendKept(reply, id, key, type ? join("pictures", name) : null, type || "");

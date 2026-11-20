@@ -175,7 +175,7 @@ test("the server imports nothing from the status lines, and only files the produ
   const root = join(import.meta.dirname, "..");
   // The image copies `server/` whole and these files of `src/`, as the Dockerfile says.
   const copied = new Set([...readFileSync(join(root, "Dockerfile"), "utf8").matchAll(/\/app\/src\/([\w.-]+) /g)].map((match) => match[1]));
-  assert.deepEqual([...copied].sort(), ["appearance.ts", "reading-types.ts", "series-selection.ts", "types.ts"]);
+  assert.deepEqual([...copied].sort(), ["appearance.ts", "prepared-text-rules.ts", "reading-types.ts", "series-selection.ts", "types.ts"]);
   const imported = new Set<string>();
   for (const name of readdirSync(join(root, "server"))) {
     if (!name.endsWith(".ts")) continue;
