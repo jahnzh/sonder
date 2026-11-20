@@ -6,8 +6,10 @@
 # Exit status: 0 passed; 1 the check failed (or its own exit status); 2 usage;
 # 3 the host's loopback is broken; 4 the remote run never started or died;
 # 5 SSH connectivity was lost after the run began; 6 a Playwright browser is
-# missing on the host; 7 WebKit system packages are missing on the host; 124 the
-# wait cap was reached.
+# missing on the host; 7 WebKit system packages are missing on the host; 8 the
+# checkout's filesystem is fuller than SONDER_CI_DISK_MAX_PERCENT (default 90),
+# recorded as disk_full before the bundle is made (#791); 124 the wait cap was
+# reached.
 # Only an unreachable host at the start falls back to a local run. A failure on
 # the host is a failure and is never rerun locally.
 #
@@ -41,6 +43,8 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT" || exit 1
 # shellcheck source=lib/ci-history.sh
 source "$ROOT/scripts/lib/ci-history.sh"
+# shellcheck source=lib/ci-disk.sh
+source "$ROOT/scripts/lib/ci-disk.sh"
 
 SONDER_CI_HOST=${SONDER_CI_HOST:-192.168.1.119}
 SONDER_CI_REPO=${SONDER_CI_REPO:-jahnzh/sonder}
@@ -567,6 +571,13 @@ run_remote_check() {
 
   cleanup_stale_remote_dirs
 
+  # A full disk fails the bundle and reads like a host failure (#791): say so.
+  ci_disk_guard "$ROOT" ci-ssh
+  if [[ $? -eq 1 ]]; then
+    record_result remote disk_full "$CI_DISK_FULL_EXIT"
+    return "$CI_DISK_FULL_EXIT"
+  fi
+
   BUNDLE_PATH="$ARTIFACT_ROOT/${RUN_ID}.bundle"
   log "Creating git bundle for ${FULL_SHA}"
   if ! git bundle create "$BUNDLE_PATH" "$FULL_SHA" HEAD refs/remotes/origin/main >/dev/null 2>&1; then
@@ -701,6 +712,7 @@ if host_reachable; then
       case "$RESULT" in
         host_browsers_missing) DESCRIPTION="CI host failure: Playwright browsers missing" ;;
         host_webkit_packages_missing) DESCRIPTION="CI host failure: WebKit system packages missing" ;;
+        disk_full) DESCRIPTION="CI refused: disk full on the checkout's filesystem" ;;
         remote_run_died | remote_setup_failed | host_bundle_failed) DESCRIPTION="CI host failure: ${RESULT//_/ }" ;;
         host_connectivity_lost) DESCRIPTION="CI host failure: SSH connectivity lost" ;;
         timeout) DESCRIPTION="CI host failure: timed out after ${MAX_WAIT}s" ;;

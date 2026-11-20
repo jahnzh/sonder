@@ -28,7 +28,7 @@ Say "running" only with that evidence, and say what you did not verify.
 
 ## At every heartbeat
 
-Run `bash scripts/orca/heartbeat.sh <run_id>`. It appends the time to `HEARTBEAT.log` and prints the unread inbox, running checks and the newest results, whether the watchdog runs, one line per worker read from its screen, memory, disk and production health, and removes stale browser-test temp folders. Then act on what it shows:
+Run `bash scripts/orca/heartbeat.sh <run_id>`. It appends the time to `HEARTBEAT.log` and prints the unread inbox, running checks and the newest results, whether the watchdog runs, one line per worker read from its screen, memory, disk, the root filesystem's use (`df -h /`; checks refuse to start above 90 %, #791) and production health, and removes stale browser-test temp folders. Then act on what it shows:
 
 - A worker that is not `busy`, or has an `ALERT`, has stopped without sending a message (a provider's "High Load", a usage limit, a prompt waiting for an answer). Read its screen and get it going again, or move its work to a model with quota. A count of changed files says nothing: a stalled worker still has them.
 - Keep three workers running whenever there is work that does not touch the same files. Waiting for one check or one answer is no reason to leave the other slots empty (the owner asked why only one worker was running twice on 2026-11-15).

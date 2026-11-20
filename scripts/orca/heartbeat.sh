@@ -4,7 +4,8 @@
 # The run id is required: there is no default run, so the inbox and workers shown never belong to another run.
 # It appends the UTC time to HEARTBEAT.log (the line watchdog.sh reads), then prints: unread non-heartbeat
 # inbox messages, running checks and deploys with the newest check results, whether the watchdog runs,
-# one line per worker (check-workers.sh), free memory and disk, production health, and how many stale
+# one line per worker (check-workers.sh), free memory and disk, the root filesystem's use (`df -h /`;
+# checks refuse to start above SONDER_CI_DISK_MAX_PERCENT, #791), production health, and how many stale
 # browser-test temp folders it removed. It changes nothing else and acknowledges no message.
 set -u
 if [ -z "${1:-}" ]; then
@@ -48,6 +49,7 @@ bash scripts/orca/check-workers.sh "$run" || true
 echo "== host"
 free -g | awk 'NR==2 {print "memory available: " $7 " GB"}'
 df -BG . | awk 'NR==2 {print "disk free: " $4}'
+df -h / | awk 'NR==2 {print "root filesystem: " $5 " used, " $4 " free of " $2 " (" $1 ")"}'
 health=$(curl -s -m 5 "${SONDER_HEALTH_URL:-http://127.0.0.1:3001/api/health}" || true)
 echo "production: ${health:-no answer}"
 removed=$(node -e 'import("./scripts/test-browser.mjs").then((m) => console.log(m.removeStaleBrowserTemps().length))' 2>/dev/null)

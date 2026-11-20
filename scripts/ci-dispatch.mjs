@@ -6,6 +6,7 @@
 //   ci-dispatch.mjs release --pid <pid>
 //   ci-dispatch.mjs host-env <host-id>
 //   ci-dispatch.mjs status
+//   ci-dispatch.mjs prune --artifacts <dir> [--keep <sha>]
 //
 // `admit` joins the central FIFO queue under the shared state dir, waits until
 // it is the oldest live ticket, probes the hosts over SSH, and admits on the
@@ -34,7 +35,16 @@
 // not in MemAvailable yet. Costs, factor, reserves and ceiling are the named
 // settings in scripts/ci-hosts.json ("dispatch" section, overridable per host).
 //
+// `prune` (issue #791) removes <dir>/<sha>/ artifact directories whose newest
+// entry (the directory, its children and grandchildren) is older than
+// SONDER_CI_ARTIFACT_HOURS (default 6). It never removes the directory of a
+// check this dispatcher has running or queued, of --keep, or one that holds a
+// live `*.pid` file (a runner started without the dispatcher). Prints one
+// `pruned <dir>` line per removed directory; exit 2 on a bad setting.
+//
 // Environment:
+//   SONDER_CI_ARTIFACT_HOURS  age in hours after which prune removes a commit's
+//                             artifacts (default 6, a non-negative number)
 //   SONDER_CI_STATE_DIR       shared state dir (default
 //                             ${XDG_RUNTIME_DIR:-/tmp}/sonder-ci-dispatch-<uid>)
 //   SONDER_CI_HOST_CONFIG     hosts file (default scripts/ci-hosts.json)
@@ -348,6 +358,97 @@ function sharedProbes(state, hosts, ttl, env) {
   return out;
 }
 
+// ---- artifact pruning (#791) ---------------------------------------------
+
+const SHA_DIR = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+
+// Newest mtime (ms) of `dir`, its entries and their entries. Symlinks count
+// by their own mtime and are never followed.
+function newestMtime(dir) {
+  let newest = fs.lstatSync(dir).mtimeMs;
+  for (const a of fs.readdirSync(dir, { withFileTypes: true })) {
+    const pa = path.join(dir, a.name);
+    try {
+      newest = Math.max(newest, fs.lstatSync(pa).mtimeMs);
+      if (!a.isDirectory()) continue;
+      for (const b of fs.readdirSync(pa)) newest = Math.max(newest, fs.lstatSync(path.join(pa, b)).mtimeMs);
+    } catch {
+      // removed while we looked: no younger than what we have
+    }
+  }
+  return newest;
+}
+
+// True when `dir` or one of its subdirectories holds a `*.pid` file whose
+// process is alive (ci-ssh.pid of a runner started by hand, for instance).
+function holdsLivePid(dir) {
+  const pidFiles = [];
+  for (const a of fs.readdirSync(dir, { withFileTypes: true })) {
+    const pa = path.join(dir, a.name);
+    if (a.isFile() && a.name.endsWith(".pid")) pidFiles.push(pa);
+    else if (a.isDirectory()) {
+      try {
+        for (const b of fs.readdirSync(pa, { withFileTypes: true })) if (b.isFile() && b.name.endsWith(".pid")) pidFiles.push(path.join(pa, b.name));
+      } catch { /* removed while we looked */ }
+    }
+  }
+  return pidFiles.some((f) => {
+    let pid = NaN;
+    try { pid = Number(fs.readFileSync(f, "utf8").trim()); } catch { /* unreadable: not live */ }
+    return Number.isInteger(pid) && pid > 0 && processAlive(pid);
+  });
+}
+
+// Pure but for the filesystem: remove <root>/<sha>/ directories older than
+// `hours`, except the shas in `keep` and directories with a live pid file.
+// Returns the removed paths.
+export function pruneArtifacts({ root, hours, keep = [], nowMs = Date.now() }) {
+  const removed = [];
+  let entries = [];
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return removed; // no artifacts yet
+  }
+  const keepSet = new Set(keep.filter(Boolean));
+  const cutoff = nowMs - hours * 3600 * 1000;
+  for (const e of entries) {
+    if (!e.isDirectory() || !SHA_DIR.test(e.name) || keepSet.has(e.name)) continue;
+    const dir = path.join(root, e.name);
+    try {
+      if (newestMtime(dir) >= cutoff || holdsLivePid(dir)) continue;
+      fs.rmSync(dir, { recursive: true, force: true });
+      removed.push(dir);
+    } catch {
+      // vanished or not removable: leave it for the next start
+    }
+  }
+  return removed;
+}
+
+export function artifactHours(env = process.env) {
+  const raw = env.SONDER_CI_ARTIFACT_HOURS;
+  if (raw === undefined || raw === "") return 6;
+  if (!/^[0-9]+([.][0-9]+)?$/.test(raw)) return null;
+  return Number(raw);
+}
+
+function prune(opts, env) {
+  if (!opts.artifacts) die("prune needs --artifacts");
+  const hours = artifactHours(env);
+  if (hours === null) die("SONDER_CI_ARTIFACT_HOURS must be a non-negative number of hours");
+  const state = stateDir(env);
+  ensureState(state);
+  // Under the lock, so a check admitted meanwhile is either in the list or
+  // starts after the prune.
+  withLock(state, () => {
+    const live = [...liveEntries(state, "runs"), ...liveEntries(state, "queue")].map((e) => e.sha);
+    for (const dir of pruneArtifacts({ root: opts.artifacts, hours, keep: [...live, opts.keep] })) {
+      console.log(`pruned ${dir}`);
+    }
+  });
+}
+
 // ---- commands ------------------------------------------------------------
 
 function parseArgs(argv) {
@@ -521,7 +622,8 @@ function main() {
   else if (cmd === "release") release(parseArgs(rest), env);
   else if (cmd === "host-env") hostEnv(rest[0], env);
   else if (cmd === "status") status(env);
-  else die("usage: ci-dispatch.mjs admit|release|host-env|status");
+  else if (cmd === "prune") prune(parseArgs(rest), env);
+  else die("usage: ci-dispatch.mjs admit|release|host-env|status|prune");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) main();

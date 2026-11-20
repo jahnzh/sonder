@@ -83,6 +83,11 @@ function cleanEnv() {
   return env;
 }
 
+// `df -P` shaped like real GNU coreutils output; the use is $STUB_DF_USE (default 42).
+const dfStub = `#!/usr/bin/env bash
+printf 'Filesystem     1024-blocks      Used Available Capacity Mounted on\\n/dev/vda2       1073432576 450841681 622590895      %s%% /\\n' "\${STUB_DF_USE:-42}"
+`;
+
 function fixture(t?: TestContext) {
   const base = tempDir("sonder-ci-ssh-");
   if (t) registerTempDir(t, base);
@@ -94,10 +99,11 @@ function fixture(t?: TestContext) {
   fs.mkdirSync(remote);
   fs.copyFileSync(script, path.join(repo, "scripts", "ci-ssh.sh"));
   fs.copyFileSync(stopScript, path.join(repo, "scripts", "ci-stop.sh"));
-  fs.copyFileSync(
-    path.resolve("scripts/lib/ci-history.sh"),
-    path.join(repo, "scripts", "lib", "ci-history.sh"),
-  );
+  for (const lib of ["ci-history.sh", "ci-disk.sh"]) {
+    fs.copyFileSync(path.resolve("scripts/lib", lib), path.join(repo, "scripts", "lib", lib));
+  }
+  // The disk guard (#791) reads this df stub, never the machine's own disk.
+  fs.writeFileSync(path.join(base, "df-stub"), dfStub, { mode: 0o755 });
   if (fs.existsSync(path.resolve("scripts/ci-hosts.json"))) {
     fs.copyFileSync(
       path.resolve("scripts/ci-hosts.json"),
@@ -167,6 +173,7 @@ function fixture(t?: TestContext) {
         STUB_GH_LOG: logs.gh,
         STUB_DPKG_LOG: logs.dpkg,
         STUB_BROWSER_CACHE: browserCache,
+        SONDER_CI_DF: path.join(base, "df-stub"),
         ...env,
       },
     });
@@ -206,6 +213,7 @@ function ciStopHangEnv(f: ReturnType<typeof fixture>) {
     STUB_GH_LOG: f.logs.gh,
     STUB_DPKG_LOG: f.logs.dpkg,
     STUB_BROWSER_CACHE: f.browserCache,
+    SONDER_CI_DF: path.join(f.base, "df-stub"),
     STUB_NPM_MODE: "hang",
     STUB_SSH_PROBE: "block",
     SONDER_CI_MAX_WAIT: "300",
@@ -469,6 +477,21 @@ test("a host whose closed port does not refuse fails fast without running tests"
   assert.match(out.output, /loopback .* is broken/);
   assert.equal(f.checkCalls().length, 0);
   assert.equal(f.result(f.second).result, "host_loopback_broken");
+});
+
+test("a checkout fuller than SONDER_CI_DISK_MAX_PERCENT is recorded as disk_full before the bundle", (t) => {
+  const f = fixture(t);
+  const out = f.run(f.second, { STUB_DF_USE: "97" });
+  assert.equal(out.status, 8, out.output);
+  assert.match(out.output, /\[ci-ssh\] disk at 97%: free space before checks/);
+  assert.doesNotMatch(out.output, /Creating git bundle|Could not create the git bundle/);
+  assert.equal(f.result(f.second).result, "disk_full");
+  assert.equal(f.result(f.second).exit_code, "8");
+  assert.equal(f.checkCalls().length, 0);
+  const root = path.join(f.repo, "artifacts", "ci", f.second);
+  assert.deepEqual(fs.readdirSync(root).filter((n) => n.endsWith(".bundle")), [], "no bundle made");
+  assert.match(f.read(f.logs.gh), /state=failure/);
+  assert.match(f.read(f.logs.gh), /disk full/);
 });
 
 test("a passing remote check passes", (t) => {

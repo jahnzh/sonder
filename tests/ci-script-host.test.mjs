@@ -15,6 +15,7 @@ const HOSTING_COPY_PATHS = [
   "scripts/ci-run.sh",
   "scripts/ci-dispatch.mjs",
   "scripts/ci-hosts.json",
+  "scripts/lib/ci-disk.sh",
   "tests/ci-run.test.mjs",
 ];
 

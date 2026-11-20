@@ -214,10 +214,9 @@ function fixture(t?: TestContext) {
   fs.mkdirSync(podmanState);
   fs.writeFileSync(path.join(podmanState, "image"), "");
   fs.copyFileSync(script, path.join(repo, "scripts", "ci-deck.sh"));
-  fs.copyFileSync(
-    path.resolve("scripts/lib/ci-history.sh"),
-    path.join(repo, "scripts", "lib", "ci-history.sh"),
-  );
+  for (const lib of ["ci-history.sh", "ci-disk.sh"]) {
+    fs.copyFileSync(path.resolve("scripts/lib", lib), path.join(repo, "scripts", "lib", lib));
+  }
   fs.writeFileSync(path.join(repo, "package.json"), '{"name":"fixture"}\n');
   const git = (...args: string[]) =>
     execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
@@ -276,6 +275,8 @@ function fixture(t?: TestContext) {
         STUB_PODMAN_LOG: logs.podman,
         STUB_PODMAN_STATE: podmanState,
         SONDER_LOCAL_DF: dfHealthy,
+        // The disk guard before the bundle (#791) reads the same healthy shim (10% used).
+        SONDER_CI_DF: dfHealthy,
         SONDER_LOCAL_STALE_DIR: localStale,
         ...env,
     };
@@ -357,6 +358,23 @@ test("an unreachable Deck falls back to a local check of the same commit", (t) =
   const record = f.result(f.second);
   assert.equal(record.mode, "local_fallback");
   assert.equal(record.result, "passed");
+});
+
+test("a local checkout fuller than SONDER_CI_DISK_MAX_PERCENT is recorded as disk_full before the bundle", (t) => {
+  const f = fixture(t);
+  const dfFull = path.join(f.base, "df-full");
+  fs.writeFileSync(
+    dfFull,
+    "#!/usr/bin/env bash\nprintf 'Filesystem     1024-blocks      Used Available Capacity Mounted on\\n/dev/vda2       1073432576 1020000000 53432576      96%% /\\n'\n",
+    { mode: 0o755 },
+  );
+  const out = f.run(f.second, { SONDER_CI_DF: dfFull });
+  assert.equal(out.status, 8, out.output);
+  assert.match(out.output, /\[ci-deck\] disk at 96%: free space before checks/);
+  assert.doesNotMatch(out.output, /Creating git bundle/);
+  assert.equal(f.result(f.second).result, "disk_full");
+  assert.equal(f.runCalls().length, 0);
+  assert.match(f.read(f.logs.gh), /disk full/);
 });
 
 test("a passing run starts the container with the fixed flags and posts ci/deck", (t) => {
