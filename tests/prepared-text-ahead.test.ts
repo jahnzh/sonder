@@ -64,7 +64,7 @@ async function longestBlock<T>(work: () => Promise<T>) {
   }
 }
 
-test("preparing a large book does not block the server's event loop", async () => {
+test("preparing a large book does not block the server's event loop", async (t) => {
   // One chapter of 4.5 MB (the largest a chapter may be is 5 MB): about 45,000 sentences in one file, which the
   // preparing step parses, places and writes in one go. On the main thread that is seconds without an answer.
   const sentence = "The lantern by the harbour wall was lit before the ferry came in that evening. ";
@@ -74,6 +74,7 @@ test("preparing a large book does not block the server's event loop", async () =
   assert.ok(extracted.sections[0].paragraphs.length > 40_000);
   // For scale: the same work on this thread, with the loop held throughout.
   const epub = readFileSync(fileOf("ahead-large"));
+  t.after(() => remove("ahead-large"));
   const inline = await longestBlock(() => prepareEpub({ epub, book: extracted, base: "/x", key: "k", writePicture: async () => {} }));
   const ahead = await longestBlock(() => buildPrepared("ahead-large"));
   const manifest = JSON.parse(readFileSync(join(ahead.result.dir, "manifest.json"), "utf8"));
@@ -82,13 +83,13 @@ test("preparing a large book does not block the server's event loop", async () =
   // The aim is under 100 ms on the production host, which the measurement holds (see the pull request). Here the
   // two are compared: on a loaded check host a gap of some hundred milliseconds can come from the host alone, but
   // preparing moved back onto this thread would hold it as long as the first number.
-  assert.ok(inline.longest > 1000, `on the main thread the loop is held ${Math.round(inline.longest)} ms`);
+  // (How long that is depends on the host: 0.9 s on the fastest check host, several seconds on a loaded one.)
+  assert.ok(inline.longest > 300, `on the main thread the loop is held ${Math.round(inline.longest)} ms`);
   assert.ok(ahead.longest < inline.longest / 4, `the loop was held ${Math.round(ahead.longest)} ms while preparing, against ${Math.round(inline.longest)} ms on this thread`);
   // What was prepared off the thread is what the thread itself would have made.
   const parts = manifest.parts.map((part: { index: number }) => readFileSync(join(ahead.result.dir, `p${part.index}.html`), "utf8"));
   assert.equal(parts.length, inline.result.parts.length);
   assert.equal(sentencesOfParts(parts).sentences.length, extracted.sections[0].paragraphs.length);
-  remove("ahead-large");
 });
 
 test("a failure while preparing reaches the opener with its own sentence, and leaves nothing behind", async () => {
