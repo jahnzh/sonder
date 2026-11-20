@@ -94,6 +94,32 @@ test("the manifest, its parts and its pictures are served to a signed-in reader,
   assert.equal((await get("/api/reader/set-consensus:work-cache/prepared")).statusCode, 404);
 });
 
+test("a second open of an unchanged book transfers nothing", async () => {
+  const file = await edition("ed-warm", "Warm text.");
+  const first = await get("/api/reader/ed-warm/prepared");
+  const tag = String(first.headers.etag);
+  assert.match(tag, /^"[0-9a-f]{16}-[0-9a-f]{16}"$/);
+  assert.equal(first.headers["cache-control"], "private, no-cache");
+  const again = (header: string) => app.inject({ method: "GET", url: "/api/reader/ed-warm/prepared", cookies: { sonder_session: reader }, headers: { "if-none-match": header } });
+  for (const header of [tag, `W/${tag}`, `"other", ${tag}`]) {
+    const second = await again(header);
+    assert.equal(second.statusCode, 304, header);
+    assert.equal(second.body, "");
+    assert.equal(second.headers.etag, tag);
+  }
+  // Parts and pictures are never asked for again: their addresses hold the key and are cached for a year, immutable.
+  const { key } = first.json();
+  for (const url of [`/api/reader/ed-warm/prepared/${key}/parts/0`, `/api/reader/ed-warm/prepared/${key}/pictures/0.png`])
+    assert.equal((await get(url)).headers["cache-control"], "private, max-age=31536000, immutable", url);
+  // A changed book has another validator, so the old one gets the new manifest.
+  writeFileSync(file, await fixture("Changed text."));
+  utimesSync(file, new Date(), new Date(Date.now() + 9000));
+  const changed = await again(tag);
+  assert.equal(changed.statusCode, 200);
+  assert.notEqual(changed.headers.etag, tag);
+  assert.equal((await get("/api/reader/ed-warm/prepared", null)).statusCode, 401);
+});
+
 test("a part or picture that is not there is not found, whatever its name", async () => {
   await edition("ed-names");
   const { key } = (await get("/api/reader/ed-names/prepared")).json();

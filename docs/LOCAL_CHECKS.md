@@ -188,7 +188,7 @@ Before rolling back to an image older than ADR 0011 (derived work media state, i
 
 The script prints the exact rollback command on failure and at the end of a successful run. Record every deploy in `artifacts/orca/STATE.md` (commit, backup path, image tag, markers, live-check results).
 
-## Check prepared reader text against a library
+## Check prepared text against a library
 
 ```bash
 npx tsx scripts/check-prepared-text.ts --db data/sonder.db --out artifacts/prepared-text-check.json

@@ -181,11 +181,13 @@ async function sendKept(reply: FastifyReply, id: string, key: string, file: stri
 export function registerPreparedText(app: FastifyInstance) {
   app.get("/api/reader/:id/prepared", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const { dir } = await ensurePrepared(id, req.log);
-    return reply
-      .header("Content-Type", "application/json; charset=utf-8")
-      .header("Cache-Control", "private, no-cache")
-      .send(await readFile(join(dir, "manifest.json")));
+    const { dir, key } = await ensurePrepared(id, req.log);
+    // The key names the manifest's content, so it is its validator: an unchanged book answers 304 without a body.
+    const tag = `"${short(id)}-${key}"`;
+    reply.header("ETag", tag).header("Cache-Control", "private, no-cache");
+    const asked = String(req.headers["if-none-match"] || "");
+    if (asked.split(",").some((candidate) => candidate.trim().replace(/^W\//, "") === tag)) return reply.code(304).send();
+    return reply.header("Content-Type", "application/json; charset=utf-8").send(await readFile(join(dir, "manifest.json")));
   });
   app.get("/api/reader/:id/prepared/:key/parts/:part", async (req, reply) => {
     const { id, key, part } = req.params as { id: string; key: string; part: string };

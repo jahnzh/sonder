@@ -1,4 +1,4 @@
-// Prepared reader text: an EPUB as sanitised HTML in parts, with every sentence of extractBook (server/reader.ts)
+// Prepared text (GLOSSARY.md, ADR 0025): an EPUB as sanitised HTML in parts, with every sentence of extractBook (server/reader.ts)
 // tagged with its own id, and a manifest that says which part holds what.
 //
 // The sentences are not cut here. extractBook's stored sentences are the book's coordinate system (alignment maps,
@@ -258,19 +258,19 @@ export function pictureSize(data: Buffer, extension: string): { width: number; h
 }
 
 type Wrapper = { open: string; close: string };
-type Chunk = {
+type Unit = {
   html: string;
   chars: number;
   section: number;
   wrappers: Wrapper[];
   /** A chapter file or a heading starts here. */
   natural: boolean;
-  /** Ordinals of the first and last tagged sentence in the chunk, -1 without one; `started` counts those that begin in it. */
+  /** Ordinals of the first and last tagged sentence in the unit, -1 without one; `started` counts those that begin in it. */
   firstOrdinal: number;
   lastOrdinal: number;
   started: number;
 };
-type Anchor = { chunk: number; after: number; section: number };
+type Anchor = { unit: number; after: number; section: number };
 /** A counted block's text as the extractor reads it: which stored sentence, if any, owns each character. */
 type BlockText = { owner: Int32Array };
 
@@ -330,9 +330,9 @@ export async function prepareEpub(input: {
   const pictures = new Map<string, { name: string; entry: string; index: number }>();
   const links: string[] = [];
   const anchors = new Map<string, Anchor>();
-  const chunks: Chunk[] = [];
-  const sections: { index: number; href: string; path: string; firstChunk: number; chars: number }[] = [];
-  /** The last sentence a tag was written for, and the chunk being written. */
+  const units: Unit[] = [];
+  const sections: { index: number; href: string; path: string; firstUnit: number; chars: number }[] = [];
+  /** The last sentence a tag was written for, and the unit being written. */
   let lastOrdinal = -1;
   let current = { chars: 0, firstOrdinal: -1, lastOrdinal: -1, started: 0 };
 
@@ -423,9 +423,9 @@ export async function prepareEpub(input: {
     }
 
     const sectionWrapper: Wrapper = { open: `<section data-section="${index}">`, close: "</section>" };
-    const record = { index, href: String(item.href), path, firstChunk: chunks.length, chars: 0 };
+    const record = { index, href: String(item.href), path, firstUnit: units.length, chars: 0 };
     sections.push(record);
-    if (!anchors.has(path)) anchors.set(path, { chunk: chunks.length, after: lastOrdinal, section: index });
+    if (!anchors.has(path)) anchors.set(path, { unit: units.length, after: lastOrdinal, section: index });
 
     const span = (ordinal: number, text: string) => {
       if (ordinal < lastOrdinal) problem(`sentence ${ordinals[ordinal].id} comes after ${ordinals[lastOrdinal].id}`);
@@ -491,7 +491,7 @@ export async function prepareEpub(input: {
       if (id) {
         out += ` data-id="${attr(id)}"`;
         const key = `${path}#${id}`;
-        if (!anchors.has(key)) anchors.set(key, { chunk: chunks.length, after: lastOrdinal, section: index });
+        if (!anchors.has(key)) anchors.set(key, { unit: units.length, after: lastOrdinal, section: index });
       }
       const lang = node.attrs.lang || node.attrs["xml:lang"] || "";
       if (/^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8}){0,4}$/.test(lang)) out += ` lang="${lang}"`;
@@ -599,14 +599,14 @@ export async function prepareEpub(input: {
       return attributes ? `<span${attributes}>${content}</span>` : content;
     };
 
-    const chunk = (wrappers: Wrapper[], natural: boolean, write: () => string) => {
+    const unit = (wrappers: Wrapper[], natural: boolean, write: () => string) => {
       current = { chars: 0, firstOrdinal: -1, lastOrdinal: -1, started: 0 };
       const html = write();
       if (!html) return;
       record.chars += current.chars;
-      chunks.push({ html, section: index, wrappers, natural: natural || chunks.length === record.firstChunk, ...current });
+      units.push({ html, section: index, wrappers, natural: natural || units.length === record.firstUnit, ...current });
     };
-    /** The children of the body, or of a container a part may be cut in: each block is a chunk of its own. */
+    /** The children of the body, or of a container a part may be cut in: each block is a unit of its own. */
     const flow = (nodes: Node[], wrappers: Wrapper[]) => {
       let run: Node[] = [];
       const flush = () => {
@@ -615,7 +615,7 @@ export async function prepareEpub(input: {
         run = [];
         // Loose text between blocks becomes a paragraph; white space alone is written as it is.
         const loose = nodesOfRun.some((node) => (isText(node) ? node.text.trim() : true));
-        chunk(wrappers, false, () => {
+        unit(wrappers, false, () => {
           const html = nodesOfRun.map(render).join("");
           return loose && html.trim() ? `<p>${html}</p>` : html;
         });
@@ -634,7 +634,7 @@ export async function prepareEpub(input: {
               const tag = name === "blockquote" ? "blockquote" : "div";
               const attributes = common(node);
               flow(node.childNodes, known || attributes ? [...wrappers, { open: `<${tag}${attributes}>`, close: `</${tag}>` }] : wrappers);
-            } else chunk(wrappers, /^h[1-3]$/.test(name), () => render(node));
+            } else unit(wrappers, /^h[1-3]$/.test(name), () => render(node));
           }
         }
       }
@@ -648,26 +648,26 @@ export async function prepareEpub(input: {
     if (!tagged[ordinal].length) problem(`sentence ${sentence.id} is not tagged`);
     else if (normalizeReaderText(tagged[ordinal].join("")) !== sentence.text) problem(`sentence ${sentence.id} is tagged with other text than the stored one`);
   });
-  if (!chunks.length) throw new Error("This EPUB contains no readable text.");
+  if (!units.length) throw new Error("This EPUB contains no readable text.");
 
-  // Parts: chunks are added until the next would pass the size. A sentence that runs from one chunk into the
+  // Parts: units are added until the next would pass the size. A sentence that runs from one unit into the
   // next keeps them together.
   const tied: boolean[] = [];
   let before = -1;
-  for (let index = 0; index < chunks.length; index++) {
+  for (let index = 0; index < units.length; index++) {
     let next = -1;
-    for (let ahead = index; ahead < chunks.length && next < 0; ahead++) next = chunks[ahead].firstOrdinal;
+    for (let ahead = index; ahead < units.length && next < 0; ahead++) next = units[ahead].firstOrdinal;
     tied.push(before >= 0 && before === next);
-    if (chunks[index].lastOrdinal >= 0) before = chunks[index].lastOrdinal;
+    if (units[index].lastOrdinal >= 0) before = units[index].lastOrdinal;
   }
   const partOf: number[] = [];
   const members: number[][] = [];
   let size = 0;
-  for (let index = 0; index < chunks.length; ) {
+  for (let index = 0; index < units.length; ) {
     let end = index + 1;
-    let bytes = Buffer.byteLength(chunks[index].html);
-    while (end < chunks.length && tied[end]) bytes += Buffer.byteLength(chunks[end++].html);
-    if (!members.length || (size > 0 && (size + bytes > PART_TARGET_BYTES || (chunks[index].natural && size >= PART_NATURAL_BYTES)))) {
+    let bytes = Buffer.byteLength(units[index].html);
+    while (end < units.length && tied[end]) bytes += Buffer.byteLength(units[end++].html);
+    if (!members.length || (size > 0 && (size + bytes > PART_TARGET_BYTES || (units[index].natural && size >= PART_NATURAL_BYTES)))) {
       members.push([]);
       size = 0;
     }
@@ -685,7 +685,7 @@ export async function prepareEpub(input: {
     const exact = anchors.has(key) && key.includes("#");
     return {
       section: found.section,
-      part: partOf[Math.min(found.chunk, chunks.length - 1)],
+      part: partOf[Math.min(found.unit, units.length - 1)],
       sentence: ordinals[found.after + 1]?.id ?? null,
       ...(exact ? { anchor: key.slice(key.indexOf("#") + 1) } : {}),
     };
@@ -707,13 +707,13 @@ export async function prepareEpub(input: {
       open = open.slice(0, keep);
     };
     for (const index of indexes) {
-      const { wrappers } = chunks[index];
+      const { wrappers } = units[index];
       let same = 0;
       while (same < open.length && same < wrappers.length && open[same] === wrappers[same]) same++;
       close(same);
       for (const wrapper of wrappers.slice(same)) html += wrapper.open;
       open = wrappers;
-      html += chunks[index].html;
+      html += units[index].html;
     }
     close(0);
     return html.replace(marks, (_whole, kind: string, number: string) => {
@@ -727,8 +727,8 @@ export async function prepareEpub(input: {
   let charStart = 0;
   let ordinal = 0;
   const manifestParts: PreparedPart[] = members.map((indexes, index) => {
-    const own = indexes.map((chunkIndex) => chunks[chunkIndex]);
-    const sentences = own.reduce((sum, chunk) => sum + chunk.started, 0);
+    const own = indexes.map((unitIndex) => units[unitIndex]);
+    const sentences = own.reduce((sum, unit) => sum + unit.started, 0);
     const ranges: PreparedPart["ranges"] = [];
     for (let at = ordinal; at < ordinal + sentences; at++) {
       const last = ranges[ranges.length - 1];
@@ -740,7 +740,7 @@ export async function prepareEpub(input: {
     const part: PreparedPart = {
       index,
       bytes: Buffer.byteLength(parts[index]),
-      chars: own.reduce((sum, chunk) => sum + chunk.chars, 0),
+      chars: own.reduce((sum, unit) => sum + unit.chars, 0),
       charStart,
       sentences,
       ordinal,
@@ -760,7 +760,7 @@ export async function prepareEpub(input: {
       index: record.index,
       href: record.href,
       title: own?.title || "",
-      part: partOf[Math.min(record.firstChunk, chunks.length - 1)],
+      part: partOf[Math.min(record.firstUnit, units.length - 1)],
       chars: record.chars,
       charStart: sectionStart,
       sentences: own?.paragraphs.length || 0,
