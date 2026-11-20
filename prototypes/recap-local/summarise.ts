@@ -6,7 +6,7 @@
 //   npx tsx prototypes/recap-local/summarise.ts --book <book.json> --out <states.json> --label <name> [--ctx 16384] [--until <sentence id>]
 import { readFileSync, writeFileSync } from "node:fs";
 import { checkClaim, folded, indexOf, named, shown, unitsOf, words, type Book, type Kind, type Note, type States, type Unit, type UnitState } from "./lib.ts";
-import { ask, noTiming } from "./llm.ts";
+import { StopRun, ask, timingOf } from "./llm.ts";
 
 const args = process.argv.slice(2);
 const option = (name: string) => {
@@ -137,10 +137,18 @@ export async function summarise(book: Book, label: string, contextTokens: number
     const retirable = state.filter((note) => note.kind === "goal" || note.kind === "open").map((note) => note.handle);
     // A unit whose request fails for good adds no notes: the story so far stays as it was, and the unit is marked.
     let failed: string | undefined;
+    let stop: string | undefined;
     const reply = await ask<Reply>({ system: SYSTEM, user, schema: schemaFor(unit, book, retirable, length), maxTokens: REPLY_TOKENS }).catch((error: Error) => {
+      if (error instanceof StopRun) stop = error.message;
       failed = error.message.slice(0, 300);
-      return { value: { who: [], goals: [], events: [], open: [] } as Reply, timing: noTiming(), raw: "" };
+      return { value: { who: [], goals: [], events: [], open: [] } as Reply, timing: timingOf(error), raw: "", violations: [] as string[] };
     });
+    // A usage limit or a lost sign-in ends the run here: what is stored so far stays usable up to this unit.
+    if (stop) {
+      states.stopped = `before unit ${unit.index + 1} "${unit.title}": ${stop}`;
+      log(`stopped ${states.stopped}`);
+      break;
+    }
     const offered: { kind: Kind; weight: number; name?: string; text: string; id: string; quote: string }[] = [
       ...reply.value.who.map((note) => ({ ...note, kind: "who" as const, weight: 3 })),
       ...reply.value.goals.map((note) => ({ ...note, kind: "goal" as const, weight: 2 })),
@@ -166,6 +174,9 @@ export async function summarise(book: Book, label: string, contextTokens: number
       outputMs: reply.timing.outputMs,
       retries: reply.timing.retries,
       serverErrors: reply.timing.serverErrors,
+      thinkingTokens: reply.timing.thinkingTokens,
+      costUsd: reply.timing.costUsd,
+      schemaViolations: reply.violations,
       ...(failed ? { failed } : {}),
     };
     // A note may cite only this unit's own sentences: the cutoff of the check is the unit's last sentence, and a
@@ -188,7 +199,7 @@ export async function summarise(book: Book, label: string, contextTokens: number
     state = storyOf(Object.values(states.notes), retired);
     record.state = state.map((note) => note.handle);
     states.units.push(record);
-    log(`unit ${unit.index + 1} "${unit.title}": ${sentences.length} sentences, +${record.added.length} notes, ${record.dropped.length} dropped, ${record.retired.length} retired, ${Math.round(record.ms)} ms${failed ? ` FAILED: ${failed}` : ""}`);
+    log(`unit ${unit.index + 1} "${unit.title}": ${sentences.length} sentences, +${record.added.length} notes, ${record.dropped.length} dropped, ${record.retired.length} retired, ${reply.violations.length} schema violations, ${Math.round(record.ms)} ms${failed ? ` FAILED: ${failed}` : ""}`);
   }
   return states;
 }
@@ -209,4 +220,5 @@ if (process.argv[1]?.endsWith("summarise.ts")) {
   const offered = states.units.reduce((sum, unit) => sum + unit.offered, 0),
     dropped = states.units.reduce((sum, unit) => sum + unit.dropped.length, 0);
   process.stdout.write(`${out}: ${states.units.length} units in ${((performance.now() - started) / 1000).toFixed(1)} s, ${offered} notes offered, ${dropped} dropped\n`);
+  if (states.stopped) process.exitCode = 3;
 }

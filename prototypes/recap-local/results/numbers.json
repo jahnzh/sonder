@@ -43,6 +43,10 @@
         "retries": 0,
         "serverErrors": 0,
         "failedUnits": 0,
+        "stopped": null,
+        "thinkingTokens": 0,
+        "costUsd": 0,
+        "schemaViolations": 0,
         "slowestUnitSeconds": 5.7
       },
       "recaps": {
@@ -136,7 +140,21 @@
         "bareMaraLines": 0,
         "foreshadowingLines": 0,
         "retries": 0,
-        "serverErrors": 0
+        "serverErrors": 0,
+        "promptTokens": 7708,
+        "outputTokens": 4481,
+        "thinkingTokens": 0,
+        "costUsd": 0,
+        "costUsdEach": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "schemaViolations": 0,
+        "failed": 0
       },
       "assembled": {
         "recaps": 6,
@@ -232,7 +250,21 @@
         "foreshadowingLines": 0,
         "retries": 0,
         "serverErrors": 0,
-        "fromStoredNotes": 65
+        "promptTokens": 3187,
+        "outputTokens": 1859,
+        "thinkingTokens": 0,
+        "costUsd": 0,
+        "costUsdEach": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "schemaViolations": 0,
+        "fromStoredNotes": 65,
+        "failed": 0
       }
     },
     "dcc1": {
@@ -255,6 +287,10 @@
         "retries": 0,
         "serverErrors": 0,
         "failedUnits": 0,
+        "stopped": null,
+        "thinkingTokens": 0,
+        "costUsd": 0,
+        "schemaViolations": 0,
         "slowestUnitSeconds": 12.5
       },
       "recaps": {
@@ -350,7 +386,21 @@
         "bareMaraLines": 0,
         "foreshadowingLines": 0,
         "retries": 0,
-        "serverErrors": 0
+        "serverErrors": 0,
+        "promptTokens": 27971,
+        "outputTokens": 9256,
+        "thinkingTokens": 0,
+        "costUsd": 0,
+        "costUsdEach": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "schemaViolations": 0,
+        "failed": 0
       },
       "assembled": {
         "recaps": 6,
@@ -444,7 +494,21 @@
         "foreshadowingLines": 0,
         "retries": 0,
         "serverErrors": 0,
-        "fromStoredNotes": 110
+        "promptTokens": 34695,
+        "outputTokens": 3814,
+        "thinkingTokens": 0,
+        "costUsd": 0,
+        "costUsdEach": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "schemaViolations": 0,
+        "fromStoredNotes": 110,
+        "failed": 0
       }
     }
   },
@@ -492,6 +556,10 @@
         "retries": 0,
         "serverErrors": 0,
         "failedUnits": 0,
+        "stopped": null,
+        "thinkingTokens": 0,
+        "costUsd": 0,
+        "schemaViolations": 0,
         "slowestUnitSeconds": 7.0
       },
       "recaps": {
@@ -587,7 +655,21 @@
         "bareMaraLines": 0,
         "foreshadowingLines": 0,
         "retries": 0,
-        "serverErrors": 0
+        "serverErrors": 0,
+        "promptTokens": 10046,
+        "outputTokens": 4483,
+        "thinkingTokens": 0,
+        "costUsd": 0,
+        "costUsdEach": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "schemaViolations": 0,
+        "failed": 0
       },
       "assembled": {
         "recaps": 6,
@@ -683,7 +765,21 @@
         "foreshadowingLines": 0,
         "retries": 0,
         "serverErrors": 0,
-        "fromStoredNotes": 61
+        "promptTokens": 3420,
+        "outputTokens": 1965,
+        "thinkingTokens": 0,
+        "costUsd": 0,
+        "costUsdEach": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "schemaViolations": 0,
+        "fromStoredNotes": 61,
+        "failed": 0
       }
     },
     "dcc1": {
@@ -706,6 +802,10 @@
         "retries": 0,
         "serverErrors": 0,
         "failedUnits": 0,
+        "stopped": null,
+        "thinkingTokens": 0,
+        "costUsd": 0,
+        "schemaViolations": 0,
         "slowestUnitSeconds": 17.2
       },
       "recaps": {
@@ -801,7 +901,21 @@
         "bareMaraLines": 0,
         "foreshadowingLines": 0,
         "retries": 0,
-        "serverErrors": 0
+        "serverErrors": 0,
+        "promptTokens": 36013,
+        "outputTokens": 7965,
+        "thinkingTokens": 0,
+        "costUsd": 0,
+        "costUsdEach": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "schemaViolations": 0,
+        "failed": 0
       },
       "assembled": {
         "recaps": 6,
@@ -897,7 +1011,21 @@
         "foreshadowingLines": 0,
         "retries": 0,
         "serverErrors": 0,
-        "fromStoredNotes": 87
+        "promptTokens": 34769,
+        "outputTokens": 3423,
+        "thinkingTokens": 0,
+        "costUsd": 0,
+        "costUsdEach": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "schemaViolations": 0,
+        "fromStoredNotes": 87,
+        "failed": 0
       }
     }
   },
@@ -946,6 +1074,10 @@
         "retries": 0,
         "serverErrors": 0,
         "failedUnits": 0,
+        "stopped": null,
+        "thinkingTokens": 0,
+        "costUsd": 0,
+        "schemaViolations": 0,
         "slowestUnitSeconds": 8.3
       },
       "recaps": {
@@ -1041,7 +1173,21 @@
         "bareMaraLines": 0,
         "foreshadowingLines": 0,
         "retries": 0,
-        "serverErrors": 0
+        "serverErrors": 0,
+        "promptTokens": 8544,
+        "outputTokens": 4146,
+        "thinkingTokens": 0,
+        "costUsd": 0,
+        "costUsdEach": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "schemaViolations": 0,
+        "failed": 0
       },
       "assembled": {
         "recaps": 6,
@@ -1137,7 +1283,21 @@
         "foreshadowingLines": 0,
         "retries": 0,
         "serverErrors": 0,
-        "fromStoredNotes": 52
+        "promptTokens": 3362,
+        "outputTokens": 1664,
+        "thinkingTokens": 0,
+        "costUsd": 0,
+        "costUsdEach": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "schemaViolations": 0,
+        "fromStoredNotes": 52,
+        "failed": 0
       }
     },
     "dcc1": {
@@ -1160,6 +1320,10 @@
         "retries": 0,
         "serverErrors": 0,
         "failedUnits": 12,
+        "stopped": null,
+        "thinkingTokens": 0,
+        "costUsd": 0,
+        "schemaViolations": 0,
         "slowestUnitSeconds": 18.2
       },
       "recaps": {
@@ -1255,7 +1419,21 @@
         "bareMaraLines": 0,
         "foreshadowingLines": 0,
         "retries": 0,
-        "serverErrors": 0
+        "serverErrors": 0,
+        "promptTokens": 35506,
+        "outputTokens": 8214,
+        "thinkingTokens": 0,
+        "costUsd": 0,
+        "costUsdEach": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "schemaViolations": 0,
+        "failed": 0
       },
       "assembled": {
         "recaps": 6,
@@ -1352,7 +1530,959 @@
         "foreshadowingLines": 0,
         "retries": 0,
         "serverErrors": 0,
-        "fromStoredNotes": 84
+        "promptTokens": 34829,
+        "outputTokens": 3264,
+        "thinkingTokens": 0,
+        "costUsd": 0,
+        "costUsdEach": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "schemaViolations": 0,
+        "fromStoredNotes": 84,
+        "failed": 0
+      }
+    }
+  },
+  "claude-haiku-5-5": {
+    "fixture": {
+      "precompute": {
+        "units": 8,
+        "seconds": 111.9,
+        "promptTokens": 29844,
+        "cachedTokens": 4228,
+        "outputTokens": 22932,
+        "promptPerSecond": 4963,
+        "outputPerSecond": 237,
+        "notesOffered": 54,
+        "notesDropped": 0,
+        "notesDroppedShare": 0.0,
+        "notesRepaired": 0,
+        "dropReasons": {},
+        "retries": 0,
+        "serverErrors": 0,
+        "failedUnits": 0,
+        "stopped": null,
+        "thinkingTokens": 18490,
+        "costUsd": 0.0145,
+        "schemaViolations": 0,
+        "slowestUnitSeconds": 16.8
+      },
+      "recaps": {
+        "recaps": 6,
+        "claimsOffered": 59,
+        "claimsDropped": 0,
+        "claimsDroppedShare": 0.0,
+        "claimsRepeated": 0,
+        "claimsKept": 59,
+        "keptExact": 59,
+        "keptRepaired": 0,
+        "dropReasons": {},
+        "secondsEach": [
+          3.6,
+          18.2,
+          17.1,
+          13.9,
+          20.0,
+          27.4
+        ],
+        "secondsMean": 16.7,
+        "secondsMax": 27.4,
+        "promptPerSecond": 3732,
+        "outputPerSecond": 273,
+        "words": [
+          [
+            "P1 early",
+            7,
+            112,
+            [
+              60,
+              100
+            ],
+            true
+          ],
+          [
+            "P1 early",
+            70,
+            98,
+            [
+              60,
+              100
+            ],
+            true
+          ],
+          [
+            "P2 middle",
+            7,
+            198,
+            [
+              150,
+              250
+            ],
+            false
+          ],
+          [
+            "P2 middle",
+            70,
+            234,
+            [
+              150,
+              250
+            ],
+            true
+          ],
+          [
+            "P3 late",
+            7,
+            195,
+            [
+              150,
+              250
+            ],
+            false
+          ],
+          [
+            "P3 late",
+            70,
+            336,
+            [
+              300,
+              400
+            ],
+            true
+          ]
+        ],
+        "inTarget": 5,
+        "leakFlags": 4,
+        "certainLeakFlags": 0,
+        "injectionFlags": 0,
+        "bareMaraLines": 0,
+        "foreshadowingLines": 0,
+        "retries": 0,
+        "serverErrors": 0,
+        "promptTokens": 25606,
+        "outputTokens": 23641,
+        "thinkingTokens": 19069,
+        "costUsd": 0.0144,
+        "costUsdEach": [
+          0.0006,
+          0.0023,
+          0.0025,
+          0.002,
+          0.0029,
+          0.004
+        ],
+        "schemaViolations": 0,
+        "failed": 0
+      },
+      "assembled": {
+        "recaps": 6,
+        "claimsOffered": 62,
+        "claimsDropped": 0,
+        "claimsDroppedShare": 0.0,
+        "claimsRepeated": 0,
+        "claimsKept": 62,
+        "keptExact": 62,
+        "keptRepaired": 0,
+        "dropReasons": {},
+        "secondsEach": [
+          8.1,
+          8.9,
+          7.1,
+          8.2,
+          9.8,
+          8.6
+        ],
+        "secondsMean": 8.4,
+        "secondsMax": 9.8,
+        "promptPerSecond": 2970,
+        "outputPerSecond": 258,
+        "words": [
+          [
+            "P1 early",
+            7,
+            97,
+            [
+              60,
+              100
+            ],
+            true
+          ],
+          [
+            "P1 early",
+            70,
+            94,
+            [
+              60,
+              100
+            ],
+            true
+          ],
+          [
+            "P2 middle",
+            7,
+            211,
+            [
+              150,
+              250
+            ],
+            false
+          ],
+          [
+            "P2 middle",
+            70,
+            212,
+            [
+              150,
+              250
+            ],
+            true
+          ],
+          [
+            "P3 late",
+            7,
+            216,
+            [
+              150,
+              250
+            ],
+            false
+          ],
+          [
+            "P3 late",
+            70,
+            399,
+            [
+              300,
+              400
+            ],
+            true
+          ]
+        ],
+        "inTarget": 6,
+        "leakFlags": 1,
+        "certainLeakFlags": 0,
+        "injectionFlags": 0,
+        "bareMaraLines": 0,
+        "foreshadowingLines": 0,
+        "retries": 0,
+        "serverErrors": 0,
+        "promptTokens": 15975,
+        "outputTokens": 9808,
+        "thinkingTokens": 8359,
+        "costUsd": 0.0065,
+        "costUsdEach": [
+          0.0011,
+          0.0011,
+          0.001,
+          0.001,
+          0.0013,
+          0.0011
+        ],
+        "schemaViolations": 0,
+        "fromStoredNotes": 43,
+        "failed": 0
+      }
+    },
+    "dcc1": {
+      "precompute": {
+        "units": 62,
+        "seconds": 1383.8,
+        "promptTokens": 567927,
+        "cachedTokens": 37448,
+        "outputTokens": 308722,
+        "promptPerSecond": 9432,
+        "outputPerSecond": 247,
+        "notesOffered": 760,
+        "notesDropped": 0,
+        "notesDroppedShare": 0.0,
+        "notesRepaired": 3,
+        "dropReasons": {},
+        "retries": 0,
+        "serverErrors": 0,
+        "failedUnits": 1,
+        "stopped": null,
+        "thinkingTokens": 245888,
+        "costUsd": 0.2112,
+        "schemaViolations": 11,
+        "slowestUnitSeconds": 44.4
+      },
+      "recaps": {
+        "recaps": 6,
+        "claimsOffered": 107,
+        "claimsDropped": 0,
+        "claimsDroppedShare": 0.0,
+        "claimsRepeated": 0,
+        "claimsKept": 107,
+        "keptExact": 104,
+        "keptRepaired": 0,
+        "dropReasons": {},
+        "secondsEach": [
+          23.5,
+          45.6,
+          21.6,
+          49.1,
+          23.1,
+          48.2
+        ],
+        "secondsMean": 35.2,
+        "secondsMax": 49.1,
+        "promptPerSecond": 9904,
+        "outputPerSecond": 260,
+        "words": [
+          [
+            "10%",
+            7,
+            167,
+            [
+              150,
+              250
+            ],
+            false
+          ],
+          [
+            "10%",
+            70,
+            522,
+            [
+              450,
+              550
+            ],
+            false
+          ],
+          [
+            "45%",
+            7,
+            200,
+            [
+              150,
+              250
+            ],
+            false
+          ],
+          [
+            "45%",
+            70,
+            468,
+            [
+              450,
+              550
+            ],
+            false
+          ],
+          [
+            "85%",
+            7,
+            173,
+            [
+              150,
+              250
+            ],
+            false
+          ],
+          [
+            "85%",
+            70,
+            561,
+            [
+              450,
+              550
+            ],
+            false
+          ]
+        ],
+        "inTarget": 5,
+        "leakFlags": 0,
+        "certainLeakFlags": 0,
+        "injectionFlags": 0,
+        "bareMaraLines": 0,
+        "foreshadowingLines": 0,
+        "retries": 0,
+        "serverErrors": 0,
+        "promptTokens": 63141,
+        "outputTokens": 51639,
+        "thinkingTokens": 43549,
+        "costUsd": 0.0321,
+        "costUsdEach": [
+          0.0042,
+          0.0067,
+          0.0033,
+          0.007,
+          0.0039,
+          0.007
+        ],
+        "schemaViolations": 0,
+        "failed": 0
+      },
+      "assembled": {
+        "recaps": 6,
+        "claimsOffered": 117,
+        "claimsDropped": 0,
+        "claimsDroppedShare": 0.0,
+        "claimsRepeated": 0,
+        "claimsKept": 117,
+        "keptExact": 113,
+        "keptRepaired": 0,
+        "dropReasons": {},
+        "secondsEach": [
+          13.2,
+          18.2,
+          10.7,
+          17.9,
+          14.9,
+          27.3
+        ],
+        "secondsMean": 17.0,
+        "secondsMax": 27.3,
+        "promptPerSecond": 10146,
+        "outputPerSecond": 255,
+        "words": [
+          [
+            "10%",
+            7,
+            220,
+            [
+              150,
+              250
+            ],
+            false
+          ],
+          [
+            "10%",
+            70,
+            502,
+            [
+              450,
+              550
+            ],
+            false
+          ],
+          [
+            "45%",
+            7,
+            232,
+            [
+              150,
+              250
+            ],
+            false
+          ],
+          [
+            "45%",
+            70,
+            494,
+            [
+              450,
+              550
+            ],
+            false
+          ],
+          [
+            "85%",
+            7,
+            232,
+            [
+              150,
+              250
+            ],
+            false
+          ],
+          [
+            "85%",
+            70,
+            484,
+            [
+              450,
+              550
+            ],
+            false
+          ]
+        ],
+        "inTarget": 6,
+        "leakFlags": 0,
+        "certainLeakFlags": 0,
+        "injectionFlags": 0,
+        "bareMaraLines": 0,
+        "foreshadowingLines": 0,
+        "retries": 0,
+        "serverErrors": 0,
+        "promptTokens": 51614,
+        "outputTokens": 23003,
+        "thinkingTokens": 20311,
+        "costUsd": 0.0167,
+        "costUsdEach": [
+          0.0024,
+          0.0032,
+          0.0016,
+          0.0026,
+          0.0026,
+          0.0042
+        ],
+        "schemaViolations": 0,
+        "fromStoredNotes": 78,
+        "failed": 0
+      }
+    }
+  },
+  "claude-sonnet-5-5": {
+    "fixture": {
+      "precompute": {
+        "units": 8,
+        "seconds": 52.9,
+        "promptTokens": 31219,
+        "cachedTokens": 4228,
+        "outputTokens": 4792,
+        "promptPerSecond": 1797,
+        "outputPerSecond": 181,
+        "notesOffered": 49,
+        "notesDropped": 0,
+        "notesDroppedShare": 0.0,
+        "notesRepaired": 0,
+        "dropReasons": {},
+        "retries": 0,
+        "serverErrors": 0,
+        "failedUnits": 0,
+        "stopped": null,
+        "thinkingTokens": 0,
+        "costUsd": 0.1104,
+        "schemaViolations": 1,
+        "slowestUnitSeconds": 7.4
+      },
+      "recaps": {
+        "recaps": 5,
+        "claimsOffered": 38,
+        "claimsDropped": 0,
+        "claimsDroppedShare": 0.0,
+        "claimsRepeated": 0,
+        "claimsKept": 38,
+        "keptExact": 38,
+        "keptRepaired": 0,
+        "dropReasons": {},
+        "secondsEach": [
+          4.7,
+          4.4,
+          7.2,
+          6.2,
+          9.1
+        ],
+        "secondsMean": 6.3,
+        "secondsMax": 9.1,
+        "promptPerSecond": 3099,
+        "outputPerSecond": 188,
+        "words": [
+          [
+            "P1 early",
+            7,
+            113,
+            [
+              60,
+              100
+            ],
+            true
+          ],
+          [
+            "P1 early",
+            70,
+            111,
+            [
+              60,
+              100
+            ],
+            true
+          ],
+          [
+            "P2 middle",
+            70,
+            123,
+            [
+              150,
+              250
+            ],
+            true
+          ],
+          [
+            "P3 late",
+            7,
+            185,
+            [
+              150,
+              250
+            ],
+            false
+          ],
+          [
+            "P3 late",
+            70,
+            366,
+            [
+              300,
+              400
+            ],
+            true
+          ]
+        ],
+        "inTarget": 2,
+        "leakFlags": 3,
+        "certainLeakFlags": 0,
+        "injectionFlags": 0,
+        "bareMaraLines": 0,
+        "foreshadowingLines": 0,
+        "retries": 0,
+        "serverErrors": 0,
+        "promptTokens": 21947,
+        "outputTokens": 3364,
+        "thinkingTokens": 0,
+        "costUsd": 0.0775,
+        "costUsdEach": [
+          0.0116,
+          0.0115,
+          0.0141,
+          0.0172,
+          0.0231
+        ],
+        "schemaViolations": 1,
+        "failed": 1
+      },
+      "assembled": {
+        "recaps": 6,
+        "claimsOffered": 53,
+        "claimsDropped": 0,
+        "claimsDroppedShare": 0.0,
+        "claimsRepeated": 0,
+        "claimsKept": 53,
+        "keptExact": 53,
+        "keptRepaired": 0,
+        "dropReasons": {},
+        "secondsEach": [
+          4.2,
+          3.8,
+          6.8,
+          4.6,
+          4.2,
+          4.7
+        ],
+        "secondsMean": 4.7,
+        "secondsMax": 6.8,
+        "promptPerSecond": 1650,
+        "outputPerSecond": 145,
+        "words": [
+          [
+            "P1 early",
+            7,
+            119,
+            [
+              60,
+              100
+            ],
+            true
+          ],
+          [
+            "P1 early",
+            70,
+            117,
+            [
+              60,
+              100
+            ],
+            true
+          ],
+          [
+            "P2 middle",
+            7,
+            245,
+            [
+              150,
+              250
+            ],
+            false
+          ],
+          [
+            "P2 middle",
+            70,
+            242,
+            [
+              150,
+              250
+            ],
+            true
+          ],
+          [
+            "P3 late",
+            7,
+            232,
+            [
+              150,
+              250
+            ],
+            false
+          ],
+          [
+            "P3 late",
+            70,
+            410,
+            [
+              300,
+              400
+            ],
+            true
+          ]
+        ],
+        "inTarget": 3,
+        "leakFlags": 1,
+        "certainLeakFlags": 0,
+        "injectionFlags": 0,
+        "bareMaraLines": 0,
+        "foreshadowingLines": 0,
+        "retries": 0,
+        "serverErrors": 0,
+        "promptTokens": 15942,
+        "outputTokens": 1606,
+        "thinkingTokens": 0,
+        "costUsd": 0.0479,
+        "costUsdEach": [
+          0.0075,
+          0.0073,
+          0.0081,
+          0.008,
+          0.0079,
+          0.0092
+        ],
+        "schemaViolations": 0,
+        "fromStoredNotes": 34,
+        "failed": 0
+      }
+    },
+    "dcc1": {
+      "precompute": {
+        "units": 62,
+        "seconds": 550.4,
+        "promptTokens": 584491,
+        "cachedTokens": 37448,
+        "outputTokens": 62524,
+        "promptPerSecond": 4746,
+        "outputPerSecond": 172,
+        "notesOffered": 659,
+        "notesDropped": 2,
+        "notesDroppedShare": 0.003,
+        "notesRepaired": 9,
+        "dropReasons": {
+          "quote-not-in-sentence": 2
+        },
+        "retries": 0,
+        "serverErrors": 0,
+        "failedUnits": 1,
+        "stopped": null,
+        "thinkingTokens": 0,
+        "costUsd": 1.7942,
+        "schemaViolations": 8,
+        "slowestUnitSeconds": 16.0
+      },
+      "recaps": {
+        "recaps": 5,
+        "claimsOffered": 75,
+        "claimsDropped": 0,
+        "claimsDroppedShare": 0.0,
+        "claimsRepeated": 0,
+        "claimsKept": 75,
+        "keptExact": 75,
+        "keptRepaired": 0,
+        "dropReasons": {},
+        "secondsEach": [
+          6.8,
+          10.7,
+          12.6,
+          7.0,
+          13.3
+        ],
+        "secondsMean": 10.1,
+        "secondsMax": 13.3,
+        "promptPerSecond": 4217,
+        "outputPerSecond": 198,
+        "words": [
+          [
+            "10%",
+            7,
+            115,
+            [
+              150,
+              250
+            ],
+            false
+          ],
+          [
+            "10%",
+            70,
+            383,
+            [
+              450,
+              550
+            ],
+            false
+          ],
+          [
+            "45%",
+            70,
+            415,
+            [
+              450,
+              550
+            ],
+            false
+          ],
+          [
+            "85%",
+            7,
+            225,
+            [
+              150,
+              250
+            ],
+            false
+          ],
+          [
+            "85%",
+            70,
+            446,
+            [
+              450,
+              550
+            ],
+            false
+          ]
+        ],
+        "inTarget": 1,
+        "leakFlags": 0,
+        "certainLeakFlags": 0,
+        "injectionFlags": 0,
+        "bareMaraLines": 0,
+        "foreshadowingLines": 0,
+        "retries": 0,
+        "serverErrors": 0,
+        "promptTokens": 57154,
+        "outputTokens": 6320,
+        "thinkingTokens": 0,
+        "costUsd": 0.1775,
+        "costUsdEach": [
+          0.0321,
+          0.0324,
+          0.0332,
+          0.0355,
+          0.0443
+        ],
+        "schemaViolations": 2,
+        "failed": 1
+      },
+      "assembled": {
+        "recaps": 6,
+        "claimsOffered": 96,
+        "claimsDropped": 0,
+        "claimsDroppedShare": 0.0,
+        "claimsRepeated": 0,
+        "claimsKept": 96,
+        "keptExact": 94,
+        "keptRepaired": 0,
+        "dropReasons": {},
+        "secondsEach": [
+          4.9,
+          8.2,
+          5.1,
+          7.7,
+          5.6,
+          7.6
+        ],
+        "secondsMean": 6.5,
+        "secondsMax": 8.2,
+        "promptPerSecond": 4386,
+        "outputPerSecond": 164,
+        "words": [
+          [
+            "10%",
+            7,
+            257,
+            [
+              150,
+              250
+            ],
+            false
+          ],
+          [
+            "10%",
+            70,
+            537,
+            [
+              450,
+              550
+            ],
+            false
+          ],
+          [
+            "45%",
+            7,
+            257,
+            [
+              150,
+              250
+            ],
+            false
+          ],
+          [
+            "45%",
+            70,
+            531,
+            [
+              450,
+              550
+            ],
+            false
+          ],
+          [
+            "85%",
+            7,
+            271,
+            [
+              150,
+              250
+            ],
+            false
+          ],
+          [
+            "85%",
+            70,
+            558,
+            [
+              450,
+              550
+            ],
+            false
+          ]
+        ],
+        "inTarget": 2,
+        "leakFlags": 0,
+        "certainLeakFlags": 0,
+        "injectionFlags": 0,
+        "bareMaraLines": 0,
+        "foreshadowingLines": 0,
+        "retries": 0,
+        "serverErrors": 0,
+        "promptTokens": 51404,
+        "outputTokens": 3332,
+        "thinkingTokens": 0,
+        "costUsd": 0.1361,
+        "costUsdEach": [
+          0.0256,
+          0.0304,
+          0.0126,
+          0.016,
+          0.0232,
+          0.0283
+        ],
+        "schemaViolations": 0,
+        "fromStoredNotes": 59,
+        "failed": 0
       }
     }
   }

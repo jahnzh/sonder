@@ -1,40 +1,47 @@
-# Local "Story so far" on the RTX 3070 Ti: results
+# "Story so far" on a local model and on hosted Claude: results
 
-Measured on 20 November 2026 on the WSL host. How the prototype works and how to run it: [README.md](README.md).
+Measured on 20 November 2026: three local models on the WSL host's RTX 3070 Ti, then Claude Haiku 5.5 and Claude Sonnet 5.5 on the same books, cutoffs and gaps. How the prototype works and how to run it: [README.md](README.md).
 
 ## Recommendation
 
-1. **It runs locally, with room to spare.** Gemma 4 E4B (4-bit, llama.cpp) takes 3.1 GB of the card at a 16k context, makes the notes for a 130,000-word book in 10 minutes and a recap in 3 to 11 seconds. No text leaves the house. The 9B model does not fit beside the desktop: it crashed at 7.5 GB.
-2. **The guarantees hold; the writing is not good enough for anyone but the owner.** In 36 fixture recaps there was no leak and no obeyed injection, and every kept claim cites a real passage before the cutoff. But the accurate model (Gemma 4 E4B) writes a flat list that misses main threads, and the better writers (Qwen3.5) state wrong things in 4 to 18% of their fixture claims. The quote check cannot catch a wrong claim with a real quote.
-3. **So:** keep Replay first. Build Story so far on this pipeline with the model behind an adapter, and start with local Gemma 4 E4B in assembled mode as an owner-only trial. Whether a hosted model is needed is a question of quality, not of feasibility or cost, and it is still open: no hosted model was run here. The panel's judged evaluation, with a hosted model next to these, should decide it before other users see a recap.
+1. **It runs locally, but the model that tells the story well is hosted.** Local Gemma 4 E4B takes 3.1 GB of the card, makes a 130,000-word book's notes in 10 minutes and a recap in 3 to 11 seconds, and is accurate but flat. Sonnet 5.5 was the only model with no wrong claim in what was read (91 fixture claims, 30 sampled from the real book) and with the main threads in its recaps.
+2. **Sonnet 5.5 clears the panel's bars on this evidence; Haiku 5.5 does not yet.** Haiku reads nearly as well at a tenth of the price, but it called the hero "Carl Dwyer" in 45 notes and 12 recap claims, a surname the book never gives. Sonnet costs about $1.80 once per long book for the notes and 2 to 4 cents per recap; Haiku about $0.21 and half a cent. The guarantees held for all five models: no leak, no obeyed injection, no citation after the cutoff.
+3. **So:** keep Replay first, and build Story so far on this pipeline with the model behind an adapter. If the book's text may leave the house, use Sonnet 5.5 through the API with structured outputs. If it may not, local Gemma 4 E4B in assembled mode is fit for an owner-only trial. Either way make the new name check a hard rule, and run the panel's judged evaluation on more books before anyone but the owner sees a recap.
 
 ## Results
 
-Each column is one model on llama.cpp (build b12589), 16k context, all layers on the GPU, 8-bit KV cache. Speeds and times are from the real book unless a row says otherwise.
+The three local models ran on llama.cpp (build b12589) at a 16k context with all layers on the GPU. The two hosted models ran through the Claude Code CLI on the owner's subscription, at low effort; their costs are what the same tokens would cost on the API ("Hosted models next to the local ones" has the details). Speeds and times are from the real book unless a row says otherwise.
 
-| | Gemma 4 E4B, QAT Q4_K_XL | Qwen3.5-4B, Q6_K | Qwen3.5-9B, Q4_K_M |
-| --- | --- | --- | --- |
-| **GPU memory taken** | 3.1 GB | 4.0 GB | 5.9 GB |
-| Card at its peak (desktop included) | 5.1 of 8.2 GB | 6.1 of 8.2 GB | 7.5 of 8.2 GB, then a crash |
-| **Reading** (prompt) | 7,351 tok/s | 4,559 tok/s | 3,137 tok/s |
-| **Writing** (generation) | 108 tok/s | 111 tok/s | 89 tok/s |
-| **Notes for the whole book** (130k words, 62 units) | 9.9 min | 11.4 min | 11.4 min for 86% of the book, then the crash (about 13 min for all of it) |
-| **Recap, written mode**, away 7 d / 70 d | 9.2 s / 21.3 s | 8.5 s / 18.7 s | 11.0 s / 24.1 s |
-| **Recap, assembled mode**, away 7 d / 70 d | 5.3 s / 9.5 s | 5.3 s / 8.6 s | 6.7 s / 10.3 s |
-| **Citation check, notes**: dropped | 7.5% (64 of 852) | 17.9% (153 of 855) | 22.4% (149 of 666) |
-| Notes whose citation was moved to the right sentence | 61 | 117 | 60 |
-| **Citation check, recap claims**, real book: written / assembled | 1.3% / 0% dropped | 0.8% / 12.1% | 4.3% / 7.8% |
-| Citation check, recap claims, fixture: written / assembled | 0% / 1.1% dropped | 4.1% / 1.1% | 9.5% / 5.3% |
-| **Fixture: leaks** (12 recaps each) | 0 | 0 | 0 |
-| **Fixture: injection obeyed** | 0, and never repeated | 0; its demand is repeated in 6 of 12 recaps | 0; repeated in 7 of 12 |
-| **Wrong claims by reading**, fixture: written / assembled | 0 of 77 / 0 of 93 | 3 of 67 / 4 of 90 | 10 of 57 / 4 of 71 |
-| Wrong claims in a sample from the real book | 1 of 30 | not sampled | 1 of 22 |
-| Recaps inside their word band (24 each) | 22 | 16 | 18 |
+| | Gemma 4 E4B, QAT Q4 | Qwen3.5-4B, Q6_K | Qwen3.5-9B, Q4_K_M | Haiku 5.5 (hosted) | Sonnet 5.5 (hosted) |
+| --- | --- | --- | --- | --- | --- |
+| **GPU memory taken** | 3.1 GB | 4.0 GB | 5.9 GB | none | none |
+| Card at its peak (desktop included) | 5.1 of 8.2 GB | 6.1 of 8.2 GB | 7.5 of 8.2 GB, then a crash | – | – |
+| **Reading** (prompt) | 7,351 tok/s | 4,559 tok/s | 3,137 tok/s | – | – |
+| **Writing** (generation) | 108 tok/s | 111 tok/s | 89 tok/s | 247 tok/s, four fifths of it thinking | 172 tok/s |
+| **Notes for the whole book** (130k words, 62 units) | 9.9 min | 11.4 min | about 13 min (crashed at 86%) | 23.1 min | 9.2 min |
+| **Recap, written mode**, away 7 d / 70 d | 9.2 s / 21.3 s | 8.5 s / 18.7 s | 11.0 s / 24.1 s | 22.7 s / 47.6 s | 6.9 s / 12.2 s |
+| **Recap, assembled mode**, away 7 d / 70 d | 5.3 s / 9.5 s | 5.3 s / 8.6 s | 6.7 s / 10.3 s | 12.9 s / 21.1 s | 5.2 s / 7.8 s |
+| **Cost of a book's notes** | electricity | electricity | electricity | $0.21 | $1.79 |
+| **Cost of a recap**, written / assembled | – | – | – | $0.005 / $0.003 | $0.036 / $0.023 |
+| **Citation check, notes**: dropped | 7.5% (64 of 852) | 17.9% (153 of 855) | 22.4% (149 of 666) | 0% (0 of 760) | 0.3% (2 of 659) |
+| Notes whose citation was moved to the right sentence | 61 | 117 | 60 | 3 | 9 |
+| **Citation check, recap claims**, real book: written / assembled | 1.3% / 0% dropped | 0.8% / 12.1% | 4.3% / 7.8% | 0% / 0% | 0% / 0% |
+| Citation check, recap claims, fixture: written / assembled | 0% / 1.1% dropped | 4.1% / 1.1% | 9.5% / 5.3% | 0% / 0% | 0% / 0% |
+| **Requests that failed** (94 each) | 0 | 0 | the server crashed once | 1 | 3 |
+| Places where the reply broke its schema and code put it right | 0 (a grammar forces it) | 0 | 0 | 11 | 12 |
+| **Fixture: leaks** (12 recaps each) | 0 | 0 | 0 | 0 | 0 (11 recaps) |
+| **Fixture: injection obeyed** | 0, and never repeated | 0; its demand is repeated in 6 of 12 recaps | 0; repeated in 7 of 12 | 0, and never repeated | 0, and never repeated |
+| **Wrong claims by reading**, fixture: written / assembled | 0 of 77 / 0 of 93 | 3 of 67 / 4 of 90 | 10 of 57 / 4 of 71 | 0 of 59 / 0 of 62 | 0 of 38 / 0 of 53 |
+| Wrong claims in a sample from the real book | 1 of 30 | not sampled | 1 of 22 | 0 of 30 | 0 of 30 |
+| **Names that are not in the book** (real book) | none | none | none | "Dwyer": 45 of 760 notes, 12 of 224 recap claims | none |
+| Recaps inside their word band | 22 of 24 | 16 of 24 | 18 of 24 | 22 of 24 | 8 of 22 |
 
 - **Written mode:** the model writes every claim from the stored notes and the current chapter. **Assembled mode:** code takes the earlier story from the stored notes word for word and the model writes only the current chapter's events, the last scene and the open question. In assembled mode about two thirds of a recap's claims are stored notes.
 - **"Dropped"** is a claim whose sentence lies after the cutoff or does not contain its quote. Every drop here was a quote that is not in the cited sentence, mostly a quote that runs across two sentences. No claim ever cited a sentence after the cutoff. Claims that repeat an earlier claim are left out and counted apart (0 to 8 in six recaps).
 - **Leaks** were flagged by the patterns of `fixture/traps.ts` and every flagged line was read. None stated a later fact.
-- Raw outputs for the fixture are in [results/](results/); all figures are in [results/numbers.json](results/numbers.json). The real book's outputs stay on the WSL host.
+- **Names that are not in the book** are capitalised words in a kept claim that occur nowhere in the text read up to its cutoff (`namesNotIn`). The check was written after Haiku's surname turned up and was then run over every model's stored outputs. Its only other hits were plural forms of names that are in the text.
+- **A failed request** is one whose reply could not be used at all. The unit or recap is then missing: nothing was asked a second time for a hosted model.
+- Raw outputs for the fixture are in [results/](results/); all figures are in [results/numbers.json](results/numbers.json). The real book's outputs stay on the hosts that made them.
 
 ## What the reading says
 
@@ -54,15 +61,31 @@ Each column is one model on llama.cpp (build b12589), 16k context, all layers on
 - **Long recaps in written mode.** With 30 to 38 claims to write, the small models repeat themselves, put questions among the events and retell the chapter line by line. Assembled mode avoids that, hits the word band (Gemma: 11 of 12) and halves the latency, but it reads as a list of notes, and it carries every mistake in a note into every later recap.
 - **The story so far favours the last chapter.** Half of the stored events are the latest ten, and one busy chapter can fill them. A 70-day recap then has too much of the last fight and too little of the book's arc.
 
+**The hosted models:**
+
+- **Sonnet 5.5 reads like a recap.** Its notes hold reasons and connections ("whether Pike's hint about Mara Venn's coat is true, or an attempt to misdirect Ines, was left unanswered"; "she shares a first name with harbourmaster Mara Venn"). Its recaps carry the plot's threads: both anonymous notes, the theft of the tally, the false tide table. Its open question at the late cutoff joins two things the reader has seen ("Will Ines trust Dr Pike with the receipts, given that the press printing the tide tables stands in his dispensary?") without stating anything that comes later.
+- **Haiku 5.5 is close.** It is careful about what is known ("Anselm Pike hinted at Mara Venn's coat, but it is not stated whether she entered the archive") and asks the right question at the late cutoff ("Who stood beside Ines Okafor in the dark?"). No wrong claim was found on the fixture or in 30 claims sampled from the real book.
+- **Haiku invented a name.** The prompt asks for full names, the book gives its narrator only "Carl", and Haiku wrote "Carl Dwyer" in the notes of seven of the 62 units, the first of them the fifth. No source I found gives him that surname. Every such claim has a real quote, so the citation check passes it. It is the panel's "what the model already knows or makes up" failure, on the model that otherwise reads best for its price. Sonnet and the local models wrote "Carl".
+- **Neither repeats the injection.** The handbill appears as "a printed handbill" that Ines burns, and nothing more.
+- **Citations are exact.** Haiku had no note dropped in 760 and Sonnet 2 in 659, against 7 to 22% for the local models.
+- **Without a grammar a reply can break.** Sonnet failed 3 of 94 requests. The one that was run again by hand showed why: it wrote the JSON, then went on in plain text ("Wait — the schema requires at least three events…") and wrote it a second time. Haiku failed one by answering with the schema itself. The API's structured outputs would prevent both; the CLI has none.
+- **Sonnet misses the word band more often than not** (8 of 22). In written mode it gives fewer claims than the schema's minimum, which nothing forces without a grammar, so its recaps run short. In assembled mode its notes, about 25 words each, run a 7-day recap just over 250 words.
+
 **Against the panel's bars:**
 
 | Bar | Result |
 | --- | --- |
-| Citations before the cutoff: 100% | Met by construction and by the check. |
-| 0 major leaks | Met on the fixture. On the real book nothing after the cutoff was seen in the recaps read, but a model that knows the book could still leak; that was not tested with a judge. |
-| Factual precision ≥ 97% | Gemma 4 E4B is near it (0 wrong of 170 on the fixture, 1 of 30 sampled on the real book). Qwen3.5-4B (about 96%) and Qwen3.5-9B (82 to 94%) are under it on the fixture. Samples are too small to settle it. |
-| Key-event recall ≥ 70% at long gaps | Not measured. From reading, Gemma 4 E4B would fail it and the 9B model might pass. |
-| Owner usefulness ≥ 4 of 5 | For the owner to judge: the real book's recaps are on the WSL host (see "What is left on the WSL host"). |
+| Citations before the cutoff: 100% | Met by construction and by the check, for all five. |
+| 0 major leaks | Met on the fixture by all five. On the real book nothing after the cutoff was seen in the recaps read. Haiku's invented surname is not a later fact, but it shows that text from outside the book can get in. |
+| Factual precision ≥ 97% | **Sonnet 5.5: met on this evidence** (0 wrong of 91 fixture claims, 0 of 30 sampled, no unknown name). **Haiku 5.5: not met in written mode on the real book**, where 12 of 107 claims carry the surname (89%); met on the fixture (0 of 121) and in the 30 claims sampled for content. Gemma 4 E4B is near it (0 of 170 on the fixture, 1 wrong of 30 sampled). Qwen3.5-4B (about 96%) and Qwen3.5-9B (82 to 94%) are under it. The samples are small. |
+| Recall of the main threads (≥ 70% of key events at long gaps) | Not measured as a number. By reading: Sonnet and Haiku have the threads on both books; the 9B model has most; Gemma 4 E4B and Qwen3.5-4B miss main ones. |
+| Owner usefulness ≥ 4 of 5 | For the owner to judge: the real book's recaps are on the hosts that made them (see "What is left"). |
+
+**Is a hosted model worth its cost?**
+
+- **In money, yes.** A long novel costs about $1.80 on Sonnet 5.5 or $0.21 on Haiku 5.5 for the notes, once per edition, and a recap 2 to 4 cents or half a cent. Forty books and three hundred recaps a year come to about $80 on Sonnet and $10 on Haiku.
+- **The real costs are elsewhere:** the book's text goes to a provider, and the server needs the key storage, spend gate and consent that #378 describes. The panel put that at one to four weeks of work.
+- **What it buys:** recaps that read as a story and, for Sonnet, no wrong claim in what was checked. Local Gemma is free and private and gets the facts right, but its recaps are lists of small facts.
 
 ## Sample recaps
 
@@ -122,9 +145,24 @@ Every line is true. It never says that the tally was taken, never mentions the t
 
 It reads better, it has the theft and the right open question, and a third of it is wrong.
 
+### Fixture, late cutoff, away 7 days: Sonnet 5.5, written
+
+*185 words (band 150–250), 8 of 8 claims kept, 6.2 s.*
+
+- Ines Okafor arrived at the island port of Harrow Quay as the new keeper of the Salt Ledger, appointed by the council after Aldous Brandt vanished. `1:8` “Keeper of the Salt Ledger," Ines said.”
+- Ines Okafor was to finish the audit of the Salt Ledger before the equinox market so the island could refuse the Crane Company's offer. `2:10` “The council needs the audit finished before the equinox market,”
+- Ines Okafor found that the Salt Ledger's pages between February and June had been torn out, leaving only stubs. `2:15` “Between February and June there was nothing but a row of torn stubs.”
+- Ines Okafor counted the salt over four days and found that twenty-four barrels a month had reached the island without reaching the book. `4:6` “Twenty-four barrels a month had come onto the island and never reached the book.”
+- A second note from the Cormorant told Ines Okafor that the harbourmaster signs what she is given and to ask who writes the tide tables. `4:25` “The harbourmaster signs what she is given.”
+- Near midnight an intruder entered the archive in the dark and took Ines Okafor's salt tally, leaving the ledger and receipts. `5:19` “The tally was gone from the desk.”
+- On the tower steps at first light, Dr Anselm Pike offered to keep Ines Okafor's receipts in his dispensary strongbox, saying nobody searches a doctor. `6:14` “I have a strongbox in the dispensary, and nobody searches a doctor.”
+- Will Ines Okafor trust Dr Anselm Pike with the receipts, given that the press printing the tide tables stands in his dispensary? `5:2` “the press stood in the back room of Dr Pike's dispensary”
+
+Every line is true, in half the claims the others need, and the question is the one the reader should be holding.
+
 ### Real book at 45%, away 7 days
 
-The recaps' own words only; the citations quote the book and are left out. Both models start from the same place, just after a boss fight.
+The recaps' own words only; the citations quote the book and are left out. All four start from the same place, just after a boss fight.
 
 Gemma 4 E4B, assembled (238 words, 18 of 18 claims kept, 4.3 s):
 
@@ -142,15 +180,32 @@ Qwen3.5-9B, written (181 words, 10 of 10 claims kept, 9.7 s):
 >
 > Princess Donut received a dozen Heal scrolls from a Silver Survivor's Box because she ended a boss battle with less than 5% of her health. Will the narrator and Princess Donut survive the borough boss inside the gym?
 
-The first still has the fight going on in its opening lines (a stored goal that was never retired). The second tells it better and does not notice that "the narrator" is Carl.
+Haiku 5.5, written (200 words, 11 of 11 claims kept, 21.6 s):
+
+> Carl Dwyer, a former Coast Guard marine tech from Seattle, is a crawler stranded in the dungeon after the transformation. Mordecai, a rat-like Rat Hooligan, is the Guildmaster of the guildhall where Carl and Donut train and get their fights reviewed. Carl and Donut set out north from the encampment in search of the Taco Bell.
+>
+> A transformation struck at about 2:23 AM Pacific time, killing everyone who was indoors at that moment. Carl and Donut entered the Safe Room, a fast food restaurant with a playground placed underground. A door magically reformed itself and locked Carl and Donut inside, starting a boss battle with a Neighborhood Boss. Frank Q pulled a weapon from his inventory and fired at Donut as she leaped into the air. Carl smashed the Juicer's skull with his foot, killing the boss, and then rushed to Donut, who was near death. Donut's broken leg magically set itself, and her health began recovering after the Juicer fight.
+>
+> At the training guild, Donut received a dozen Heal scrolls from a Silver Survivor's Box, while Carl looked on. Could another group of crawlers be killing off the missing people, rather than Frank and Maggie, as Carl has wondered?
+
+Sonnet 5.5, assembled (257 words, 10 of 10 claims kept, 5.1 s; its written recap at this place is one of the three requests that failed):
+
+> Carl is the 27-year-old narrator, a former US Coast Guard member who works as a marine tech fixing electrical systems on rich people's boats, and who lived in Seattle with Beatrice. Carl wanted to keep Donut alive after her injury, so he tested potions on himself and planned to wait five minutes before giving her one.
+>
+> At about 2:23 AM on January 3rd, a transformation killed nearly everyone who was indoors, crushing buildings and cars into the ground in Seattle and elsewhere. The announcement said that crawlers who descend early are held in stasis until the collapse, and advised descending no earlier than six hours before it. Carl read Confusing Fog scrolls, which blinded the troglodytes but lasted only fifteen or twenty seconds each, while the Juicer hurled flaming weights that exploded and wounded Carl. Donut's leg set itself and she faked a dramatic death before drinking her own health potion, and Carl told her to help loot. Carl looted all the weight equipment, tools and office items from the gym into his inventory, insisting to Donut that anything they could lift should be taken. Carl and Donut both reached level nine thanks to the boss being a higher level than expected, and they went to a nearby training guild.
+>
+> In the training guild, Donut opened her loot boxes and received a bracelet, spell book and Heal scrolls, while Carl watched her. Will Donut read her new spell book and find a way to fix her low constitution and weak armor so her shred attack becomes useful?
+
+Gemma still has the fight going on in its opening lines (a stored goal that was never retired). The 9B model tells it better and does not notice that "the narrator" is Carl. Haiku tells it well under a name the book does not give. Sonnet's is the one a returning reader could use, and at 257 words it is just over its band.
 
 ## What was run
 
 - **Host:** `jahn@192.168.1.119`, WSL2 on the owner's Windows desktop. RTX 3070 Ti (8 GB), Ryzen 7 9800X3D, 15 GB of RAM in WSL. The alignment worker ran untouched throughout and had no job in any measured second (the scripts log it).
-- **Runtime:** llama.cpp server, build b12589 (20 November 2026), the prebuilt Ubuntu CUDA 13.5 binaries. One slot, 16,384-token context, all layers on the GPU, flash attention, q8_0 KV cache, reasoning off, temperature 0.2, fixed seed.
-- **Models:** Gemma 4 E4B (`gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf`), Qwen3.5-4B (`Qwen3.5-4B-Q6_K.gguf`), Qwen3.5-9B (`Qwen3.5-9B-Q4_K_M.gguf`).
+- **Hosted models:** Claude Haiku 5.5 and Claude Sonnet 5.5 through the Claude Code CLI on the coordinating machine, on the owner's subscription, with the owner's approval to send the real book's text. Same prompts, schemas, cutoffs, gaps and checks.
+- **Local runtime:** llama.cpp server, build b12589 (20 November 2026), the prebuilt Ubuntu CUDA 13.5 binaries. One slot, 16,384-token context, all layers on the GPU, flash attention, q8_0 KV cache, reasoning off, temperature 0.2, fixed seed.
+- **Local models:** Gemma 4 E4B (`gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf`), Qwen3.5-4B (`Qwen3.5-4B-Q6_K.gguf`), Qwen3.5-9B (`Qwen3.5-9B-Q4_K_M.gguf`).
 - **Books:** the invented fixture (8 chapters, 2,600 words) and *Dungeon Crawler Carl* book 1 from the library (130,217 words, 13,472 sentences, 60 sections, cut into 62 units).
-- **Recaps:** 3 positions × 2 gaps (7 days and 70 days) per book, in both modes: 24 per model. Fixture positions are the three cutoffs of `fixture/traps.ts`; the real book's are the sentences at 10%, 45% and 85%.
+- **Recaps:** 3 positions × 2 gaps (7 days and 70 days) per book, in both modes: 24 per model. With the 70 summarising requests of the two books that is 94 requests per model. Fixture positions are the three cutoffs of `fixture/traps.ts`; the real book's are the sentences at 10%, 45% and 85%.
 - **Judging.** Leaks, injection and citations are checked by code. Whether a claim is true was judged by reading: every fixture claim against the story, and a random sample of the real book's claims against the cited text (`wsl/audit.py`).
 
 ## Memory: what the card can hold
@@ -196,6 +251,36 @@ One 6,600-token prompt and 256 tokens of free text, all layers on the GPU, 16k c
 - **A recap's time is its output.** Reading 4,000 to 9,000 tokens takes one to three seconds; the rest is writing each claim with its id and quote, about 75 tokens a claim. Assembled mode is faster because the model writes a third of the claims.
 - **Latency need not be felt.** The cutoff is known when a session ends and the gap only grows, so a recap for each band can be made in the background while the reader is away.
 - **The card can be given back.** A model loads from the page cache in 2 to 3 seconds, so the server can start for a job and stop after it; the alignment worker then has the whole card the rest of the time.
+
+## Hosted models next to the local ones
+
+**How they were run.** `hosted.sh` calls `claude -p --model … --output-format json` once per request, in an empty folder, with no tools, no MCP servers, no settings, the request's own system prompt and `--effort low`. The schema is written into the prompt, since the CLI has no structured output of its own, and the reply is checked against it by code. Nothing was asked twice. No usage limit was reached.
+
+**What differs from the API,** and so from what a server would do:
+
+- The CLI adds about 650 tokens to each prompt and about half a second to each call.
+- Thinking cannot be set. At low effort Haiku 5.5 thought a great deal (80% of its output tokens) and Sonnet 5.5 not at all. Haiku's times and costs include that thinking; Sonnet's quality is what it writes without any.
+- Sampling is the CLI's default. The local models ran at temperature 0.2.
+- A server would use the API's structured outputs, which force the schema as llama.cpp's grammar does.
+
+**Tokens, and what they would cost on the API** ([prices](https://platform.claude.com/docs/en/about-claude/pricing): Haiku 5.5 $0.10 in and $0.50 out per million tokens, Sonnet 5.5 $2 and $10; every prompt token counted at the input price, so no prompt caching):
+
+| | Requests | Prompt tokens | Output tokens | Of which thinking | Cost | Cost without the thinking tokens |
+| --- | --- | --- | --- | --- | --- | --- |
+| **Haiku 5.5**: notes, real book | 62 | 567,927 | 308,722 | 245,888 | $0.21 | $0.09 |
+| Haiku 5.5: 6 recaps, written | 6 | 63,141 | 51,639 | 43,549 | $0.032 | $0.010 |
+| Haiku 5.5: 6 recaps, assembled | 6 | 51,614 | 23,003 | 20,311 | $0.017 | $0.007 |
+| Haiku 5.5: fixture, all 20 requests | 20 | 71,425 | 56,381 | 45,918 | $0.035 | $0.012 |
+| **Sonnet 5.5**: notes, real book | 62 | 584,491 | 62,524 | 0 | $1.79 | $1.79 |
+| Sonnet 5.5: 5 recaps, written | 5 | 57,154 | 6,320 | 0 | $0.18 | $0.18 |
+| Sonnet 5.5: 6 recaps, assembled | 6 | 51,404 | 3,332 | 0 | $0.14 | $0.14 |
+| Sonnet 5.5: fixture, all 19 requests | 19 | 69,108 | 9,762 | 0 | $0.24 | $0.24 |
+
+- **The whole follow-up would have cost about $2.64 on the API:** $0.30 for Haiku and $2.34 for Sonnet. The two Sonnet recaps that failed and the one run again by hand are not in these sums; they add about $0.10. On the subscription it cost nothing extra.
+- **A book's notes are the cost.** They are paid once per edition and can be shared by every reader of it. A recap is cents on Sonnet and a fraction of a cent on Haiku.
+- **Haiku's price cliff is far away.** Its prices are for prompts up to 100,000 tokens and five times higher beyond. The largest prompt here was under 14,000 tokens, because no request holds more than a chapter and the notes. The design that hands a model the whole book so far would cross it at about 55,000 words, at the panel's 1.8 tokens per word.
+- **The Batch API does not fit the notes.** Each chapter's prompt contains the notes written for the chapters before it, so a book's requests cannot be sent together. It would fit recaps made ahead of time for every band.
+- **The panel's estimate holds for Haiku and not for Sonnet.** It gave $0.05 to $0.30 per book and $0.004 per recap on Haiku: measured $0.21 and $0.003 to $0.005. Sonnet is about nine times that.
 
 ## Research (web, as of 20 November 2026)
 
@@ -259,35 +344,40 @@ The design under test needs none of the long-context ability: no request holds m
 | Qwen3.5-4B × Q6_K × llama.cpp | The same size class from the other family, at a higher-precision quantisation that still fits. |
 | Qwen3.5-9B × Q4_K_M × llama.cpp | The largest model that could fit 8 GB with a useful context, to see what size buys. |
 
-## What is left on the WSL host
+## What is left
 
-Everything is under `~/recap-proto` (14 GB). No model server is running and the GPU memory is back to what the desktop uses. Nothing outside that folder was changed: no sudo, no service, no Windows-side change, and `~/sonder-ctc-worker` was not touched.
+**On the coordinating machine:** nothing outside this branch. The hosted runs were made in a session scratch folder, their outputs were copied to the WSL host, and the fixture's are in `results/`.
+
+**On the WSL host:** everything is under `~/recap-proto` (14 GB). No model server is running and the GPU memory is back to what the desktop uses. Nothing outside that folder was changed: no sudo, no service, no Windows-side change, and `~/sonder-ctc-worker` was not touched.
 
 | Path | Size | What |
 | --- | --- | --- |
 | `models/` | 13 GB | The three GGUF files (4.0, 3.3 and 5.3 GB). |
 | `llama/b12589/` | 0.9 GB | llama.cpp and its CUDA runtime, unpacked. |
 | `work/sonder/` | 0.3 GB | A copy of this branch with `node_modules`. |
-| `work/runs/` | 2 MB | The final outputs, the real book's notes and recaps among them. |
+| `work/runs/` | 3 MB | The final outputs of all five models, the real book's notes and recaps among them. |
 | `work/books/` | 3 MB | The fixture and a copy of the *Dungeon Crawler Carl* EPUB with its extracted sentences. |
 | `wsl/`, `logs/` | under 1 MB | Scripts and logs. |
 
-To read the real book's recaps: `~/recap-proto/wsl/show.py ~/recap-proto/work/runs/gemma4-e4b-qat-q4 dcc1 --assembled` (or `qwen35-9b-q4 dcc1` for the 9B model's). To remove everything: `rm -rf ~/recap-proto`.
+To read the real book's recaps: `~/recap-proto/wsl/show.py ~/recap-proto/work/runs/claude-sonnet-5-5 dcc1` (written mode; add `--assembled` for the other), and the same with `claude-haiku-5-5`, `gemma4-e4b-qat-q4`, `qwen35-4b-q6` or `qwen35-9b-q4`. To remove everything: `rm -rf ~/recap-proto`.
 
 ## Limits of this measurement
 
-- **No hosted model was run** (no paid calls), so "is a hosted model better" is answered from the panel's bars and published results, not from a side-by-side.
+- **The hosted models ran through the CLI, not the API.** Their latency, their thinking and their failed requests are partly the CLI's; see "Hosted models next to the local ones". A production server would still need an API key.
 - **One reader judged**, and for the real book only a sample. The panel's plan (a calibrated judge model, then the owner) is still to do.
-- **Twenty-four recaps per model.** Rates from so few are rough.
+- **Twenty-four recaps per model, one real book.** Rates from so few are rough, and a book the models know less well could go differently.
+- **The name check came after the runs.** It was run over the stored outputs; no recap was made with it as a rule.
 - **Other work ran on the host** during the measurements: CI checks on the CPU and the owner's desktop on the GPU. Speeds moved by a few percent between runs.
 - **The fixture is tiny,** so the gap bands step down on it: a recap is at most a fifth of the words read, and only its last position reaches the 300–400 word band. The 450–550 word band was measured on the real book only.
 - **The stored notes were made before one late fix.** Qwen3.5 leaves a person's name out of a "who" note because the name has its own field, and later summarising steps saw those notes without the name. The name is now put back wherever a note is shown. The recaps in this document were made after the fix, the notes before it.
-- **llama.cpp nightly.** An earlier pass, with another output schema, failed once on each Qwen model within a book with `Unexpected empty grammar stack` (HTTP 500); the client now asks again with another seed. The final pass had none.
+- **llama.cpp nightly.** An earlier pass, with another output schema, failed once on each Qwen model within a book with `Unexpected empty grammar stack` (HTTP 500); the client now asks a local model again with another seed. The final pass had none.
 - **Dropped as unusable:** letting the same model judge whether each cited passage supports its claim. It filled its reasoning field with a copy of the claim and rejected most claims that reading shows to be right. A judge needs a stronger model or labelled examples.
 
 ## What to change next
 
-- **Run the panel's evaluation with a hosted model beside these**, on the same notes and cutoffs. The pipeline only needs another address in `llm.ts`.
+- **Make the name check a rule:** drop a note or claim with a capitalised word that is not in the text read so far, and stop asking for "full names" where the book gives one name.
+- **Run the panel's judged evaluation** on more books, with Sonnet 5.5 and Haiku 5.5 through the API with structured outputs, and with Haiku's thinking off as a third arm.
+- **Try a split:** Sonnet for a book's notes, which decide the quality and are paid once, and a cheaper or local model for the current chapter's part of a recap.
 - **Spread the stored events better:** at most a few per chapter among the latest ten, so that one fight cannot fill them.
 - **Leave front matter and back matter out** of the units (the copyright line became a note).
 - **Retire goals by code** when a later chapter's notes contradict them, or drop the stored goals older than a chapter.

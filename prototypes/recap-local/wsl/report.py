@@ -3,7 +3,9 @@
 
     report.py <runs folder> <label> [<label> ...] [--json <out.json>]
 
-Reads what measure.sh wrote for each label: vram.json, <book>.states.json and <book>.recaps.json.
+Reads what measure.sh (or hosted.sh) wrote for each label: vram.json where there is one, <book>.states.json,
+<book>.recaps.json and <book>.recaps.assembled.json. Costs are what the requests would cost on the API, as llm.ts
+worked them out from the token counts; they are 0 for a local model.
 """
 import json, os, sys
 
@@ -45,6 +47,10 @@ def precompute(states):
         "retries": sum(unit["retries"] for unit in units),
         "serverErrors": sum(unit.get("serverErrors", 0) for unit in units),
         "failedUnits": sum(1 for unit in units if unit.get("failed")),
+        "stopped": states.get("stopped"),
+        "thinkingTokens": sum(unit.get("thinkingTokens") or 0 for unit in units),
+        "costUsd": round(sum(unit.get("costUsd") or 0 for unit in units), 4),
+        "schemaViolations": sum(len(unit.get("schemaViolations") or []) for unit in units),
         "slowestUnitSeconds": round(max(unit["ms"] for unit in units) / 1000, 1),
     }
 
@@ -81,13 +87,21 @@ def recaps(rows):
         "foreshadowingLines": sum(len(row.get("foreshadowing", [])) for row in rows),
         "retries": sum(row["timing"]["retries"] for row in rows),
         "serverErrors": sum(row["timing"].get("serverErrors", 0) for row in rows),
+        "promptTokens": sum(row["timing"]["promptTokens"] for row in rows),
+        "outputTokens": sum(row["timing"]["outputTokens"] for row in rows),
+        "thinkingTokens": sum(row["timing"].get("thinkingTokens", 0) for row in rows),
+        "costUsd": round(sum(row["timing"].get("costUsd", 0) for row in rows), 4),
+        "costUsdEach": [round(row["timing"].get("costUsd", 0), 4) for row in rows],
+        "schemaViolations": sum(len(row.get("schemaViolations") or []) for row in rows),
     }
 
 
 report = {}
 for label in labels:
     folder = os.path.join(runs, label)
-    entry = {"vram": json.load(open(os.path.join(folder, "vram.json")))}
+    entry = {}
+    if os.path.exists(os.path.join(folder, "vram.json")):
+        entry["vram"] = json.load(open(os.path.join(folder, "vram.json")))
     if os.path.exists(os.path.join(folder, "vram.recaps.json")):
         entry["vramRecaps"] = json.load(open(os.path.join(folder, "vram.recaps.json")))
     for book in books:
@@ -96,12 +110,16 @@ for label in labels:
             continue
         entry[book] = {"precompute": precompute(json.load(open(states_path)))}
         if os.path.exists(recaps_path):
-            entry[book]["recaps"] = recaps(json.load(open(recaps_path))["rows"])
+            written = json.load(open(recaps_path))
+            entry[book]["recaps"] = recaps(written["rows"])
+            entry[book]["recaps"]["failed"] = len(written.get("failed", []))
         assembled_path = os.path.join(folder, f"{book}.recaps.assembled.json")
         if os.path.exists(assembled_path):
-            rows = json.load(open(assembled_path))["rows"]
+            assembled = json.load(open(assembled_path))
+            rows = assembled["rows"]
             entry[book]["assembled"] = recaps(rows)
             entry[book]["assembled"]["fromStoredNotes"] = sum(row.get("fromStoredNotes", 0) for row in rows)
+            entry[book]["assembled"]["failed"] = len(assembled.get("failed", []))
     report[label] = entry
 
 if out:
@@ -110,10 +128,11 @@ if out:
 print("| Configuration | GPU memory taken (peak) | Reading tok/s | Writing tok/s | Whole book | Recap latency (mean, max) | Citations dropped | Repeats left out |")
 print("| --- | --- | --- | --- | --- | --- | --- | --- |")
 for label, entry in report.items():
-    vram = entry["vram"]
+    vram = entry.get("vram")
     book = entry.get("dcc1") or entry["fixture"]
     pre, rec = book["precompute"], book.get("recaps")
-    print(f"| {label} | {vram['peakMiB'] - vram['baselineMiB']} MiB ({vram['peakMiB']} of 8192 with the desktop's {vram['baselineMiB']}) | {pre['promptPerSecond']} | {pre['outputPerSecond']} | {pre['seconds']} s, {pre['units']} units | "
+    memory = f"{vram['peakMiB'] - vram['baselineMiB']} MiB ({vram['peakMiB']} of 8192 with the desktop's {vram['baselineMiB']})" if vram else "hosted"
+    print(f"| {label} | {memory} | {pre['promptPerSecond']} | {pre['outputPerSecond']} | {pre['seconds']} s, {pre['units']} units | "
           + (f"{rec['secondsMean']} s, {rec['secondsMax']} s | {rec['claimsDropped']}/{rec['claimsOffered']} ({rec['claimsDroppedShare']:.1%}) | {rec['claimsRepeated']} |" if rec else "– | – | – |"))
 print()
 for book in books:
@@ -142,3 +161,21 @@ for label, entry in report.items():
             long = [seconds for seconds, word in zip(rec["secondsEach"], rec["words"]) if word[1] != 7]
             print(f"| {label} | {book} | {mode} | {rec['secondsMean']} s, {rec['secondsMax']} s ({sum(short) / len(short):.1f} s; {sum(long) / len(long):.1f} s) | {rec['outputPerSecond']} | {rec['claimsOffered']} | {rec.get('fromStoredNotes', 0)} | "
                   f"{rec['claimsDropped']} ({rec['claimsDroppedShare']:.1%}) | {rec['claimsRepeated']} | {rec['keptExact']} / {rec['claimsKept']} | {rec['inTarget']} of {rec['recaps']} |")
+
+print()
+print("### Tokens and what they would cost on the API")
+print("| Configuration | Book | Step | Requests | Prompt tokens | Output tokens | Of which thinking | Cost | Cost without the thinking tokens | Schema violations | Failed |")
+print("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+from_llm = {"claude-haiku-5-5": (0.1, 0.5), "claude-sonnet-5-5": (2, 10)}
+for label, entry in report.items():
+    price = from_llm.get(label)
+    for book in books:
+        steps = [("notes", entry.get(book, {}).get("precompute")), ("recaps, written", entry.get(book, {}).get("recaps")), ("recaps, assembled", entry.get(book, {}).get("assembled"))]
+        for step, numbers in steps:
+            if not numbers:
+                continue
+            requests = numbers.get("units", numbers.get("recaps"))
+            prompt = numbers["promptTokens"] + (numbers.get("cachedTokens", 0) if step == "notes" and not price else 0)
+            lean = f"${(numbers['promptTokens'] * price[0] + (numbers['outputTokens'] - numbers['thinkingTokens']) * price[1]) / 1e6:.4f}" if price else "–"
+            cost = f"${numbers['costUsd']:.4f}" if price else "–"
+            print(f"| {label} | {book} | {step} | {requests} | {prompt} | {numbers['outputTokens']} | {numbers['thinkingTokens']} | {cost} | {lean} | {numbers['schemaViolations']} | {numbers.get('failedUnits', numbers.get('failed', 0))} |")

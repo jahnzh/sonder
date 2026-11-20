@@ -1,6 +1,6 @@
 # Local "Story so far" recap: prototype
 
-A throwaway prototype that answers one question: can the **Story so far** recap of the Resume recap design run on a local model on the WSL host's RTX 3070 Ti, instead of a hosted API? The findings, the numbers and the recommendation are in [RESULTS.md](RESULTS.md).
+A throwaway prototype that answers one question: can the **Story so far** recap of the Resume recap design run on a local model on the WSL host's RTX 3070 Ti, instead of a hosted API? It also runs the same test on two hosted Claude models, to have something to compare with. The findings, the numbers and the recommendation are in [RESULTS.md](RESULTS.md).
 
 Nothing in `server/` or `src/` is changed and nothing here is reached by the app. The prototype imports two existing helpers: `cutEpub` (`server/reader.ts`) for the sentence ids, and `normalizeReaderText` (`src/reading-types.ts`) for comparing quotes.
 
@@ -15,7 +15,8 @@ The design under test is the one the panel recommended: stored chapter summaries
 | (c) | `recap.ts` | `--cutoff <sentence id> --gap <days>`: a recap from the stored notes that end before the reader's chapter and that chapter's raw text up to the cutoff, whose length follows the gap. Two modes: the model writes all of it, or (`--assemble`) code takes the earlier story from the stored notes word for word and the model writes only the current chapter's part. |
 | (d) | `lib.ts` (`checkClaim`) | Drops every claim whose sentence lies after the cutoff or does not contain its quote. The recap is what is left. |
 | | `matrix.ts` | Recaps at several positions and gaps, with the code checks of each. |
-| | `llm.ts` | One schema-constrained request to a local llama.cpp server. It refuses an address that is not loopback or a private network. |
+| | `names.ts` | The name check on stored outputs: claims with a capitalised word that is nowhere in the text read up to their cutoff. |
+| | `llm.ts` | One request to a model, answered as JSON of a schema. Two providers: a local llama.cpp server (the schema becomes a grammar; an address that is not loopback or a private network is refused), and a hosted Claude model through the Claude Code CLI, for comparison (see "A hosted model next to the local ones"). |
 
 Rules worth knowing:
 
@@ -25,6 +26,8 @@ Rules worth knowing:
 - **Length.** Under 3 days 60–100 words, 3–14 days 150–250, 2–8 weeks 300–400, longer about 500. A recap is at most a fifth of the words read so far, so a band steps down early in a book. A model cannot count words, so the schema fixes the number of claims per group instead, from the model's own words per claim as measured on its stored notes. The order is who and where, goals, events, last scene, open question.
 - **Names.** A "who" note has its name in a field of its own, and some models then leave the name out of the sentence. Wherever a note is shown, the name is put back (`named` in `lib.ts`).
 - **The checker.** A quote is compared after `normalizeReaderText`, with typographic quotes, dashes and letter case folded (reported separately as "not exact"). It must be at least 12 characters. A quote that is in a neighbouring sentence the model was shown, and nowhere else, moves the citation there ("repaired"). An id after the cutoff is never repaired. A claim that repeats an earlier claim of the same recap is left out and counted apart from citation drops.
+- **The schema check.** Every reply is held against its JSON schema by code (`conform` in `lib.ts`). For llama.cpp that never finds anything, because the grammar already forces the schema. For a hosted model nothing forces it: a list item that breaks its schema is left out, a list that is too long is cut, and each such place is counted as a schema violation.
+- **The name check.** A capitalised word in a kept claim that occurs nowhere in the text read so far is reported (`namesNotIn`): a name from outside the book, or a made-up one. It reports and does not drop yet; RESULTS.md says why it should.
 - **Not checked by code:** whether the quoted sentence supports the claim. See RESULTS.md.
 
 ## The fixture
@@ -94,10 +97,27 @@ npx tsc --noEmit -p prototypes/recap-local
 npx tsx --test prototypes/recap-local/lib.test.ts
 ```
 
+## A hosted model next to the local ones
+
+`hosted.sh` runs the same books, cutoffs, gaps and both recap modes on a hosted Claude model, through the Claude Code CLI that is signed in on the machine (`claude -p --model … --output-format json`), so on the owner's subscription and without an API key:
+
+```sh
+prototypes/recap-local/hosted.sh claude-haiku-5-5 claude-haiku-5-5 <books folder> <runs folder>
+prototypes/recap-local/hosted.sh claude-sonnet-5-5 claude-sonnet-5-5 <books folder> <runs folder>
+```
+
+- **Same pipeline.** `RECAP_PROVIDER=claude-cli` and `RECAP_MODEL` switch `llm.ts` to the CLI; the prompts, schemas, cutoff rules and checks are the ones the local models get. Node 24 runs the scripts as they are, so no dependencies are needed on the machine that has the CLI.
+- **Only the prompt.** The CLI runs in an empty temp folder with `--tools ""`, `--strict-mcp-config`, `--setting-sources ""`, `--disable-slash-commands`, `--no-session-persistence`, the request's own text as `--system-prompt`, and an environment without the variables of the session that started it. It still adds about 650 tokens of its own to each prompt.
+- **No grammar.** The schema is written into the prompt, and the reply is held against it by the schema check.
+- **Thinking stays on.** The CLI cannot turn it off; `--effort low` (`RECAP_EFFORT`) keeps it short. Thinking tokens are counted as output and reported apart.
+- **One request at a time, never asked again.** A reply that is not JSON of the schema's shape fails its unit or recap. A usage or rate limit stops the run (exit 3); running the script again with the same label goes on from the books and recaps that are there.
+- **Cost.** A subscription call costs nothing extra, so `llm.ts` works out what each call would cost on the API from the token counts the CLI reports, with every prompt token at the input price (no prompt caching). A production server would call the API with a key; times measured through the CLI include its start-up, about half a second.
+- **The real book's text goes to Anthropic** in these runs. The owner approved that for this test.
+
 ## Token estimate
 
 Units are sized without the model's tokenizer, at 3.4 characters per token plus 7 per sentence id. A prompt estimated at 6,000 tokens was 6,673 tokens for Qwen3.5 and 6,631 for Gemma 4, so the estimate runs about 11% low; the unit budget leaves 18% for it. At a 16,384-token context a unit holds up to about 10,100 real tokens of text.
 
 ## Privacy
 
-The book's text goes to `127.0.0.1` on the WSL host and nowhere else. This repository is public: the outputs for a real book hold its text and are not committed. `results/` holds the fixture's outputs for each measured model (its stored notes, its recaps in both modes and its GPU memory), which are invented text, and `results/numbers.json` and `results/probes.jsonl`, which are numbers only.
+With a local model the book's text goes to `127.0.0.1` on the WSL host and nowhere else. With the hosted comparison it goes to Anthropic through the CLI. This repository is public: the outputs for a real book hold its text and are not committed. `results/` holds the fixture's outputs for each measured model (its stored notes, its recaps in both modes and its GPU memory), which are invented text, and `results/numbers.json` and `results/probes.jsonl`, which are numbers only.

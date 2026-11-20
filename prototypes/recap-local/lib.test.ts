@@ -2,7 +2,7 @@
 //   npx tsx --test prototypes/recap-local/lib.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BANDS, GROUPS, bandOf, checkClaim, claimCounts, indexOf, named, sameClaim, unitsOf, type Book } from "./lib.ts";
+import { BANDS, GROUPS, bandOf, checkClaim, claimCounts, conform, indexOf, named, namesNotIn, sameClaim, unitsOf, wordsOf, type Book } from "./lib.ts";
 import { storyOf } from "./summarise.ts";
 import type { Note } from "./lib.ts";
 
@@ -124,4 +124,34 @@ test("a who note is read with its name in it", () => {
   assert.equal(named(who("Ines Okafor", "She was the new keeper of the Salt Ledger.")), "Ines Okafor was the new keeper of the Salt Ledger.");
   assert.equal(named(who("Mara Lisle", "A girl of nineteen who mended nets.")), "Mara Lisle: a girl of nineteen who mended nets.");
   assert.equal(named(who("Mara Venn", "Mara Venn was the harbourmaster.")), "Mara Venn was the harbourmaster.");
+});
+
+test("a reply is held against its schema: a bad item goes, a long list is cut, a missing list is empty", () => {
+  const item = { type: "object", properties: { weight: { enum: [1, 2, 3] }, text: { type: "string", minLength: 5, maxLength: 20 }, id: { type: "string", pattern: "^1:[0-9]{1,4}$" } }, required: ["weight", "text", "id"], additionalProperties: false };
+  const schema = { type: "object", properties: { events: { type: "array", minItems: 1, maxItems: 2, items: item }, open: { type: "array", maxItems: 2, items: item } }, required: ["events", "open"], additionalProperties: false };
+  const good = { weight: 2, text: "It rained.", id: "1:4" };
+  assert.deepEqual(conform(schema, { events: [good], open: [] }), { value: { events: [good], open: [] }, violations: [] });
+  const checked = conform(schema, {
+    events: [good, { ...good, id: "2:4" }, { ...good, text: "A sentence that is much too long for this schema." }, { ...good, weight: 4 }, { weight: 1, text: "No id here" }, good, good],
+    extra: true,
+  })!;
+  assert.deepEqual(checked.value, { events: [good, good], open: [] });
+  assert.deepEqual(checked.violations, [
+    "reply.events[1].id: does not match ^1:[0-9]{1,4}$",
+    "reply.events[2].text: longer than 20",
+    "reply.events[3].weight: not one of [1,2,3]",
+    "reply.events[4].id: missing",
+    "reply.events: 3 items, at most 2",
+    "reply.open: missing",
+    "reply.extra: not in the schema",
+  ]);
+  assert.equal(conform(schema, "not an object"), null);
+  assert.equal(conform(schema, [good]), null);
+});
+
+test("a name that is nowhere in the text read so far is found", () => {
+  const read = new Set(wordsOf("My name is Carl. Carl\u2019s cat was called Princess Donut. The dungeon opened."));
+  assert.deepEqual(namesNotIn("Carl Dwyer took Princess Donut into the Dungeon.", read), ["Dwyer"]);
+  assert.deepEqual(namesNotIn("Who is Mordecai, and what does Carl owe him?", read), ["Mordecai"]);
+  assert.deepEqual(namesNotIn("Carl's cat was called Donut.", read), []);
 });

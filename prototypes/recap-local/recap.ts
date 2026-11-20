@@ -5,7 +5,7 @@
 // story from the stored notes and the model writes only the current chapter's part.
 //   npx tsx prototypes/recap-local/recap.ts --book <book.json> --states <states.json> --cutoff <sentence id> --gap <days> [--assemble] [--out <recap.json>]
 import { readFileSync, writeFileSync } from "node:fs";
-import { FORESHADOWING, GROUPS, KINDS, bandOf, checkClaim, claimCounts, indexOf, named, sameClaim, shown, shownTokens, unitsOf, words, type Book, type Group, type Kind, type Note, type States } from "./lib.ts";
+import { FORESHADOWING, GROUPS, KINDS, bandOf, checkClaim, claimCounts, indexOf, named, namesNotIn, sameClaim, shown, shownTokens, unitsOf, words, wordsOf, type Book, type Group, type Kind, type Note, type States } from "./lib.ts";
 import { ask, type Timing } from "./llm.ts";
 
 /** `stored`: the claim is a stored note, word for word (the assembled mode), not something the recap step wrote. */
@@ -34,6 +34,10 @@ export type Recap = {
   repaired: number;
   reasons: Record<string, number>;
   foreshadowing: string[];
+  /** Where the model's reply broke its schema and `conform` put it right. */
+  schemaViolations: string[];
+  /** Kept claims with a capitalised word that is nowhere in the text read so far, as "<word>: <claim>". Reported, not dropped. */
+  namesNotInText: string[];
   input: { notes: number; rawSentences: number; rawFrom: string; stateOfUnit: number | null; insideChapterState: boolean };
   timing: Timing;
 };
@@ -135,6 +139,7 @@ export async function recap(book: Book, states: States, cutoff: string, gapDays:
   const offered: Offered[] = [];
   let input: ReturnType<typeof inputFor>;
   let timing: Timing;
+  let schemaViolations: string[];
   if (mode === "written") {
     const most = GROUPS.reduce((sum, group) => sum + counts[group][1], 0);
     const maxTokens = 400 + most * 95;
@@ -143,6 +148,7 @@ export async function recap(book: Book, states: States, cutoff: string, gapDays:
     const reply = await ask<Record<Group, { text: string; id: string; quote: string }[]>>({ system: SYSTEM, user, schema: schemaFor(counts), maxTokens });
     for (const group of GROUPS) for (const claim of reply.value[group] ?? []) offered.push({ group, ...claim });
     timing = reply.timing;
+    schemaViolations = reply.violations;
   } else {
     input = inputFor(book, states, place.ord, 1400);
     const of = (kind: Kind) => input.notes.filter((note) => note.kind === kind);
@@ -181,6 +187,7 @@ export async function recap(book: Book, states: States, cutoff: string, gapDays:
     offered.splice(who.length + goals.length, 0, ...written("goals"));
     offered.push(...written("events"), ...written("last_scene"), ...written("open_question"));
     timing = reply.timing;
+    schemaViolations = reply.violations;
   }
   const shownOrds = [...input.raw.map((sentence) => sentence.ord), ...input.notes.map((note) => note.ord)];
   const claims: RecapClaim[] = [];
@@ -203,6 +210,7 @@ export async function recap(book: Book, states: States, cutoff: string, gapDays:
       duplicates++;
     }
   const kept = claims.filter((claim) => claim.ok);
+  const read = new Set(book.sentences.slice(0, place.ord + 1).flatMap((sentence) => wordsOf(sentence.text)));
   const paragraph = (...groups: Group[]) => kept.filter((claim) => groups.includes(claim.group)).map((claim) => claim.text).join(" ");
   const text = [paragraph("who_where", "goals"), paragraph("events"), paragraph("last_scene", "open_question")].filter(Boolean).join("\n\n");
   return {
@@ -226,6 +234,8 @@ export async function recap(book: Book, states: States, cutoff: string, gapDays:
     repaired: kept.filter((claim) => claim.repairedFrom).length,
     reasons,
     foreshadowing: kept.filter((claim) => FORESHADOWING.test(claim.text)).map((claim) => claim.text),
+    schemaViolations,
+    namesNotInText: kept.flatMap((claim) => namesNotIn(claim.text, read).map((name) => `${name}: ${claim.text}`)),
     input: { notes: input.notes.length, rawSentences: input.raw.length, rawFrom: input.raw[0].id, stateOfUnit: input.stateOfUnit, insideChapterState: input.insideChapterState },
     timing,
   };

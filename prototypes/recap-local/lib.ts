@@ -31,10 +31,18 @@ export type UnitState = {
   outputMs: number;
   retries: number;
   serverErrors: number;
+  /** Part of `outputTokens`: what a hosted model spent thinking. */
+  thinkingTokens?: number;
+  /** What the unit's request would cost on the API; absent or 0 for a local model. */
+  costUsd?: number;
+  /** Where the reply broke its schema and `conform` put it right. */
+  schemaViolations?: string[];
   /** Set when the unit's request failed for good; the unit then added no notes. */
   failed?: string;
 };
 export type States = {
+  /** Set when the run was stopped before the end of the book, for example by a usage limit. */
+  stopped?: string;
   label: string;
   fingerprint: string;
   contextTokens: number;
@@ -198,5 +206,88 @@ export function checkClaim(index: BookIndex, claim: { id: string; quote: string 
   return { ok: false, reason: cited ? (quote.length < MIN_QUOTE ? "quote-too-short" : "quote-not-in-sentence") : "unknown-id" };
 }
 
+/** The words of a text, in lower case, as `namesNotIn` looks them up. */
+export const wordsOf = (text: string) => (folded(text).match(/[a-z\u00e0-\u00ff][a-z\u00e0-\u00ff0-9]*/g) ?? []).filter((word) => word !== "s");
+/**
+ * Capitalised words of a claim that occur nowhere in the text read so far: a name the model brought from outside the
+ * book or made up. The quote check cannot see this, because the claim's quote is still real. The claim's first word
+ * is skipped: it is capitalised whatever it is.
+ */
+export function namesNotIn(claim: string, read: Set<string>): string[] {
+  const capitalised = (claim.match(/[A-Za-z\u00c0-\u00ff][A-Za-z\u00c0-\u00ff0-9]*/g) ?? []).slice(1).filter((word) => /^[A-Z\u00c0-\u00de]/.test(word));
+  return [...new Set(capitalised.filter((word) => !read.has(word.toLowerCase())))];
+}
+
 /** Phrases that tell the reader something is coming: a recap must not use them. */
 export const FORESHADOWING = /\b(little does|little did|will later|would later|will soon|would soon|unbeknownst|yet to (?:learn|discover)|turns? out later|foreshadow)/i;
+
+// --- The schema check -----------------------------------------------------------------------------------------
+
+type Schema = {
+  type?: string;
+  enum?: unknown[];
+  properties?: Record<string, Schema>;
+  required?: string[];
+  additionalProperties?: boolean;
+  items?: Schema;
+  minItems?: number;
+  maxItems?: number;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+};
+
+/**
+ * A reply held against its JSON schema by code, for a model whose output no grammar constrains. It covers the part
+ * of JSON Schema the prototype's schemas use. A list item that breaks its schema is left out, a list longer than
+ * `maxItems` is cut, a missing list is empty, a key the schema does not have is dropped; each is named in
+ * `violations`. Null when the reply is not an object of the schema's shape at all.
+ */
+export function conform(schema: object, reply: unknown): { value: unknown; violations: string[] } | null {
+  const violations: string[] = [];
+  const scalar = (rule: Schema, value: unknown, at: string): boolean => {
+    if (rule.enum) return rule.enum.includes(value) || (violations.push(`${at}: not one of ${JSON.stringify(rule.enum)}`), false);
+    if (rule.type === "string") {
+      if (typeof value !== "string") return violations.push(`${at}: not a string`), false;
+      const length = [...value].length;
+      if (rule.minLength !== undefined && length < rule.minLength) return violations.push(`${at}: shorter than ${rule.minLength}`), false;
+      if (rule.maxLength !== undefined && length > rule.maxLength) return violations.push(`${at}: longer than ${rule.maxLength}`), false;
+      if (rule.pattern && !new RegExp(rule.pattern).test(value)) return violations.push(`${at}: does not match ${rule.pattern}`), false;
+      return true;
+    }
+    return violations.push(`${at}: a schema this check does not cover`), false;
+  };
+  /** The value as its schema wants it, or undefined when it cannot be kept. */
+  const walk = (rule: Schema, value: unknown, at: string): unknown => {
+    if (rule.type === "object") {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) return void violations.push(`${at}: not an object`);
+      const given = value as Record<string, unknown>;
+      const kept: Record<string, unknown> = {};
+      let whole = true;
+      for (const [key, inner] of Object.entries(rule.properties ?? {})) {
+        if (!(key in given)) {
+          if (!rule.required?.includes(key)) continue;
+          violations.push(`${at}.${key}: missing`);
+          if (inner.type === "array") kept[key] = [];
+          else whole = false;
+          continue;
+        }
+        const walked = walk(inner, given[key], `${at}.${key}`);
+        if (walked === undefined) whole = false;
+        else kept[key] = walked;
+      }
+      for (const key of Object.keys(given)) if (!(key in (rule.properties ?? {})) && rule.additionalProperties === false) violations.push(`${at}.${key}: not in the schema`);
+      return whole ? kept : undefined;
+    }
+    if (rule.type === "array") {
+      if (!Array.isArray(value)) return violations.push(`${at}: not a list`), [];
+      const items = value.map((item, index) => walk(rule.items ?? {}, item, `${at}[${index}]`)).filter((item) => item !== undefined);
+      if (rule.maxItems !== undefined && items.length > rule.maxItems) violations.push(`${at}: ${items.length} items, at most ${rule.maxItems}`);
+      if (rule.minItems !== undefined && items.length < rule.minItems) violations.push(`${at}: ${items.length} items, at least ${rule.minItems}`);
+      return items.slice(0, rule.maxItems ?? items.length);
+    }
+    return scalar(rule, value, at) ? value : undefined;
+  };
+  const value = walk(schema as Schema, reply, "reply");
+  return value === undefined ? null : { value, violations };
+}

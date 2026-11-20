@@ -4,6 +4,7 @@
 // cutoff and against the handbill's injection. --at takes cutoffs at those shares of the book's sentences.
 import { readFileSync, writeFileSync } from "node:fs";
 import { type Book, type States } from "./lib.ts";
+import { StopRun } from "./llm.ts";
 import { recap, type Recap } from "./recap.ts";
 import { bareMara, injection, positions } from "./fixture/traps.ts";
 
@@ -38,14 +39,25 @@ const cutoffs = args.includes("--fixture")
       .map((share) => ({ name: `${Math.round(share * 100)}%`, id: book.sentences[Math.min(book.sentences.length - 1, Math.round(share * (book.sentences.length - 1)))].id, note: undefined, traps: undefined }));
 
 const rows: Row[] = [];
+/** Recaps that could not be made: the model's reply was not usable, or the run was stopped. */
+const failed: { position: string; gapDays: number; error: string }[] = [];
+let stopped: string | undefined;
 for (const cutoff of cutoffs)
   for (const gap of gaps) {
-    const result = await recap(book, states, cutoff.id, gap, args.includes("--assemble") ? "assembled" : "written");
+    if (stopped) break;
+    const result = await recap(book, states, cutoff.id, gap, args.includes("--assemble") ? "assembled" : "written").catch((error: Error) => {
+      if (error instanceof StopRun) stopped = error.message;
+      failed.push({ position: cutoff.name, gapDays: gap, error: error.message.slice(0, 300) });
+      process.stdout.write(`${cutoff.name} (${cutoff.id}), ${gap} d: FAILED: ${error.message.slice(0, 200)}\n`);
+      return null;
+    });
+    if (!result) continue;
     // Flags are raised on the recap as shown (the kept claims), one claim at a time.
     const lines = result.claims.filter((claim) => claim.ok).map((claim) => claim.text);
     const flags = (traps: { name: string; pattern: RegExp; certain: boolean }[]) => traps.flatMap((trap) => lines.filter((line) => trap.pattern.test(line)).map((line) => ({ name: trap.name, certain: trap.certain, line })));
     const row: Row = { ...result, position: cutoff.name, note: cutoff.note, leaks: cutoff.traps ? flags(cutoff.traps) : [], injection: cutoff.traps ? flags(injection) : [], bareMara: cutoff.traps ? lines.filter((line) => bareMara.test(line)) : [] };
     rows.push(row);
-    process.stdout.write(`${cutoff.name} (${cutoff.id}), ${gap} d: ${row.words} words (target ${row.target.join("–")}${row.bandLimitedByText ? ", band limited by the words read" : ""}), kept ${row.kept}/${row.offered}${row.fromStoredNotes ? ` (${row.fromStoredNotes} stored notes)` : ""}, ${row.dropped} dropped, ${row.duplicates} repeats, ${Math.round(row.timing.ms)} ms${cutoff.traps ? `, ${row.leaks.length} leak flags, ${row.injection.length} injection flags` : ""}\n`);
+    process.stdout.write(`${cutoff.name} (${cutoff.id}), ${gap} d: ${row.words} words (target ${row.target.join("–")}${row.bandLimitedByText ? ", band limited by the words read" : ""}), kept ${row.kept}/${row.offered}${row.fromStoredNotes ? ` (${row.fromStoredNotes} stored notes)` : ""}, ${row.dropped} dropped, ${row.duplicates} repeats, ${row.schemaViolations.length} schema violations, ${Math.round(row.timing.ms)} ms${cutoff.traps ? `, ${row.leaks.length} leak flags, ${row.injection.length} injection flags` : ""}\n`);
   }
-writeFileSync(out, JSON.stringify({ label: states.label, book: book.title, rows }, null, 2));
+writeFileSync(out, JSON.stringify({ label: states.label, book: book.title, rows, failed, ...(stopped ? { stopped } : {}) }, null, 2));
+if (stopped) process.exitCode = 3;
