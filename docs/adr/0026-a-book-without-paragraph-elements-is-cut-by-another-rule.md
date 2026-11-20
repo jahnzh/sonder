@@ -9,7 +9,8 @@ Decision, made by ray for the owner on 2026-11-20: such a book gets a real cut, 
 - **Judged per book.** A book whose standard blocks hold less than half of its text (`LOW_SHARE_BOOK`) is cut by the rule below. Every other book keeps the standard rule in every chapter, an odd chapter included.
 - **Applied per chapter.** In such a book each chapter uses the first of three rules whose blocks hold at least nine tenths of the chapter's text (`CHAPTER_SHARE`): the standard rule; the standard rule with `<div>` as a block too (`div`); the whole chapter as one block (`body`), which is what a chapter without any block has always been.
 - **The section says which.** `ReaderSection.blocks` carries `div` or `body`; without it the rule is the standard one. The reader counts a chapter's blocks with the same function and the section's rule, so the server decides once and nothing is judged twice.
-- **Saved places are carried over.** The first time such a book is cut after this change, its reading places and bookmarks are moved from the standard cut to the sentence that now holds the start of the old one, and the edition is marked (`settings`, key `reader-recut:<edition>`) in the same transaction. A moved reading place gets the next revision.
+- **Saved places are carried over, in a step of its own.** The cut reads only the file (`cutEpub`) and writes nothing. The routes that answer or store a place of a book go through `bookWithPlaces`, which, the first time for such an edition, moves its reading places and bookmarks from the standard cut to the sentence that now holds the start of the old one, gives each its share of the book in the new cut, and marks the edition (`settings`, key `reader-recut:<edition>`) in the same transaction; it logs the edition and the count. A moved reading place gets the next revision.
+- **A place sent later on the old cut is recognised by its quote.** A device that read such a book on its stored copy still names sentences of the standard cut, and ids of the two cuts overlap. Every place carries the start of its sentence's text: one whose sentence does not start with its quote, but whose standard-cut sentence does, is moved to the sentence that holds it now; one whose text is in neither cut is refused, as an unknown id is. A normal book takes a place by its id alone, as before.
 
 ## Why per book, and why these lines
 
@@ -22,7 +23,8 @@ A book that arrives later has no ids yet, and the rule depends only on its file,
 ## What is given up
 
 - **Sentence quality in a `body` chapter.** Its blocks have no boundaries, so a heading runs into the sentence after it, and a file that leaves no space after a full stop gets long sentences. It is still the book's text, in order.
-- **A build of the app from before this change** does not know the section's rule and looks for these books' sentences in the standard blocks. It shows the text and misplaces the highlight until it updates.
+- **A build of the app from before this change** does not know the section's rule and looks for these books' sentences in the standard blocks. It shows the text, misplaces the highlight, and saves a page turn's place at the start of the chapter, as it did on the old cut, until it updates.
+- **A rollback to the build before this change** gives such a book its standard cut again while its places stay carried and marked. A place saved during the rollback is on the old cut and is not carried a second time; it is recognised by its quote when it is next sent, not while it sits on the server.
 - **A map made on the standard cut of such a book is not found stale by itself**, because the file's fingerprint does not change. On the day of the change the five editions had one job between them, with no map. A book of this kind that arrives later is cut by its rule from the start.
 
 ## Considered options
