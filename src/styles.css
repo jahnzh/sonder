@@ -91,10 +91,10 @@ img {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 9px;
+  gap: var(--space-8);
   min-height: 40px;
-  padding: 10px 16px;
-  border-radius: 6px;
+  padding: var(--space-8) var(--space-16);
+  border-radius: var(--corner-control);
   font-size: calc(12px * var(--ui-scale, 1));
   font-weight: 600;
   white-space: nowrap;
@@ -125,7 +125,7 @@ img {
   flex-shrink: 0;
   width: 32px;
   height: 32px;
-  border-radius: 5px;
+  border-radius: var(--corner-control);
   color: var(--muted);
 }
 .icon-button:hover {
@@ -135,7 +135,7 @@ img {
 .brand-mark {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--space-4);
   height: 30px;
   flex-shrink: 0;
 }
@@ -143,7 +143,7 @@ img {
   display: block;
   background: var(--accent);
   width: 4px;
-  border-radius: 3px;
+  border-radius: var(--corner-round);
   height: 16px;
 }
 .brand-mark i:nth-child(2) {
@@ -159,7 +159,7 @@ img {
   width: 100%;
   max-width: 1360px;
   margin: 0 auto;
-  padding: 40px 43px 28px;
+  padding: calc(var(--space-32) + var(--space-8)) calc(var(--space-32) + var(--space-8)) var(--space-24);
   flex: 1;
 }
 .player-dock {
@@ -175,14 +175,14 @@ img {
   display: grid;
   grid-template-columns: 1fr 1.25fr 1fr;
   align-items: center;
-  padding: 14px 24px;
-  gap: 24px;
+  padding: var(--space-12) var(--space-24);
+  gap: var(--space-24);
   box-shadow: 0 -3px 12px color-mix(in srgb, var(--shadow) 1%, transparent);
 }
 .dock-book {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-12);
   min-width: 0;
   text-align: left;
   padding: 0;
@@ -192,7 +192,7 @@ img {
   height: 59px;
   width: 44px;
   object-fit: cover;
-  border-radius: 3px;
+  border-radius: var(--corner-control);
   box-shadow: 0 1px 5px color-mix(in srgb, var(--shadow) 13%, transparent);
 }
 .dock-book > span {
@@ -211,7 +211,7 @@ img {
   display: block;
   font-size: max(11px, calc(8px * var(--ui-scale, 1)));
   color: var(--muted);
-  margin-top: 5px;
+  margin-top: var(--space-4);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -226,7 +226,7 @@ img {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 22px;
+  gap: var(--space-24);
 }
 .transport .icon-button {
   width: 23px;
@@ -239,7 +239,7 @@ img {
   flex-shrink: 0;
   width: 37px;
   height: 37px;
-  border-radius: 50%;
+  border-radius: var(--corner-round);
   background: var(--surface);
   color: var(--text);
   box-shadow: 0 1px 3px color-mix(in srgb, var(--shadow) 8%, transparent);
@@ -249,7 +249,7 @@ img {
   transform: scale(1.05);
 }
 .play-button > svg:not(.spin) {
-  margin-left: 1px;
+  margin-left: 1px; /* tokens: Library.dc.html, the play triangle centred by eye in the mini player's round button */
 }
 .seek-button {
   position: relative;
@@ -275,8 +275,8 @@ img {
 .dock-progress {
   display: flex;
   align-items: center;
-  gap: 9px;
-  margin-top: 8px;
+  gap: var(--space-8);
+  margin-top: var(--space-8);
 }
 .dock-progress > span {
   font-size: max(11px, calc(7px * var(--ui-scale, 1)));
@@ -293,13 +293,13 @@ img {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 14px;
+  gap: var(--space-12);
 }
 .dock-actions > .icon-button {
   color: var(--muted);
 }
 .dock-actions .expand-player {
-  margin-left: 1px;
+  margin-left: 0;
   width: 25px;
 }
 .mobile-player-chevron {
@@ -310,9 +310,9 @@ img {
   bottom: calc(var(--player-height) + 6px);
   left: 50%;
   transform: translateX(-50%);
-  padding: 10px 18px;
+  padding: var(--space-8) var(--space-16);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--corner-control);
   background: var(--surface);
   z-index: 61;
   font-size: calc(11px * var(--ui-scale, 1));
@@ -327,7 +327,7 @@ input[type="range"] {
   height: 3px;
   border: 0;
   padding: 0;
-  border-radius: 3px;
+  border-radius: var(--corner-round);
   background: linear-gradient(
     to right,
     var(--surface) 0%,
@@ -341,7 +341,7 @@ input[type="range"]::-webkit-slider-thumb {
   appearance: none;
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--corner-round);
   background: var(--surface);
   border: 0;
   transition: transform 0.15s;
@@ -352,7 +352,7 @@ input[type="range"]:hover::-webkit-slider-thumb {
 input[type="range"]::-moz-range-thumb {
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--corner-round);
   background: var(--surface);
   border: 0;
 }
@@ -376,8 +376,8 @@ input[type="range"]::-moz-range-thumb {
   overscroll-behavior: contain;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 13px;
-  padding: 27px 30px;
+  border-radius: var(--corner-group);
+  padding: var(--space-24) var(--space-32);
   z-index: 91;
   box-shadow: 0 24px 80px color-mix(in srgb, var(--shadow) 20%, transparent);
   animation: dialog-in 0.2s ease;
@@ -386,11 +386,11 @@ input[type="range"]::-moz-range-thumb {
   --dialog-title-line: calc(18px * var(--ui-scale, 1) * 1.35);
   display: flex;
   justify-content: space-between;
-  gap: 20px;
+  gap: var(--space-16);
   align-items: flex-start;
-  padding-bottom: 22px;
+  padding-bottom: var(--space-24);
   border-bottom: 1px solid var(--line);
-  margin-bottom: 24px;
+  margin-bottom: var(--space-24);
 }
 .dialog-heading h2 {
   font-family: var(--font-heading);
@@ -404,16 +404,16 @@ input[type="range"]::-moz-range-thumb {
   font-size: calc(11px * var(--ui-scale, 1));
   line-height: 1.5;
   color: var(--muted);
-  margin-top: 5px;
+  margin-top: var(--space-4);
 }
 .dialog-heading > .icon-button {
   /* Centre the close button on the title's first line at any UI scale. */
-  margin-top: calc((var(--dialog-title-line) - 32px) / 2);
-  margin-right: -7px;
+  margin-top: calc((var(--dialog-title-line) - 32px) / 2); /* tokens: no board draws the old dialog; centres its 32 close button on the heading's first line (the line height), not a spacing */
+  margin-right: calc(var(--space-8) * -1);
 }
 .full-seek {
   width: 100%;
-  margin-top: 22px;
+  margin-top: var(--space-24);
   display: block;
 }
 .full-timestamps {
@@ -421,18 +421,18 @@ input[type="range"]::-moz-range-thumb {
   justify-content: space-between;
   font-size: max(11px, calc(8px * var(--ui-scale, 1)));
   color: var(--text);
-  margin-top: 9px;
+  margin-top: var(--space-8);
 }
 .empty-state {
   display: flex;
   align-items: center;
   justify-content: center;
   flex-direction: column;
-  padding: 55px 20px;
+  padding: calc(var(--space-32) + var(--space-24)) var(--space-16);
   text-align: center;
   background: color-mix(in srgb, var(--surface) 47%, transparent);
   border: 1px dashed var(--border);
-  border-radius: 9px;
+  border-radius: var(--corner-control);
   min-height: 260px;
 }
 .empty-icon {
@@ -443,8 +443,8 @@ input[type="range"]::-moz-range-thumb {
   height: 58px;
   color: var(--text);
   background: var(--surface);
-  border-radius: 50%;
-  margin-bottom: 17px;
+  border-radius: var(--corner-round);
+  margin-bottom: var(--space-16);
 }
 .empty-state h3 {
   font-family: var(--font-body);
@@ -456,18 +456,18 @@ input[type="range"]::-moz-range-thumb {
   font-size: calc(11px * var(--ui-scale, 1));
   color: var(--text);
   line-height: 1.8;
-  margin-top: 10px;
+  margin-top: var(--space-8);
   max-width: 370px;
 }
 .empty-state .button {
-  margin-top: 23px;
+  margin-top: var(--space-24);
   font-size: max(11px, calc(10px * var(--ui-scale, 1)));
   min-height: 36px;
 }
 .account-dialog label {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-8);
   font-size: max(11px, calc(10px * var(--ui-scale, 1)));
   color: var(--muted);
   font-weight: 500;
@@ -476,8 +476,8 @@ input[type="range"]::-moz-range-thumb {
   width: 100%;
   border: 1px solid var(--border);
   background: var(--surface);
-  border-radius: 5px;
-  padding: 11px 12px;
+  border-radius: var(--corner-control);
+  padding: var(--space-12);
   font-size: calc(11px * var(--ui-scale, 1));
   outline-offset: 2px;
   min-height: 39px;
@@ -493,7 +493,7 @@ input[type="range"]::-moz-range-thumb {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--space-8);
 }
 .inline-error {
   font-size: max(11px, calc(10px * var(--ui-scale, 1)));
@@ -501,9 +501,9 @@ input[type="range"]::-moz-range-thumb {
   color: var(--danger);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 12px;
-  margin-top: 15px;
+  border-radius: var(--corner-control);
+  padding: var(--space-12);
+  margin-top: var(--space-16);
 }
 
 .app-loading {
@@ -512,7 +512,7 @@ input[type="range"]::-moz-range-thumb {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 16px;
+  gap: var(--space-16);
   color: var(--muted);
   font-size: calc(12px * var(--ui-scale, 1));
 }
@@ -555,23 +555,23 @@ input[type="range"]::-moz-range-thumb {
 }
 @media (min-width: 1500px) {
   .main-content {
-    padding-top: 47px;
+    padding-top: calc(var(--space-32) + var(--space-16));
   }
 }
 @media (max-width: 1250px) {
   .main-content {
-    padding: 35px 30px 25px;
+    padding: calc(var(--space-32) + var(--space-4)) var(--space-32) var(--space-24);
   }
   .dock-actions {
-    gap: 8px;
+    gap: var(--space-8);
   }
   .player-dock {
-    gap: 20px;
-    padding: 14px 20px;
+    gap: var(--space-16);
+    padding: var(--space-12) var(--space-16);
     grid-template-columns: 1fr 1.2fr 1fr;
   }
   .transport {
-    gap: 18px;
+    gap: var(--space-16);
   }
   .dock-book small {
     max-width: 185px;
@@ -579,15 +579,15 @@ input[type="range"]::-moz-range-thumb {
 }
 @media (max-width: 1050px) {
   .main-content {
-    padding: 31px 27px 25px;
+    padding: var(--space-32) var(--space-24) var(--space-24);
   }
   .dock-actions {
-    gap: 10px;
+    gap: var(--space-8);
   }
   .player-dock {
     grid-template-columns: 1fr 1.2fr 0.8fr;
-    padding: 14px 18px;
-    gap: 20px;
+    padding: var(--space-12) var(--space-16);
+    gap: var(--space-16);
   }
   .dock-book strong {
     font-size: max(11px, calc(9px * var(--ui-scale, 1)));
@@ -601,7 +601,7 @@ input[type="range"]::-moz-range-thumb {
     font-size: max(11px, calc(7px * var(--ui-scale, 1)));
   }
   .transport {
-    gap: 14px;
+    gap: var(--space-12);
   }
   .dock-actions > .expand-player {
     display: none;
@@ -609,24 +609,24 @@ input[type="range"]::-moz-range-thumb {
 }
 @media (max-width: 800px) {
   .brand-mark {
-    gap: 2px;
+    gap: 0;
   }
   .brand-mark i {
     width: 3px;
   }
   .main-content {
-    padding: 29px 22px 22px;
+    padding: var(--space-32) var(--space-24) var(--space-24);
   }
   .player-dock {
     grid-template-columns: 1fr 1.2fr 0.5fr;
-    gap: 17px;
-    padding: 14px 17px;
+    gap: var(--space-16);
+    padding: var(--space-12) var(--space-16);
   }
   .transport {
-    gap: 12px;
+    gap: var(--space-12);
   }
   .dock-book {
-    gap: 9px;
+    gap: var(--space-8);
   }
   .dock-book small {
     max-width: 110px;
@@ -635,13 +635,13 @@ input[type="range"]::-moz-range-thumb {
     font-size: max(11px, calc(8px * var(--ui-scale, 1)));
   }
   .dock-actions {
-    gap: 7px;
+    gap: var(--space-8);
   }
   .dock-actions > .icon-button {
     display: none;
   }
   .player-dock .dock-progress {
-    gap: 5px;
+    gap: var(--space-4);
   }
   .dock-progress > span {
     font-size: max(11px, calc(6px * var(--ui-scale, 1)));
@@ -656,22 +656,24 @@ input[type="range"]::-moz-range-thumb {
     --player-height: 74px;
   }
   .main-content {
-    padding: 29px 22px 26px;
+    /* The phone boards' 16 at the sides (Worker.dc.html), not the old 22 rounded up to 24: at 393 (iPhone 15) the
+       extra 4 wrapped the Restart row's line, 82 high instead of the board's 64. */
+    padding: var(--space-32) var(--space-16) var(--space-24);
     max-width: 570px;
   }
   .player-dock {
     bottom: var(--shell-tab-bar);
     min-height: var(--player-height);
-    padding: 10px 18px;
+    padding: var(--space-8) var(--space-16);
     display: flex;
-    gap: 16px;
+    gap: var(--space-16);
     background: color-mix(in srgb, var(--surface) 98%, transparent);
     border-top: 1px solid var(--border);
     box-shadow: 0 -3px 16px color-mix(in srgb, var(--shadow) 3%, transparent);
   }
   .dock-book {
     flex: 1;
-    gap: 11px;
+    gap: var(--space-12);
     max-width: none;
     min-width: 0;
   }
@@ -679,7 +681,7 @@ input[type="range"]::-moz-range-thumb {
     width: 34px;
     height: 46px;
     flex-shrink: 0;
-    border-radius: 3px;
+    border-radius: var(--corner-control);
   }
   .dock-book strong {
     font-size: max(11px, calc(9px * var(--ui-scale, 1)));
@@ -688,7 +690,7 @@ input[type="range"]::-moz-range-thumb {
   .dock-book small {
     font-size: max(11px, calc(7px * var(--ui-scale, 1)));
     max-width: 230px;
-    margin-top: 5px;
+    margin-top: var(--space-4);
   }
   .dock-book > span {
     flex: 1;
@@ -697,7 +699,7 @@ input[type="range"]::-moz-range-thumb {
     display: block;
     transform: rotate(180deg);
     color: var(--text);
-    margin-left: 3px;
+    margin-left: var(--space-4);
     width: 15px;
     flex-shrink: 0;
   }
@@ -707,7 +709,7 @@ input[type="range"]::-moz-range-thumb {
     margin: 0;
   }
   .transport {
-    gap: 12px;
+    gap: var(--space-12);
   }
   .transport > .seek-button:first-of-type {
     display: none;
@@ -759,19 +761,19 @@ input[type="range"]::-moz-range-thumb {
     bottom: calc(var(--player-height) + 69px + env(safe-area-inset-bottom));
     font-size: max(11px, calc(9px * var(--ui-scale, 1)));
     max-width: calc(100% - 24px);
-    padding: 8px 12px;
+    padding: var(--space-8) var(--space-12);
   }
   .dialog-content {
     max-height: calc(100dvh - 30px);
     width: calc(100% - 24px);
-    padding: 21px 20px;
-    border-radius: 11px;
+    padding: var(--space-24) var(--space-16);
+    border-radius: var(--corner-group);
   }
   .dialog-heading {
     --dialog-title-line: calc(16px * var(--ui-scale, 1) * 1.5);
-    padding-bottom: 18px;
-    margin-bottom: 20px;
-    gap: 12px;
+    padding-bottom: var(--space-16);
+    margin-bottom: var(--space-16);
+    gap: var(--space-12);
   }
   .dialog-heading h2 {
     font-size: calc(16px * var(--ui-scale, 1));
@@ -780,14 +782,14 @@ input[type="range"]::-moz-range-thumb {
     font-size: max(11px, calc(10px * var(--ui-scale, 1)));
   }
   .dialog-heading > .icon-button {
-    margin-right: -6px;
+    margin-right: calc(var(--space-4) * -1);
   }
 
   .full-seek {
-    margin-top: 19px;
+    margin-top: var(--space-16);
   }
   .empty-state {
-    padding: 40px 20px;
+    padding: calc(var(--space-32) + var(--space-8)) var(--space-16);
     min-height: 255px;
   }
   .empty-state h3 {
@@ -798,7 +800,7 @@ input[type="range"]::-moz-range-thumb {
   }
   .empty-state .button {
     font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-    margin-top: 19px;
+    margin-top: var(--space-16);
   }
   .inline-error {
     font-size: max(11px, calc(9px * var(--ui-scale, 1)));
@@ -806,8 +808,8 @@ input[type="range"]::-moz-range-thumb {
 }
 @media (max-width: 390px) {
   .main-content {
-    padding-left: 18px;
-    padding-right: 18px;
+    padding-left: var(--space-16);
+    padding-right: var(--space-16);
   }
   .dock-book strong {
     font-size: max(11px, calc(8px * var(--ui-scale, 1)));
@@ -822,12 +824,12 @@ input[type="range"]::-moz-range-thumb {
     max-width: 72px;
   }
   .player-dock {
-    gap: 12px;
-    padding-left: 15px;
-    padding-right: 15px;
+    gap: var(--space-12);
+    padding-left: var(--space-16);
+    padding-right: var(--space-16);
   }
   .dock-book {
-    gap: 9px;
+    gap: var(--space-8);
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -913,7 +915,7 @@ body {
   color: var(--muted);
 }
 .dock-progress {
-  margin-top: 10px;
+  margin-top: var(--space-8);
 }
 .dock-progress input {
   --range-progress: 0%;
@@ -1061,7 +1063,7 @@ input[type="range"]::-moz-range-thumb {
     min-height: 38px;
   }
   .empty-state {
-    padding: 35px 20px;
+    padding: calc(var(--space-32) + var(--space-4)) var(--space-16);
   }
   .inline-error {
     font-size: calc(11px * var(--ui-scale, 1));
@@ -1081,7 +1083,7 @@ input[type="range"]::-moz-range-thumb {
 }
 @media (max-width: 650px) {
   .main-content {
-    padding-top: 25px;
+    padding-top: var(--space-24);
   }
 }
 
@@ -1097,10 +1099,10 @@ input[type="range"]::-moz-range-thumb {
 .app-update {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px;
+  gap: var(--space-12);
+  padding: var(--space-12);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--corner-control);
   background: var(--sidebar);
   color: var(--ink);
   box-shadow: 0 8px 30px #0005;
@@ -1115,7 +1117,7 @@ input[type="range"]::-moz-range-thumb {
 }
 .app-update small {
   display: block;
-  margin-top: 4px;
+  margin-top: var(--space-4);
   font-size: 12px;
   line-height: 1.5;
   color: var(--muted);
@@ -1127,14 +1129,14 @@ input[type="range"]::-moz-range-thumb {
 .playback-source {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-4);
   color: var(--text);
   font-size: calc(12px * var(--ui-scale, 1));
-  margin: 8px 0;
+  margin: var(--space-8) 0;
 }
 .dock-book .playback-source.compact {
   display: flex;
-  margin: 4px 0 0;
+  margin: var(--space-4) 0 0;
   font-size: max(11px, calc(9px * var(--ui-scale, 1)));
   line-height: 1.2;
   color: var(--text);
@@ -1149,7 +1151,7 @@ input[type="range"]::-moz-range-thumb {
     flex-shrink: 0;
   }
   .player-dock .transport {
-    gap: 4px;
+    gap: var(--space-4);
   }
   .player-dock .transport > .seek-button {
     display: inline-flex;

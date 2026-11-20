@@ -13,11 +13,9 @@ import { tempDir } from "./temp-dir.ts";
 const repository = fileURLToPath(new URL("..", import.meta.url));
 const script = fileURLToPath(new URL("../scripts/check-stylesheet-tokens.mjs", import.meta.url));
 
-// The stylesheets not yet converted to the tokens; #612 converts them and deletes this list.
-const NOT_YET_CONVERTED = ["src/appearance.css", "src/player.css", "src/reader.css", "src/signin.css", "src/styles.css"];
 // Every value the boards draw that no token gives, marked `/* tokens: <reason> */` on its declaration.
 // A new exception changes this number, so it is seen in review.
-const EXCEPTIONS = 20;
+const EXCEPTIONS = 32;
 
 // A fixture `appearance.css` with the tokens' names, and values on purpose unlike the real ones: the check reads
 // names only, and only from `:root` (a variable a rule sets for itself is not a token).
@@ -164,47 +162,44 @@ test("an exception with a reason is counted, and one without a reason is reporte
   ]);
 });
 
-test("the tree check reads every stylesheet under src/, skips the listed ones and reports a listed file that does not exist", () => {
+test("the tree check reads every stylesheet under src/ and skips none", () => {
   const root = tree({
     "src/parts/row.css": ".row {\n  padding: var(--space-8);\n  gap: 2px; /* tokens: Row.dc.html */\n}\n",
     "src/pages/deep/page.css": ".page { margin: 12px; }\n",
     "src/styles.css": ".old { border-radius: 10px; }\n",
     "src/notes.txt": "padding: 3px;",
   });
-  const options = { skip: ["src/styles.css", "src/gone.css"], tokensFile: "src/appearance.css" };
-  const result = checkStylesheetTokens(root, options);
-  assert.deepEqual(result.files, ["src/appearance.css", "src/pages/deep/page.css", "src/parts/row.css"]);
+  // A skip list is no longer read (#612): an old option passed by mistake skips nothing.
+  const result = checkStylesheetTokens(root, { skip: ["src/styles.css"], tokensFile: "src/appearance.css" });
+  assert.deepEqual(result.files, ["src/appearance.css", "src/pages/deep/page.css", "src/parts/row.css", "src/styles.css"]);
   assert.deepEqual(result.findings.map(({ file, line, property, value }) => [file, line, property, value]), [
-    ["src/gone.css", 0, "", ""],
     ["src/appearance.css", 11, "padding", "3px"],
     ["src/pages/deep/page.css", 1, "margin", "12px"],
+    ["src/styles.css", 1, "border-radius", "10px"],
   ]);
-  assert.match(result.findings[0].reason, /listed as not yet converted, but the file does not exist/);
   assert.deepEqual(result.exceptions.map(({ file, line }) => [file, line]), [["src/parts/row.css", 3]]);
-  // Unlisted, the old stylesheet is checked too.
-  const all = checkStylesheetTokens(root, { tokensFile: "src/appearance.css" });
-  assert.ok(all.findings.some((entry) => entry.file === "src/styles.css" && entry.value === "10px"));
   // A tree without its tokens stylesheet is a finding, not a pass.
   assert.match(checkStylesheetTokens(root, { tokensFile: "src/missing.css" }).findings[0].reason, /tokens stylesheet does not exist/);
 });
 
 test("the command line fails on a finding and passes a clean tree", () => {
-  const root = tree({ "src/parts/tokens.css": APPEARANCE.replace(/\.button \{[^}]*\}/, ""), "src/a.css": ".a { gap: 4px; }\n" });
-  const failing = spawnSync(process.execPath, [script, root, "--skip", "src/appearance.css"], { encoding: "utf8" });
+  const clean = APPEARANCE.replace(/\.button \{[^}]*\}/, "");
+  const root = tree({ "src/appearance.css": clean, "src/parts/tokens.css": clean, "src/a.css": ".a { gap: 4px; }\n" });
+  const failing = spawnSync(process.execPath, [script, root], { encoding: "utf8" });
   assert.equal(failing.status, 1, failing.stderr);
   assert.match(failing.stderr, /src\/a\.css:1: gap: 4px/);
   writeFileSync(path.join(root, "src/a.css"), ".a { gap: var(--space-4); }\n");
-  const passing = spawnSync(process.execPath, [script, root, "--skip", "src/appearance.css"], { encoding: "utf8" });
+  const passing = spawnSync(process.execPath, [script, root], { encoding: "utf8" });
   assert.equal(passing.status, 0, passing.stderr);
-  assert.match(passing.stdout, /Stylesheet token check passed: 2 stylesheets, 0 exceptions/);
+  assert.match(passing.stdout, /Stylesheet token check passed: 3 stylesheets, 0 exceptions/);
 });
 
-test("every stylesheet of the real tree keeps inside the tokens, but the ones not yet converted", () => {
-  const result = checkStylesheetTokens(repository, { skip: NOT_YET_CONVERTED });
+test("every stylesheet of the real tree keeps inside the tokens, with no list of skipped files", () => {
+  const result = checkStylesheetTokens(repository);
   assert.deepEqual(result.findings.map(formatEntry), []);
   assert.ok(result.tokens.spacing.includes("--space-8") && result.tokens.corner.includes("--corner-control"));
   // The parts and the new pages are among the checked stylesheets.
-  for (const file of ["src/parts/row.css", "src/parts/sheet.css", "src/pages/library-page.css", "src/shell.css"])
+  for (const file of ["src/parts/row.css", "src/parts/sheet.css", "src/pages/library-page.css", "src/shell.css", "src/appearance.css", "src/player.css", "src/reader.css", "src/signin.css", "src/styles.css"])
     assert.ok(result.files.includes(file), file);
   console.log(`${result.exceptions.length} exceptions:\n${result.exceptions.map((entry) => `  ${formatEntry(entry)}`).join("\n")}`);
   assert.equal(result.exceptions.length, EXCEPTIONS);
