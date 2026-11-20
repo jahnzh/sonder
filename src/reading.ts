@@ -10,7 +10,7 @@ import type {
   TextLocator,
 } from "./reading-types";
 import type { SavedEbook } from "./types";
-import { preparedBook, preparedChanged, type PreparedBook } from "./prepared-book";
+import { patiently, preparedBook, preparedChanged, type PreparedBook } from "./prepared-book";
 import { preparedView } from "./reader-view-switch";
 export type PendingReading = {
   checkpoint: ReadingCheckpoint;
@@ -222,7 +222,7 @@ async function withDeviceState(id: string, book: ReaderBook): Promise<ReaderBook
 export async function loadPreparedReader(id: string): Promise<{ book: ReaderBook; prepared: PreparedBook }> {
   const [prepared, state] = await Promise.all([
     preparedBook(id),
-    api<Pick<ReaderBook, "workId" | "title" | "author" | "checkpoint" | "bookmarks">>(`/reader/${encodeURIComponent(id)}/state`),
+    patiently(() => api<Pick<ReaderBook, "workId" | "title" | "author" | "checkpoint" | "bookmarks">>(`/reader/${encodeURIComponent(id)}/state`)),
   ]);
   const { manifest } = prepared;
   const sections = manifest.sections

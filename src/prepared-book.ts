@@ -12,6 +12,37 @@ export type { PreparedManifest };
 
 /** A manifest this old is asked for again when a reader opens; the answer is a 304 unless the book changed. */
 export const MANIFEST_FRESH_MS = 5 * 60_000;
+/**
+ * How often one thing is asked of the server before the reader is told and must act: the manifest, the saved
+ * place, a part. A failed request is never repeated without end (one open reader would use up the account's
+ * request limit in a second, and a refusal for that limit is itself a failed request).
+ */
+export const LOAD_ATTEMPTS = 3;
+/** The waits before the second and the third attempt. */
+export const LOAD_WAITS_MS = [1000, 3000];
+/** A server that asks for a longer wait than this (`Retry-After`) is not asked again by itself. */
+export const LOAD_RETRY_AFTER_LIMIT_MS = 10_000;
+/** The resolved parts whose text is kept in memory; a part read longer ago is asked of the browser's cache again. */
+export const PARTS_KEPT = 12;
+
+/**
+ * Asks, and asks again after a failure that another try can mend (no answer, a server error, a short "too many
+ * requests"), LOAD_ATTEMPTS times in all with growing waits. A refusal that stands (not found, not signed in, a stale
+ * key) and a long "too many requests" are thrown at once.
+ */
+export async function patiently<T>(ask: () => Promise<T>, wait: (ms: number) => Promise<void> = (ms) => new Promise((done) => setTimeout(done, ms))): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await ask();
+    } catch (error) {
+      if (error instanceof PreparedStaleError || attempt >= LOAD_ATTEMPTS) throw error;
+      const status = error instanceof ApiError ? error.status : undefined;
+      const asked = error instanceof ApiError && error.retryAfter ? error.retryAfter * 1000 : 0;
+      if (status === 429 ? !asked || asked > LOAD_RETRY_AFTER_LIMIT_MS : status !== undefined && status < 500 && status !== 408) throw error;
+      await wait(Math.max(asked, LOAD_WAITS_MS[attempt - 1] ?? LOAD_WAITS_MS.at(-1)!));
+    }
+  }
+}
 
 /** The server no longer keeps the prepared text this manifest names: the book is loaded again. */
 export class PreparedStaleError extends Error {
@@ -98,8 +129,14 @@ export type PreparedBook = {
   index: SentenceIndex;
   /** The address the prepared output is served under; a part's picture may name nothing outside it. */
   base: string;
-  /** A part's HTML, asked for once. Rejects with PreparedStaleError when the server keeps another output now. */
+  /**
+   * A part's HTML, asked for once. Rejects with PreparedStaleError when the server keeps another output now. A part
+   * that could not be loaded (after `patiently`'s attempts) stays failed: asking for it again answers the same
+   * failure without a request, until `retry`.
+   */
   part(index: number): Promise<string>;
+  /** The reader asked to try again: the parts that failed are asked of the server anew when next wanted. */
+  retry(): void;
 };
 
 type Kept = { at: number; book: Promise<PreparedBook> };
@@ -133,9 +170,23 @@ export function reportRefused(id: string, key: string, part: number, refused: re
 }
 
 async function load(id: string): Promise<PreparedBook> {
-  const manifest = await api<PreparedManifest>(`/reader/${encodeURIComponent(id)}/prepared`);
+  const manifest = await patiently(() => api<PreparedManifest>(`/reader/${encodeURIComponent(id)}/prepared`));
   const base = `/api/reader/${encodeURIComponent(id)}/prepared/${manifest.key}`;
   const parts = new Map<number, Promise<string>>();
+  const failed = new Set<number>();
+  /** The parts that arrived, oldest first. */
+  const kept: number[] = [];
+  const one = async (index: number) => {
+    const response = await fetch(`${base}/parts/${index}`);
+    if (response.ok) return response.text();
+    const answer = (await response.json().catch(() => ({}))) as { error?: string; code?: string };
+    if (response.status === 404 && answer.code === "prepared_stale") {
+      // The next open asks for the manifest again.
+      books.delete(id);
+      throw new PreparedStaleError();
+    }
+    throw new ApiError(answer.error || "This part of the book could not be loaded.", response.status, answer.code, Number(response.headers.get("Retry-After")) || undefined);
+  };
   return {
     manifest,
     index: sentenceIndex(manifest),
@@ -143,21 +194,22 @@ async function load(id: string): Promise<PreparedBook> {
     part(index) {
       let part = parts.get(index);
       if (!part) {
-        part = fetch(`${base}/parts/${index}`).then(async (response) => {
-          if (response.ok) return response.text();
-          const answer = (await response.json().catch(() => ({}))) as { error?: string; code?: string };
-          if (response.status === 404 && answer.code === "prepared_stale") {
-            // The next open asks for the manifest again.
-            books.delete(id);
-            throw new PreparedStaleError();
-          }
-          throw new ApiError(answer.error || "This part of the book could not be loaded.", response.status, answer.code);
-        });
-        // A failed request is asked again by the next reader of the part.
-        part.catch(() => parts.get(index) === part && parts.delete(index));
+        part = patiently(() => one(index));
         parts.set(index, part);
+        part.then(
+          () => {
+            kept.push(index);
+            // The text of parts read long ago is let go: the browser's own cache answers for them again.
+            while (kept.length > PARTS_KEPT) parts.delete(kept.shift()!);
+          },
+          () => failed.add(index),
+        );
       }
       return part;
+    },
+    retry() {
+      for (const index of failed) parts.delete(index);
+      failed.clear();
     },
   };
 }

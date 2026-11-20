@@ -1,6 +1,6 @@
 import { autoQueueAlignmentsForWork } from "./alignment.ts";
 import { ebookSetMembersRemoved, removePendingMembersLeftBehind } from "./ebook-set-link.ts";
-import { currentUserId } from "./users.ts";
+import { currentUserId, sessionUser } from "./users.ts";
 import type { FastifyInstance } from "fastify";
 import JSZip from "jszip";
 import { XMLParser } from "fast-xml-parser";
@@ -341,6 +341,10 @@ export function readerCheckpoint(id: string, userId = 1): ReadingCheckpoint | nu
     .get(id, userId) as { data: string } | undefined;
   return row ? JSON.parse(row.data) : null;
 }
+/** How many reports of refused markup one user may send for one book in a minute. */
+export const REFUSED_REPORTS_A_MINUTE = 6;
+/** The reasons of a refused-markup report as they are logged: a reason may quote the book, so only printable characters. */
+export const loggedReasons = (reasons: readonly string[]) => reasons.map((reason) => reason.replace(/[^\x20-\x7e]/g, "?"));
 export function registerReader(app: FastifyInstance) {
   app.post("/api/reader/:id/link", async (req) => {
     const { id } = req.params as { id: string };
@@ -396,17 +400,20 @@ export function registerReader(app: FastifyInstance) {
   // The reader of prepared text makes a part's nodes against an allow-list (src/prepared-html.ts) and leaves out what
   // is not on it. The server's own sanitiser should have left nothing to leave out, so each such part is reported
   // here once and logged: a miss in the sanitiser is seen, not papered over.
-  app.post("/api/reader/:id/prepared-refused", { bodyLimit: 4096 }, async (req, reply) => {
+  // A limit of its own, for a user and a book: a hostile or broken book cannot fill the log through its readers.
+  app.post(
+    "/api/reader/:id/prepared-refused",
+    { bodyLimit: 4096, config: { rateLimit: { max: REFUSED_REPORTS_A_MINUTE, timeWindow: "1 minute", keyGenerator: (request) => `refused:${sessionUser(request)?.id ?? request.ip}:${(request.params as { id: string }).id}` } } },
+    async (req, reply) => {
     const { id } = req.params as { id: string };
     const input = z
       .object({ key: z.string().regex(/^[0-9a-f]{16}$/), part: z.number().int().min(0).max(99999), refused: z.array(z.string().min(1).max(80)).min(1).max(20) })
       .parse(req.body);
     ebookRecord(id);
-    // A reason may quote the book (a class, an id): only printable characters reach the log.
-    const refused = input.refused.map((reason) => reason.replace(/[^\x20-\x7e]/g, "?"));
-    req.log.warn({ edition: id, key: input.key, part: input.part, refused }, "prepared text: the reader refused markup the sanitiser let through");
+    req.log.warn({ edition: id, key: input.key, part: input.part, refused: loggedReasons(input.refused) }, "prepared text: the reader refused markup the sanitiser let through");
     return reply.code(204).send();
-  });
+    },
+  );
   app.put("/api/reader/:id/progress", async (req, reply) => {
     const { id } = req.params as { id: string };
     const input = z

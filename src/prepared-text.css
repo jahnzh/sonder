@@ -96,6 +96,8 @@
   font-size: 0.9em;
 }
 .prepared-text :is(td, th) {
+  /* A table is held to the band's width: a long word in a cell breaks instead of being cut off at the right. */
+  overflow-wrap: anywhere;
   padding: var(--space-4) var(--space-8);
   vertical-align: top;
   text-align: left;

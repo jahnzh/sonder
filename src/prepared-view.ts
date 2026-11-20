@@ -39,6 +39,11 @@ export type PreparedViewEvents = {
   onLink(target: PreparedTarget): void;
   /** The server keeps another prepared output of the book now: the reader opens it again. */
   onStale(): void;
+  /**
+   * A neighbouring part could not be loaded. The view does not ask again by itself: the reader is told and
+   * `retry` asks again.
+   */
+  onLoadFailed(error: unknown): void;
   /** The band took another size after the book was shown (Appearance docked or closed, a rotated phone). */
   onBandResized(): void;
   /** A part held markup the allow-list left out (prepared-html.ts); told once for a part. */
@@ -79,6 +84,9 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
   /** A place asked for while the band had no size (Now playing closed over a mounted reader): shown once it has one. */
   let waiting: (() => void) | null = null;
   const extending = { [-1]: false, [1]: false } as Record<number, boolean>;
+  /** The direction in which the next part could not be loaded: it is not asked for again until `retry`. */
+  const stopped = { [-1]: false, [1]: false } as Record<number, boolean>;
+  let failures = 0;
   const reportedParts = new Set<number>();
 
   const bandTop = () => scroller.getBoundingClientRect().top;
@@ -185,6 +193,9 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
   const failed = (error: unknown) => {
     if (error instanceof PreparedStaleError && !disposed) events.onStale();
   };
+  const again = () => {
+    stopped[-1] = stopped[1] = false;
+  };
 
   /** Shows one part alone, in place of whatever was loaded. False when a newer jump replaced this one. */
   async function only(part: number, at: number): Promise<boolean> {
@@ -193,6 +204,7 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
     loaded.clear();
     loaded.set(part, entry);
     low = high = part;
+    again();
     // Back to the top of the new text; a scroll event only follows when the band was scrolled.
     const before = scroller.scrollTop;
     text.replaceChildren(entry.element);
@@ -204,9 +216,10 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
   /** Loads the part after (1) or before (-1) the loaded ones, and takes out the far end when too many are in the page. */
   async function extend(direction: -1 | 1) {
     const part = direction > 0 ? high + 1 : low - 1;
-    if (extending[direction] || low < 0 || part < 0 || part >= manifest.parts.length) return;
+    if (extending[direction] || stopped[direction] || low < 0 || part < 0 || part >= manifest.parts.length) return;
     extending[direction] = true;
     const at = epoch;
+    let gave = false;
     try {
       const entry = await build(part);
       if (disposed || at !== epoch || part !== (direction > 0 ? high + 1 : low - 1)) return;
@@ -238,11 +251,19 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
       }
       publish();
     } catch (error) {
-      failed(error);
+      // Nothing asks for this part again by itself: one failed answer must not become a stream of requests.
+      gave = true;
+      if (!disposed && at === epoch) {
+        stopped[direction] = true;
+        // Counted on the band for the browser tests: one failure, told once, not a loop of them.
+        host.setAttribute("data-load-failures", String(++failures));
+        failed(error);
+        if (!(error instanceof PreparedStaleError)) events.onLoadFailed(error);
+      }
     } finally {
       extending[direction] = false;
     }
-    if (!disposed && at === epoch) fill();
+    if (!gave && !disposed && at === epoch) fill();
   }
   /** Loads a neighbour when the loaded text ends near the view. */
   const fill = () => {
@@ -486,6 +507,12 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
     },
     /** The first sentence in view. */
     firstInView,
+    /** The reader asked to try again after a part could not be loaded. */
+    retry() {
+      book.retry();
+      again();
+      fill();
+    },
     destroy() {
       disposed = true;
       epoch++;
@@ -494,6 +521,7 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
       observer.disconnect();
       host.removeAttribute("data-parts");
       host.removeAttribute("data-view-resizes");
+      host.removeAttribute("data-load-failures");
       host.replaceChildren();
     },
   };

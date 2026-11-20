@@ -27,11 +27,14 @@ export type BuiltPart = {
  */
 export function buildPart(html: string, into: Document, base: string): BuiltPart {
   const parsed = new DOMParser().parseFromString(html, "text/html");
+  // The parsed document's body, asked of the document itself and not by name: an element named "body" in the part
+  // (a form, a picture) would stand in for it in Firefox, and the walk would start there and show nothing else.
+  const body = (Object.getOwnPropertyDescriptor(Document.prototype, "body")!.get!.call(parsed) as HTMLElement | null) ?? parsed.documentElement;
   const sentences = new Map<string, HTMLElement[]>();
   const refused = new Set<string>();
   const content = into.createDocumentFragment();
   // Walked without recursion: a book of deeply nested tags must not exhaust the stack.
-  const work: { from: Node; to: Node }[] = [{ from: parsed.body, to: content }];
+  const work: { from: Node; to: Node }[] = [{ from: body, to: content }];
   while (work.length) {
     const { from, to } = work.pop()!;
     for (let child = from.firstChild; child; child = child.nextSibling) {

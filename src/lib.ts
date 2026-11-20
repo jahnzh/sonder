@@ -70,6 +70,8 @@ export class ApiError extends Error {
     message: string,
     readonly status: number,
     readonly code?: string,
+    /** Seconds the server asked to wait before asking again (`Retry-After`), when it said so. */
+    readonly retryAfter?: number,
   ) {
     super(message);
   }
@@ -104,6 +106,7 @@ export async function api<T = unknown>(
       result.error || "Could not connect. Please try again.",
       response.status,
       result.code,
+      Number(response.headers.get("Retry-After")) || undefined,
     );
   return result as T;
 }

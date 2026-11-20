@@ -328,8 +328,6 @@ export function ReaderView({
   const [prepared] = useState(preparedView);
   const [source, setSource] = useState<PreparedBook | null>(null);
   const engine = useRef<PreparedView | null>(null);
-  // Today's reader: a saved place that names only a sentence, until that sentence has been shown.
-  const sentencePlace = useRef<TextLocator | null>(null);
   // Appearance docked under the text in place of the foot (#588); not in the address.
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   // Sizes the view to the text band when the band changed (the ResizeObserver's work, #587); set once the book opens.
@@ -523,7 +521,8 @@ export function ReaderView({
       const state = await readingState(id);
       setConflict(state?.conflict || null);
     } catch (error) {
-      setError((error as Error).message);
+      if (prepared) messages.error(!navigator.onLine || error instanceof TypeError ? "book-offline" : "book-load");
+      else setError((error as Error).message);
       setLoading(false);
     } finally {
       // The new view keeps its waiting line until the text is in the band: it has no frame that fills later.
@@ -602,6 +601,25 @@ export function ReaderView({
     setLocator(next);
   };
   const preparedLink = useRef<(target: PreparedTarget) => void>(() => {});
+  // The new view's loading failures, in the reader's words: without a connection the book cannot be read in this
+  // view yet (Keep on this device is step 6 of #799); anything else is a part or the book that could not be loaded.
+  const loadError = (error: unknown): ReaderError =>
+    !navigator.onLine || error instanceof TypeError ? "book-offline" : engine.current?.firstInView() ? "text-load" : "book-load";
+  const staleReloads = useRef(0);
+  // Raised by Retry when the book's first part could not be shown: the view is opened again.
+  const [openAttempt, setOpenAttempt] = useState(0);
+  const retryLoad = () => {
+    staleReloads.current = 0;
+    if (!source) {
+      setLoading(true);
+      void refresh(true);
+    } else if (engine.current?.firstInView() || rendered) engine.current?.retry();
+    else {
+      source.retry();
+      setLoading(true);
+      setOpenAttempt((value) => value + 1);
+    }
+  };
   const longPress = useRef<(sentence: string) => void>(() => {});
   useEffect(() => {
     if (!prepared || !book || !source || !viewport.current) return;
@@ -613,8 +631,14 @@ export function ReaderView({
       onAction: (action) => pageAction.current(action),
       onLongPress: (sentence) => longPress.current(sentence),
       onLink: (target) => preparedLink.current(target),
-      // The server prepared the book again: its manifest and parts are read anew.
-      onStale: () => void refresh(true),
+      // The server prepared the book again: its manifest and parts are read anew, once or twice; a book that
+      // keeps answering "stale" is an error to the reader, not a loop.
+      onStale: () => {
+        if (++staleReloads.current > 2) return messages.error("book-load");
+        setLoading(true);
+        void refresh(true);
+      },
+      onLoadFailed: (error) => messages.error(loadError(error)),
       onRefused: (part, refused) => reportRefused(id, source.manifest.key, part, refused),
       // The band changed (Appearance docked or closed): the narrated sentence is brought into it again, as today's
       // reader follows it again after sizing its view.
@@ -638,7 +662,8 @@ export function ReaderView({
           setRendered(true);
         },
         (error) => {
-          if (!disposed) setError((error as Error).message || "This book could not be shown.");
+          // The reader's own words in the foot, with Retry; never the browser's sentence for a failed request.
+          if (!disposed) messages.error(loadError(error));
         },
       )
       .finally(() => {
@@ -651,7 +676,7 @@ export function ReaderView({
       view.destroy();
       if (engine.current === view) engine.current = null;
     };
-  }, [id, prepared, source]);
+  }, [id, prepared, source, openAttempt]);
   useEffect(() => {
     if (prepared || !book || !viewport.current) return;
     let disposed = false;
@@ -829,12 +854,8 @@ export function ReaderView({
                 Math.max(1, all.length - 1),
             };
             // A relocation the reader caused pages away and is saved after a pause.
-            const relocation = following.relocated(next, !!latest.current, section.index);
-            if (relocation === "ignored")
+            if (following.relocated(next, !!latest.current, section.index) === "ignored")
               return;
-            // The saved sentence is still to be shown: only the reader's own move replaces it.
-            if (sentencePlace.current && relocation !== "manual") return;
-            sentencePlace.current = null;
             latest.current = next;
             setLocator(next);
           } catch {}
@@ -954,10 +975,6 @@ export function ReaderView({
           cleanChapterFonts = null;
         });
         following.openingDisplay();
-        // A saved place without a CFI is a sentence (one the new view saved, #802): the book opens at its start and
-        // the theme effect below goes to the sentence. Until then the start, which epub.js reports as the place
-        // shown, must not stand in for the place saved (`relocate`).
-        sentencePlace.current = latest.current && !latest.current.cfi ? latest.current : null;
         try {
           await view.display(latest.current?.cfi || book.sections[0].href);
         } catch {
@@ -1369,7 +1386,6 @@ export function ReaderView({
         all.findIndex((fragment) => fragment.id === paragraphId) /
         Math.max(1, all.length - 1),
     };
-    sentencePlace.current = null;
     latest.current = value;
     setLocator(value);
     if (persist) await saveReading(id, value, "listening", recordingId);
@@ -1855,7 +1871,8 @@ export function ReaderView({
     undo: (notice: ReaderNotice) => (notice === "listening" ? undoListen() : undoRemoveBookmark()),
     retry: (failed: ReaderError) => {
       messages.clearError(failed);
-      if (failed === "locate") void fromAudio();
+      if (failed === "text-load" || failed === "book-load" || failed === "book-offline") retryLoad();
+      else if (failed === "locate") void fromAudio();
       else {
         // Back to narration, and the follow jump is tried again even when the reader was still following.
         following.backToNarration();

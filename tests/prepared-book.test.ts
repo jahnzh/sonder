@@ -12,7 +12,8 @@ Object.assign(globalThis, {
   localStorage: { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => void store.set(key, value), removeItem: (key: string) => void store.delete(key) },
   window: Object.assign(globalThis, { addEventListener() {}, removeEventListener() {}, dispatchEvent: () => true }),
 });
-const { sentenceIndex } = await import("../src/prepared-book.ts");
+const { sentenceIndex, patiently, preparedBook, PreparedStaleError, LOAD_ATTEMPTS, LOAD_WAITS_MS } = await import("../src/prepared-book.ts");
+const { ApiError } = await import("../src/lib.ts");
 const { sentencePlaces } = await import("../src/reader-places.ts");
 
 /** Sections as extractBook cuts them, from plain sentences per chapter: `<section>:<n>` ids in reading order. */
@@ -74,4 +75,74 @@ test("the manifest places every sentence where the sentences themselves do", asy
   assert.equal(index.sectionOf("x"), null);
   assert.deepEqual(index.sectionSpan(1), { start: 0, count: 0 });
   assert.deepEqual(places.sectionSpan(1), { start: 0, count: 0 });
+});
+
+test("a failed request is asked again a few times with growing waits, never without end; a refusal that stands is not asked again", async () => {
+  const run = async (answers: unknown[]) => {
+    let asked = 0;
+    const waits: number[] = [];
+    const outcome = await patiently(
+      async () => {
+        const answer = answers[Math.min(asked++, answers.length - 1)];
+        if (answer instanceof Error) throw answer;
+        return answer;
+      },
+      async (ms) => void waits.push(ms),
+    ).then((value) => ({ value }), (error: Error) => ({ error }));
+    return { asked, waits, ...outcome };
+  };
+  const failed = (status: number, retryAfter?: number) => new ApiError("refused", status, undefined, retryAfter);
+  assert.equal(LOAD_ATTEMPTS, 3);
+  // A server error and no answer at all: three attempts, the waits as set, then the failure is the caller's.
+  for (const error of [failed(500), failed(503), new TypeError("Failed to fetch")]) {
+    const always = await run([error]);
+    assert.equal(always.asked, 3);
+    assert.deepEqual(always.waits, LOAD_WAITS_MS);
+    assert.equal((always as { error: Error }).error, error);
+  }
+  // It mends: the answer of the second attempt is the answer.
+  assert.deepEqual(await run([failed(500), "the part"]), { asked: 2, waits: [LOAD_WAITS_MS[0]], value: "the part" });
+  // Refusals that asking again cannot change are asked once.
+  for (const error of [failed(404), failed(401), failed(403), failed(400), new PreparedStaleError()]) assert.equal((await run([error])).asked, 1, error.message);
+  // Too many requests: never asked again by itself, unless the server names a short wait, which is kept.
+  assert.equal((await run([failed(429)])).asked, 1);
+  assert.equal((await run([failed(429, 60)])).asked, 1);
+  const short = await run([failed(429, 2), "the part"]);
+  assert.deepEqual([short.asked, short.waits], [2, [2000]]);
+  assert.equal((await run([failed(429, 2)])).asked, 3);
+});
+
+test("a part that could not be loaded stays failed without another request, until the reader asks again", async () => {
+  // The server as the book's loader sees it: a manifest, a part that fails until it is mended, one that works.
+  const asked: string[] = [];
+  let mended = false;
+  const native = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const path = String(input);
+    asked.push(path);
+    if (path.endsWith("/prepared")) return Response.json({ key: "0123456789abcdef", parts: [], sections: [], sentences: 0, fingerprint: "f" });
+    if (path.endsWith("/parts/1") && !mended) return Response.json({ error: "no" }, { status: 500 });
+    return new Response("<p>text</p>", { status: 200 });
+  }) as typeof fetch;
+  try {
+    const book = await preparedBook("ed-kept-failure");
+    const of = (part: number) => asked.filter((path) => path.endsWith(`/parts/${part}`)).length;
+    await assert.rejects(book.part(1));
+    assert.equal(of(1), LOAD_ATTEMPTS);
+    // Wanted again and again, as a view near the end of its text wants it: the same failure, no request.
+    for (let again = 0; again < 50; again++) await assert.rejects(book.part(1));
+    assert.equal(of(1), LOAD_ATTEMPTS);
+    // A part that arrived is asked for once.
+    assert.equal(await book.part(0), "<p>text</p>");
+    assert.equal(await book.part(0), "<p>text</p>");
+    assert.equal(of(0), 1);
+    // The reader's Retry: asked anew, and it arrives.
+    mended = true;
+    book.retry();
+    assert.equal(await book.part(1), "<p>text</p>");
+    assert.equal(of(1), LOAD_ATTEMPTS + 1);
+    assert.equal(asked.filter((path) => path.endsWith("/prepared")).length, 1);
+  } finally {
+    globalThis.fetch = native;
+  }
 });

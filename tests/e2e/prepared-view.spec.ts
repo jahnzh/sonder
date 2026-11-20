@@ -205,6 +205,8 @@ test("a hostile part runs nothing in the application: its nodes are made from th
     `<form action="javascript:window.__ran='form'"><button formaction="javascript:window.__ran='button'" autofocus onfocus="window.__ran='focus'">press</button><input onfocus="window.__ran='input'" autofocus></form>`,
     `<p><a href="javascript:window.__ran='link'" class="js">a script link</a> <a href="data:text/html,<script>opener.__ran='data'</script>" class="data">a data link</a> <a href="https://example.org/" target="_self" rel="opener">a web link</a></p>`,
     `<details open ontoggle="window.__ran='toggle'"><summary>details</summary></details>`,
+    // An element named "body" stands in for the parsed document's own in Firefox; the walk must not start from it.
+    `<form id="forms" name="body"><input name="innerHTML" id="attributes"></form><img name="body" src="x">`,
     `<style>.reader-head{display:none}</style><link rel="stylesheet" href="https://attacker.example/x.css"><base href="https://attacker.example/"><meta http-equiv="refresh" content="0;url=https://attacker.example/">`,
     `<template><img src="x" onerror="window.__ran='template'"></template><noscript><img src="x" onerror="window.__ran='noscript'"></noscript>`,
     `<p>After it all.</p>`,
@@ -431,4 +433,194 @@ test("a place and a bookmark saved in one view open in the other", async ({ page
   await page.getByRole("searchbox", { name: "Search this book" }).fill(found.text.slice(0, 28));
   await page.locator(".reader-pages-result", { hasText: found.text.slice(0, 28) }).first().click();
   await expect.poll(() => textShown(room, found.text), { timeout: READER_WAIT_MS.followHighlight }).toBe(true);
+});
+
+// A failed request must never become a stream of requests (review of #828): one open reader asking 500 times a second
+// would use up the account's request limit, and a refusal for that limit is itself a failed request.
+const partRequests = (requests: ReturnType<typeof counted>, part: number) => requests.of(new RegExp(`/prepared/[0-9a-f]+/parts/${part}$`)).length;
+const footError = (page: Page) => page.locator(".reader-room .reader-player > .reader-message").getByRole("alert");
+const toEnd = (page: Page) => band(page).locator(".prepared-scroll").evaluate((scroller) => scroller.scrollTo(0, scroller.scrollHeight));
+
+test("a part that always fails is asked for three times, then the foot says so and Retry loads it", async ({ page }) => {
+  test.setTimeout(120000);
+  const { ebook } = await bookWith(page, `Failing part ${randomUUID()}`, await longBookFixture({ chapters: 12, sentences: 400, title: `Failing part ${randomUUID()}` }));
+  const manifest = await (await page.request.get(`/api/reader/${ebook}/prepared`)).json();
+  expect(manifest.parts.length).toBeGreaterThan(3);
+  let failing = true;
+  await page.route(/\/prepared\/[0-9a-f]+\/parts\/1$/, (route) => (failing ? route.fulfill({ status: 500, json: { error: "The server's own sentence." } }) : route.continue()));
+  await choosePreparedView(page);
+  const requests = counted(page);
+  await gotoRead(page, ebook);
+  await expect(band(page).locator(".prepared-part").first()).toBeVisible();
+  await toEnd(page);
+  // Three attempts with their waits (1 s, 3 s), and then no more, however long the reader stays and scrolls.
+  await expect(footError(page)).toHaveText("This part of the book could not be loaded.", { timeout: 15000 });
+  expect(partRequests(requests, 1)).toBe(3);
+  // Up a little and down to the end again, twice: each is a scroll towards the missing part.
+  for (let turn = 0; turn < 2; turn++) {
+    await band(page).locator(".prepared-scroll").evaluate((scroller) => scroller.scrollBy(0, -900));
+    await page.waitForTimeout(300);
+    await toEnd(page);
+    await page.waitForTimeout(1200);
+  }
+  expect(partRequests(requests, 1)).toBe(3);
+  expect(await band(page).getAttribute("data-parts")).toBe("0");
+  // The view itself stopped: it was told of the failure once, and scrolling towards the missing part does not make
+  // it ask the failure it keeps again and again.
+  expect(await band(page).getAttribute("data-load-failures")).toBe("1");
+  // Retry asks again; the part arrives and the message leaves.
+  failing = false;
+  await page.locator(".reader-room .reader-message").getByRole("button", { name: "Retry", exact: true }).click();
+  await expect.poll(async () => (await band(page).getAttribute("data-parts"))!.split(",").includes("1")).toBe(true);
+  await expect(footError(page)).toHaveCount(0);
+  expect(partRequests(requests, 1)).toBe(4);
+});
+
+test("a part answered with 429 is not asked for again by itself", async ({ page }) => {
+  test.setTimeout(120000);
+  const { ebook } = await bookWith(page, `Limited part ${randomUUID()}`, await longBookFixture({ chapters: 12, sentences: 400, title: `Limited part ${randomUUID()}` }));
+  await page.route(/\/prepared\/[0-9a-f]+\/parts\/1$/, (route) => route.fulfill({ status: 429, headers: { "Retry-After": "60" }, json: { error: "Rate limit exceeded, retry in 1 minute" } }));
+  await choosePreparedView(page);
+  const requests = counted(page);
+  await gotoRead(page, ebook);
+  await expect(band(page).locator(".prepared-part").first()).toBeVisible();
+  await toEnd(page);
+  await expect(footError(page)).toHaveText("This part of the book could not be loaded.", { timeout: 15000 });
+  await toEnd(page);
+  await page.waitForTimeout(5000);
+  expect(partRequests(requests, 1)).toBe(1);
+});
+
+test("a book whose manifest, saved place or first part cannot be loaded says so in the foot after three tries, in the reader's words", async ({ page }) => {
+  test.setTimeout(150000);
+  const { ebook } = await bookWith(page, `Failing book ${randomUUID()}`, await readerFixture({ title: `Failing book ${randomUUID()}` }));
+  await choosePreparedView(page);
+  for (const [what, pattern] of [
+    ["the manifest", new RegExp(`/api/reader/${ebook}/prepared$`)],
+    ["the saved place", new RegExp(`/api/reader/${ebook}/state$`)],
+    ["the first part", /\/prepared\/[0-9a-f]+\/parts\/0$/],
+  ] as const) {
+    let failing = true;
+    let asked = 0;
+    await page.route(pattern, (route) => {
+      asked++;
+      return failing ? route.fulfill({ status: 503, json: { error: "The server's own sentence." } }) : route.continue();
+    });
+    await page.goto("/api/health");
+    await gotoRead(page, ebook);
+    await expect(footError(page), what).toHaveText("This book could not be loaded.", { timeout: 20000 });
+    await expect(page.locator(".reader-room")).not.toContainText("The server's own sentence.");
+    await page.waitForTimeout(2500);
+    // Playback warming asks for the same manifest as the reader: the two share the request and its three attempts.
+    expect(asked, what).toBeLessThanOrEqual(what === "the manifest" ? 6 : 3);
+    expect(asked, what).toBeGreaterThanOrEqual(3);
+    failing = false;
+    await page.locator(".reader-room .reader-message").getByRole("button", { name: "Retry", exact: true }).click();
+    await expect(band(page).locator(".prepared-text p").first(), what).toBeVisible({ timeout: 20000 });
+    await expect(footError(page)).toHaveCount(0);
+    await page.unrouteAll({ behavior: "wait" });
+  }
+});
+
+test("without a connection the reader says in its own words that this view needs one", async ({ page, context }) => {
+  const { book, ebook } = await bookWith(page, `Offline ${randomUUID()}`, await readerFixture({ title: `Offline ${randomUUID()}` }));
+  await choosePreparedView(page);
+  // The app is loaded and the book chosen; then the connection goes and Read is opened.
+  await gotoRead(page, ebook);
+  await expect(band(page).locator(".prepared-text p").first()).toBeVisible();
+  await page.goto("/#library");
+  await expect(page.locator("nav[aria-label='Main']").first()).toBeVisible();
+  await page.evaluate(() => new Promise((done) => setTimeout(done, 400)));
+  await context.setOffline(true);
+  try {
+    await page.reload().catch(() => {});
+    await context.setOffline(false);
+    await page.goto("/#library");
+    await expect(page.locator("nav[aria-label='Main']").first()).toBeVisible();
+    await context.setOffline(true);
+    await page.evaluate((workId) => { location.hash = `#read/${encodeURIComponent(workId)}`; }, book.workId);
+    await expect(footError(page)).toHaveText("This book needs a connection to be read in this view.", { timeout: 20000 });
+    await expect(page.locator(".reader-room")).not.toContainText(/Failed to fetch|NetworkError/);
+    // Back online, Retry opens the book.
+    await context.setOffline(false);
+    await page.locator(".reader-room .reader-message").getByRole("button", { name: "Retry", exact: true }).click();
+    await expect(band(page).locator(".prepared-text p").first()).toBeVisible({ timeout: 20000 });
+  } finally {
+    await context.setOffline(false);
+  }
+});
+
+test("reading far: a part is asked for once however often it comes back, and never more than five parts are in the page", async ({ page }) => {
+  test.setTimeout(150000);
+  const { ebook, sentences } = await bookWith(page, `Far ${randomUUID()}`, await longBookFixture({ chapters: 30, sentences: 600, title: `Far ${randomUUID()}` }));
+  const manifest = await (await page.request.get(`/api/reader/${ebook}/prepared`)).json();
+  expect(manifest.parts.length).toBeGreaterThan(10);
+  await page.addInitScript(() => localStorage.setItem("sonder-follow-narration", "off"));
+  await choosePreparedView(page);
+  const requests = counted(page);
+  await gotoRead(page, ebook);
+  await expect(band(page).locator(".prepared-part").first()).toBeVisible();
+  const loaded = async () => ((await band(page).getAttribute("data-parts")) || "").split(",").filter(Boolean).map(Number);
+  // Down through eight parts: the page never holds more than five, and the first ones are taken out again.
+  for (let step = 0; step < 40 && Math.max(...(await loaded())) < 8; step++) {
+    await toEnd(page);
+    await page.waitForTimeout(250);
+    expect((await loaded()).length).toBeLessThanOrEqual(5);
+  }
+  expect(Math.max(...(await loaded()))).toBeGreaterThanOrEqual(8);
+  expect(Math.min(...(await loaded()))).toBeGreaterThan(0);
+  // Back to the book's start by its Chapters page, and down again: parts come back without being asked for again.
+  const room = page.locator(".reader-room");
+  const area = (await band(page).boundingBox())!;
+  if (!(await room.locator(".reader-topbar").isVisible())) await page.mouse.click(area.x + area.width / 2, area.y + area.height / 2);
+  await room.locator(".reader-player").getByRole("button", { name: "Chapters", exact: true }).click();
+  await page.locator(".reader-pages-chapter").first().click();
+  await expect.poll(() => textShown(room, sentences.sections[0].paragraphs[0].text)).toBe(true);
+  for (let step = 0; step < 20 && Math.max(...(await loaded())) < 3; step++) {
+    await toEnd(page);
+    await page.waitForTimeout(250);
+  }
+  const parts = requests.of(/\/prepared\/[0-9a-f]+\/parts\/\d+$/);
+  expect(parts.length).toBeGreaterThanOrEqual(9);
+  expect(new Set(parts).size, "no part twice").toBe(parts.length);
+});
+
+test("a scroll that no wheel or touch made (a scrollbar, a key) pages away and saves the place too", async ({ page }) => {
+  test.setTimeout(120000);
+  const { book, ebook, map, sentences } = await longBook(page, `Scrollbar ${randomUUID()}`);
+  const first = map.intervals.filter((interval: any) => interval.section === sentences.sections[0].index).sort((a: any, b: any) => a.start - b.start);
+  await narrateAt(page, book, first[20].start + 0.5);
+  await choosePreparedView(page);
+  await gotoRead(page, ebook);
+  const room = page.locator(".reader-room");
+  await expect(room).toHaveAttribute("data-current-passage", first[20].paragraphId, { timeout: READER_WAIT_MS.followHighlight });
+  await expect.poll(() => highlightShown(room), { timeout: READER_WAIT_MS.followHighlight }).toBe(true);
+  await page.waitForTimeout(1500);
+  // The text is moved as a scrollbar moves it: no wheel, no touch, no key event reaches the reader.
+  await band(page).locator(".prepared-scroll").evaluate((scroller) => scroller.scrollBy(0, 2600));
+  await expect(room).not.toHaveAttribute("data-current-passage", /.+/);
+  await expect.poll(async () => (await (await page.request.get(`/api/reader/${ebook}/state`)).json()).checkpoint?.origin, { timeout: 15000 }).toBe("reading");
+});
+
+test("today's reader, without the switch, opens a place that names only a sentence on that sentence, also when its first display is slow", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "the slow first display is made by slowing the processor through Chromium's protocol");
+  test.setTimeout(180000);
+  // The new view saves places without a CFI (#802). Today's reader is not changed for them: it already opens such a
+  // place by its sentence, and this holds it to that, with the processor slowed so that its first display is late.
+  await page.addInitScript(() => localStorage.setItem("sonder-follow-narration", "off"));
+  const { ebook, sentences } = await bookWith(page, `Sentence place ${randomUUID()}`, await longBookFixture({ chapters: 8, sentences: 300, title: `Sentence place ${randomUUID()}` }));
+  const section = sentences.sections[5];
+  const sentence = section.paragraphs[120];
+  expect((await page.request.put(`/api/reader/${ebook}/progress`, { data: { locator: { section: section.index, paragraphId: sentence.id, quote: sentence.text, progression: 0.7 }, baseRevision: 0, eventId: `place-${randomUUID()}`, deviceId: "another-device", updatedAt: Date.now(), origin: "reading" } })).ok()).toBe(true);
+  const session = await page.context().newCDPSession(page);
+  await session.send("Emulation.setCPUThrottlingRate", { rate: 6 });
+  await gotoRead(page, ebook);
+  const room = page.locator(".reader-room");
+  await expect(band(page)).not.toHaveAttribute("data-view", "prepared");
+  await expect.poll(() => textShown(room, sentence.text), { timeout: 90000 }).toBe(true);
+  await session.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+  // It is still the saved place: the head names its chapter, and nothing was saved over it.
+  await expect(room.locator(".reader-head-rest")).toContainText(section.title);
+  await page.waitForTimeout(1500);
+  expect((await (await page.request.get(`/api/reader/${ebook}/state`)).json()).checkpoint.locator.paragraphId).toBe(sentence.id);
 });
