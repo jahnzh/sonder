@@ -1,0 +1,12 @@
+{
+  "label": "gemma4-e4b-qat-q4",
+  "model": "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf",
+  "ctx": 16384,
+  "gpuLayers": "all",
+  "kvCache": "q8_0",
+  "baselineMiB": 2035,
+  "loadedMiB": 5070,
+  "peakMiB": 5096,
+  "seconds": 737,
+  "alignmentWorkerBusySeconds": 0
+}

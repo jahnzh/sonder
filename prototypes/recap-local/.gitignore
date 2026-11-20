@@ -1,0 +1,3 @@
+# Outputs of runs on a real book hold its text; they stay on the host that made them.
+runs/
+*.epub
