@@ -53,51 +53,6 @@
 .hardcover-page-note[data-failed] {
   color: var(--danger);
 }
-/* A result on the row above it: no line between the row and what it says. */
-.part-group > .hardcover-row-line {
-  border-top: 0;
-}
-.hardcover-row-line {
-  list-style: none;
-  margin: calc(-1 * var(--space-8)) 0 0;
-  padding: 0 var(--space-16) var(--space-12);
-  font-weight: 400;
-  color: var(--muted);
-}
-.hardcover-row-line[data-failed] {
-  color: var(--danger);
-}
-/* A row's value that acts (Use Hardcover position, Hardcover edition): the value on the right edge is the button. */
-.hardcover-value-button {
-  height: var(--height-control);
-  max-width: 100%;
-  min-width: var(--height-control);
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-8);
-  cursor: pointer;
-}
-.hardcover-value-button:disabled {
-  cursor: default;
-  opacity: 0.55;
-}
-.hardcover-value-button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: var(--corner-control);
-}
-.hardcover-value-text {
-  min-width: 0;
-  max-width: 180px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 /* Open on Hardcover: a row that is a link, drawn as a Row. */
 a.hardcover-link-row {
   text-decoration: none;
