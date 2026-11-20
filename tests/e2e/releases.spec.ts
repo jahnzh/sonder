@@ -1,3 +1,4 @@
+// @projects firefox
 import { test, expect } from "@playwright/test";
 import type { AudiobookRelease } from "../../src/types";
 test("multiple audiobook releases are shown in English and one is explicitly chosen for an existing book", async ({

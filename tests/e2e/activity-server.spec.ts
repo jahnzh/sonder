@@ -1,3 +1,4 @@
+// @projects firefox, webkit-iphone-activity
 import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import type { ActivityItem, ActivityProcess, ActivityResponse, ActivityWorkerHost } from "../../src/types";

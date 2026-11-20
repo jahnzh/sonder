@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice14
 import { test, expect, type Page } from "@playwright/test";
 
 // Settings › Playback › Keyboard shortcuts (#614; spec #608 "Keyboard shortcuts"; board SettingsKeys.dc.html, the row on

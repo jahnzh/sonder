@@ -1,3 +1,4 @@
+// @projects webkit-iphone-activity
 import { test, expect, type Page, type Route } from "@playwright/test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { parseRange } from "../../server/range";

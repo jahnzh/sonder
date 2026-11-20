@@ -823,3 +823,42 @@ test("#774: the multi-user check's temporary user works on a book the administra
   assert.match(source, /const \{book:playable,recent:playableRecent\}=multiUserPlayable\(qaBooks,adminCatalogue\);/);
   assert.doesNotMatch(source, /qaBooks\.find\(b=>b\.tracks\?\.length\)/, "no chooser of its own");
 });
+
+// #794: the slice pass's ebook-only book. The work and its placeholder as GET /api/library and GET /api/books answered
+// on tests/browser-server.ts after POST /api/ebooks/import of an EPUB alone (trimmed to the fields the rule reads).
+const aloneWork = (n, extra = {}) => ({
+  workId: `work-alone-${n}`, title: `Alone ${n}`, inLibrary: true, chosenRecordingId: null, recordings: [], chosenEbookId: null,
+  ebooks: [{ id: `upload-${n}`, format: "epub", size: 2281, available: true, check: null, place: null }], ...extra,
+});
+const alonePlaceholder = (n, progress) => ({
+  id: `placeholder-work-alone-${n}`, workId: `work-alone-${n}`, recordingId: `recording-placeholder-work-alone-${n}`, title: `Alone ${n}`,
+  tracks: [], duration: 0, inLibrary: true, status: "unread", ...(progress ? { progress } : {}),
+});
+
+test("ebookOnlyWork: a library work with no recording that has a track and an EPUB on the server, the preferred one first", () => {
+  const audio = aloneWork("audio", { recordings: [{ recordingId: "r", tracks: [{ id: "t", duration: 60 }] }] });
+  const pdf = aloneWork("pdf", { ebooks: [{ id: "upload-pdf", format: "pdf", available: true }] });
+  const missing = aloneWork("missing", { ebooks: [{ id: "upload-missing", format: "epub", available: false }] });
+  const outside = aloneWork("outside", { inLibrary: false });
+  // A placeholder recording without a track (#483) is no audio.
+  const placeholder = aloneWork("placeholder", { recordings: [{ recordingId: "recording-placeholder", tracks: [] }] });
+  const works = [audio, pdf, missing, outside, placeholder, aloneWork("b")];
+  const books = [alonePlaceholder("placeholder"), alonePlaceholder("b")];
+  assert.deepEqual(rec.ebookOnlyWork(works, books), { work: placeholder, ebookId: "upload-placeholder" });
+  assert.deepEqual(rec.ebookOnlyWork(works, books, { preferred: "work-alone-b" }), { work: works[5], ebookId: "upload-b" });
+  // A preference that does not qualify falls back to the first that does.
+  assert.equal(rec.ebookOnlyWork(works, books, { preferred: "work-alone-audio" }).work, placeholder);
+  // The shared default edition is the one Read opens.
+  const shared = aloneWork("shared", { chosenEbookId: "upload-two", ebooks: [{ id: "upload-one", format: "epub", available: true }, { id: "upload-two", format: "epub", available: true }] });
+  assert.equal(rec.ebookOnlyWork([shared], []).ebookId, "upload-two");
+});
+
+test("ebookOnlyWork: never a work listened to in the last 48 hours; says why when there is none", () => {
+  const now = Date.parse("2026-11-20T12:00:00Z");
+  const works = [aloneWork("recent"), aloneWork("quiet")];
+  const books = [alonePlaceholder("recent", { trackId: "x", position: 0, updatedAt: now - 3600_000 }), alonePlaceholder("quiet", { trackId: "x", position: 0, updatedAt: now - 72 * 3600_000 })];
+  assert.equal(rec.ebookOnlyWork(works, books, { now, preferred: "work-alone-recent" }).work.workId, "work-alone-quiet");
+  assert.deepEqual(rec.ebookOnlyWork(works.slice(0, 1), books, { now }), { reason: "1 ebook-only book(s) in the library, each listened to in the last 48 h" });
+  assert.deepEqual(rec.ebookOnlyWork([], [], { now }), { reason: "no ebook-only book with an EPUB on the server in the library" });
+  assert.deepEqual(rec.ebookOnlyWork(undefined, undefined, { now }), { reason: "no ebook-only book with an EPUB on the server in the library" });
+});

@@ -1,3 +1,4 @@
+// @projects firefox, mobile-chrome, mobile-firefox, mobile-safari, mobile-iphone-slice13, mobile-iphone-slice14
 import { test, expect, type Page } from "@playwright/test";
 import { defaultAppearance, paletteFor, type Appearance } from "../../src/appearance";
 import { skipOnMobile } from "./mobile";

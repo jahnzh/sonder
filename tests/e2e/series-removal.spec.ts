@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13, mobile-iphone-series
 // Remove series (#566, spec #560 "Remove series"; boards SeriesMore.dc.html, SeriesRemove.dc.html): the last row of a
 // saved series' page opens one dialog over the page. With the switch off (or for someone who is not the
 // administrator) the books stay; the administrator's "Remove the books it added" lists only the books the series

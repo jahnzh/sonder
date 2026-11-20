@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice14-sw
 import { test, expect } from "@playwright/test";
 import { mkdtemp, mkdir, writeFile, readFile, copyFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

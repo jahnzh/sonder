@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13
 // The Book page for a book without files or not in the library (#533, spec #526 "The Book page"; boards
 // BookNotInLibrary, BookNothing, BookPdf): a Discover result outside the library opens the page and Add to library
 // adds it (the request, the page after it, the Library after a reload); a PDF-only book (Read off, the PDF line, the

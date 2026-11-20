@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
 import { chooseView, listRow } from "./library-view";
 import { randomUUID } from "node:crypto";

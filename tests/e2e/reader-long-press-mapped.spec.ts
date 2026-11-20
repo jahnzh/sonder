@@ -1,3 +1,4 @@
+// @projects firefox, webkit-iphone-now-playing
 // #742: on a partly mapped edition (Consider Phlebas), the live reader check's long-press got no "Listening from here".
 // It pressed near the left edge of the narrated sentence's highlight box; a sentence that starts in the middle of a
 // line and runs on has a box from the text's left edge, so the press landed on the sentence before, which the map

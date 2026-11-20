@@ -1,3 +1,4 @@
+// @projects firefox
 // Paste a magnet link for the book (#606, spec #600 "Paste a magnet link"): `#book/<workId>/get/audiobook/magnet`, a
 // sheet over Get audiobook. Opened from Get's row and from a link (Close back to Get); Back showing Get's kept words,
 // rows and choice without a second search; Get this recording off until the text starts with `magnet:?`; the pasted

@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13-sw
 import { test, expect, type BrowserContext } from "@playwright/test";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

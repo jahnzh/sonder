@@ -1,3 +1,4 @@
+// @projects firefox
 // The line under Get this recording (#603, spec #600 "What the line under the button says"; guards 10 and 11 of its
 // list): with a download for the book on its way (a routed library answer) the line says it is replaced and the add
 // is sent with `replaceActive: true`, with no dialog; "Plays from TorBox right away." on a cached row; the torrent

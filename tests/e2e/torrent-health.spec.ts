@@ -1,3 +1,4 @@
+// @projects firefox, webkit-iphone-activity
 import { test, expect, type Page } from "@playwright/test";
 // The local torrent client is Activity › Server's Torrent client row (#519); Settings › Connections lists the
 // services of spec #572 only, so the old "Your home server" section with its health line is gone (#580).

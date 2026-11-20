@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13, mobile-iphone-series
 // The Series page (#562, spec #560 "The Series page"; boards Series.dc.html, SeriesMore.dc.html, DesktopSeries.dc.html
 // for the column): `#series/<id>` for a saved series. It opens from the Library and from a book's series line; the rows'
 // lines; a library book opens its Book page and Back returns to the series where it was scrolled; the play button plays
