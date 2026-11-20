@@ -182,6 +182,22 @@ test("hostile markup: scripts, handlers, frames, forms and outside addresses do 
   assert.deepEqual([...result.pictures.keys()], ["0.png"], "only the book's own picture is copied");
 });
 
+test("documents with their parts in odd places are tagged as the extractor read them", async () => {
+  const { readerFixture } = await import("./reader-fixture.ts");
+  for (const variant of [undefined, "svg-root", "iframe-root", "nav-root", "no-head", "head-late", "text-before-head", "template-root", "svg-asset"] as const) {
+    const id = `prepared-variant-${variant}`;
+    const file = join(temp, "media", "ebooks", `${id}.epub`);
+    const epub = await readerFixture({ variant, script: true, cover: true });
+    writeFileSync(file, epub);
+    db.insert(s.ebookEditions).values({ id, workId: "work-prepared", format: "epub", source: file }).run();
+    const book = await extractBook(id);
+    const pictures = new Map<string, Buffer>();
+    const result = await prepareEpub({ epub, book, base: BASE, key: "key", writePicture: async (name, data) => void pictures.set(name, data) });
+    assertClean(result.parts.join(""));
+    assertTagged({ ...result, book, pictures, html: result.parts.join("") });
+  }
+});
+
 test("a hostile book cannot forge the marks the preparing step leaves for itself", async () => {
   const result = await prepared({
     files: { "pic.png": tinyPng },
