@@ -96,7 +96,7 @@ const seriesIphone = process.env.SONDER_SLICE_WEBKIT === "1" && existsSync(webki
 // that test it.
 const slice14Specs =
   /(^|\/)(app|book-page|chapterless-sync|ebook-page|gallery(-[a-z-]+)?|integrated-reader|keep-reading|keyboard-shortcuts|media-controls|navigation|reader-(appearance|bands|book-text|foot-setting|frame|keys|load-teardown|pages|text-links|theme)|reliability|service-worker-regressions)\.spec\.ts$/;
-const slice14WorkerSpecs = /(^|\/)(app|reader-theme|service-worker-regressions)\.spec\.ts$/;
+const slice14WorkerSpecs = /(^|\/)(app|service-worker-regressions)\.spec\.ts$/;
 // Opt-in (SONDER_SLICE_WEBKIT=1): a slice's final check runs it; the committed check on every push does not.
 const slice14Iphone = process.env.SONDER_SLICE_WEBKIT === "1" && existsSync(webkit.executablePath())
   ? [

@@ -12,9 +12,13 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 import { readerFixture } from "../reader-fixture";
+import { NO_BLOB_STORE } from "./mobile";
 
 const unique = (label: string) => `${label} ${test.info().repeatEachIndex} ${randomBytes(3).toString("hex")}`;
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const isWebKit = (info: ReturnType<typeof test.info>) =>
+  info.project.use.browserName === "webkit" || info.project.use.defaultBrowserType === "webkit";
+
 // A routed read still in flight when a test ends (the Book page and the reader read the work as the test closes)
 // finds its response disposed: the routes go first, and such a handler's error is not the test's.
 test.afterEach(async ({ page }) => {
@@ -165,6 +169,12 @@ test("the administrator's Ebook page: editions and checks, shared default and Re
   await expect(page.getByText("Choose a reading edition")).toHaveCount(0);
   await closeReader(page);
 
+  // The device copy is a Blob in IndexedDB, which Playwright's ephemeral WebKit context refuses (NO_BLOB_STORE, #618):
+  // there the test ends here; Chromium and Firefox guard the copy, its removal and the read from the server after it.
+  if (isWebKit(test.info())) {
+    test.info().annotations.push({ type: "part skipped", description: NO_BLOB_STORE });
+    return;
+  }
   // A copy of the edition on this device, as the reader's offline save writes it where there is no private file
   // system (Firefox's headless profile never finishes the reader's own save: its storage.persist() does not settle).
   const { fingerprint } = (await (await page.request.get(`/api/reader/${encodeURIComponent(matching)}`)).json()) as { fingerprint: string };
