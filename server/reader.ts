@@ -71,6 +71,12 @@ export function ebookRecord(id: string) {
     );
   return row;
 }
+/**
+ * Version of extractBook's cut: which text is a sentence and what id it gets. Raise it with any change to that
+ * (here, `countedBlocks` or `normalizeReaderText`), so that prepared text kept on disk (server/prepared-text-cache.ts)
+ * is made again from the new cut. It changes nothing in the output itself.
+ */
+export const EXTRACTOR_VERSION = 1;
 export async function extractBook(id: string) {
   if (id.startsWith("set-consensus:")) {
     const workId = id.slice("set-consensus:".length);

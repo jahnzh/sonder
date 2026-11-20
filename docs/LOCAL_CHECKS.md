@@ -192,6 +192,16 @@ Before rolling back to an image older than ADR 0011 (derived work media state, i
 
 The script prints the exact rollback command on failure and at the end of a successful run. Record every deploy in `artifacts/orca/STATE.md` (commit, backup path, image tag, markers, live-check results).
 
+## Check prepared text against a library
+
+```bash
+npx tsx scripts/check-prepared-text.ts --db data/sonder.db --out artifacts/prepared-text-check.json
+```
+
+For every EPUB edition of the database it prepares the reader text (`server/prepared-text.ts`) and compares it with the stored sentences: every id once and in order, each tagged sentence equal to the stored text, and the manifest's counts equal to what the parts hold. It prints the counts (books, sentences, mismatches, books that failed and why) and, for the books with the most text (`--timings <n>`, default 3), the time to prepare from nothing and to serve the manifest and each part from the cache. `--only <edition id>` checks one book. Exit code 1 when a sentence differs or a book fails.
+
+It may be run against the production database: it copies the database with the online backup and opens the copy, only reads the EPUB files, and prepares into a temp folder that it removes, with `MEDIA_ROOT` pointed at that folder too. It starts no server, opens no page and saves no reading or listening position.
+
 ## Live verification
 
 Which checks run where:
