@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 import { openRead } from "./now-playing";
 import { gotoRead } from "./read-face";
+import { skipWithoutBlobStore } from "./mobile";
 
 const OUT = "OUT";
 mkdirSync(OUT, { recursive: true });
@@ -124,6 +125,8 @@ async function routeWork(page: Page, workId: string, strip: (work: any) => any) 
 }
 
 test("a kept book with an audiobook, an EPUB and a ready reading sync is complete with all three, and reads and follows offline", async ({ page, context }) => {
+  // The recording is kept as Blob chunks, which Playwright's ephemeral WebKit context refuses (#618).
+  skipWithoutBlobStore();
   test.setTimeout(150_000);
   const book = await fixture(page, unique("Kept whole"));
   const interval = book.interval!;
