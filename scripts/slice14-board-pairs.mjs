@@ -1,0 +1,132 @@
+#!/usr/bin/env node
+// Puts each screenshot of the redesign's final pass (#618) beside its board: renders the board's .dc.html in Chromium
+// at the board's size, then writes one pair per state and size and one contact sheet per size.
+//   SONDER_SHOTS_DIR=<dir>/app npx playwright test tests/e2e/slice14-boards.spec.ts --project=chromium
+//   node scripts/slice14-board-pairs.mjs <dir>     reads <dir>/app, writes <dir>/boards, <dir>/pairs, <dir>/sheets
+// Set PLAYWRIGHT_CHROMIUM_EXECUTABLE if the pinned Chromium is missing.
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { chromium } from "playwright";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const PROJECT = join(root, "docs/design/redesign/project");
+const out = process.argv[2];
+if (!out) {
+  console.error("usage: node scripts/slice14-board-pairs.mjs <dir with app/>");
+  process.exit(2);
+}
+const PINNED = "/home/jahn/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome";
+const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || (existsSync(PINNED) ? PINNED : undefined);
+const canvas = JSON.parse(readFileSync(join(PROJECT, "canvas.json"), "utf8"));
+
+/** Each state: [phone board, desktop board, app screenshot, title]. A state with no desktop board is put beside its
+ * phone board; one with no board at all (null, null) is shown alone and says so. A state with no phone board is
+ * shot on the desktop only. */
+const STATES = [
+  ["Library.dc.html", "DesktopLibrary.dc.html", "library-grid", "Library, grid"],
+  ["LibraryList.dc.html", "DesktopLibrary.dc.html", "library-list", "Library, list"],
+  ["Library.dc.html", "DesktopLibrary.dc.html", "library-chip", "Library, the In progress chip"],
+  ["LibrarySort.dc.html", "DesktopLibrary.dc.html", "library-picker", "Library, the sort-and-view picker"],
+  [undefined, "DesktopLibrary.dc.html", "library-slash", "Library, / focuses its search"],
+  [undefined, "DesktopLibrary.dc.html", "root-desktop", "/ opens the Library"],
+  ["DiscoverResults.dc.html", null, "discover-search", "Discover with a search"],
+  ["Activity.dc.html", "DesktopActivity.dc.html", "activity-now", "Activity, Now"],
+  ["ActivityDevice.dc.html", "DesktopActivityDevice.dc.html", "activity-device", "Activity, This device"],
+  ["ActivityServer.dc.html", "DesktopActivityServer.dc.html", "activity-server", "Activity, Server"],
+  ["Activity.dc.html", "DesktopActivity.dc.html", "old-downloads", "#downloads (an old name) opens Activity"],
+  ["Settings.dc.html", "DesktopSettings.dc.html", "settings", "Settings"],
+  ["SettingsAccount.dc.html", "DesktopSettings.dc.html", "settings-account", "Settings, Account"],
+  ["SettingsAppearance.dc.html", "DesktopSettings.dc.html", "settings-appearance", "Settings, Appearance"],
+  ["SettingsPlayback.dc.html", "DesktopSettings.dc.html", "settings-playback", "Settings, Playback"],
+  [null, null, "settings-connections", "Settings, Connections"],
+  ["SettingsUsers.dc.html", "DesktopSettings.dc.html", "settings-users", "Settings, Users"],
+  ["SettingsLibrary.dc.html", "DesktopSettings.dc.html", "settings-library", "Settings, Library and storage"],
+  ["SettingsApp.dc.html", "DesktopSettings.dc.html", "settings-app", "Settings, App"],
+  ["SettingsKeys.dc.html", "DesktopSettings.dc.html", "settings-keyboard", "Settings, Keyboard shortcuts"],
+  ["Book.dc.html", null, "book", "Book page of a book with both files"],
+  ["Audiobook.dc.html", null, "book-audiobook", "Its Audiobook page"],
+  ["Ebook.dc.html", null, "book-ebook", "Its Ebook page"],
+  ["ReadingSync.dc.html", null, "book-sync", "Its Reading sync page"],
+  ["Series.dc.html", "DesktopSeries.dc.html", "series", "A Series page"],
+  ["NowPlaying.dc.html", "DesktopNowPlaying.dc.html", "listen", "Now playing, Listen"],
+  ["ReaderControls.dc.html", "DesktopReader.dc.html", "read-controls", "Now playing, Read with the controls shown"],
+  ["ReaderAppearance.dc.html", null, "read-appearance", "Now playing, Read with Appearance docked"],
+  ["Book.dc.html", null, "ebook-only-book", "Book page of a book with only an ebook (no board of its own; beside Book)"],
+  ["ReaderEbookOnly.dc.html", null, "ebook-only-read", "Read of a book with only an ebook, controls shown"],
+  ["BookPdf.dc.html", null, "pdf-only-book", "Book page of a book with only a PDF"],
+  ["ReaderEbookOnly.dc.html", null, "old-reader", "#reader/<ebook id> (an old name) opens Read"],
+];
+const PARTS = {
+  phone: STATES.filter(([phone]) => phone !== undefined).map(([phone, , app, title]) => [phone, `${app}-phone`, `${title} (390 by 844)`]),
+  desktop: STATES.map(([phone, desktop, app, title]) => [desktop ?? phone ?? null, `${app}-desktop`, `${title} (1280 by 800${desktop || !phone ? "" : "; no desktop board, beside the phone board"})`]),
+};
+
+/** The board's helmet and root, as the canvas mounts them (docs/design/redesign/tools/check-boards.mjs). */
+function standalone(name) {
+  const html = readFileSync(join(PROJECT, name), "utf8");
+  const found = html.match(/<x-dc>\s*<helmet>([\s\S]*?)<\/helmet>\s*([\s\S]*?)\s*<\/x-dc>/);
+  if (!found) throw new Error(`${name}: no <x-dc> with a <helmet>`);
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">${found[1]}</head><body>${found[2].replaceAll("{{accent}}", "#dd8966")}</body></html>`;
+}
+const dataUrl = (file) => `data:image/png;base64,${readFileSync(file).toString("base64")}`;
+const escape = (text) => text.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+
+const browser = await chromium.launch({ executablePath });
+const page = await browser.newPage();
+for (const dir of ["boards", "pairs", "sheets"]) mkdirSync(join(out, dir), { recursive: true });
+
+async function board(name) {
+  const file = join(out, "boards", name.replace(".dc.html", ".png"));
+  if (existsSync(file)) return file;
+  const { w, h } = canvas.boards[name];
+  await page.setViewportSize({ width: w, height: h });
+  // The fonts come from Google; without a network the board falls back to the system's faces.
+  await page.setContent(standalone(name), { waitUntil: "load", timeout: 15000 }).catch(() => {});
+  await page.evaluate(() => document.fonts.ready).catch(() => {});
+  await page.screenshot({ path: file });
+  return file;
+}
+
+async function compose(html, width, file) {
+  await page.setViewportSize({ width, height: 400 });
+  await page.setContent(html, { waitUntil: "load" });
+  await page.screenshot({ path: file, fullPage: true });
+}
+const STYLE = `<style>body{margin:0;background:#0b0f0b;color:#e6eadf;font:14px/1.4 system-ui,sans-serif}
+.pair{display:flex;gap:24px;padding:16px;align-items:flex-start}.pair figure{margin:0}.pair figcaption{padding:0 0 8px;color:#a9b59d}
+h1{font-size:18px;margin:0;padding:16px 16px 0}.sheet{display:flex;flex-wrap:wrap;gap:8px;padding:8px}.sheet figure{margin:0}
+.sheet figcaption{padding:4px 8px;color:#a9b59d}img{display:block;border:1px solid #26331f}</style>`;
+
+const missing = [];
+for (const [part, states] of Object.entries(PARTS)) {
+  const pairs = [];
+  for (const [boardName, app, title] of states) {
+    const shot = join(out, "app", `app-${app}.png`);
+    if (!existsSync(shot)) {
+      missing.push(shot);
+      continue;
+    }
+    const desktop = part === "desktop";
+    const pairFile = join(out, "pairs", `${app}.png`);
+    const width = desktop ? 2 * 1280 + 3 * 24 : 2 * 390 + 3 * 24;
+    const left = boardName
+      ? `<figure><figcaption>Board: ${escape(boardName)}</figcaption><img src="${dataUrl(await board(boardName))}"></figure>`
+      : `<figure><figcaption>No board draws this page</figcaption></figure>`;
+    await compose(`${STYLE}<h1>${escape(title)}</h1><div class="pair">${left}<figure><figcaption>Sonder</figcaption><img src="${dataUrl(shot)}"></figure></div>`, width, pairFile);
+    pairs.push([pairFile, title, desktop]);
+    console.log(`pair  ${pairFile}`);
+  }
+  const sheetFile = join(out, "sheets", `${part}.png`);
+  const figures = pairs
+    .map(([file, title, desktop]) => `<figure><figcaption>${escape(title)}</figcaption><img src="${dataUrl(file)}" style="width:${desktop ? 1300 : 420}px"></figure>`)
+    .join("");
+  await compose(`${STYLE}<h1>The redesign's final pass (#618): ${part}, each board beside Sonder</h1><div class="sheet">${figures}</div>`, 1760, sheetFile);
+  console.log(`sheet ${sheetFile}`);
+}
+await browser.close();
+writeFileSync(join(out, "sheets", "README.txt"), "Left of each pair the board, right Sonder at the board's size, against the suite's own server and fixtures.\n");
+if (missing.length) {
+  console.error(`missing app screenshots:\n${missing.join("\n")}`);
+  process.exit(1);
+}

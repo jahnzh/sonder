@@ -3,7 +3,7 @@ import { readerFixture } from "../reader-fixture";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { defaultAppearance } from "../../src/appearance";
-import { skipOnMobile } from "./mobile";
+import { NO_BLOB_STORE, skipOnMobile } from "./mobile";
 import { closeAppearance, openAppearance, setStepper } from "./reader-appearance";
 import { playFromLibrary } from "./library-play";
 import { gotoRead } from "./read-face";
@@ -250,6 +250,13 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await page
     .getByRole("button", { name: "Pause narration", exact: true })
     .click();
+  // Keep stores Blobs in IndexedDB, which Playwright's ephemeral WebKit context refuses (NO_BLOB_STORE, #618): there the
+  // test ends here; Chromium and Firefox guard Keep and the offline reopening.
+  const info = test.info();
+  if (info.project.use.browserName === "webkit" || info.project.use.defaultBrowserType === "webkit") {
+    info.annotations.push({ type: "part skipped", description: NO_BLOB_STORE });
+    return;
+  }
   // The EPUB is kept on this device by the Book page's Keep on this device switch (#551): the reader's own copy of a
   // book it opened is only a reading cache, and "Save ebook offline" left the More sheet (#532).
   await page.goto(`/#book/${encodeURIComponent(audioBook.workId)}`);
