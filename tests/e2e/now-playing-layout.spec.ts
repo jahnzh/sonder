@@ -1,3 +1,4 @@
+// @projects firefox, webkit, mobile-chrome, mobile-firefox, mobile-safari, mobile-iphone-slice13, webkit-iphone-now-playing
 import {type Page,type Locator,type APIRequestContext} from "@playwright/test";
 import {test,expect} from "./fixtures";
 import {randomUUID} from "node:crypto";

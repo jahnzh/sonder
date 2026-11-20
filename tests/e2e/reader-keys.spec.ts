@@ -1,3 +1,4 @@
+// @projects firefox, webkit-iphone-now-playing, mobile-iphone-slice14
 import {test,expect,type Page} from "@playwright/test";
 import {showControls} from "./reader-bands";
 import {readFileSync} from "node:fs";

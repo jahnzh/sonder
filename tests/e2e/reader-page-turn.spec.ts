@@ -1,3 +1,4 @@
+// @projects firefox, webkit-iphone-page-turn, webkit-iphone-now-playing
 import {test,expect,type Page,type Locator} from "@playwright/test";
 import {mkdirSync,readFileSync} from "node:fs";
 import {randomUUID} from "node:crypto";

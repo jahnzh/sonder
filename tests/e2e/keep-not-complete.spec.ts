@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13
 // A kept book that is not complete says why and offers Retry (#552; boards KeepNotComplete.dc.html and
 // KeepFull.dc.html). A save refused by the source (a routed answer) shows "Not complete" in the failed colour, the
 // reason and Retry on the Book page, lights the dot and sits under Needs attention; Retry finishes it. A quota error

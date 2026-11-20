@@ -1,3 +1,4 @@
+// @projects firefox
 // Import from this device into the book (#605, spec #600 "Import from this device"): "Import files from this device"
 // on Get audiobook and "Import a file from this device" on Get ebook open the device's file chooser, and choosing
 // starts the upload at once, with the book's workId. While it runs the row is a File row with its bar ("Uploading ·

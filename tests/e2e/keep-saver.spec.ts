@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13
 // Keep on this device saves the chosen recording and resumes by itself (#550; boards Book.dc.html and
 // KeepNothing.dc.html). The switch on a book with a recording saves it, the line going from Saving to its size; on for
 // a book with nothing yet reads "Nothing to save yet", and the recording arriving (a routed library answer) is saved

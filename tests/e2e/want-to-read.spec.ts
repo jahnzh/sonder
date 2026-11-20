@@ -1,3 +1,4 @@
+// @projects firefox
 // Sonder's own Want to read (#721 part c1), at 390 by 844 and on a desktop, in Chromium and Firefox: a book outside
 // the library has Want to read beside Add to library on its Book page, which adds it and puts it on the list; in the
 // library the Book group's row takes it off and puts it back; an ebook-only book joins through its placeholder; the

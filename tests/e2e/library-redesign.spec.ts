@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13
 // The Library by work (#577, spec #572 "The Library"; boards Library.dc.html, LibraryList.dc.html and
 // DesktopLibrary.dc.html), at 390 by 844 and at desktop width, in Chromium and Firefox: one tile per work (a work with
 // two recordings is one tile), the marks of each kind, each chip and the chip kept after a reload, Continue, Search,

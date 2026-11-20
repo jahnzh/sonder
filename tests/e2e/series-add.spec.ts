@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-series
 // The Add sheet of a saved series (#563, spec #560 "The Add sheet"; board SeriesAdd.dc.html): `#series/<id>/add`.
 // Add on a row opens it with that book chosen; Close and Back change nothing; on a reload it opens with the server's
 // choice, so the book AudiobookDB listed later is chosen and adding it adds it once (the book already in the library

@@ -1,3 +1,4 @@
+// @projects firefox
 // A paused player picks up a newer place saved on another device (#773): two browser contexts of one account on one
 // recording. Context A is paused, context B saves a later place, and A, coming into view or pressing play (the dock's
 // button or Media Session's play from the lock screen or headphones), lands on B's place while the server keeps it.

@@ -1,3 +1,4 @@
+// @projects firefox
 // The Reading sync page (#540, spec #537 "The page"; boards ReadingSync, ReadingSyncReady, ReadingSyncStopped,
 // ReadingSyncPaused, ReadingSyncCancelled, ReadingSyncPartial, ReadingSyncNoMatch, ReadingSyncLanguage):
 // `#book/<workId>/sync` and its Details. A real book (an imported recording and an EPUB) with the listing routed for

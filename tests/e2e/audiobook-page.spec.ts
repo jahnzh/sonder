@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing
 // The Audiobook page (#530, spec #526 "The Audiobook page"; board Audiobook.dc.html): its address, its layout at
 // phone size and on a desktop, the chosen recording across a reload and a second browser context, the copies'
 // dialogs, and what someone who is not the administrator does not see.

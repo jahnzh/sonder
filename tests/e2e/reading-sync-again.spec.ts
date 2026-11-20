@@ -1,3 +1,4 @@
+// @projects firefox, webkit-iphone-now-playing
 // Prepare again with the reading sync in use kept (#542, spec #537 "While a row keeps a map"; board
 // ReadingSyncAgain.dc.html), against the suite's own server: a ready book's reader keeps following the narration while
 // the new job runs, the page shows the map in use and the new job's steps, Cancel leaves the page as before Prepare

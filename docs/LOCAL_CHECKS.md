@@ -53,6 +53,10 @@ scripts/stress-spec.sh tests/e2e/<file>.spec.ts -g "<title>" --runs 20 --load
 
 Each run gets a fresh server, so the spec file does not have to be repeat-safe. `--load` keeps every CPU busy beside the runs. The script builds first (the browser tests serve `dist/`), prints the passed and failed counts, and keeps the logs of failed runs. When a run fails, decide with its trace whether a user doing the same thing at the same speed would get the wrong result (fix the app) or the test acts before the app is ready (fix the test, waiting on what a user would see).
 
+## Which projects a spec runs in (#793)
+
+`chromium` runs every spec. Any other project runs a spec only when the spec's first line names it: `// @projects firefox, mobile-chrome, mobile-iphone-slice14`. `playwright.config.ts` reads those lines from `tests/e2e/*.spec.ts` once at load and builds each project's `testMatch` from them, so adding a spec to a project, or a project to a spec, touches only the spec file; never add a pattern to the config. The names a spec may use are `SPEC_PROJECTS` in `tests/spec-projects.ts` (a project that exists only with a browser binary or `SONDER_MOBILE` / `SONDER_SLICE_WEBKIT` may still be named). An unknown or repeated name, `chromium`, or the line anywhere but first stops every Playwright run at load, and `tests/spec-projects.test.ts` fails on it and checks that each project of the config runs exactly the specs that name it.
+
 ## Mobile device projects
 
 ### Sharded browser stage (#34)
@@ -77,7 +81,7 @@ A skipped or Chromium-only run is reported as such: `report.json` has a `selecti
 - `mobile-firefox`: Firefox with the Pixel 7 viewport, touch and user agent. Firefox does not support `isMobile`, so it is left out and there is no meta-viewport handling. Defined only when the Firefox binary exists.
 - `mobile-safari`: WebKit with the `iPhone 15` descriptor. It is defined only when the Playwright WebKit binary exists, so a host without it runs the other projects alone. iOS itself is not emulated.
 
-All run `now-playing-layout`, `device-reset`, `app`, `playback-workflow`, `integrated-reader` and `playback-speed`. Build first, because the tests serve `dist/`.
+Each runs the specs whose `// @projects` line names it (see above). Build first, because the tests serve `dist/`.
 
 **Known failures (measured 2026-10-29 on the server):** `mobile-chrome` 27 passed, 1 failed, 6 skipped; `mobile-firefox` 15 to 18 passed, 10 to 13 failed, 6 skipped (the count varies between runs). In headless Firefox the audio never starts, so the audio-dependent tests fail: `app.spec` real playback and import/download, `integrated-reader` following narration, and six `playback-workflow` tests (Pause never appears). Firefox does report that it can play MP3 and the autoplay preferences did not help, so the cause is not established; the headless audio device is the untested candidate. `playback-speed.spec` and one `integrated-reader` test also fail in full runs on a cleanup `PUT /api/appearance` timeout, but pass alone. Treat `mobile-firefox` as a layout check until the audio cause is found; real Firefox playback is covered by the Android emulator (#66). `mobile-safari` has not run here because WebKit is not installed.
 

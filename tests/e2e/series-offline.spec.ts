@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-series-sw
 // The saved series without a connection (#568, spec #560 "Without a connection"): the device keeps the last answer of
 // `GET /api/series` and of each saved series opened. A saved series opened once, then offline after a reload: the
 // Library's Series chip and the page show it with the books' lines from the stored library, Add and Remove series off,

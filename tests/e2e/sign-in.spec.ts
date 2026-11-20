@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13
 import { test, expect, type Browser, type Locator, type Page } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";

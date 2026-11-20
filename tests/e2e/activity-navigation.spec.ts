@@ -1,3 +1,4 @@
+// @projects firefox, webkit-iphone-activity
 import { test, expect, type Page } from "@playwright/test";
 import type { ActivityResponse } from "../../src/types";
 import { noOverflow } from "./overflow";
@@ -5,7 +6,6 @@ import { noOverflow } from "./overflow";
 // Activity is a place, with Now and Server (#516; boards Activity.dc.html, ActivityMember.dc.html,
 // DesktopActivity.dc.html). Activity took the Downloads slot in the tab bar and the rail, for everyone, with the
 // attention dot that was on Settings. Now lists the books with work going on (#522), Server the queues and workers.
-// The file name ends in "navigation.spec.ts" so the Firefox project's pattern in playwright.config.ts picks it up.
 
 const DESKTOP = { width: 1280, height: 800 };
 const quiet: ActivityResponse = { checkedAt: Date.now(), stuckMultiplier: 1, attention: 0, processes: [], items: [] };

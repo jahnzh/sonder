@@ -1,3 +1,4 @@
+// @projects firefox, mobile-chrome, mobile-firefox, mobile-safari, webkit-iphone-activity, webkit-iphone-now-playing, mobile-iphone-series, mobile-iphone-slice14
 import { test, expect, type Page } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";

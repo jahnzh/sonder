@@ -1,3 +1,4 @@
+// @projects firefox
 // The Reading sync page's buttons (#541, spec #537 "The page"): Pause sends `pause` and shows Paused, Resume is the
 // main action beside Cancel, Cancel sends `cancel` and shows Cancelled with Prepare again, which finishes; a pair whose
 // recording and edition are in different languages says why and has no Prepare. The suite's server finishes a job in
