@@ -26,7 +26,7 @@ import { currentUserId, listUserIds, requireAdmin, setUserSetting, userIsAdmin }
 import { hardcoverForWorks, hiddenHardcoverPlaceholders } from "./hardcover.ts";
 import { deliveredTracks } from "./media-library.ts";
 import { chapterOverrides } from "./recording-chapters.ts";
-import { choiceKey, chosenRecordingId, fallbackCovers, idList, listedRecordings, storedChoices, workCovers } from "./work-cover.ts";
+import { choiceKey, chosenCover, chosenRecordingId, editionCovers, fallbackCovers, idList, listedRecordings, storedChoices, workCovers } from "./work-cover.ts";
 import { readerPlaces, workCompletions } from "./work-completion.ts";
 import { applyTitleEdits, applyWorkEdits, metadataOf, registerWorkMetadataRoutes } from "./work-metadata.ts";
 import { ebookFile } from "./ebooks.ts";
@@ -50,6 +50,7 @@ import type {
   WorkResult,
   WorkSeries,
 } from "../src/types.ts";
+import { ownCover } from "../src/types.ts";
 
 type TrackRow = typeof s.tracks.$inferSelect;
 
@@ -181,7 +182,8 @@ function recordingsByWork(userId: number, workIds: string[], files: FileCheck[])
       language: row.language,
       releaseTitle: row.releaseTitle,
       sourceLabel: row.sourceLabel,
-      cover: row.cover,
+      // A sample book's cover stored for another edition is no cover (#763).
+      cover: ownCover(row.cover, row.editionId),
       duration: delivered.tracks.reduce((total, track) => total + track.duration, 0),
       tracks: delivered.tracks,
       serverStored: delivered.serverStored,
@@ -391,6 +393,7 @@ function buildStoredWorks(userId: number, workIds: string[], hidden: Set<string>
   const recordings = recordingsByWork(userId, workIds, files);
   const choices = storedChoices(sqlite, userId, workIds);
   const covers = fallbackCovers(sqlite, userId, workIds, hidden);
+  const ownCovers = editionCovers(sqlite, userId, workIds, hidden);
   const completions = workCompletions(userId, workIds);
   const ebooks = ebooksByWork(userId, workIds, files);
   const readingSync = readingSyncByWork(recordings, ebooks.byWork);
@@ -413,7 +416,8 @@ function buildStoredWorks(userId: number, workIds: string[], hidden: Set<string>
         description: work.description,
         genre: work.genre,
         year: work.year,
-        cover: listed.find((recording) => recording.recordingId === chosen)?.cover ?? covers.get(workId)?.cover ?? "",
+        // The one cover choice (#763): the chosen recording's own, else the work's, else none.
+        cover: chosenCover(listed.find((recording) => recording.recordingId === chosen) ?? covers.get(workId), ownCovers.get(workId)),
         inLibrary: added.has(workId),
         addedAt: added.get(workId) ?? null,
         finished: completion?.finished ?? false,

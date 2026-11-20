@@ -44,6 +44,7 @@ import {
   type SourceId,
 } from "./get-audiobook-state";
 import { GetImportRow } from "./get-import-row";
+import { Cover } from "../parts/Cover";
 import "./get-audiobook-sheet.css";
 
 /** What the sheet keeps in its history entry. */
@@ -339,7 +340,7 @@ export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarr
         <h1 className="get-sheet-title type-heading">{NEW_BOOK_HEADING}</h1>
       ) : (
       <div className="get-sheet-book">
-        {work?.cover ? <img className="get-sheet-cover" src={work.cover} alt="" /> : <span className="get-sheet-cover" aria-hidden="true" />}
+        <Cover className="get-sheet-cover" src={work?.cover} title={work?.title ?? ""} workId={work?.workId} compact />
         <div className="get-sheet-names">
           <h1 className="get-sheet-title type-heading">{title}</h1>
           {work?.author && <p className="get-sheet-author type-label">{work.author}</p>}

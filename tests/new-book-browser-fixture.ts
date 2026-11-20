@@ -27,7 +27,7 @@ export async function installNewBookFixture(app: FastifyInstance) {
       remoteId: null,
       title: metadata.title || "A new audiobook",
       author: metadata.author || "Unknown author",
-      cover: metadata.cover?.startsWith("https://") ? metadata.cover : "/covers/time.svg",
+      cover: metadata.cover?.startsWith("https://") ? metadata.cover : "",
       workId: metadata.workId || null,
       language: null,
       narrator: null,
