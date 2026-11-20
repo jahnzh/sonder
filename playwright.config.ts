@@ -89,6 +89,21 @@ const seriesIphone = process.env.SONDER_SLICE_WEBKIT === "1" && existsSync(webki
       { name: "mobile-iphone-series-sw", testMatch: seriesWorkerSpecs, use: slice13Phone },
     ]
   : [];
+// Every browser spec that slice 14's tickets (#609 to #617: what was left removed, the tokens, Keyboard shortcuts, the old
+// names) added or changed, and the specs its spec says must still guard (app, the gallery, reliability, the service
+// worker), the slice's final check (#618): also in WebKit with the iPhone profile at the suite's phone window, and in
+// Firefox (the line in its list below). The service worker is blocked as on mobile-iphone-slice13, except for the specs
+// that test it.
+const slice14Specs =
+  /(^|\/)(app|book-page|chapterless-sync|ebook-page|gallery(-[a-z-]+)?|integrated-reader|keep-reading|keyboard-shortcuts|media-controls|navigation|reader-(appearance|bands|book-text|foot-setting|frame|keys|load-teardown|pages|text-links|theme)|reliability|service-worker-regressions)\.spec\.ts$/;
+const slice14WorkerSpecs = /(^|\/)(app|reader-theme|service-worker-regressions)\.spec\.ts$/;
+// Opt-in (SONDER_SLICE_WEBKIT=1): a slice's final check runs it; the committed check on every push does not.
+const slice14Iphone = process.env.SONDER_SLICE_WEBKIT === "1" && existsSync(webkit.executablePath())
+  ? [
+      { name: "mobile-iphone-slice14", testMatch: slice14Specs, testIgnore: slice14WorkerSpecs, use: { ...slice13Phone, serviceWorkers: "block" as const } },
+      { name: "mobile-iphone-slice14-sw", testMatch: slice14WorkerSpecs, use: slice13Phone },
+    ]
+  : [];
 const desktopProjects = [
   { name: "chromium" },
   // Layout checks also run in Firefox/WebKit when those browsers are installed.
@@ -255,6 +270,8 @@ const desktopProjects = [
               /(^|\/)paused-catch-up\.spec\.ts$/,
               // The Series slice's states beside their boards, opt-in with SONDER_SERIES_BOARDS=1 (#570).
               /(^|\/)series-boards\.spec\.ts$/,
+              // Every spec of slice 14 (#609 to #617) and the specs it must still guard, the slice's final check (#618).
+              slice14Specs,
             ]
           : /(now-playing-layout|device-reset|reader-frame)\.spec\.ts/,
       use: { browserName: browser.name() as "firefox" | "webkit", launchOptions: browser === firefox ? firefoxLaunchOptions : {} },
@@ -264,6 +281,7 @@ const desktopProjects = [
   ...slice13Iphone,
   ...nowPlayingIphone,
   ...seriesIphone,
+  ...slice14Iphone,
 ];
 export default defineConfig({
   testDir: "./tests/e2e",
