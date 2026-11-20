@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13
 // The Library's sort-and-view control (#578; spec #572 "The Library" and "The Picker part"; boards LibrarySort.dc.html,
 // LibraryShelf.dc.html, LibraryList.dc.html, DesktopLibrary.dc.html), at 390 by 844 and on a desktop, in Chromium and
 // Firefox: the control "<sort> · <view>" opens the Picker from the bottom edge on a phone and under its button on a

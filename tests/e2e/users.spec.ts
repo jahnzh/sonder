@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing
 import { test, expect, type Page } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";

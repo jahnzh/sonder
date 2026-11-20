@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13
 // The Get sheet without a book (#576, spec #572 "Discover"; board GetRecording.dc.html): Discover's last row opens
 // `#discover/get/<query>` with the words searched; "A recording for a new book" in place of the book, each row's own
 // title first and "Adds the book to your library." under the button; Get this recording sends `makeWork: true` and

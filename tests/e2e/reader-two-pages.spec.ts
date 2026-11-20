@@ -1,3 +1,4 @@
+// @projects firefox
 // Read on a desktop shows two pages side by side when the text area is wide enough (#762): in Page mode, when the text
 // area beside the contents and between the page arrows has room for two pages of the text's measure, the host spans
 // both and epub.js lays out a spread; narrower, a larger font or Scroll mode give one page, and switching keeps the

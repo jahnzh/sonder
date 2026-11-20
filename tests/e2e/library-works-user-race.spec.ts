@@ -1,3 +1,4 @@
+// @projects firefox
 // Review #528, finding 1: a library write started for one account while the user signs in as another must stay
 // in the first account's device database. The page runs the real client modules (`src/library-works-store.ts`
 // and `src/lib.ts`, bundled here with esbuild) against real IndexedDB; the account switch is made with the real

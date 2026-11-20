@@ -1,3 +1,4 @@
+// @projects firefox
 // A device whose browser cleared Sonder's files saves its kept books again (#554; board KeepCleared.dc.html, spec
 // #548 "Reporting"). A book kept and completed on this device; then the device database and the files are emptied in
 // the page (every IndexedDB store, the private file system, the caches) while the server keeps its records. A reload

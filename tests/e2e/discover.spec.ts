@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing
 // Discover finds books (#575, spec #572 "Discover"; boards Discover.dc.html, DiscoverResults.dc.html,
 // DiscoverNothing.dc.html, DiscoverSeries.dc.html), at 390 by 844 and at desktop width: the start list; "banks" with the
 // server's group, then AudiobookDB's and Open Library's (#721 part c2), a book on the server listed once and the

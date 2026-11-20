@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing
 import { test, expect, type Page } from "@playwright/test";
 import { showControls } from "./reader-bands";
 import { listenFace, openListen, openRead } from "./now-playing";

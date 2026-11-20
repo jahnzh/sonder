@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing, mobile-iphone-series
 // The Library's Series chip (#567, spec #560 "The Library's Series chip"; boards LibrarySeries.dc.html and
 // DesktopSeries.dc.html): "Series" after "All books" in the filter row; the saved series as rows with a stacked cover,
 // the name and "<author> · N of M finished"; a row opens `#series/<id>` and Back returns to the chip at its scroll

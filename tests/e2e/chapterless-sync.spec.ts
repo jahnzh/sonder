@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice14
 import {test,expect} from "@playwright/test";
 import {readFileSync} from "node:fs";
 import {readerFixture} from "../reader-fixture";

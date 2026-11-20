@@ -1,3 +1,4 @@
+// @projects firefox
 import { test, expect, type Page, type Route } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { readerFixture } from "../reader-fixture";

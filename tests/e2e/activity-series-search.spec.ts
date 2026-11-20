@@ -1,3 +1,4 @@
+// @projects firefox
 import { test, expect, type Page } from "./device-store";
 import { mkdirSync } from "node:fs";
 import type { ActivityItem, ActivityResponse } from "../../src/types";

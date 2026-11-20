@@ -1,3 +1,4 @@
+// @projects firefox, webkit-iphone-now-playing, mobile-iphone-slice14
 import { test, expect, type FrameLocator, type Locator, type Page } from "@playwright/test";
 import { readFileSync, mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";

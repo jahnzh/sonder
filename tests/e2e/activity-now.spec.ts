@@ -1,3 +1,4 @@
+// @projects firefox, webkit-iphone-activity
 import { test, expect, type Page, type Route } from "./device-store";
 import { readFileSync } from "node:fs";
 import { parseRange } from "../../server/range";

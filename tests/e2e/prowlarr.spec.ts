@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13
 import { test, expect } from "@playwright/test";
 import type { AudiobookRelease } from "../../src/types";
 import { prowlarrFixtureUrl } from "../prowlarr-browser-fixture";

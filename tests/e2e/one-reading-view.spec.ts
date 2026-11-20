@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing
 import {type Page} from "@playwright/test";
 // Each test runs its own server (own-server.ts): on the suite's server the book the Library's reader opens is the one
 // with the newest place, which the specs before this file also write; it failed in a full Chromium run only (#575).

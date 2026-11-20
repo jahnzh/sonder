@@ -1,3 +1,4 @@
+// @projects firefox
 // Keep on this device, then play (#783): once the device copy has finished saving, the book plays from it, with the
 // service worker controlling the page as it does on the owner's phone (Android Firefox): Automatic and Plays from ›
 // Device copy, and offline after that; the place listened to stays on its recording.

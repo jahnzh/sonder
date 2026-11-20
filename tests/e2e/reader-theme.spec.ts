@@ -1,3 +1,4 @@
+// @projects firefox, mobile-chrome, mobile-firefox, mobile-safari, mobile-iphone-slice13-sw, webkit-iphone-now-playing, mobile-iphone-slice14
 import { test, expect, type Page } from "@playwright/test";
 import { readerFixture } from "../reader-fixture";
 import { readFileSync } from "node:fs";
