@@ -125,7 +125,8 @@ function NowPlayingScreen({ workId, face, open, ...props }: NowPlayingProps & { 
 
   // Only while the entry still shows this face: the kept-mounted dialog can hear of a focus outside it after the
   // address has moved on (a link or a typed address), and Back from there would undo that move. The reader on its own
-  // had this guard (#590); every reader is this one now (#613 part 2).
+  // had this guard (#590); every reader is this one now (#613 part 2). A late close from Firefox's focus
+  // change as the reader's iframe goes is the same case (#662).
   const close = () => goBackFrom({ name: face, workId }, { name: "book", workId });
   const faceControl = <FaceSwitch workId={workId} face={face} admin={props.admin} exists={exists} />;
   const shown = known && exists(face);
