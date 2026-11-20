@@ -96,3 +96,23 @@ test("a chapter's rule is the first whose blocks hold nine tenths of its text", 
   // A chapter without text needs no rule.
   assert.equal(chapterBlockRule(body(`<p> </p><div></div>`), text), undefined);
 });
+test("the line for a chapter's rule is at nine tenths of its text", () => {
+  const text = (node: ReturnType<typeof body>) => node.text;
+  const words = (count: number) => "word ".repeat(count).trim() + ".";
+  // 100 words in all: `held` of them in <p>, the rest in a <div> or loose.
+  const chapter = (held: number, rest: (text: string) => string) => body(`<p>${words(held)}</p>${rest(words(100 - held))}`);
+  const inDiv = (rest: string) => `<div>${rest}</div>`;
+  for (const [held, rule] of [[88, "div"], [92, undefined]] as const) {
+    const share = blockShare(chapter(held, inDiv), text);
+    assert.ok(Math.abs(share - held / 100) < 0.01 && Math.abs(share - 0.9) < 0.03, `${held}: ${share}`);
+    assert.equal(chapterBlockRule(chapter(held, inDiv), text), rule, `${held} of 100 words in standard blocks`);
+  }
+  // The same line decides between <div> blocks and the whole chapter: here the <div> holds part of the rest.
+  const partly = (inside: number) => (rest: string) => `<div>${words(inside)}</div> ${rest.split(" ").slice(inside).join(" ")}`;
+  for (const [inside, rule] of [[32, "div"], [28, "body"]] as const) {
+    const made = chapter(60, partly(inside));
+    const share = blockShare(made, text, "div");
+    assert.ok(Math.abs(share - 0.9) < 0.04, `${inside}: ${share}`);
+    assert.equal(chapterBlockRule(made, text), rule, `${60 + inside} of 100 words in blocks with <div>`);
+  }
+});

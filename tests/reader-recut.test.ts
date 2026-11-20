@@ -127,6 +127,15 @@ test("places saved in the standard cut are carried over to the same text, once",
   const second = await read();
   assert.deepEqual(second.checkpoint, first.checkpoint);
   assert.deepEqual(second.bookmarks, first.bookmarks);
+  // The edition is marked. Without the mark every restart would carry again, and a place saved since on an id
+  // the old cut also had (0:1 was its heading) would be moved to other text.
+  assert.ok(sqlite.prepare("SELECT 1 FROM settings WHERE key=?").get(`reader-recut:${id}`), "the edition is marked");
+  const later = await app.inject({ method: "PUT", url: `/api/reader/${id}/progress`, payload: { locator: locator("0:1", byId.get("0:1")!), baseRevision: 4, eventId: "event-two-2", deviceId: "device-1", updatedAt: Date.now() } });
+  assert.equal(later.statusCode, 200, later.body);
+  invalidateParsedBook(id);
+  const third = await read();
+  assert.equal(third.checkpoint.locator.paragraphId, "0:1");
+  assert.equal(third.checkpoint.revision, 5);
 });
 
 test("a place sent on the old cut after the change lands on its own text, or is refused", async () => {
@@ -217,4 +226,26 @@ test("cutting a book writes nothing; the carry-over is a step of its own, and sa
   assert.equal(JSON.parse(mark()!.value).places, 1);
   // A book cut by the standard rule has no table and is never marked.
   assert.equal((await cutEpub(readFileSync(join(temp, "media", "ebooks", "recut-normal.epub")))).recut, null);
+});
+
+test("the line between the two kinds of book is at half of the text in standard blocks", async () => {
+  // Two books of the same sentences, some in <p> and the rest in <div>: one a little under the line, one a little over.
+  const book = async (id: string, inParagraphs: number) => {
+    const chapter = (word: string) => prose(word, 10).map((text, index) => (index < inParagraphs ? `<p>${text}</p>` : `<div>${text}</div>`)).join("");
+    return extractBook(await edition(id, [chapter("first"), chapter("second")]));
+  };
+  // The share as the extractor measures it: the fixture's headings and the <p> text, over all the text.
+  const share = (inParagraphs: number) => {
+    const sentence = normalizeReaderText(prose("first", 1)[0]).length + 1;
+    const headings = "Down the Rabbit-Hole".length + "The Pool of Tears".length;
+    return (headings + 2 * inParagraphs * sentence) / (headings + 2 * 10 * sentence);
+  };
+  assert.ok(share(4) > 0.4 && share(4) < 0.5, `under: ${share(4)}`);
+  assert.ok(share(5) > 0.5 && share(5) < 0.6, `over: ${share(5)}`);
+  const under = await book("recut-under", 4);
+  assert.deepEqual(under.sections.map((section) => section.blocks), ["div", "div"]);
+  assert.equal(under.sections[0].paragraphs.length, 21);
+  const over = await book("recut-over", 5);
+  assert.ok(over.sections.every((section) => !("blocks" in section)));
+  assert.equal(over.sections[0].paragraphs.length, 11, "the heading and the five paragraphs' sentences; the <div> text is not cut");
 });
