@@ -4,12 +4,14 @@ import {protectBrowserMutations, closeProtectedBrowser} from './verification-saf
 import {chromium,expect as baseExpect} from '@playwright/test';
 import {createReaderControls,narratedOnPage,narratedPressPoint,waitForBox} from './live-reader-controls.mjs';
 import {verifyBaseURL} from './live-check-target.mjs';
-import {selectReaderRecording,requestFrom,getJSON,NoSuitableRecording,NO_SUITABLE_RECORDING_EXIT,FOLLOW_WAIT_SECONDS} from './live-check-recording.mjs';
+import {selectReaderRecording,requestFrom,getJSON,NoSuitableRecording,NO_SUITABLE_RECORDING_EXIT,FOLLOW_WAIT_SECONDS,verifyChoice} from './live-check-recording.mjs';
 const expect=baseExpect.configure({timeout:25000});
 // A local test server (tests/browser-server.ts) has no .env and no password; production reads both from .env.
 if(fs.existsSync('.env'))process.loadEnvFile('.env');
-// The recording id is a preference: the check plays it when it qualifies and otherwise picks another (#431).
-const preferred=process.argv[2]||null;
+// The recording id (first argument, else SONDER_VERIFY_RECORDING) is a preference: the check plays it when it qualifies
+// and otherwise picks another (#431). Never one listened to in the last 48 h: chosen explicitly, that is refused unless
+// SONDER_VERIFY_ALLOW_RECENT=1 (#774).
+const {preferred,allowRecent}=verifyChoice();
 const baseURL=verifyBaseURL();
 const browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || '/home/jahn/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome'});
 const context=await browser.newContext({baseURL,viewport:{width:390,height:844},serviceWorkers:'block'});
@@ -22,7 +24,7 @@ try {
  // Only an empty listing or a 404/410 map can lead to "no suitable recording"; any other failed request fails the check (#431).
  // A recording chosen here that then fails below stays a failure: the check does not fall through to another one.
  const get=requestFrom(context);
- const pick=await selectReaderRecording(get,{preferred});
+ const pick=await selectReaderRecording(get,{preferred,allowRecent});
  const {book,ebook,sequence}=pick;
  report.recordingId=pick.recordingId;report.selection={ebookId:ebook.id,jobId:pick.job.id,start:sequence.start,follow:sequence.follow,...(pick.preferred?{preferred:pick.preferred}:{})};
  const appearance=await getJSON(get,'/api/appearance');

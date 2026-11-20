@@ -37,6 +37,8 @@ import type { Book, Download, DownloadPart, LibraryWork } from "../types";
 import { chosenRecording } from "./book-model";
 import { KeepItems } from "./keep-item";
 import { PlaysFromRow } from "./plays-from";
+import { useBookCover } from "../cover-choice";
+import { Cover } from "../parts/Cover";
 import "./now-playing.css";
 
 type Running = Record<string, { progress: number; chapter: number; total: number }>;
@@ -276,6 +278,8 @@ function ListenFace({
   const chapter = trackId ? currentChapter(book, trackId, position) : undefined;
   const chapterTitle = (chapter?.title || book.tracks.find((t) => t.id === trackId)?.title || "").trim();
   const toggle = () => (playsThis ? p.toggle() : void p.play(book));
+  // The one cover choice (#763): the edition's own, else the work's, else the generated cover.
+  const cover = useBookCover(book, work.cover);
   const speed = useBookSpeed(book);
   const own = useHasOwnSpeed(book);
   const sleep = sleepShown(p.sleep);
@@ -291,7 +295,7 @@ function ListenFace({
   const chapterLine = desktop ? listenChapterLine(chapterTitle, chapter ? chapterTimeLeft(chapter, position, speed) : null) : chapterTitle;
   const intro = (
     <div className="now-playing-intro">
-      <img className="now-playing-cover" src={book.cover || work.cover} alt="" />
+      <Cover className="now-playing-cover" src={cover} title={work.title || book.title} author={work.author || book.author} workId={work.workId} />
       <div className="now-playing-names">
         <h1 className={desktop ? "type-title" : "type-heading"}>{work.title || book.title}</h1>
         <p className={desktop ? "type-body" : "type-label"}>{work.author || book.author}</p>

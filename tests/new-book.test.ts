@@ -153,7 +153,7 @@ for (const route of ["abb", "prowlarr"] as const) {
     const editions = editionsOf(job.workId);
     assert.equal(editions.length, 1);
     assert.ok(isPlaceholderEdition(sqlite, editions[0].id));
-    assert.equal(editions[0].cover, route === "abb" ? COVER : "/covers/meditations.svg");
+    assert.equal(editions[0].cover, route === "abb" ? COVER : "", "no cover of its own: never a sample book's (#763)");
     // One library row, the administrator's; the other account has none.
     assert.deepEqual(libraryRows(1, job.workId), [{ bookId: editions[0].id, status: "unread" }]);
     assert.deepEqual(libraryRows(listenerId, job.workId), []);

@@ -11,7 +11,7 @@
   background: var(--surface);
   color: var(--text);
   /* On a phone it stands where the foot stood: it keeps clear of the home bar as the foot did. */
-  padding-bottom: var(--reader-safe-bottom, 0px);
+  padding-bottom: var(--reader-safe-bottom, 0px); /* tokens: the safe-area inset as the reader keeps it, 0 on a desktop (reader.css) */
 }
 .reader-appearance-heading {
   flex: none;

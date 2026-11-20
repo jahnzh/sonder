@@ -7,5 +7,5 @@ export function sharedEdition(works: ListedWork[], workId: string): string | nul
 export function requestFrom(context: BrowserContext): Get;
 export function selectReaderRecording(
   get: Get,
-  options?: { preferred?: string | null },
+  options?: { preferred?: string | null; allowRecent?: boolean; now?: number },
 ): Promise<{ recordingId: string; book: any; ebook: { id: string }; job: { id: string }; map: any; sequence: any; listing: { works: any[] } & Record<string, any>; preferred?: { recordingId: string; reason: string } }>;
