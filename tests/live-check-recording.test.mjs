@@ -177,6 +177,24 @@ test("a named recording that does not qualify gives way to another, and the reas
   assert.deepEqual(missing.preferred, { recordingId: "recording-gone", reason: "the recording is not in the book listing" });
 });
 
+test("a recording stored on the server goes before one that streams from outside, whatever their maps; the named one still goes first (#822)", async () => {
+  // The fixture's books are stored on the server; one that streams from TorBox says so in GET /api/books.
+  const stored = book("stored", { progress: { position: 42 } });
+  const streamed = { ...book("streamed", { progress: { position: 42 } }), serverStored: false };
+  const storedToo = book("stored-too", { progress: { position: 42 } });
+  const listing = listingOf([
+    { book: streamed, jobs: [job(streamed, { status: "ready", updatedAt: 900 })] },
+    { book: stored, jobs: [job(stored, { status: "partial", updatedAt: 100 })] },
+    { book: storedToo, jobs: [job(storedToo, { status: "ready", updatedAt: 50 })] },
+  ]);
+  assert.deepEqual(rec.readerPairs(listing).pairs.map((p) => p.book.recordingId), ["recording-stored-too", "recording-stored", "recording-streamed"]);
+  assert.equal((await select(listing)).recordingId, "recording-stored-too");
+  assert.equal((await select(listing, { preferred: streamed.recordingId })).recordingId, streamed.recordingId);
+  // With none stored on the server the order is the old one, and a stored one that does not qualify gives way.
+  const late = book("late", { progress: { position: 639 } });
+  assert.equal((await select(listingOf([{ book: late }, { book: streamed, jobs: [job(streamed)] }]))).recordingId, streamed.recordingId);
+});
+
 test("without a preference: a ready map before a partial one, then the most recently updated (deploy.sh's old order)", async () => {
   const books = ["old-ready", "new-ready", "newest-partial"].map((n) => book(n, { progress: { position: 42 } }));
   const listing = listingOf([

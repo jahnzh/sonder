@@ -12,7 +12,10 @@
 #      --marker-file path exists in the image (docker run --rm --entrypoint test <image> -f <path>)
 #   6. smoke-test the built image with the service's environment, network and mounts
 #   7. docker compose up -d sonder, wait for the health check, curl /api/health
-#   8. run the live verification scripts (reader + multi-user) unless --skip-live-checks; a check picks its own
+#   8. wait until /api/health has answered in under SONDER_DEPLOY_SETTLE_ANSWER seconds (0.5) for
+#      SONDER_DEPLOY_SETTLE_SECONDS in a row (60), so a check never meets a server still slow from its start (#822);
+#      after SONDER_DEPLOY_SETTLE_CEILING seconds (300) say so and go on. 0 seconds skips the wait.
+#   9. run the live verification scripts (reader + multi-user) unless --skip-live-checks; a check picks its own
 #      recording, and one that exits 3 found no recording it can run on and is reported as skipped, not failed (#431).
 #      It never picks a book listened to in the last 48 h (#774). SONDER_VERIFY_RECORDING=<recording id> names the
 #      recording instead, and SONDER_VERIFY_ALLOW_RECENT=1 lets that be a recently played one: both are passed through.
@@ -61,6 +64,15 @@ db=${SONDER_DEPLOY_DB:-$repo_root/data/sonder.db}
 backup_dir=${SONDER_DEPLOY_BACKUP_DIR:-$repo_root/data/backups}
 health_timeout=${SONDER_DEPLOY_HEALTH_TIMEOUT:-180}
 port=${SONDER_DEPLOY_PORT:-3001}
+# The settle wait before the live checks (#822): how long /api/health must keep answering quickly, what quickly is, how
+# long the wait may take in all, and how often it asks. Seconds; the answer time and the interval may be fractions.
+settle_seconds=${SONDER_DEPLOY_SETTLE_SECONDS:-60}
+settle_answer=${SONDER_DEPLOY_SETTLE_ANSWER:-0.5}
+settle_ceiling=${SONDER_DEPLOY_SETTLE_CEILING:-300}
+settle_interval=${SONDER_DEPLOY_SETTLE_INTERVAL:-2}
+for value in "$settle_seconds" "$settle_ceiling"; do
+  case $value in ''|*[!0-9]*) echo "SONDER_DEPLOY_SETTLE_SECONDS and SONDER_DEPLOY_SETTLE_CEILING are whole seconds, got: $value" >&2; exit 2 ;; esac
+done
 live_checks=${SONDER_DEPLOY_LIVE_CHECKS:-scripts/verify-integrated-reader.mjs scripts/verify-multi-user.mjs}
 # The slice pass (#794): the slice finals' lists, walked at a phone's and a desktop's size. Optional: only with
 # SONDER_DEPLOY_SLICE_PASS=1, after the other checks (a slice's final deploy asks for it).
@@ -130,7 +142,8 @@ if [ "$dry_run" -eq 1 ]; then
   if [ "$skip_live" -eq 1 ]; then
     echo "  7. live checks: skipped (--skip-live-checks)"
   else
-    echo "  7. live checks: ${live_checks}"
+    echo "  7. wait until /api/health has answered in under ${settle_answer}s for ${settle_seconds}s in a row (at most ${settle_ceiling}s)"
+    echo "  8. live checks: ${live_checks}"
     [ -n "${SONDER_VERIFY_RECORDING:-}" ] && echo "     recording: ${SONDER_VERIFY_RECORDING}${SONDER_VERIFY_ALLOW_RECENT:+ (SONDER_VERIFY_ALLOW_RECENT=${SONDER_VERIFY_ALLOW_RECENT})}"
   fi
   exit 0
@@ -228,7 +241,35 @@ if ! curl -fsS "http://127.0.0.1:${port}/api/health" >/dev/null; then
   exit 1
 fi
 
-# 8. Live checks. Each check picks its own recording (scripts/live-check-recording.mjs). Exit 3 means it found no
+# 8. Let the server settle before a check plays real audio on it (#822). On 20 Nov 2026 the reader check started the
+# moment health answered, met a server answering slower than 2 s seconds after its start, and failed a sound build.
+# The stretch starts over at any answer that is slow, refused or an error. At the ceiling the checks start anyway.
+if [ "$skip_live" -eq 0 ] && [ "$settle_seconds" -gt 0 ]; then
+  echo "waiting until /api/health has answered in under ${settle_answer}s for ${settle_seconds}s in a row (at most ${settle_ceiling}s)"
+  # Milliseconds, so a stretch is never a rounded second short.
+  settle_began=$(date +%s%3N)
+  settle_since=""
+  while :; do
+    took=$(curl -fsS -o /dev/null -m 5 -w '%{time_total}' "http://127.0.0.1:${port}/api/health" 2>/dev/null) || took=""
+    now=$(date +%s%3N)
+    if [ -n "$took" ] && awk -v took="$took" -v limit="$settle_answer" 'BEGIN { exit !(took + 0 < limit + 0) }'; then
+      [ -n "$settle_since" ] || settle_since=$now
+      if [ $(( now - settle_since )) -ge $(( settle_seconds * 1000 )) ]; then
+        echo "settled: /api/health answered in under ${settle_answer}s for ${settle_seconds}s, $(( (now - settle_began) / 1000 ))s after the container was healthy"
+        break
+      fi
+    else
+      settle_since=""
+    fi
+    if [ $(( now - settle_began )) -ge $(( settle_ceiling * 1000 )) ]; then
+      echo "not settled: /api/health did not answer in under ${settle_answer}s for ${settle_seconds}s in a row within ${settle_ceiling}s (last answer: ${took:-none}s); starting the live checks anyway" >&2
+      break
+    fi
+    sleep "$settle_interval"
+  done
+fi
+
+# 9. Live checks. Each check picks its own recording (scripts/live-check-recording.mjs). Exit 3 means it found no
 # recording it can run on without moving the owner's saved position: with the reason the check wrote to
 # SONDER_LIVE_CHECK_SKIP_FILE it is reported as skipped and not counted as a failure (#431). SONDER_VERIFY_PRODUCTION=1
 # lets the checks run against production, which they refuse without it (scripts/live-check-target.mjs).
