@@ -15,7 +15,6 @@ import { Row } from "../parts/Row";
 import { InfoMark } from "../parts/Tooltip";
 import { backName } from "../parts/back-name";
 import { usePlayer } from "../player";
-import { openReader } from "../reading";
 import { useDeviceEbookChoice, useEbookDeviceCopy } from "../ebook-device-copy";
 import { ebookSearchTarget } from "./ebook-page";
 import { keepOffAndRemove, removeBookFiles, useDeviceBook, useKeepRecord } from "../keep-runtime";
@@ -27,6 +26,7 @@ import { addedElsewhere, addsBeforeGet, bookModel, chosenRecording, wantToReadAc
 import { wantToReadNote } from "../status-lines";
 import type { Notify } from "./shared";
 import { KeepItems } from "./keep-item";
+import { Cover } from "../parts/Cover";
 import "./book-page.css";
 
 export { KEEP_OFF_KEEPS, keepOffQuestion, earlierQuestion } from "./keep-item";
@@ -199,10 +199,9 @@ export function BookPage(props: Props) {
   };
   const read = () => {
     if (!model.readEbookId) return;
-    // The book in the player reads beside the narration: Now playing on its Read face (#593). A book without a
-    // recording reads there too, like any other book (#594).
-    if (model.readFace || p.book?.workId === workId) address.navigate({ name: "read", workId });
-    else openReader(model.readEbookId);
+    // Now playing on its Read face (#593), for every book: the reader on its own is gone (#613 part 2). A book
+    // without a recording reads there with no narration (#594, #596).
+    address.navigate({ name: "read", workId });
   };
   /**
    * Add to library (#527): the work the server added, which for a Hardcover book not on the server is the work its
@@ -304,13 +303,8 @@ export function BookPage(props: Props) {
       {head}
 
       <div className="book-page-intro">
-        {work.cover ? (
-          <img className="book-page-cover" src={work.cover} alt="" />
-        ) : (
-          <div className="book-page-cover book-page-cover-blank type-label" aria-hidden="true">
-            {work.title}
-          </div>
-        )}
+        {/* The work's cover by the one cover choice (#763), else the generated cover. */}
+        <Cover className="book-page-cover" src={work.cover} title={work.title} author={work.author} workId={work.workId} />
         <div className="book-page-names">
           <h1 className="book-page-title type-heading">{work.title}</h1>
           <p className="book-page-muted type-label">{work.author}</p>

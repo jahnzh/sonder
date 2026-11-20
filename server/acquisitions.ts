@@ -10,6 +10,7 @@ import { matchedWorkForMedia } from "./same-book.ts";
 import { claimWorkAudio } from "./work-library.ts";
 import * as s from "./schema.ts";
 import { getSecret, torbox } from "./services.ts";
+import { ownCover } from "../src/types.ts";
 import { addTorrent, getTorrent, removeTorrent, transmission } from "./transmission.ts";
 import { getTorrentHealth } from "./torrent-health.ts";
 import { getWorkMediaState, trackWorkMediaState } from "./work-media-state.ts";
@@ -126,9 +127,8 @@ export async function acquire(
     remoteId: null,
     title,
     author: metadata.author || "Unknown author",
-    cover: metadata.cover?.startsWith("https://")
-      ? metadata.cover
-      : "/covers/time.svg",
+    // No cover of its own is "" (#763): never a sample book's.
+    cover: metadata.cover?.startsWith("https://") ? metadata.cover : "",
     workId: metadata.workId || null,
     language: metadata.language || null,
     narrator: metadata.narrator || null,
@@ -253,7 +253,8 @@ function createBook(
         .values({
           id,
           workId,
-          cover: job.cover,
+          // An acquisition stored by an older build may hold a sample book's cover: read as none (#763).
+          cover: ownCover(job.cover, id),
           narrator: job.narrator || "Unknown narrator",
           language: job.language,
           releaseTitle: job.title,

@@ -8,10 +8,13 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 import { NO_BLOB_STORE } from "./mobile";
+import { throttleCpu } from "./cpu-throttle";
 // Every test here saves a device copy, which Playwright's WebKit cannot store (tests/e2e/mobile.ts).
 test.skip(({ browserName }) => browserName === "webkit", NO_BLOB_STORE);
 
 test.use({ serviceWorkers: "block" });
+// SONDER_CPU_THROTTLE=4 runs it on a slow processor in Chromium (#702, #707).
+test.beforeEach(({ page }) => throttleCpu(page));
 
 const OUT = "OUT";
 mkdirSync(OUT, { recursive: true });
@@ -294,32 +297,21 @@ test("the rollout turns Keep on for a recording saved before the upgrade, withou
   await page.goto("/#library");
   await expect(page.getByRole("heading", { name: "Library", exact: true, level: 1 })).toBeVisible();
   const book = await importBook(page, unique("Saved before"));
-  // The device's library by work lists the book, and its file is on the device as an earlier build saved it.
+  // The device's library by work lists the book, and the first run's rollout has finished.
   await page.evaluate(() => window.dispatchEvent(new Event("sonder:library-changed")));
+  await expect.poll(() => device(page, book.workId), { timeout: 20_000 }).toMatchObject({ stored: true, rolledOut: true });
+  // The file goes on the device as an earlier build saved it, with no Keep record and no rollout, while no page of
+  // Sonder runs (#702): a run of the open page's saver that read the device before the seeding would otherwise mark
+  // the rollout done after it, without the book. build.json is a page of the same origin that starts no app.
+  await page.goto("/build.json");
   await page.evaluate(
     async ({ workId, recordingId, trackId }) => {
-      const open = () =>
-        new Promise<IDBDatabase>((resolve, reject) => {
-          const request = indexedDB.open("sonder");
-          request.onsuccess = () => resolve(request.result);
-          request.onerror = () => reject(request.error);
-        });
-      // The first run's rollout has finished (so it cannot mark itself done after the seeding below), and the
-      // stored library lists the book.
-      for (let i = 0; i < 200; i++) {
-        const db = await open();
-        const [found, rolled] = await new Promise<[boolean, boolean]>((resolve) => {
-          const tx = db.transaction(["works", "preferences"]);
-          const work = tx.objectStore("works").get(workId);
-          const rollout = tx.objectStore("preferences").get("keep-rollout");
-          tx.oncomplete = () => resolve([!!work.result, rollout.result?.value === true]);
-        });
-        db.close();
-        if (found && rolled) break;
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
       const blob = await (await fetch(`/api/media/${encodeURIComponent(trackId)}`)).blob();
-      const db = await open();
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open("sonder");
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
       await new Promise<void>((resolve, reject) => {
         const tx = db.transaction(["downloads", "downloadChunks", "preferences", "keep"], "readwrite");
         tx.objectStore("downloads").put({ recordingId, trackId, name: "Chapter", size: blob.size, storage: "chunks", mime: "audio/mpeg", completedAt: Date.now() });
@@ -337,11 +329,37 @@ test("the rollout turns Keep on for a recording saved before the upgrade, withou
   expect(await serverKeep(page, book.workId)).toBeNull();
   const saves: number[] = [];
   page.on("request", (request) => isSave(request) && saves.push(rangeStart(request)));
-  await page.reload();
-  await expect.poll(async () => (await serverKeep(page, book.workId))?.on, { timeout: 20_000 }).toBe(true);
+  await page.goto("/#library");
+  // The saver's first run: the rollout marks itself done once it has sent the choices it made (#702).
+  await expect.poll(() => device(page, book.workId), { timeout: 20_000 }).toMatchObject({ rolledOut: true });
+  expect((await device(page, book.workId)).keep).toBe(true);
+  expect((await serverKeep(page, book.workId))?.on).toBe(true);
   await page.goto(address(book.workId));
   await expect(keep(page)).toHaveAttribute("aria-checked", "true");
   await expect(line(page)).toHaveText(/^Audiobook · 5\.1 MB$/);
   expect(saves).toEqual([]);
   expect(await persistCalls(page)).toBe(0);
 });
+
+/** What the device database holds for the rollout: the stored work, the rollout marker and the work's Keep choice. */
+function device(page: Page, workId: string) {
+  return page.evaluate(
+    (workId) =>
+      new Promise<{ stored: boolean; rolledOut: boolean; keep: boolean | null }>((resolve, reject) => {
+        const request = indexedDB.open("sonder");
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const db = request.result;
+          const tx = db.transaction(["works", "preferences", "keep"]);
+          const work = tx.objectStore("works").get(workId);
+          const rollout = tx.objectStore("preferences").get("keep-rollout");
+          const choice = tx.objectStore("keep").get(workId);
+          tx.oncomplete = () => {
+            db.close();
+            resolve({ stored: !!work.result, rolledOut: rollout.result?.value === true, keep: choice.result ? choice.result.on === true : null });
+          };
+        };
+      }),
+    workId,
+  );
+}

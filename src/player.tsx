@@ -46,6 +46,8 @@ import {
   stallHandler,
   stallWatchdog,
 } from "./device-fallback";
+import { bookCover, coverBooks } from "./cover-choice";
+import { storedWorkCover } from "./library-works-store";
 import { keyEventContext, playbackKeyAction } from "./keyboard";
 import { useAppearance } from "./components/Appearance";
 import {
@@ -554,17 +556,21 @@ export function PlayerProvider({
           : local!;
       el.load();
       if ("mediaSession" in navigator) {
+        // The one cover choice (#763); a book with none shows no artwork rather than another book's.
+        const artwork = bookCover(b, coverBooks(), storedWorkCover(b.workId));
         navigator.mediaSession.metadata = new MediaMetadata({
           title: b.title,
           artist: b.author,
           album: sessionChapterTitle(b, selected, pendingSeek.current),
-          artwork: [
-            {
-              src: new URL(b.cover, location.origin).href,
-              sizes: "500x680",
-              type: "image/svg+xml",
-            },
-          ],
+          artwork: artwork
+            ? [
+                {
+                  src: new URL(artwork, location.origin).href,
+                  sizes: "500x680",
+                  type: "image/svg+xml",
+                },
+              ]
+            : [],
         });
       }
       try {

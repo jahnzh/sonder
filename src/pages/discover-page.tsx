@@ -275,6 +275,7 @@ export function DiscoverPage({
           title={row.title}
           status={row.status}
           cover={row.cover}
+          workId={row.workId}
           onClick={() => onBook(row.workId)}
           action={
             <Button

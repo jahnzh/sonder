@@ -2,6 +2,7 @@ import {test,expect,type Page,type Locator} from "@playwright/test";
 import {showControls} from "./reader-bands";
 import {readFileSync} from "node:fs";
 import {readerFixture} from "../reader-fixture";
+import { gotoRead } from "./read-face";
 // WebKit needs allow-scripts so the reader's own listeners run on the page (#37).
 // EPUB content itself must still never run script. These checks run in all three engines.
 const sandboxFor=(browserName:string)=>browserName==="webkit" ? "allow-same-origin allow-scripts" : "allow-same-origin";
@@ -13,14 +14,14 @@ async function importBook(page:Page,title:string,script=false,variant?:"svg-root
  const upload=await page.request.post(`/api/ebooks/import${link ? `?workId=${book.workId}` : ""}`,{multipart:{file:{name:`${title}.epub`,mimeType:"application/epub+zip",buffer:fixture||await readerFixture({script,variant,title})}}});
  expect(upload.ok()).toBe(true);
  const id=(await upload.json()).id;
- await page.goto(`/#reader/${id}`);
- await expect(page.getByRole("dialog",{name:"Reader"})).toBeVisible();
+ await gotoRead(page, id);
+ await expect(page.getByRole("dialog", { name: "Now playing", exact: true })).toBeVisible();
  return id;
 }
 async function openReader(page:Page,title:string,script=false,link=true){
  const id=await importBook(page,title,script,undefined,link);
- const room=page.locator(".reader-room:not(.inline-reader)");
- const frame=page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe");
+ const room=page.locator(".reader-room");
+ const frame=page.frameLocator(".reader-room .reader-viewport iframe");
  await expect(frame.getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
  return {id,room,frame};
 }
@@ -224,7 +225,7 @@ for(const variant of ["svg-root","iframe-root","nav-root","template-root"] as co
  test(`a section with a ${variant.replace("-"," ")} is emptied and runs nothing`,async({page,browserName})=>{
   const leaks:string[]=[];page.on("response",r=>{if(r.url().includes("/leak"))leaks.push(r.url())});
   await importBook(page,`Frame ${variant}`,false,variant);
-  const iframe=page.locator(".reader-room:not(.inline-reader) .reader-viewport iframe");
+  const iframe=page.locator(".reader-room .reader-viewport iframe");
   await expect(iframe.first()).toBeAttached();
   await page.waitForTimeout(1500);
   expect(await page.evaluate(()=>(window as any).__epubScriptExecuted)).toBeUndefined();
@@ -239,11 +240,11 @@ for(const variant of ["svg-root","iframe-root","nav-root","template-root"] as co
 }
 test("a section without a head still gets the CSP first and runs nothing",async({page,browserName})=>{
  await importBook(page,"Frame no head",false,"no-head");
- const frame=page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe");
+ const frame=page.frameLocator(".reader-room .reader-viewport iframe");
  await expect(frame.getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
  await page.waitForTimeout(1000);
  expect(await page.evaluate(()=>(window as any).__epubScriptExecuted)).toBeUndefined();
- const state=await page.locator(".reader-room:not(.inline-reader) .reader-viewport iframe").first().evaluate((f:HTMLIFrameElement)=>({
+ const state=await page.locator(".reader-room .reader-viewport iframe").first().evaluate((f:HTMLIFrameElement)=>({
   sandbox:f.getAttribute("sandbox"),
   csp:f.contentDocument!.head.firstElementChild?.getAttribute("http-equiv")==="Content-Security-Policy"?f.contentDocument!.head.firstElementChild!.getAttribute("content"):null,
  }));
@@ -256,9 +257,9 @@ test("a section without a head still gets the CSP first and runs nothing",async(
 // carries script must not get such a URL: navigating the frame to it would run the script as the app.
 test("a book's SVG asset is a data: URL, so navigating the frame to it reaches nothing",async({page,browserName})=>{
  await importBook(page,"Frame svg asset",false,"svg-asset");
- const frame=page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe");
+ const frame=page.frameLocator(".reader-room .reader-viewport iframe");
  await expect(frame.getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
- const iframe=page.locator(".reader-room:not(.inline-reader) .reader-viewport iframe").first();
+ const iframe=page.locator(".reader-room .reader-viewport iframe").first();
  const seen=await iframe.evaluate((f:HTMLIFrameElement)=>{
   const doc=f.contentDocument!;
   const image=doc.querySelector("#svg-image") as HTMLImageElement|null,link=doc.querySelector("#svg-link") as HTMLAnchorElement|null,ext=doc.querySelector("#ext-link") as HTMLAnchorElement|null;
@@ -279,10 +280,10 @@ test("a book's SVG asset is a data: URL, so navigating the frame to it reaches n
 test("a section with content before its head still has the CSP in the head",async({page})=>{
  const leaks:string[]=[];page.on("response",r=>{if(r.url().includes("/leak"))leaks.push(r.url())});
  await importBook(page,"Frame late head",false,"head-late");
- const frame=page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe");
+ const frame=page.frameLocator(".reader-room .reader-viewport iframe");
  await expect(frame.getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
  await page.waitForTimeout(1000);
- const csp=await page.locator(".reader-room:not(.inline-reader) .reader-viewport iframe").first().evaluate((f:HTMLIFrameElement)=>{
+ const csp=await page.locator(".reader-room .reader-viewport iframe").first().evaluate((f:HTMLIFrameElement)=>{
   const doc=f.contentDocument!,meta=doc.querySelector('meta[http-equiv="Content-Security-Policy"]');
   // A bare character before <head> also makes the parser move the head into <body>, so the meta must be
   // inside the head the frame parsed, not merely the first element of the head in the source tree.
@@ -299,10 +300,10 @@ test("a section with content before its head still has the CSP in the head",asyn
 test("a section with a character before its head still has the CSP in the head",async({page})=>{
  const leaks:string[]=[];page.on("response",r=>{if(r.url().includes("/leak"))leaks.push(r.url())});
  await importBook(page,"Frame text head",false,"text-before-head");
- const frame=page.frameLocator(".reader-room:not(.inline-reader) .reader-viewport iframe");
+ const frame=page.frameLocator(".reader-room .reader-viewport iframe");
  await expect(frame.getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
  await page.waitForTimeout(1000);
- const csp=await page.locator(".reader-room:not(.inline-reader) .reader-viewport iframe").first().evaluate((f:HTMLIFrameElement)=>{
+ const csp=await page.locator(".reader-room .reader-viewport iframe").first().evaluate((f:HTMLIFrameElement)=>{
   const doc=f.contentDocument!,meta=doc.querySelector('meta[http-equiv="Content-Security-Policy"]');
   return {parent:meta?.parentElement?.tagName,first:doc.head.firstElementChild===meta,inHead:doc.head.contains(meta),srcset:doc.querySelectorAll("[srcset]").length};
  });

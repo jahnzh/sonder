@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { parseRange } from "../../server/range";
 import { listenFace, openListen } from "./now-playing";
+import { throttleCpu } from "./cpu-throttle";
 test.use({ serviceWorkers: "block" });
+// SONDER_CPU_THROTTLE=4 runs it on a slow processor in Chromium (#702, #707).
+test.beforeEach(({ page }) => throttleCpu(page));
 let ALICE_WORK = "";
 test.beforeEach(async ({ page }) => {
   ALICE_WORK = (await (await page.request.get("/api/books")).json()).find((book: any) => book.id === "alice").workId;
