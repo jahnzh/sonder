@@ -115,7 +115,7 @@ npm run backup -- data/sonder.db data/backups/before-change-$(date +%s).db
 The destination filesystem must support hard links so only the completed, verified backup becomes visible. Both source and destination are explicit. The source must exist and the destination must be new. The command uses SQLite's online backup API and verifies the resulting database with `PRAGMA integrity_check`; it reports failure if the backup cannot be completed or verified.
 
 Deploy backups (`data/backups/before-<short>-<epoch>.db`) older than the newest 20 may be compressed in place to `before-<short>-<epoch>.db.zst` with `zstd`, each verified by SHA-256 against its original before the original is removed; nothing in Sonder lists, rotates or restores them by name (the daily backups' retention touches only the `daily-<day>.db` files its own runs recorded), and a backup with a `-wal` or `-shm` file beside it is left as it is.
-To restore from a compressed one, unpack it to a new file first, `zstd -d data/backups/before-<short>-<epoch>.db.zst -o /path/to/restore.db` (the `.zst` stays), check it with `sqlite3 /path/to/restore.db "PRAGMA integrity_check"`, and use that file as any other backup.
+To restore from a compressed one, unpack it to a new file first, `zstd -d data/backups/before-<short>-<epoch>.db.zst -o /path/to/restore.db` (the `.zst` stays), check it with `PRAGMA integrity_check`, and use that file as any other backup.
 
 Sonder uses WAL mode. A plain copy of `sonder.db` can omit committed transactions still held in its WAL. Use the backup command while the application is running. Keep the installation's encryption key separately with its existing secret-management process; this command copies only the database.
 
