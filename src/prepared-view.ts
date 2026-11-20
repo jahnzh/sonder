@@ -17,8 +17,11 @@ import { readerBlockSelector } from "./reading-types";
 export const MAX_LOADED_PARTS = 5;
 /** A neighbour is loaded when less than this many heights of the band are left before the loaded text ends. */
 const AHEAD = 2;
-/** The room kept above a sentence shown at the top of the band. */
-const TOP_ROOM = 8;
+/**
+ * The room kept above a sentence shown at the top of the band: none, so the line before it is not left as a cut
+ * sliver at the band's edge (seen in the real-book check).
+ */
+const TOP_ROOM = 0;
 const HOLD_MS = 550;
 const MOVE_LIMIT = 12;
 const SWIPE = 50;

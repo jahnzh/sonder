@@ -13,7 +13,8 @@ import { expect, type Locator, type Page } from "@playwright/test";
 export const TAP_RENDER_MS = 10_000;
 
 export async function revealControls(page: Page, room: Locator, { timeout = 30_000 } = {}) {
-  await expect(room.locator(".reader-viewport iframe").first()).toBeVisible();
+  // The book's text is there: the EPUB's frame, or the prepared text of the new view (#802).
+  await expect(room.locator(".reader-viewport :is(iframe, .prepared-text)").first()).toBeVisible();
   await expect(room.locator(".reader-loading")).toHaveCount(0);
   const topbar = room.locator(".reader-topbar");
   await expect(async () => {

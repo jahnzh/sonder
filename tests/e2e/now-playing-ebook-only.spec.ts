@@ -1,4 +1,4 @@
-// @projects firefox, webkit-iphone-now-playing
+// @projects firefox, webkit-iphone-now-playing, prepared-view
 // Now playing for a book without a recording or without an EPUB (#594, spec #586 "A book without a recording, a book
 // without an EPUB"; board ReaderEbookOnly.dc.html), against the suite's own server at a phone's 390 by 844. An
 // ebook-only book (#555) opens from the Book page's Read on Now playing's Read face, has no mini player, and its foot
@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 import { expectTextUncovered } from "./reader-bands";
 import { playFromContinue } from "./library-play";
+import {bookText} from "./reader-view";
 
 test.use({ viewport: { width: 390, height: 844 } });
 // The member's answers are routed: once a service worker controls the page, WebKit's requests no longer pass
@@ -73,7 +74,7 @@ const screen = (page: Page) => page.getByRole("dialog", { name: "Now playing", e
 const room = (page: Page) => page.locator(".now-playing-screen .reader-room");
 const foot = (page: Page) => page.locator(".now-playing-screen .reader-player");
 const faces = (page: Page) => screen(page).getByRole("radiogroup", { name: "Listen or read", exact: true });
-const frame = (page: Page) => page.frameLocator(".now-playing-screen .reader-viewport iframe");
+const frame = (page: Page) => bookText(page,".now-playing-screen");
 const slider = (page: Page) => foot(page).getByRole("slider", { name: "Position in the book", exact: true });
 
 async function showControls(page: Page) {

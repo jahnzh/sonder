@@ -1,4 +1,4 @@
-// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing
+// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing, prepared-view
 import {type Page} from "@playwright/test";
 // Each test runs its own server (own-server.ts): on the suite's server the book the Library's reader opens is the one
 // with the newest place, which the specs before this file also write; it failed in a full Chromium run only (#575).
@@ -11,6 +11,7 @@ import {openRead} from "./now-playing";
 import {closeAppearance,openAppearance} from "./reader-appearance";
 import {tapPages} from "./reader-tap";
 import { skipOnMobile } from "./mobile";
+import {bookText,textFrame,expectHighlightDrawn} from "./reader-view";
 // One reading view (ADR 0017, #501): the reader shows the book's own text and nothing else. The Lyrics and Word
 // views are gone with their switch, their settings, the `P` key and the timing correction; `F` stays.
 test.use({serviceWorkers:"block"});
@@ -56,7 +57,7 @@ async function openFollowing(page:Page,book:any,interval:any){
  await openRead(page);
  const room=page.locator(".inline-reader");
  await timedWait("follow-highlight",()=>expect(room).toHaveAttribute("data-current-passage",interval.paragraphId,{timeout:READER_WAIT_MS.followHighlight}),{testName:test.info().title});
- await expect(room.locator(".reader-viewport .sonder-follow")).toHaveAttribute("data-epubcfi",/^epubcfi\(/,{timeout:READER_WAIT_MS.followHighlight});
+ await expectHighlightDrawn(room,{timeout:READER_WAIT_MS.followHighlight});
  return room;
 }
 async function withAppearance(page:Page,reader:object,run:()=>Promise<void>){
@@ -64,7 +65,7 @@ async function withAppearance(page:Page,reader:object,run:()=>Promise<void>){
  expect((await page.request.put("/api/appearance",{data:{...appearance,reader:{...appearance.reader,...reader}}})).ok()).toBe(true);
  try{await run();}finally{await page.request.put("/api/appearance",{data:appearance});}
 }
-const frameOf=(page:Page)=>page.frameLocator(".inline-reader .reader-viewport iframe");
+const frameOf=(page:Page)=>bookText(page,".inline-reader");
 // The book's text is what the reader shows: its pages are visible and nothing covers them.
 // `paragraphId`: a sentence that is on the page.
 async function expectBookText(page:Page,manifest:any,paragraphId?:string){
@@ -74,7 +75,7 @@ async function expectBookText(page:Page,manifest:any,paragraphId?:string){
   await expect(frameOf(page).getByText(text.slice(0,24))).toBeVisible();
  }
  await expect(room.locator(".reader-viewport")).not.toHaveAttribute("aria-hidden",/.*/);
- await expect(room.locator(".reader-viewport iframe")).toBeVisible();
+ await expect(textFrame(room)).toBeVisible();
  await expect(room.getByLabel("Lyrics reader")).toHaveCount(0);
  await expect(room.getByLabel("Word reader")).toHaveCount(0);
 }
@@ -141,7 +142,7 @@ test("the reader offers no view switch, P does nothing and F returns to the narr
   // F with the focus outside the pages returns to the narration.
   await page.keyboard.press("f");
   await expect(room).toHaveAttribute("data-current-passage",interval.paragraphId);
-  await expect(room.locator(".reader-viewport .sonder-follow")).toHaveAttribute("data-epubcfi",/^epubcfi\(/);
+  await expectHighlightDrawn(room);
   // And with the focus in the pages, after a page turn there.
   await pageAway(page);
   await page.keyboard.press("f");

@@ -1,12 +1,13 @@
-// @projects firefox, webkit-iphone-now-playing, mobile-iphone-slice14
+// @projects firefox, webkit-iphone-now-playing, mobile-iphone-slice14, prepared-view
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 import { showControls } from "./reader-bands";
-import { highlightShown, textShown } from "./reader-view";
+import {highlightShown,textShown,bookText} from "./reader-view";
 import {openRead} from "./now-playing";
 import { gotoRead } from "./read-face";
+import { onPreparedView } from "./prepared-view";
 // Chapters, Bookmarks and Search as pages (#590, spec #586; boards Chapters.dc.html, ReaderBookmarks.dc.html,
 // ReaderSearch.dc.html): `#book/<workId>/chapters`, `/bookmarks`, `/search`, each a Page with one Title, "Back to the
 // book" and the book's title. A row opens the reader there, paged away, and Back to narration returns.
@@ -64,7 +65,7 @@ const standaloneRoom = (page: Page) => page.locator(".reader-room");
 async function openStandalone(page: Page, ebook: string) {
   await gotoRead(page, ebook);
   const room = standaloneRoom(page);
-  await expect(page.frameLocator(".reader-room .reader-viewport iframe").getByText("Alice was beginning", { exact: false })).toBeVisible();
+  await expect(bookText(page).getByText("Alice was beginning", { exact: false })).toBeVisible();
   return room;
 }
 const head = (room: Locator) => room.locator(".reader-topbar");
@@ -83,7 +84,7 @@ const hashOf = (page: Page) => page.evaluate(() => location.hash);
 /** Where the reader's text stands: the view's scroll offsets, its resize count and the sentence the head names. */
 const placeOf = (room: Locator) =>
   room.locator(".reader-viewport").evaluate((host) => {
-    const container = host.querySelector<HTMLElement>(".epub-container");
+    const container = host.querySelector<HTMLElement>(":is(.epub-container,.prepared-scroll)");
     return { left: container?.scrollLeft, top: container?.scrollTop, resizes: host.getAttribute("data-view-resizes") };
   });
 const checkpoint = async (page: Page, ebook: string) => (await (await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint;
@@ -95,7 +96,9 @@ test("each page opens from the reader and its back button returns to the same pl
   const box = (await room.locator(".reader-viewport").boundingBox())!;
   for (let turn = 1; turn <= 2; turn++) {
     await page.mouse.click(box.x + box.width * 0.9, box.y + box.height / 2);
-    await expect.poll(async () => (await placeOf(room)).left).toBeGreaterThanOrEqual(turn * (box.width - 1));
+    // A turn moves the pages one band's width on; the new view's column (#802) nine tenths of its height down.
+    if (onPreparedView()) await expect.poll(async () => (await placeOf(room)).top).toBeGreaterThanOrEqual(turn * (box.height * 0.9 - 2));
+    else await expect.poll(async () => (await placeOf(room)).left).toBeGreaterThanOrEqual(turn * (box.width - 1));
   }
   const before = await placeOf(room);
   for (const [open, address, name] of [
@@ -104,8 +107,8 @@ test("each page opens from the reader and its back button returns to the same pl
   ] as const) {
     await open(page, room);
     expect(await hashOf(page)).toBe(`#book/${encodeURIComponent(book.workId)}/${address}`);
-    await expect(page.locator("h1")).toHaveCount(1);
-    await expect(page.locator("h1")).toHaveText(name);
+    await expect(page.locator("h1:visible")).toHaveCount(1);
+    await expect(page.locator("h1:visible")).toHaveText(name);
     await expect(page.locator(".reader-pages-book")).toHaveText(title);
     // The reader is still there under the page, hidden: Back finds it where it was.
     await expect(room).toBeHidden();
@@ -231,7 +234,7 @@ test("a link straight to a page goes back to the Book page", async ({ page }) =>
   for (const name of ["chapters", "bookmarks", "search"]) {
     await page.goto("about:blank");
     await page.goto(`/#book/${encodeURIComponent(book.workId)}/${name}`);
-    await expect(page.locator("h1")).toHaveText(name[0].toUpperCase() + name.slice(1));
+    await expect(page.locator("h1:visible")).toHaveText(name[0].toUpperCase() + name.slice(1));
     // Nothing of the app lies behind: the button goes to the page's parent, the Book page (#532).
     await back(page).click();
     await expect.poll(() => hashOf(page)).toBe(`#book/${encodeURIComponent(book.workId)}`);
@@ -318,7 +321,7 @@ test("measured against Chapters.dc.html, ReaderBookmarks.dc.html and ReaderSearc
   const header = page.locator(".part-page-header");
   const title = page.locator(".reader-pages-book");
   await openChapters(page, room);
-  await expect(page.locator("h1")).toHaveCount(1);
+  await expect(page.locator("h1:visible")).toHaveCount(1);
   expect((await boxOf(back(page))).width).toBeCloseTo(44, 0);
   expect((await boxOf(back(page))).height).toBeCloseTo(44, 0);
   const segmented = page.getByRole("radiogroup", { name: "Chapters or bookmarks" });
@@ -333,8 +336,8 @@ test("measured against Chapters.dc.html, ReaderBookmarks.dc.html and ReaderSearc
   await expect(segmented.getByRole("radio", { name: "Chapters" })).toHaveAttribute("aria-checked", "true");
   for (const row of await chapters.getByRole("button").all()) expect((await boxOf(row)).height).toBeCloseTo(52, 0);
   await page.getByRole("radio", { name: "Bookmarks", exact: true }).click();
-  await expect(page.locator("h1")).toHaveCount(1);
-  await expect(page.locator("h1")).toHaveText("Bookmarks");
+  await expect(page.locator("h1:visible")).toHaveCount(1);
+  await expect(page.locator("h1:visible")).toHaveText("Bookmarks");
   await expect(segmented.getByRole("radio", { name: "Bookmarks" })).toHaveAttribute("aria-checked", "true");
   const marks = page.getByRole("list", { name: "Bookmarks", exact: true }).getByRole("listitem");
   // In the order they were saved; each the sentence (16/22) over its line (14/20), Remove 44 at its end.
@@ -348,7 +351,7 @@ test("measured against Chapters.dc.html, ReaderBookmarks.dc.html and ReaderSearc
   }
   await back(page).click();
   await openSearch(page, room);
-  await expect(page.locator("h1")).toHaveCount(1);
+  await expect(page.locator("h1:visible")).toHaveCount(1);
   const field = page.getByRole("searchbox", { name: "Search this book", exact: true });
   await field.fill("chapter by the pool");
   const count = page.locator(".reader-pages-count");

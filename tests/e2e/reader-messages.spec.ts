@@ -1,4 +1,4 @@
-// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing
+// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing, prepared-view
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -6,6 +6,7 @@ import { readerFixture } from "../reader-fixture";
 import { expectTextUncovered, intersects } from "./reader-bands";
 import { openRead } from "./now-playing";
 import { playFromLibrary } from "./library-play";
+import {textFrame,bookTextIn} from "./reader-view";
 // Every message while reading appears in the foot (#591, ADR 0019, spec #586 "Messages in the foot"; boards
 // ReaderUndo, ReaderError, ReaderConflict, ReaderUpdate, ReaderConfirm): the foot's lower row holds the message and
 // keeps Play or Pause at its end, at rest and with the controls shown, and nothing is drawn over the text.
@@ -86,10 +87,10 @@ async function openNowPlaying(page: Page, title: string) {
   await expect(page.locator(".player-dock").getByRole("button", { name: "Play", exact: true })).toBeVisible();
   await openRead(page);
   const room = page.locator(".inline-reader");
-  await expect(room.locator(".reader-viewport iframe")).toBeVisible();
+  await expect(textFrame(room)).toBeVisible();
   return room;
 }
-const frame = (room: Locator) => room.locator(".reader-viewport iframe").first().contentFrame();
+const frame = (room: Locator) => bookTextIn(room);
 // A tap in the middle of the text toggles the controls; it is not a tap on a control.
 async function toggleControls(page: Page, room: Locator) {
   const shown = (await room.getAttribute("data-controls-visible")) === "true";

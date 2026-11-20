@@ -3,7 +3,8 @@
 # with every background loop paused, no torrent client, no alignment pool, no mail, and the media mounted read-only.
 # Nothing the measurement opens, saves or moves reaches the owner's reading place, listening place, bookmarks or
 # history. A Caddy in front of the copy compresses as the production site block does (encode zstd gzip), so the bytes
-# measured are the bytes a browser transfers.
+# measured are the bytes a browser transfers. Prepared reader text (ADR 0025) is kept beside the copy of the database,
+# since the media is read-only here; it goes with the copy.
 #
 #   scripts/reader-open-copy.sh start    # copy on 127.0.0.1:$APP_PORT, Caddy on 127.0.0.1:$PORT; prints the URL
 #   scripts/reader-open-copy.sh stop     # removes the container, the Caddy and the copy
@@ -51,6 +52,7 @@ case "${1:-}" in
       -e NODE_ENV=production -e HOST=127.0.0.1 -e PORT="$APP_PORT" -e DATA_DIR=/app/data -e MEDIA_ROOT="$MEDIA" \
       -e REQUIRE_MEDIA_MOUNT=true -e TRANSMISSION_RPC_URL= -e ALIGNMENT_POOL_ENABLED=0 -e RESEND_API_KEY= \
       -e PREPARED_TEXT_AHEAD=0 \
+      -e PREPARED_TEXT_DIR=/app/data/prepared-text \
       -v "$STATE/data:/app/data" -v "$MEDIA:$MEDIA:ro" "$IMAGE" >/dev/null
     cat > "$STATE/Caddyfile" <<EOF
 {

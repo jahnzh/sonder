@@ -1,4 +1,4 @@
-// @projects firefox, webkit-iphone-now-playing
+// @projects firefox, webkit-iphone-now-playing, prepared-view
 // A paused seek moves the reader's highlight (#730, a regression from #593's seek fix). The player holds a load's
 // seek target as the place until that seek is seen to land (src/seek-landing.ts). A seek made while the hold was
 // still waiting (on the live check's TorBox stream the load's own seek was still being read) kept the reader on the
@@ -12,6 +12,7 @@ import {readerFixture} from "../reader-fixture";
 import {installReaderWaitBudget,READER_WAIT_MS} from "./timing";
 import {openRead,openListen,listenFace,showReadControls} from "./now-playing";
 import {expectPlaysDeviceCopy} from "./device-copy";
+import {textFrame} from "./reader-view";
 
 test.use({viewport:{width:390,height:844}});
 installReaderWaitBudget(test);
@@ -164,7 +165,7 @@ test.describe("on a stream",()=>{
   await savePlace(page,book,middle(saved));
   await page.goto("/");
   await openRead(page);
-  await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
+  await expect(textFrame(page.locator(".inline-reader"))).toBeVisible();
   await expect.poll(async()=>(await audio(page)).src).toContain("/api/media/");
   // One element plays: the check's find(a=>a.src) is the player's element, not a stale one.
   expect(await page.evaluate(()=>((window as any).__audio as HTMLAudioElement[]).filter(a=>!!a.src).length)).toBe(1);

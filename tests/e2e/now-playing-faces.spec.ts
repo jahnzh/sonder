@@ -1,4 +1,4 @@
-// @projects firefox, webkit-iphone-now-playing
+// @projects firefox, webkit-iphone-now-playing, prepared-view
 // Now playing as one screen with Listen and Read (#593, spec #586 "Now playing: one screen, two faces" and "The
 // Listen face"; board NowPlaying.dc.html), against the suite's own server at a phone's 390 by 844: the face rule,
 // the addresses and history, the head, and the Listen face's rows (Plays from, Earlier positions, Keep on this
@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 import { playFromContinue } from "./library-play";
 import { expectPlaysDeviceCopy } from "./device-copy";
+import {bookText,textFrame} from "./reader-view";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -136,7 +137,7 @@ test("the first opening is Listen; Read is remembered; a face switch replaces th
   await faces(page).getByRole("radio", { name: "Read", exact: true }).click();
   await expect.poll(() => hashOf(page)).toBe(`#read/${encodeURIComponent(workId)}`);
   expect(await historyLength(page)).toBe(before + 1);
-  await expect(page.frameLocator(".now-playing-screen .reader-viewport iframe").getByText("Alice was beginning", { exact: false })).toBeVisible();
+  await expect(bookText(page,".now-playing-screen").getByText("Alice was beginning", { exact: false })).toBeVisible();
   // The face control is in the reader's head, with the controls shown (a tap in the middle of the text).
   await showReadControls(page);
   await expect(page.locator(".now-playing-screen .reader-topbar").getByRole("radiogroup", { name: "Listen or read", exact: true })).toHaveCount(1);
@@ -147,7 +148,7 @@ test("the first opening is Listen; Read is remembered; a face switch replaces th
   // Reopening opens the face last shown: Read.
   await page.locator(".dock-book").click();
   await expect.poll(() => hashOf(page)).toBe(`#read/${encodeURIComponent(workId)}`);
-  await expect(page.locator(".now-playing-screen .reader-viewport iframe")).toBeVisible();
+  await expect(textFrame(page.locator(".now-playing-screen"))).toBeVisible();
   await showReadControls(page);
   await expect(faces(page).getByRole("radio", { name: "Read", exact: true })).toHaveAttribute("aria-checked", "true");
   // The last face is kept on this device for the account and the work; nothing else holds it.
@@ -207,7 +208,7 @@ test("a book without a recording opens on Read; Listen leads to Get audiobook", 
     await page.goto(`/#listen/${encodeURIComponent(ebook.workId)}`);
     // An address of Listen for a book without a recording shows Read in its place.
     await expect.poll(() => hashOf(page)).toBe(`#read/${encodeURIComponent(ebook.workId)}`);
-    await expect(page.frameLocator(".now-playing-screen .reader-viewport iframe").getByText("Alice was beginning", { exact: false })).toBeVisible();
+    await expect(bookText(page,".now-playing-screen").getByText("Alice was beginning", { exact: false })).toBeVisible();
     // No mini player for it: the dock, if any, holds another book.
     await expect(page.locator(".player-dock").filter({ hasText: name })).toHaveCount(0);
     await showReadControls(page);
@@ -302,7 +303,7 @@ test("Listen at 390 by 844: the rows in the board's order with their names and t
   await expect(face.getByRole("button", { name: "Close now playing", exact: true })).toBeVisible();
   await page.screenshot({ path: `artifacts/now-playing-listen-1280-${test.info().project.name}.png` });
   await faces(page).getByRole("radio", { name: "Read", exact: true }).click();
-  const text = page.frameLocator(".now-playing-screen .reader-viewport iframe").getByText("Alice was beginning", { exact: false });
+  const text = bookText(page,".now-playing-screen").getByText("Alice was beginning", { exact: false });
   await expect(text).toBeVisible();
   await showReadControls(page);
   await page.screenshot({ path: `artifacts/now-playing-read-1280-${test.info().project.name}.png` });

@@ -1,4 +1,4 @@
-// @projects firefox, webkit-iphone-now-playing
+// @projects firefox, webkit-iphone-now-playing, prepared-view
 // #730 third round: the reader shows the passage of the place the player is at on the recording's second track.
 // Production's case is a TorBox recording whose tracks are listed '-1' then '-0' (by file name) while the element
 // plays '-0', the second: a paused seek there left the reader on another passage.
@@ -8,6 +8,7 @@ import {randomUUID} from "node:crypto";
 import {readerFixture} from "../reader-fixture";
 import {installReaderWaitBudget,READER_WAIT_MS} from "./timing";
 import {openRead} from "./now-playing";
+import {textFrame} from "./reader-view";
 
 test.use({viewport:{width:390,height:844}});
 installReaderWaitBudget(test);
@@ -91,7 +92,7 @@ test("paused seeks on the second track move the highlight to that track's passag
  await page.evaluate(()=>((window as any).__audio as HTMLAudioElement[]).find(a=>!!a.src)?.pause());
  await page.goto("/");
  await openRead(page);
- await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
+ await expect(textFrame(page.locator(".inline-reader"))).toBeVisible();
  await seekTo(page,early);
  await seekTo(page,mid);
  await seekTo(page,saved);

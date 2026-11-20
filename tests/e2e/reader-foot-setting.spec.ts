@@ -1,4 +1,4 @@
-// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing, mobile-iphone-slice14
+// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing, mobile-iphone-slice14, prepared-view
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -7,6 +7,7 @@ import { skipOnMobile } from "./mobile";
 import { bandBoxes, expectTextUncovered, intersects, showControls } from "./reader-bands";
 import { openRead } from "./now-playing";
 import { gotoRead } from "./read-face";
+import {bookText,textFrame} from "./reader-view";
 // Speed and the sleep timer in the reader's foot (#589, spec #586 "Speed and the sleep timer in the foot"; boards
 // ReaderSpeed.dc.html, ReaderSleep.dc.html): each takes the place of the foot's transport row with its label, a
 // Stepper and Done; the timeline above stays, nothing covers the text and the view is not laid out again.
@@ -48,7 +49,7 @@ async function settled(room: Locator) {
 async function frameState(room: Locator) {
   const boxes = await bandBoxes(room);
   const scroll = await room.locator(".reader-viewport").evaluate((host) => {
-    const container = host.querySelector<HTMLElement>(".epub-container");
+    const container = host.querySelector<HTMLElement>(":is(.epub-container,.prepared-scroll)");
     return { window: [window.scrollX, window.scrollY], view: container ? [container.scrollLeft, container.scrollTop] : null, resizes: host.getAttribute("data-view-resizes") };
   });
   return { boxes, scroll };
@@ -62,12 +63,12 @@ async function readerWithNarration(page: Page, book: any, ebook: string) {
   await expect(page.locator(".player-dock .dock-book")).toBeVisible();
   // Now playing loads the resumed recording's track; closed again, the book stays in the player.
   await openRead(page);
-  await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
+  await expect(textFrame(page.locator(".inline-reader"))).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "Now playing", exact: true })).toBeHidden();
   await gotoRead(page, ebook);
   const room = standalone(page);
-  await expect(page.frameLocator(".reader-room .reader-viewport iframe").getByText("Alice was beginning", { exact: false })).toBeVisible();
+  await expect(bookText(page).getByText("Alice was beginning", { exact: false })).toBeVisible();
   await settled(room);
   await showControls(page, room);
   return room;
@@ -406,7 +407,7 @@ test("on the desktop Speed and the sleep timer take the transport's place in the
   expect((await page.request.post("/api/progress", { data: { recordingId: book.recordingId, trackId: book.tracks[0].id, position: 5, duration: book.tracks[0].duration, updatedAt: Date.now() } })).ok()).toBe(true);
   await gotoRead(page, ebook);
   const room = standalone(page);
-  await expect(page.frameLocator(".reader-room .reader-viewport iframe").getByText("Alice was beginning", { exact: false })).toBeVisible();
+  await expect(bookText(page).getByText("Alice was beginning", { exact: false })).toBeVisible();
   let previous = "";
   await expect.poll(async () => { const now = JSON.stringify(await desktopState(room)); const same = now === previous; previous = now; return same; }, { intervals: [300] }).toBe(true);
   const before = await desktopState(room);

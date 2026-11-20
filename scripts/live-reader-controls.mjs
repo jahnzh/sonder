@@ -191,12 +191,20 @@ export async function narratedPressPoint(room) {
   const { rects, bounds } = await room.locator(".reader-viewport").evaluate((host) => {
     const box = host.getBoundingClientRect();
     const mark = host.querySelector(".sonder-follow");
-    const rects = mark ? [...mark.querySelectorAll("rect")].map((r) => { const b = r.getBoundingClientRect(); return { left: b.left, top: b.top, right: b.right, bottom: b.bottom }; }) : [];
+    // The highlight's rectangles: epub.js's SVG rects, or, in the view of prepared text (#802), the line boxes of
+    // every element of the marked sentence.
+    const drawn = mark ? [...mark.querySelectorAll("rect")] : [];
+    const boxes = drawn.length ? drawn.map((r) => r.getBoundingClientRect()) : [...host.querySelectorAll(".sonder-follow")].flatMap((element) => [...(element.getClientRects?.() ?? [])]);
+    const rects = boxes.map((b) => ({ left: b.left, top: b.top, right: b.right, bottom: b.bottom }));
     return { rects, bounds: { left: box.left, top: box.top, right: box.right, bottom: box.bottom } };
   });
   const points = narratedPressPoints(rects, bounds);
   if (!points.length) return null;
-  const hits = await room.page().evaluate((points) => points.map(({ x, y }) => document.elementFromPoint(x, y)?.tagName === "IFRAME"), points);
+  const hits = await room.page().evaluate((points) => points.map(({ x, y }) => {
+    // The book's text is what is there: the EPUB's frame, or the prepared text itself.
+    const hit = document.elementFromPoint(x, y);
+    return hit?.tagName === "IFRAME" || !!hit?.closest?.(".prepared-text");
+  }), points);
   return points.find((_, index) => hits[index]) ?? null;
 }
 

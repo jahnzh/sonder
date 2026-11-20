@@ -1,4 +1,4 @@
-// @projects firefox, mobile-chrome, mobile-firefox, mobile-safari, webkit-iphone-now-playing, mobile-iphone-slice14
+// @projects firefox, mobile-chrome, mobile-firefox, mobile-safari, webkit-iphone-now-playing, mobile-iphone-slice14, prepared-view
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -7,6 +7,10 @@ import { skipOnMobile } from "./mobile";
 import { applyInsets, bandBoxes, expectTextUncovered, INSET_PROFILES, intersects, type Box } from "./reader-bands";
 import { openRead } from "./now-playing";
 import { gotoRead } from "./read-face";
+import {bookText,textFrame} from "./reader-view";
+import { installReaderFrames } from "./reader-frames";
+import { notOnPreparedView } from "./prepared-view";
+installReaderFrames(test);
 // The reader's page (#587, ADR 0019; boards Reader.dc.html, ReaderControls.dc.html, ReaderScroll.dc.html): a head
 // of 44 and a foot of 72 that keep their boxes whether the controls show or not, plus the safe areas, and the
 // text band exactly what is between them. From the prototype of #469.
@@ -33,7 +37,7 @@ const standalone = (page: Page) => page.locator(".reader-room");
 async function openStandalone(page: Page, ebook: string) {
   await gotoRead(page, ebook);
   const room = standalone(page);
-  await expect(page.frameLocator(".reader-room .reader-viewport iframe").getByText("Alice was beginning", { exact: false })).toBeVisible();
+  await expect(bookText(page).getByText("Alice was beginning", { exact: false })).toBeVisible();
   await settled(room);
   return room;
 }
@@ -51,7 +55,7 @@ async function settled(room: Locator) {
 async function frameState(room: Locator) {
   const boxes = await bandBoxes(room);
   const scroll = await room.locator(".reader-viewport").evaluate((host) => {
-    const container = host.querySelector<HTMLElement>(".epub-container");
+    const container = host.querySelector<HTMLElement>(":is(.epub-container,.prepared-scroll)");
     return { window: [window.scrollX, window.scrollY], view: container ? [container.scrollLeft, container.scrollTop] : null, resizes: host.getAttribute("data-view-resizes") };
   });
   return { boxes, scroll };
@@ -61,7 +65,7 @@ async function frameState(room: Locator) {
 async function shownLines(room: Locator) {
   return room.locator(".reader-viewport").evaluate((host) => {
     const band = host.getBoundingClientRect(), lines: { top: number; bottom: number }[] = [];
-    for (const frame of host.querySelectorAll("iframe")) {
+    for (const frame of (window as any).__readerFrames(host)) {
       const doc = frame.contentDocument, at = frame.getBoundingClientRect();
       if (!doc?.body) continue;
       const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
@@ -83,6 +87,7 @@ async function shownLines(room: Locator) {
 for (const [mode, label] of [["paginated", "pages"], ["scroll", "scroll"]] as const)
   for (const insets of INSET_PROFILES)
     test(`the head, the text band and the foot in ${label} mode with insets ${insets.name}`, async ({ page, browserName }) => {
+      if (mode === "paginated") notOnPreparedView("it measures pages mode, where no line may be cut by the band's edge; the new view is scroll mode only (pages mode is step 4), and its scroll mode variants run");
       const { ebook } = await fixture(page, `Bands ${label} ${insets.name}`);
       await applyInsets(page, browserName, insets);
       await withReader(page, { mode }, async () => {
@@ -103,7 +108,7 @@ for (const [mode, label] of [["paginated", "pages"], ["scroll", "scroll"]] as co
         expect(topbar.y).toBeCloseTo(insets.top, 0);
         expect(topbar.height).toBeCloseTo(44, 0);
         // The epub.js view is sized to the band.
-        const view = (await room.locator(".reader-viewport .epub-container").boundingBox())!;
+        const view = (await room.locator(".reader-viewport :is(.epub-container,.prepared-scroll)").boundingBox())!;
         expect(view.height).toBeCloseTo(text.height, 0);
         expect(intersects(view, head) || intersects(view, foot)).toBe(false);
         if (mode === "paginated") {
@@ -115,7 +120,7 @@ for (const [mode, label] of [["paginated", "pages"], ["scroll", "scroll"]] as co
         } else {
           // Scroll mode scrolls the column inside the band; the bands and the window stay where they are.
           const before = await frameState(room);
-          const scrolled = await room.locator(".reader-viewport .epub-container").evaluate((container) => {
+          const scrolled = await room.locator(".reader-viewport :is(.epub-container,.prepared-scroll)").evaluate((container) => {
             const start = container.scrollTop;
             container.scrollTop = start + 240;
             return { moved: container.scrollTop - start, overflow: container.scrollHeight > container.clientHeight };
@@ -178,12 +183,12 @@ async function playerThenOpen(page: Page, book: any, ebook: string) {
   await inPlayer(page, book);
   // Now playing loads the resumed recording's track; closed again, the book stays in the player.
   await openRead(page);
-  await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
+  await expect(textFrame(page.locator(".inline-reader"))).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "Now playing", exact: true })).toBeHidden();
   await gotoRead(page, ebook);
   const room = standalone(page);
-  await expect(page.frameLocator(".reader-room .reader-viewport iframe").getByText("Alice was beginning", { exact: false })).toBeVisible();
+  await expect(bookText(page).getByText("Alice was beginning", { exact: false })).toBeVisible();
   await settled(room);
   return room;
 }
@@ -251,7 +256,7 @@ test("the reader inside Now playing gets the same bands with the insets", async 
   await inPlayer(page, book);
   await openRead(page);
   const room = page.locator(".inline-reader");
-  await expect(room.locator(".reader-viewport iframe")).toBeVisible();
+  await expect(textFrame(room)).toBeVisible();
   await settled(room);
   const before = await frameState(room);
   const { head, text, foot } = await expectTextUncovered(room);
@@ -275,7 +280,7 @@ test("the desktop's head of 60 and footer are beside the text, not over it (#595
   const { ebook } = await fixture(page, "Desktop bands");
   await gotoRead(page, ebook);
   const room = standalone(page);
-  await expect(page.frameLocator(".reader-room .reader-viewport iframe").getByText("Alice was beginning", { exact: false })).toBeVisible();
+  await expect(bookText(page).getByText("Alice was beginning", { exact: false })).toBeVisible();
   const topbar = (await room.locator(".reader-topbar").boundingBox())!, player = (await room.locator(".reader-player").boundingBox())!;
   expect(topbar.height).toBeCloseTo(60, 0);
   // The footer (DesktopReader.dc.html): 12 above, a row of 44, 16 below, and its line on top.
