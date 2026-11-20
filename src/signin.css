@@ -82,7 +82,7 @@
 }
 textarea.signin-input {
   height: 88px;
-  padding: 10px var(--space-12);
+  padding: 10px var(--space-12); /* tokens: SignInRequest.dc.html, the note's 10 by 12 inside */
   resize: none;
 }
 .signin-input[aria-invalid="true"] {
@@ -131,7 +131,7 @@ textarea.signin-input {
   width: 1px;
   height: 1px;
   padding: 0;
-  margin: -1px;
+  margin: 0;
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
@@ -152,7 +152,7 @@ textarea.signin-input {
 .signin-words {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-8) 6px;
+  gap: var(--space-8) 6px; /* tokens: SignIn.dc.html, the words' lines 8 apart and 6 between words */
 }
 .signin-word {
   height: 8px;
@@ -171,19 +171,19 @@ textarea.signin-input {
 .signin-bars {
   height: 30px;
   display: flex;
-  gap: 3px;
+  gap: 3px; /* tokens: SignIn.dc.html, 3 between the waveform's bars */
 }
 .signin-segment {
   min-width: 0;
   position: relative;
   display: flex;
   align-items: flex-end;
-  gap: 3px;
+  gap: 3px; /* tokens: SignIn.dc.html, 3 between the waveform's bars */
 }
 .signin-segment > span {
   flex: 1 1 0;
   min-width: 1px;
-  border-radius: 2px;
+  border-radius: 2px; /* tokens: SignIn.dc.html, the waveform bar's 2 corner */
   background: var(--border);
   transition: background 0.45s;
 }
@@ -197,8 +197,8 @@ textarea.signin-input {
   bottom: 0;
   left: 40%;
   width: 2px;
-  margin-left: -1px;
-  border-radius: 1px;
+  translate: -50% 0;
+  border-radius: var(--corner-round);
   background: var(--text);
   animation-name: signin-play;
   animation-timing-function: linear;

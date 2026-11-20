@@ -11,7 +11,7 @@
   width: 100%;
   overflow: hidden;
   background: var(--background);
-  border-radius: 8px;
+  border-radius: var(--corner-control);
 }
 .reader-viewport .epub-container {
   overscroll-behavior: contain;
@@ -26,7 +26,7 @@
   transform: translate(-50%, -50%);
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-8);
 }
 
 /* Page mode (#22): the page fills the room, the player bar stays at the
@@ -42,7 +42,7 @@
   flex: 1;
   min-height: 0;
   display: flex;
-  padding-bottom: var(--reader-bar);
+  padding-bottom: var(--reader-bar); /* tokens: Reader.dc.html, room for the foot under the text (its height), not a spacing */
 }
 .reader-page-area {
   position: relative;
@@ -63,10 +63,10 @@
   right: 0;
   height: 60px;
   box-sizing: border-box;
-  padding: 0 6px;
+  padding: 0 var(--space-4);
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 0;
   background: var(--chrome);
   border-bottom: 1px solid var(--hairline);
   color: var(--text);
@@ -78,7 +78,7 @@
   width: 46px;
   height: 46px;
   flex: 0 0 46px;
-  border-radius: 14px;
+  border-radius: var(--corner-group);
   color: var(--text);
 }
 .reader-topbar-title {
@@ -86,8 +86,8 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  padding: 0 4px;
+  gap: 0;
+  padding: 0 var(--space-4);
 }
 .reader-topbar-title strong,
 .reader-topbar-title span {
@@ -138,7 +138,7 @@
   grid-area: info;
   display: none;
   min-width: 0;
-  padding: 10px 20px 0;
+  padding: var(--space-8) var(--space-16) 0;
   font-size: 12px;
   color: var(--dim);
   white-space: nowrap;
@@ -180,7 +180,7 @@
   appearance: none;
   width: calc(100% - 40px);
   height: 28px;
-  margin: 4px 20px 0;
+  margin: var(--space-4) var(--space-16) 0;
   padding: 0;
   background: transparent;
   border: 0;
@@ -188,32 +188,32 @@
 }
 .reader-player .reader-scrubber::-webkit-slider-runnable-track {
   height: 4px;
-  border-radius: 2px;
+  border-radius: var(--corner-round);
   background: linear-gradient(to right, var(--accent) var(--range-progress, 0%), var(--hairline) var(--range-progress, 0%));
 }
 .reader-player .reader-scrubber::-moz-range-track {
   height: 4px;
-  border-radius: 2px;
+  border-radius: var(--corner-round);
   background: var(--hairline);
 }
 .reader-player .reader-scrubber::-moz-range-progress {
   height: 4px;
-  border-radius: 2px;
+  border-radius: var(--corner-round);
   background: var(--accent);
 }
 .reader-player .reader-scrubber::-webkit-slider-thumb {
   -webkit-appearance: none;
   width: 16px;
   height: 16px;
-  margin-top: -6px;
-  border-radius: 50%;
+  margin-top: calc(var(--space-4) * -1);
+  border-radius: var(--corner-round);
   background: var(--text);
   border: 0;
 }
 .reader-player .reader-scrubber::-moz-range-thumb {
   width: 16px;
   height: 16px;
-  border-radius: 50%;
+  border-radius: var(--corner-round);
   background: var(--text);
   border: 0;
 }
@@ -225,7 +225,7 @@
   grid-area: scrub;
   display: none;
   min-width: 0;
-  margin: 4px 20px 0;
+  margin: var(--space-4) var(--space-16) 0;
 }
 .reader-player[data-controls="true"] .reader-audio-timeline {
   display: block;
@@ -236,7 +236,7 @@
   position: static;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-8);
   width: 100%;
   height: 28px;
   margin: 0;
@@ -252,7 +252,7 @@
 }
 .reader-player .reader-audio-timeline .dock-progress input {
   height: auto;
-  border-radius: 2px;
+  border-radius: var(--corner-round);
 }
 .reader-player .reader-audio-timeline .dock-progress input::-webkit-slider-thumb {
   width: 16px;
@@ -278,7 +278,7 @@
   display: flex;
   align-items: center;
   gap: 0;
-  margin: 2px 0 12px 10px;
+  margin: 0 0 var(--space-12) var(--space-8);
 }
 .reader-player-chapters {
   margin: 0;
@@ -286,7 +286,7 @@
 .reader-player .icon-button {
   width: 44px;
   height: 44px;
-  border-radius: 14px;
+  border-radius: var(--corner-group);
   color: var(--text);
 }
 .reader-player .icon-button:disabled {
@@ -298,8 +298,8 @@
   justify-self: center;
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin: 2px 0 12px;
+  gap: var(--space-4);
+  margin: 0 0 var(--space-12);
 }
 .reader-transport > .icon-button {
   position: relative;
@@ -311,7 +311,7 @@
   inset: 0;
   display: grid;
   place-items: center;
-  padding-top: 1px;
+  padding-top: 1px; /* tokens: ReaderControls.dc.html, the 30 centred in the skip icon's circle */
   font-size: 8px;
   font-weight: 700;
 }
@@ -319,7 +319,7 @@
   width: 56px;
   height: 56px;
   border: 0;
-  border-radius: 50%;
+  border-radius: var(--corner-round);
   display: grid;
   place-items: center;
   background: var(--accent);
@@ -335,7 +335,7 @@
   justify-self: end;
   display: flex;
   align-items: center;
-  margin: 2px 10px 12px 0;
+  margin: 0 var(--space-8) var(--space-12) 0;
 }
 .reader-player .reader-back-narration {
   flex: 0 0 auto;
@@ -348,11 +348,11 @@
   position: absolute;
   z-index: 2;
   top: 50%;
-  margin-top: -26px;
+  margin-top: calc(var(--space-24) * -1);
   width: 52px;
   height: 52px;
   border: 1px solid var(--hairline);
-  border-radius: 50%;
+  border-radius: var(--corner-round);
   background: var(--chrome);
   color: var(--text);
   display: grid;
@@ -522,7 +522,7 @@
   .reader-dock {
     grid-area: dock;
     min-width: 0;
-    padding: 0 var(--reader-desktop-margin);
+    padding: 0 var(--reader-desktop-margin); /* tokens: DesktopReader.dc.html, the dock in the text's column between the page arrows (24 + 44 + 16, from the tokens) */
   }
   .reader-dock > * {
     max-width: 620px;
@@ -579,7 +579,7 @@
   .reader-player .reader-scrubber::-webkit-slider-thumb {
     width: 12px;
     height: 12px;
-    margin-top: -4px;
+    margin-top: calc(var(--space-4) * -1);
   }
   .reader-player .reader-scrubber::-moz-range-thumb {
     width: 12px;
@@ -654,7 +654,7 @@
     grid-column: 1;
     min-width: 0;
     box-sizing: border-box;
-    padding-top: var(--reader-safe-top);
+    padding-top: var(--reader-safe-top); /* tokens: Reader.dc.html, the head below the safe-area inset as the reader keeps it, 0 inline (--reader-safe-top) */
     display: grid;
     grid-template: 44px / minmax(0, 1fr);
     background: var(--background);
@@ -727,7 +727,7 @@
     min-width: 0;
     box-sizing: border-box;
     height: var(--reader-foot);
-    padding: var(--space-4) var(--space-16) var(--reader-safe-bottom);
+    padding: var(--space-4) var(--space-16) var(--reader-safe-bottom); /* tokens: Reader.dc.html, the foot 4 by 16 inside above the safe-area inset as the reader keeps it, 0 inline (--reader-safe-bottom) */
     grid-template-columns: 1fr auto 1fr;
     grid-template-rows: 20px 44px;
     row-gap: var(--space-4);

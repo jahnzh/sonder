@@ -235,11 +235,8 @@ function stylesheetsUnder(directory) {
   });
 }
 
-/**
- * Runs the check over every `.css` file under `<root>/src`, except those in `skip` (paths relative to
- * the root, the stylesheets not yet converted). A listed file that does not exist is a finding.
- */
-export function checkStylesheetTokens(root, { skip = [], tokensFile = TOKENS_FILE } = {}) {
+/** Runs the check over every `.css` file under `<root>/src`; none is skipped (#612 converted the last ones). */
+export function checkStylesheetTokens(root, { tokensFile = TOKENS_FILE } = {}) {
   const findings = [];
   const exceptions = [];
   const tokensPath = path.join(root, tokensFile);
@@ -250,13 +247,8 @@ export function checkStylesheetTokens(root, { skip = [], tokensFile = TOKENS_FIL
   const tokens = readTokenNames(readFileSync(tokensPath, "utf8"));
   if (!tokens.spacing.length || !tokens.corner.length)
     findings.push({ file: tokensFile, line: 0, property: "", value: "", reason: "the tokens stylesheet defines no spacing or no corner token" });
-  const skipped = new Set(skip);
-  for (const file of skip)
-    if (!existsSync(path.join(root, file)))
-      findings.push({ file, line: 0, property: "", value: "", reason: "listed as not yet converted, but the file does not exist" });
   const files = stylesheetsUnder(path.join(root, "src"))
     .map((name) => path.relative(root, name).split(path.sep).join("/"))
-    .filter((name) => !skipped.has(name))
     .sort();
   for (const file of files) {
     const result = checkStylesheet(readFileSync(path.join(root, file), "utf8"), tokens, file);
@@ -271,16 +263,9 @@ export function formatEntry(entry) {
   return `${entry.file}:${entry.line}:${declaration} (${entry.reason})`;
 }
 
-// `node scripts/check-stylesheet-tokens.mjs [root] [--skip <file>]...`
+// `node scripts/check-stylesheet-tokens.mjs [root]`
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const args = process.argv.slice(2);
-  const skip = [];
-  let root = ".";
-  for (let index = 0; index < args.length; index += 1) {
-    if (args[index] === "--skip") skip.push(args[++index]);
-    else root = args[index];
-  }
-  const result = checkStylesheetTokens(path.resolve(root), { skip });
+  const result = checkStylesheetTokens(path.resolve(process.argv[2] ?? "."));
   for (const entry of result.exceptions) console.log(`exception ${formatEntry(entry)}`);
   for (const entry of result.findings) console.error(formatEntry(entry));
   if (result.findings.length) process.exitCode = 1;
