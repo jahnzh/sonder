@@ -30,6 +30,7 @@ import { PlaybackSource } from "./PlaybackSource";
 import { FootSettingButtons, FootSettingRow, useFootSetting } from "./ReaderFootSetting";
 import { PlaybackTimeline } from "./PlaybackTimeline";
 import { readerNeedsScripts } from "../reader-sandbox";
+import { closeRawTextElements } from "../reader-section-markup";
 import { backToNarration } from "../reader-back-to-narration";
 import { lookupIndex, placeAt, type LookupIndex } from "../reader-lookup";
 import { pageToShow, pagedWords, type PagedWord } from "../reader-page-turn";
@@ -580,6 +581,12 @@ export function ReaderView({
           get: () => archive,
           set(value) {
             archive = value;
+            // A section named .html is parsed as HTML, where a self-closing <title/> takes the page with it (#812).
+            if (value?.handleResponse) {
+              const handleResponse = value.handleResponse.bind(value);
+              value.handleResponse = (response: unknown, type?: string) =>
+                handleResponse((type === "html" || type === "htm") && typeof response === "string" ? closeRawTextElements(response) : response, type);
+            }
             if (!value?.createUrl) return;
             const createUrl = value.createUrl.bind(value);
             value.createUrl = (url: string, options?: { base64?: boolean }) =>
