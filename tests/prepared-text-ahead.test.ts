@@ -79,10 +79,11 @@ test("preparing a large book does not block the server's event loop", async () =
   const manifest = JSON.parse(readFileSync(join(ahead.result.dir, "manifest.json"), "utf8"));
   assert.equal(manifest.sentences, extracted.sections[0].paragraphs.length);
   assert.deepEqual(manifest.problems, []);
-  // The aim is under 100 ms on the production host (measured: see the pull request). The bound here leaves room
-  // for a loaded check host, and is still far below what the work costs when it runs on this thread.
+  // The aim is under 100 ms on the production host, which the measurement holds (see the pull request). Here the
+  // two are compared: on a loaded check host a gap of some hundred milliseconds can come from the host alone, but
+  // preparing moved back onto this thread would hold it as long as the first number.
   assert.ok(inline.longest > 1000, `on the main thread the loop is held ${Math.round(inline.longest)} ms`);
-  assert.ok(ahead.longest < 400, `the loop was held ${Math.round(ahead.longest)} ms while preparing`);
+  assert.ok(ahead.longest < inline.longest / 4, `the loop was held ${Math.round(ahead.longest)} ms while preparing, against ${Math.round(inline.longest)} ms on this thread`);
   // What was prepared off the thread is what the thread itself would have made.
   const parts = manifest.parts.map((part: { index: number }) => readFileSync(join(ahead.result.dir, `p${part.index}.html`), "utf8"));
   assert.equal(parts.length, inline.result.parts.length);

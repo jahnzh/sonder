@@ -264,7 +264,11 @@ async function resolveDownload(source: EbookSource, md5: string) {
  */
 function prepareAhead(id: string, format: string | undefined) {
   if (format !== "epub") return;
-  void import("./prepared-text-ahead.ts").then(({ prepareSoon }) => prepareSoon(id));
+  void import("./prepared-text-ahead.ts").then(
+    ({ prepareSoon }) => prepareSoon(id),
+    // The book is saved either way; the sweep or its first reader prepares it.
+    (error) => console.warn(`prepared text: could not start preparing ${id} ahead: ${error instanceof Error ? error.message : String(error)}`),
+  );
 }
 async function downloadEbook(input: EbookResult & { workId?: string }) {
   ensureMediaStorage();

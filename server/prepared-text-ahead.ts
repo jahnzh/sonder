@@ -36,9 +36,19 @@ export type SweepSummary = {
   cacheBytes: number;
   maxBytes: number;
 };
-/** What could not be prepared, by the folder it would have had: a changed file is another folder and is tried again. */
-const failures = new Map<string, { id: string; error: string }>();
-const state = { running: false, book: null as string | null, last: null as (SweepSummary & { at: number }) | null, saidFull: "" };
+/**
+ * What could not be prepared, by the folder it would have had: a changed file is another folder and is tried again.
+ * A book that failed is left out of the next sweeps and tried again after RETRY_AFTER_SWEEPS of them (a day, with a
+ * sweep an hour), so nothing stays unprepared until a restart. A failure of the file system (the drive dropped, the
+ * disk was full) is not remembered at all: the next sweep tries the book again.
+ */
+const failures = new Map<string, { id: string; error: string; sweeps: number }>();
+const RETRY_AFTER_SWEEPS = 24;
+const fileSystemError = (error: unknown) => {
+  const { code, errno, syscall, statusCode } = error as NodeJS.ErrnoException & { statusCode?: number };
+  return statusCode === 503 || (typeof code === "string" && /^E[A-Z0-9]+$/.test(code) && (errno !== undefined || syscall !== undefined));
+};
+const state = { running: false, book: null as string | null, last: null as (SweepSummary & { at: number }) | null, saidFull: "", log: undefined as AheadLog | undefined };
 let sweeping: Promise<SweepSummary> | null = null;
 const soon = new Set<Promise<unknown>>();
 export const forgetFailuresForTests = () => failures.clear();
@@ -119,17 +129,23 @@ export function sweepLibrary(options: { log?: AheadLog; maxBytes?: number; pause
 }
 async function sweep({ log, maxBytes = maxCacheBytes(), pauseMs = PAUSE_MS }: { log?: AheadLog; maxBytes?: number; pauseMs?: number }): Promise<SweepSummary> {
   state.running = true;
+  // The folders are listed before the editions are read: a book that arrives in between is then in the editions
+  // and not yet among the folders, never the other way round.
+  const kept = await folders();
   const editions = await library();
-  // Folders no edition of the library has now: of an edition that was removed, or an older output of a changed
-  // file. An edition whose file is away keeps every folder it has (the drive may be coming back).
-  const away = editions.filter((edition) => !edition.folder).map((edition) => edition.prefix);
+  // Only a folder whose edition has left the library is removed here. An edition that is in the library keeps every
+  // folder it has: the one of a file that is away (the drive may be coming back), and an older output of a changed
+  // file or of older preparing code, which goes when the new one is in place (buildPrepared) and serves until then.
+  // An empty list of editions removes nothing: that is another database on this media folder, not a library that
+  // lost all its books.
+  const prefixes = new Set(editions.map((edition) => edition.prefix));
   const current = new Set(editions.flatMap((edition) => (edition.folder ? [edition.folder] : [])));
   let cacheBytes = 0;
-  for (const folder of await folders()) {
-    if (current.has(folder.name) || away.some((prefix) => folder.name.startsWith(prefix))) cacheBytes += folder.bytes;
+  for (const folder of kept) {
+    if (!editions.length || prefixes.has(folder.name.slice(0, folder.name.indexOf("-") + 1))) cacheBytes += folder.bytes;
     else await rm(join(preparedDir(), folder.name), { recursive: true, force: true });
   }
-  for (const folder of [...failures.keys()]) if (!current.has(folder)) failures.delete(folder);
+  for (const [folder, failure] of failures) if (!current.has(folder) || ++failure.sweeps > RETRY_AFTER_SWEEPS) failures.delete(folder);
   const todo = editions
     .filter((edition) => edition.folder && !edition.prepared && !failures.has(edition.folder))
     .sort((a, b) => b.readAt - a.readAt || a.size - b.size || a.id.localeCompare(b.id));
@@ -144,20 +160,31 @@ async function sweep({ log, maxBytes = maxCacheBytes(), pauseMs = PAUSE_MS }: { 
     state.book = edition.id;
     const started = Date.now();
     try {
-      const { dir } = await ensurePrepared(edition.id, log, { evict: false });
-      // Places saved in the standard cut of a book that is cut by another rule (ADR 0026) are moved now, so the
-      // Book page shows the right share before anyone opens the book. One small transaction on the server's
-      // thread; the book is still in extractBook's memory from the preparing, and a second call does nothing.
-      await bookWithPlaces(edition.id, log);
+      const { dir } = await ensurePrepared(edition.id, log, { ahead: true });
       const entry = JSON.parse(await readFile(join(dir, "entry.json"), "utf8")) as { bytes?: number };
       cacheBytes += Number(entry.bytes) || 0;
       prepared.push(edition.id);
       log?.info({ id: edition.id, ms: Date.now() - started, bytes: entry.bytes }, `prepared text: prepared ${prepared.length} of ${todo.length}`);
     } catch (error) {
-      // One book that cannot be prepared (a broken file) must not stop the others; it is said once.
+      // One book that cannot be prepared (a broken file, a thread that was stopped) must not stop the others.
       const message = error instanceof Error ? error.message : String(error);
-      failures.set(edition.folder!, { id: edition.id, error: message });
-      log?.warn({ id: edition.id, error: message }, "prepared text: could not prepare a book; it is tried again when its file changes or the server restarts");
+      const cause = (error as { cause?: unknown }).cause;
+      if (fileSystemError(error)) log?.warn({ id: edition.id, error: message }, "prepared text: could not prepare a book now; the next sweep tries it again");
+      else {
+        failures.set(edition.folder!, { id: edition.id, error: cause ? `${message} (${String(cause)})` : message, sweeps: 0 });
+        log?.warn({ id: edition.id, error: message, ...(cause ? { cause } : {}) }, "prepared text: could not prepare a book; it is tried again when its file changes, after a day, or when the server restarts");
+      }
+      if (pauseMs && index < todo.length - 1) await wait(pauseMs);
+      continue;
+    }
+    try {
+      // Places saved in the standard cut of a book that is cut by another rule (ADR 0026) are moved now, so the
+      // Book page shows the right share before anyone opens the book. One small transaction on the server's
+      // thread; the book is still in extractBook's memory from the preparing, and a second call does nothing.
+      await bookWithPlaces(edition.id, log);
+    } catch (error) {
+      // The book is prepared; its places are moved at its first reader route instead.
+      log?.warn({ id: edition.id, error: error instanceof Error ? error.message : String(error) }, "prepared text: the book is prepared, but its saved places could not be moved now");
     }
     if (pauseMs && index < todo.length - 1) await wait(pauseMs);
   }
@@ -177,7 +204,7 @@ async function sweep({ log, maxBytes = maxCacheBytes(), pauseMs = PAUSE_MS }: { 
     editions: editions.length,
     current: editions.filter((edition) => edition.prepared).length + prepared.length,
     prepared,
-    failed: [...failures.values()],
+    failed: [...failures.values()].map(({ id, error }) => ({ id, error })),
     missing: editions.filter((edition) => !edition.folder).length,
     waiting,
     cacheBytes,
@@ -191,9 +218,9 @@ async function sweep({ log, maxBytes = maxCacheBytes(), pauseMs = PAUSE_MS }: { 
  * Prepares one edition in the background: called when an EPUB was added or replaced, and returns at once, so the
  * import's own answer does not wait. A failure is logged; the sweep and the book's first open come after it anyway.
  */
-export function prepareSoon(id: string, log?: Log) {
+export function prepareSoon(id: string, log: Log | undefined = state.log) {
   if (!aheadOn() || id.startsWith("set-consensus:")) return;
-  const running: Promise<unknown> = ensurePrepared(id, log, { evict: false })
+  const running: Promise<unknown> = ensurePrepared(id, log, { ahead: true })
     .catch((error) => log?.warn({ id, error: error instanceof Error ? error.message : String(error) }, "prepared text: could not prepare a new book ahead"))
     .finally(() => soon.delete(running));
   soon.add(running);
@@ -217,7 +244,7 @@ export async function preparedStatus() {
     editions: editions.length,
     current: editions.filter((edition) => edition.prepared).length,
     missing: editions.filter((edition) => !edition.folder).length,
-    failed: [...failures.entries()].filter(([folder]) => current.has(folder)).map(([, failure]) => failure),
+    failed: [...failures.entries()].filter(([folder]) => current.has(folder)).map(([, { id, error }]) => ({ id, error })),
     waiting: state.last?.waiting ?? 0,
     full: !!state.last?.waiting,
     cacheBytes: kept.reduce((sum, folder) => sum + folder.bytes, 0),
@@ -227,18 +254,30 @@ export async function preparedStatus() {
 }
 
 /**
- * The loop that keeps the library prepared: a minute after the server starts and every hour after that, a sweep.
- * A new file is prepared by its import; the sweep is for what changed without one (a deploy with new preparing code,
- * a new Node, a file replaced on the drive) and for what a restart interrupted.
+ * How long after a start the server's own first sweep waits (`PREPARED_TEXT_FIRST_SWEEP_MINUTES`, 15). A deploy
+ * settles and runs its live checks in its first minutes, and then starts the sweep itself (scripts/deploy.sh runs
+ * scripts/prepare-library.sh); the wait keeps the server's own sweep out from under those checks, and a restart
+ * without a deploy still gets its sweep.
  */
-export function preparedTextLoop(log: AheadLog): BackgroundProcess {
+const firstSweepMs = () => {
+  const minutes = Number(process.env.PREPARED_TEXT_FIRST_SWEEP_MINUTES || "x");
+  return (minutes >= 0 ? minutes : 15) * 60_000;
+};
+/**
+ * The loop that keeps the library prepared: a sweep when the server has run for its first wait, and every hour
+ * after that. A new file is prepared by its import; the sweep is for what changed without one (a deploy with new
+ * preparing code, a new Node, a file replaced on the drive) and for what a restart interrupted. `now` is the clock
+ * (tests move it).
+ */
+export function preparedTextLoop(log: AheadLog, now: () => number = Date.now): BackgroundProcess {
+  const started = now();
   let swept = 0;
   return {
     id: "prepared-text",
     intervalMs: 60_000,
     tick: () => {
-      if (!aheadOn() || (swept && Date.now() - swept < HOUR)) return;
-      swept = Date.now();
+      if (!aheadOn() || now() - started < firstSweepMs() || (swept && now() - swept < HOUR)) return;
+      swept = now();
       // The sweep is long; the loop's tick only starts it (sweepLibrary lets one run at a time).
       void sweepLibrary({ log }).catch((error) => log.warn({ err: error }, "prepared text: the sweep failed"));
     },
@@ -246,6 +285,8 @@ export function preparedTextLoop(log: AheadLog): BackgroundProcess {
 }
 
 export function registerPreparedAhead(app: FastifyInstance) {
+  // A book prepared at its import is logged by the app, also when it fails.
+  state.log = app.log;
   app.get("/api/prepared-text", async (req) => {
     requireAdmin(req);
     return preparedStatus();
