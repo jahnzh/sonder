@@ -224,3 +224,19 @@ Use local fixture servers when changing or testing the verification tooling. The
 When coordinating through Orca, assign each editing worker a separate checkout. Record the task, worktree, commit, check report and any remaining process handles in the handoff. Stop only processes owned by that run.
 
 When re-merging a branch after its earlier merge was reverted, revert the revert first (`git revert <revert-commit>`); a plain merge brings in only the commits made since. Before restarting the container, grep the build for a marker string of the change to confirm it is present.
+
+## Measure the reader's opening
+
+`scripts/measure-reader-open.mjs` measures what opening Read costs on three real books (ADR 0025, the reader plan #799): the time from opening Read to the first readable text, to the reader showing its place, and to following the narration; the time of a jump to another narrated place; the bytes transferred; and the scripts loaded. It measures a desktop profile (1280 by 800, unthrottled) and a phone profile (Pixel 7 screen and touch, the processor four times slower, 10 Mbit/s down, 2 Mbit/s up, 40 ms each way), each cold (a browser that has never opened the app) and warm (the same browser after a reload), and prints the medians of its runs as a table. The full report goes to `artifacts/reader-open-<time>.json`.
+
+It never runs on production and refuses any target that is not a local test server. It measures a copy, which `scripts/reader-open-copy.sh` starts on the production machine: the deployed image on an online backup of the database, with every background loop paused, no torrent client, no alignment pool, no mail and the media mounted read-only, behind a Caddy that compresses as the production site does. Every write the page sends is also answered in the page and never reaches the copy, so each run opens the books at the same saved places. The owner's reading place, listening place, bookmarks and history cannot move.
+
+```bash
+scripts/reader-open-copy.sh start
+set -a; . <(grep '^APP_PASSWORD=' /home/jahn/audiobook_streamer/.env); set +a
+SONDER_VERIFY_URL=http://127.0.0.1:3106 node scripts/measure-reader-open.mjs --runs 5 \
+  --books short=<ebook id>,average=<ebook id>,long=<ebook id>
+scripts/reader-open-copy.sh stop
+```
+
+Without `--books` the script takes the shortest, the middle and the longest text among the books that have an EPUB with a reading sync map and were not listened to in the last 48 hours, and prints the choice in the form `--books` takes. A book named with `--books` that was listened to in the last 48 hours is refused unless `SONDER_VERIFY_ALLOW_RECENT=1`. The books of the baseline and its numbers are in ADR 0025; run the same command on them for a before and after. Run it while no check or build is using the machine: the times are medians, and a loaded machine still moves them.

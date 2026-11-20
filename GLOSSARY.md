@@ -182,6 +182,10 @@ _Avoid_: Rebuild (for the manual action), re-sync
 An EPUB of a work that nobody reads: not the work's shared default (or, without one, its first EPUB), and no account has a place in it. It was fetched to find the edition that matches the narration; its check against the narration is the probe, and nothing syncs it whole by itself (ADR 0024).
 _Avoid_: Other ebook, extra copy, set member (when the unread edition is meant)
 
+**Prepared text**:
+An EPUB's text as the server makes it ready to read: sanitised HTML cut into parts, every sentence wrapped and tagged with the id it already has, and a manifest that lists the parts with their character counts (ADR 0025). The reader shows the prepared text instead of laying out the EPUB file itself. The sentences and their ids are the ones the alignment map, places and bookmarks use; preparing changes how they are drawn, never what they are.
+_Avoid_: Rendered EPUB, converted book, chunk (a piece of the prepared text is a part)
+
 **Map in use**:
 The alignment map the reader follows for one recording and one ebook edition. While a rebuild or Prepare again runs, it is the earlier map. A map made for files that have changed since is never in use.
 _Avoid_: Published map, kept map, old map
