@@ -201,7 +201,7 @@ test("an upload without workId is today's: a new work from the typed title, or t
   assert.deepEqual(rows("SELECT w.id,w.title,w.author FROM audio_editions e JOIN works w ON w.id=e.work_id WHERE e.id=?", id), [
     { id: `work-${id}`, title: "Brand New", author: "New Author" },
   ]);
-  assert.equal((rows("SELECT cover FROM audio_editions WHERE id=?", id) as { cover: string }[])[0].cover, "/covers/meditations.svg");
+  assert.equal((rows("SELECT cover FROM audio_editions WHERE id=?", id) as { cover: string }[])[0].cover, "", "no cover of its own: never a sample book's (#763)");
 });
 
 test("someone who is not the administrator is refused, with or without workId, and nothing is written", async () => {

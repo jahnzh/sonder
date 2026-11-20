@@ -24,7 +24,7 @@
   box-sizing: border-box;
   width: 100%;
   min-height: var(--height-bar);
-  padding: 10px var(--space-16);
+  padding: 10px var(--space-16); /* tokens: ActivityServer.dc.html, a row 10 by 16 inside */
   display: flex;
   align-items: center;
   gap: var(--space-12);

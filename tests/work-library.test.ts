@@ -199,7 +199,7 @@ test("PUT of a work with no audio edition makes its placeholder and adds its row
   assert.equal(added.statusCode, 200, added.body);
   assert.deepEqual(added.json(), { ok: true, workId: "w-text" });
   assert.deepEqual(rows("SELECT id,narrator,cover FROM audio_editions WHERE work_id='w-text'"), [
-    { id: "placeholder-w-text", narrator: "Audio not added", cover: "/covers/meditations.svg" },
+    { id: "placeholder-w-text", narrator: "Audio not added", cover: "" },
   ]);
   assert.deepEqual(libraryRows(OWNER, "w-text"), ["placeholder-w-text"]);
   assert.deepEqual(origin(OWNER, "w-text"), { source: "manual", seriesId: null });

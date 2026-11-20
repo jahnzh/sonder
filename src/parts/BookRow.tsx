@@ -6,6 +6,7 @@
 import { useId, type ReactNode } from "react";
 import { Chevron, FileIcon, fileKindName, type FileKind } from "./icons";
 import { ProgressBar } from "./ProgressBar";
+import { Cover } from "./Cover";
 import "./book-row.css";
 
 export type BookRowProps = {
@@ -47,9 +48,11 @@ export type BookRowProps = {
    * search, whose line says why it failed, #717).
    */
   wrap?: boolean;
+  /** The work the row is: a row without a cover (or an icon) draws its generated cover on the work's colour (#763). */
+  workId?: string | null;
 };
 
-export function BookRow({ title, status, lead, cover, number, marks = [], progress, onClick, action, failed, trailing, coverIcon, raised, edgeMarks, wrap }: BookRowProps) {
+export function BookRow({ title, status, lead, cover, number, marks = [], progress, onClick, action, failed, trailing, coverIcon, raised, edgeMarks, wrap, workId }: BookRowProps) {
   const id = useId();
   const numbered = number != null && number !== "";
   const names = [
@@ -70,7 +73,7 @@ export function BookRow({ title, status, lead, cover, number, marks = [], progre
         </span>
       )}
       <span className="part-book-row-cover" aria-hidden="true" data-icon={!cover && coverIcon ? "" : undefined}>
-        {cover ? <img src={cover} alt="" loading="lazy" decoding="async" /> : coverIcon}
+        {cover || (workId && !coverIcon) ? <Cover className="part-book-row-art" src={cover} title={title} workId={workId} compact lazy /> : coverIcon}
       </span>
       <span className="part-book-row-text">
         <span id={`${id}-title`} className="part-book-row-title type-body">
