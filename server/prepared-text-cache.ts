@@ -1,15 +1,14 @@
 // Prepared reader text on disk, and the routes that serve it.
 //
 // One folder per prepared book under MEDIA_ROOT/prepared-text, named `<edition>-<key>`: the manifest, the parts
-// (`p<n>.html`) and the pictures. The key is made from the EPUB file's size and time and from
-// PREPARED_TEXT_VERSION, so a changed file or changed preparing code gives a new folder and new addresses, and what
-// was served under an address never changes (it is cached for good).
+// (`p<n>.html`) and the pictures. The key (preparedKey) is made from the EPUB file's size and time and from the
+// versions of everything that makes the output, so a changed file or changed code gives a new folder and new
+// addresses, and what was served under an address never changes (it is cached for good).
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { createHash, randomBytes } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { mkdir, readFile, readdir, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { ebookRecord, extractBook } from "./reader.ts";
+import { EXTRACTOR_VERSION, ebookRecord, extractBook } from "./reader.ts";
 import { mediaMountProblem, mediaRoot } from "./storage.ts";
 import { PREPARED_TEXT_VERSION, pictureType, prepareEpub } from "./prepared-text.ts";
 
@@ -20,8 +19,20 @@ export const preparedDir = () => resolve(process.env.PREPARED_TEXT_DIR || join(m
 /** The cache may hold this much before the entries read longest ago are removed (`PREPARED_TEXT_CACHE_MB`). */
 const maxCacheBytes = () => (Number(process.env.PREPARED_TEXT_CACHE_MB) > 0 ? Number(process.env.PREPARED_TEXT_CACHE_MB) : 2048) * 1024 * 1024;
 const short = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 16);
-/** Names one prepared output of an EPUB file: another file, or another PREPARED_TEXT_VERSION, has another key. */
-export const preparedKey = (file: { size: number; mtimeMs: number }, version = PREPARED_TEXT_VERSION) => short(`${version}|${file.size}|${file.mtimeMs}`);
+/**
+ * Names one prepared output of an EPUB file. It covers everything the output is made from that can change under a
+ * kept folder: the file (its size and time, the stamp extractBook itself goes by), the preparing code
+ * (PREPARED_TEXT_VERSION), the extractor's cut (EXTRACTOR_VERSION) and the ICU data `Intl.Segmenter` cuts sentences
+ * with, which a new Node can change. It does not see a file replaced by another of the same size and time; the
+ * manifest's `fingerprint` is of the file's content and shows that.
+ */
+export const preparedKey = (
+  file: { size: number; mtimeMs: number },
+  versions: { prepared?: number; extractor?: number; icu?: string } = {},
+) =>
+  short(
+    [versions.prepared ?? PREPARED_TEXT_VERSION, versions.extractor ?? EXTRACTOR_VERSION, versions.icu ?? process.versions.icu, file.size, file.mtimeMs].join("|"),
+  );
 /** How often a book was prepared by this process, for the tests. */
 export const preparedCounts = { built: 0 };
 
@@ -40,7 +51,8 @@ function preparedRecord(id: string) {
   if (id.startsWith("set-consensus:")) throw notFound("This book has no EPUB file.");
   return ebookRecord(id);
 }
-async function located(id: string) {
+/** The edition's row, its key and the folder its prepared text is kept in (whether it is there or not). */
+export async function located(id: string) {
   const record = preparedRecord(id);
   const key = preparedKey(await stat(record.source));
   return { record, key, dir: join(preparedDir(), `${short(id)}-${key}`) };
@@ -163,10 +175,22 @@ async function sendKept(reply: FastifyReply, id: string, key: string, file: stri
   const record = preparedRecord(id);
   if (!/^[0-9a-f]{16}$/.test(key) || !file) throw notFound("This part of the book could not be found.");
   const dir = join(preparedDir(), `${short(record.id)}-${key}`);
-  const info = await statOrNull(join(dir, file));
-  if (!info?.isFile()) {
+  // The file is opened before anything is said about caching: an answer that fails is never one to keep.
+  let handle;
+  try {
+    handle = await open(join(dir, file), "r");
+  } catch (error) {
+    if (!missing(error)) throw error;
     if (await statOrNull(dir)) throw notFound("This part of the book could not be found.");
     throw notFound("This prepared text is no longer kept. Load the book again.", "prepared_stale");
+  }
+  let info;
+  try {
+    info = await handle.stat();
+    if (!info.isFile()) throw notFound("This part of the book could not be found.");
+  } catch (error) {
+    await handle.close();
+    throw error;
   }
   return reply
     .header("Content-Type", type)
@@ -175,10 +199,17 @@ async function sendKept(reply: FastifyReply, id: string, key: string, file: stri
     .header("X-Content-Type-Options", "nosniff")
     // Opened by its address, a part or a picture (an SVG may hold script) runs nothing and loads nothing.
     .header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
-    .send(createReadStream(join(dir, file)));
+    .send(handle.createReadStream());
 }
 
+const PREPARED_ROUTE = /^\/api\/reader\/[^/]+\/prepared(?:\/|$|\?)/;
 export function registerPreparedText(app: FastifyInstance) {
+  // Only a part or picture that was served is kept for good. Any refusal or failure of these routes (not signed in,
+  // not found, a file that cannot be read) says so itself, whatever was set before it failed: a browser that kept
+  // an error under an address that never changes would show it for a year.
+  app.addHook("onSend", async (req, reply) => {
+    if (reply.statusCode >= 400 && PREPARED_ROUTE.test(req.url)) reply.header("Cache-Control", "no-store");
+  });
   app.get("/api/reader/:id/prepared", async (req, reply) => {
     const { id } = req.params as { id: string };
     const { dir, key } = await ensurePrepared(id, req.log);

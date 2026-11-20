@@ -1,7 +1,7 @@
 // The disk cache and the routes of prepared reader text (server/prepared-text-cache.ts).
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir } from "./temp-dir.ts";
 const temp = tempDir("sonder-prepared-cache-");
@@ -16,7 +16,9 @@ const { createApp } = await import("../server/app.ts");
 const { db, sqlite } = await import("../server/db.ts");
 const s = await import("../server/schema.ts");
 const { PREPARED_TEXT_VERSION, sentencesOfParts } = await import("../server/prepared-text.ts");
-const { preparedDir, preparedKey, ensurePrepared, buildPrepared, prunePrepared, preparedCounts } = await import("../server/prepared-text-cache.ts");
+const { preparedDir, preparedKey, ensurePrepared, buildPrepared, prunePrepared, preparedCounts, located } = await import("../server/prepared-text-cache.ts");
+const { EXTRACTOR_VERSION, invalidateParsedBook } = await import("../server/reader.ts");
+const { eq } = await import("drizzle-orm");
 const { preparedFixture, tinyPng } = await import("./prepared-text-fixture.ts");
 const app = await createApp();
 after(async () => {
@@ -48,7 +50,155 @@ test("the key follows the EPUB file and the preparing code", () => {
   assert.equal(preparedKey(file), preparedKey({ ...file }));
   assert.notEqual(preparedKey(file), preparedKey({ ...file, size: 1001 }));
   assert.notEqual(preparedKey(file), preparedKey({ ...file, mtimeMs: file.mtimeMs + 1 }));
-  assert.notEqual(preparedKey(file), preparedKey(file, PREPARED_TEXT_VERSION + 1));
+  assert.notEqual(preparedKey(file), preparedKey(file, { prepared: PREPARED_TEXT_VERSION + 1 }));
+  // The sentences are cut again after every restart, so what cuts them is in the key: the extractor and ICU's data.
+  assert.notEqual(preparedKey(file), preparedKey(file, { extractor: EXTRACTOR_VERSION + 1 }));
+  assert.notEqual(preparedKey(file), preparedKey(file, { icu: `${process.versions.icu}.1` }));
+  assert.equal(preparedKey(file), preparedKey(file, { prepared: PREPARED_TEXT_VERSION, extractor: EXTRACTOR_VERSION, icu: process.versions.icu }));
+});
+
+test("the manifest holds nothing of the work that can change while the file stays", async () => {
+  await edition("ed-title");
+  const before = await get("/api/reader/ed-title/prepared");
+  db.update(s.works).set({ title: "Another title", author: "Another author" }).where(eq(s.works.id, "work-cache")).run();
+  invalidateParsedBook("ed-title");
+  assert.equal((await get("/api/reader/ed-title")).json().title, "Another title");
+  const after = await get("/api/reader/ed-title/prepared");
+  assert.equal(after.headers.etag, before.headers.etag);
+  assert.ok(!("title" in after.json()) && !("author" in after.json()));
+});
+
+test("only a part or picture that was served is kept: every refusal and failure says no-store", async () => {
+  await edition("ed-errors");
+  const { key } = (await get("/api/reader/ed-errors/prepared")).json();
+  const base = `/api/reader/ed-errors/prepared/${key}`;
+  const { dir } = await ensurePrepared("ed-errors");
+  const refused: [string, string | null, number][] = [
+    ["/api/reader/ed-errors/prepared", null, 401],
+    [`${base}/parts/0`, null, 401],
+    [`${base}/pictures/0.png`, null, 401],
+    [`${base}/parts/9`, reader, 404],
+    [`${base}/pictures/9.png`, reader, 404],
+    [`/api/reader/ed-errors/prepared/${"0".repeat(16)}/parts/0`, reader, 404],
+    ["/api/reader/ed-nobody/prepared", reader, 404],
+    ["/api/reader/ed-nobody/prepared?x=1", reader, 404],
+  ];
+  for (const [url, cookie, status] of refused) {
+    const response = await get(url, cookie);
+    assert.equal(response.statusCode, status, url);
+    assert.equal(response.headers["cache-control"], "no-store", url);
+  }
+  // A file that is there and cannot be read: the answer fails after the folder was found, and must not be kept
+  // (a browser held such a 500 for the year the address is good for).
+  if (process.getuid?.() !== 0) {
+    for (const [file, url] of [["p0.html", `${base}/parts/0`], [join("pictures", "0.png"), `${base}/pictures/0.png`]]) {
+      chmodSync(join(dir, file), 0o000);
+      const failed = await get(url);
+      chmodSync(join(dir, file), 0o640);
+      assert.ok(failed.statusCode >= 500, `${url} answered ${failed.statusCode}`);
+      assert.equal(failed.headers["cache-control"], "no-store", url);
+      const served = await get(url);
+      assert.equal(served.statusCode, 200);
+      assert.equal(served.headers["cache-control"], "private, max-age=31536000, immutable");
+    }
+  }
+  // Other routes keep their own headers.
+  assert.notEqual((await get("/api/reader/ed-nobody")).headers["cache-control"], "no-store");
+});
+
+test("a key, a part number or a picture name cannot reach another folder's files", async () => {
+  await edition("ed-here");
+  await edition("ed-there");
+  const here = await ensurePrepared("ed-here");
+  const there = await ensurePrepared("ed-there");
+  const other = there.dir.split("/").pop()!;
+  const base = `/api/reader/ed-here/prepared/${here.key}`;
+  // Real targets, so a missing check would answer 200: the other book's part and picture, a part with a name a
+  // number check must refuse, and a picture that is no picture name.
+  writeFileSync(join(here.dir, "pNaN.html"), "planted");
+  writeFileSync(join(here.dir, "p00.html"), "planted");
+  writeFileSync(join(here.dir, "pictures", "planted.png"), "planted");
+  writeFileSync(join(here.dir, "pictures", "0.html"), "planted");
+  assert.ok(existsSync(join(there.dir, "p0.html")) && existsSync(join(there.dir, "pictures", "0.png")));
+  const slash = "%2F";
+  for (const url of [
+    // The key names another folder.
+    `/api/reader/ed-here/prepared/x${slash}..${slash}${other}/parts/0`,
+    `/api/reader/ed-here/prepared/x${slash}..${slash}${other}/pictures/0.png`,
+    `/api/reader/ed-here/prepared/${here.key}${slash}..${slash}${other}/parts/0`,
+    // The picture name walks out of the folder, to a picture and to a part.
+    `${base}/pictures/..${slash}..${slash}${other}${slash}pictures${slash}0.png`,
+    `${base}/pictures/..${slash}p0.html`,
+    `${base}/pictures/planted.png`,
+    `${base}/pictures/0.html`,
+    // The part number is not a number.
+    `${base}/parts/NaN`,
+    `${base}/parts/abc`,
+    `${base}/parts/0x0`,
+    `${base}/parts/..${slash}..${slash}${other}${slash}p0`,
+  ]) {
+    const response = await get(url);
+    assert.equal(response.statusCode, 404, url);
+    assert.ok(!response.body.includes("planted") && !response.body.includes("First sentence"), url);
+  }
+  // The other book's own key under this edition's address is not this edition's folder either.
+  assert.equal((await get(`/api/reader/ed-here/prepared/${there.key}/parts/0`)).statusCode, here.key === there.key ? 200 : 404);
+});
+
+test("parts and pictures ask for the edition as the reader does, also when the folder is still there", async () => {
+  await edition("ed-leaves");
+  const { key } = (await get("/api/reader/ed-leaves/prepared")).json();
+  const { dir } = await ensurePrepared("ed-leaves");
+  const urls = [`/api/reader/ed-leaves/prepared/${key}/parts/0`, `/api/reader/ed-leaves/prepared/${key}/pictures/0.png`];
+  for (const url of urls) assert.equal((await get(url)).statusCode, 200, url);
+  // The edition is no EPUB any more: the reader refuses it, and so do the kept files.
+  db.update(s.ebookEditions).set({ format: "pdf" }).where(eq(s.ebookEditions.id, "ed-leaves")).run();
+  for (const url of urls) assert.equal((await get(url)).statusCode, 400, url);
+  // The edition is gone.
+  db.delete(s.ebookEditions).where(eq(s.ebookEditions.id, "ed-leaves")).run();
+  assert.ok(existsSync(join(dir, "p0.html")));
+  for (const url of urls) assert.equal((await get(url)).statusCode, 404, url);
+});
+
+test("a prepared folder appears whole: it is written beside its place and renamed into it", async () => {
+  await edition("ed-whole", "A paragraph of the book, as long as a line.</p><p>".repeat(8000));
+  const { dir } = await located("ed-whole");
+  const seen = { half: 0, temp: 0, looks: 0 };
+  let done = false;
+  const building = buildPrepared("ed-whole").finally(() => (done = true));
+  // Look at the disk between the writer's steps for as long as it works.
+  while (!done) {
+    seen.looks++;
+    if (existsSync(dir) && !(existsSync(join(dir, "entry.json")) && existsSync(join(dir, "manifest.json")) && existsSync(join(dir, "p0.html")))) seen.half++;
+    if (entries().some((name) => name.startsWith(dir.split("/").pop()!) && name.includes(".tmp-"))) seen.temp++;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  await building;
+  assert.equal(seen.half, 0, "the folder was never there without all of its files");
+  assert.ok(seen.temp > 0, `the work was seen in its own folder (${seen.looks} looks)`);
+  const manifest = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8"));
+  assert.ok(manifest.parts.length > 3);
+  for (const part of manifest.parts) assert.equal(statSync(join(dir, `p${part.index}.html`)).size, part.bytes);
+});
+
+test("nothing is prepared onto another disk when the media drive is not the recorded one", async () => {
+  await edition("ed-mount");
+  const { dir } = await located("ed-mount");
+  const before = entries();
+  process.env.REQUIRE_MEDIA_MOUNT = "true";
+  process.env.MEDIA_VOLUME_ID = "a-volume-that-is-not-mounted";
+  try {
+    await assert.rejects(buildPrepared("ed-mount"), { statusCode: 503, message: /media volume is unavailable/ });
+    const response = await get("/api/reader/ed-mount/prepared");
+    assert.equal(response.statusCode, 503);
+    assert.equal(response.headers["cache-control"], "no-store");
+  } finally {
+    process.env.REQUIRE_MEDIA_MOUNT = "false";
+    delete process.env.MEDIA_VOLUME_ID;
+  }
+  assert.ok(!existsSync(dir));
+  assert.deepEqual(entries(), before);
+  assert.equal((await get("/api/reader/ed-mount/prepared")).statusCode, 200);
 });
 
 test("the manifest, its parts and its pictures are served to a signed-in reader, and to nobody else", async () => {
