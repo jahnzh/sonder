@@ -36,12 +36,6 @@
   object-fit: cover;
   background: var(--raised);
 }
-.book-page-cover-blank {
-  padding: var(--space-12);
-  overflow: hidden;
-  color: var(--text);
-  overflow-wrap: anywhere;
-}
 .book-page-names {
   min-width: 0;
   display: flex;

@@ -5,6 +5,10 @@ import { readerFixture } from "../reader-fixture";
 import { installReaderWaitBudget, READER_WAIT_MS, timedWait } from "./timing";
 import { listenFace, nowPlaying, openListen, openRead } from "./now-playing";
 import { playFromLibrary } from "./library-play";
+import { installCpuThrottle } from "./cpu-throttle";
+import { revealControls } from "./reader-controls";
+// SONDER_E2E_CPU_THROTTLE=4 runs it on a processor slowed four times (Chromium).
+installCpuThrottle(test);
 
 // Per-step expect ceilings are up to 45 s; leave room around history restores.
 installReaderWaitBudget(test);
@@ -137,19 +141,9 @@ async function importWithEbook(page: Page, title: string, tracks = 1) {
   return book;
 }
 
+// One tap that toggles the controls, repeated only when it was lost (#662: tests/e2e/reader-controls.ts).
 async function revealReaderControls(page: Page) {
-  const room = page.locator(".inline-reader");
-  await expect(room.locator(".reader-viewport iframe")).toBeVisible();
-  const topbar = room.locator(".reader-topbar");
-  // The controls can hide between the look and the tap (the reader follows a new position), so tap again until
-  // they are up.
-  await expect(async () => {
-    if (await topbar.isHidden()) {
-      const box = (await room.locator(".reader-viewport").boundingBox())!;
-      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-    }
-    await expect(topbar).toBeVisible({ timeout: 1500 });
-  }).toPass({ timeout: 15000 });
+  await revealControls(page, page.locator(".inline-reader"));
 }
 
 /** The Earlier positions row on Listen (on Read, reached by switching to Listen). */
@@ -482,6 +476,23 @@ test("chapter jumps can be undone and removing the recording clears its history"
   await bookPage.getByRole("group", { name: "Remove from library?", exact: true }).getByRole("button", { name: "Remove", exact: true }).click();
   await expect(page).toHaveURL(/#library$/);
   await expect.poll(async () => (await history(page, book.recordingId)).length).toBe(0);
+});
+
+// Close reader after a tap in the text: in Firefox the dialog also reported a close once the Back had landed, and that
+// second close replaced the Library behind with the Book page (#662, found as this file's chapter-jump test timing out).
+test("Close reader after a tap in the text returns to the Library Now playing was opened from, and stays there", async ({ page }) => {
+  const book = await importWithEbook(page, "Close to the Library");
+  await instrument(page);
+  await page.goto("/");
+  await startPaused(page, book.title);
+  await openReaderPlayer(page);
+  await revealReaderControls(page);
+  await page.locator(".inline-reader").getByRole("button", { name: "Close reader", exact: true }).click();
+  await expect(nowPlaying(page)).toBeHidden();
+  await expect(page.getByRole("heading", { name: "Library", exact: true, level: 1 })).toBeVisible();
+  // The entry the Back landed on is the Library's own, at the start of the app's history, not a Book page put there.
+  await expect.poll(() => page.evaluate(() => [location.hash, window.history.state?.sonderDepth])).toEqual(["#library", 0]);
+  await expect(page.getByRole("region", { name: "Book", exact: true })).toHaveCount(0);
 });
 
 test("source reloads only record a jump when the new source moves the position", async ({ page }) => {

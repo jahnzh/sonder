@@ -87,17 +87,6 @@ img {
 .muted {
   color: var(--muted);
 }
-.small {
-  font-size: calc(12px * var(--ui-scale, 1));
-}
-.eyebrow {
-  display: block;
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  font-weight: 650;
-  letter-spacing: 1.7px;
-  color: var(--muted);
-  line-height: 1.6;
-}
 .button {
   display: inline-flex;
   align-items: center;
@@ -129,16 +118,6 @@ img {
 .button.subtle:hover {
   background: var(--surface);
 }
-.button.square {
-  padding: var(--space-8);
-  min-width: 41px;
-  border: 1px solid var(--line);
-}
-.button.square:hover,
-.button.square.is-favorite {
-  color: var(--accent);
-  background: var(--surface);
-}
 .icon-button {
   display: inline-flex;
   align-items: center;
@@ -152,13 +131,6 @@ img {
 .icon-button:hover {
   background: color-mix(in srgb, var(--surface) 33%, transparent);
   color: var(--muted);
-}
-.text-link {
-  text-align: left;
-  font-weight: 600;
-}
-.text-link:hover {
-  color: var(--accent);
 }
 .brand-mark {
   display: inline-flex;
@@ -451,26 +423,6 @@ input[type="range"]::-moz-range-thumb {
   color: var(--text);
   margin-top: var(--space-8);
 }
-.equalizer {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0;
-  height: 15px;
-}
-.equalizer > i {
-  width: 2px;
-  height: 10px;
-  background: var(--surface);
-  border-radius: 0;
-  animation: wave 1s infinite alternate;
-}
-.equalizer > i:nth-child(2) {
-  animation-delay: -0.4s;
-}
-.equalizer > i:nth-child(3) {
-  animation-delay: -0.7s;
-}
 .empty-state {
   display: flex;
   align-items: center;
@@ -593,14 +545,6 @@ input[type="range"]::-moz-range-thumb {
     transform: translate(-50%, -50%);
   }
 }
-@keyframes wave {
-  from {
-    height: 4px;
-  }
-  to {
-    height: 13px;
-  }
-}
 @keyframes skeleton {
   from {
     opacity: 1;
@@ -680,9 +624,6 @@ input[type="range"]::-moz-range-thumb {
   }
   .transport {
     gap: var(--space-12);
-  }
-  .transport > .secondary-transport {
-    display: none;
   }
   .dock-book {
     gap: var(--space-8);
@@ -770,7 +711,6 @@ input[type="range"]::-moz-range-thumb {
   .transport {
     gap: var(--space-12);
   }
-  .transport .secondary-transport,
   .transport > .seek-button:first-of-type {
     display: none;
   }
@@ -916,9 +856,6 @@ input[type="range"]::-moz-range-thumb {
 body {
   background: var(--paper);
 }
-.eyebrow {
-  color: var(--muted);
-}
 .button.primary {
   color: var(--text);
   background: var(--accent-soft);
@@ -935,17 +872,6 @@ body {
 }
 .button.subtle:hover {
   background: var(--raised);
-}
-.button.square {
-  border-color: var(--border);
-  color: var(--text);
-  background: var(--raised);
-}
-.button.square:hover,
-.button.square.is-favorite {
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-color: var(--border);
 }
 .icon-button {
   color: var(--muted);
@@ -1072,24 +998,6 @@ input[type="range"]::-moz-range-thumb {
 .app-loading {
   color: var(--text);
 }
-.text-link:hover {
-  color: var(--accent);
-}
-.equalizer > i {
-  background: var(--surface);
-}
-
-.workflow-link {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-4);
-  color: var(--text);
-  font-size: calc(11px * var(--ui-scale, 1));
-  padding: 0;
-}
-.workflow-link:hover {
-  color: var(--accent);
-}
 @media (max-width: 1050px) {
   .dock-book strong {
     font-size: max(11px, calc(10px * var(--ui-scale, 1)));
@@ -1172,9 +1080,6 @@ input[type="range"]::-moz-range-thumb {
   .dock-book small {
     font-size: max(11px, calc(8px * var(--ui-scale, 1)));
   }
-}
-.ebooks-saved-list {
-  margin-bottom: var(--space-24);
 }
 @media (max-width: 650px) {
   .main-content {

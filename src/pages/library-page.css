@@ -266,15 +266,6 @@
   object-fit: cover;
   display: block;
 }
-.library-cover-title {
-  display: block;
-  padding: var(--space-8);
-  font-family: var(--font-heading);
-  font-weight: 700;
-  font-size: 12px;
-  line-height: 15px;
-  overflow: hidden;
-}
 .library-marks {
   position: absolute;
   left: var(--space-8);

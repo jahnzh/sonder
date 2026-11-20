@@ -49,8 +49,7 @@ body,
   background: color-mix(in srgb, var(--accent) 85%, var(--text));
   color: var(--on-accent);
 }
-.button.subtle,
-.button.square {
+.button.subtle {
   background: var(--raised);
   color: var(--text);
   border-color: var(--border);
