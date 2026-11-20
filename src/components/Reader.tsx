@@ -616,6 +616,9 @@ export function ReaderView({
       // The server prepared the book again: its manifest and parts are read anew.
       onStale: () => void refresh(true),
       onRefused: (part, refused) => reportRefused(id, source.manifest.key, part, refused),
+      // The band changed (Appearance docked or closed): the narrated sentence is brought into it again, as today's
+      // reader follows it again after sizing its view.
+      onBandResized: () => redrawHighlight(),
     });
     engine.current = view;
     following.openingDisplay();

@@ -39,6 +39,8 @@ export type PreparedViewEvents = {
   onLink(target: PreparedTarget): void;
   /** The server keeps another prepared output of the book now: the reader opens it again. */
   onStale(): void;
+  /** The band took another size after the book was shown (Appearance docked or closed, a rotated phone). */
+  onBandResized(): void;
   /** A part held markup the allow-list left out (prepared-html.ts); told once for a part. */
   onRefused(part: number, refused: string[]): void;
 };
@@ -316,12 +318,19 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
     start = { x: event.clientX, y: event.clientY, time: event.timeStamp };
     held = false;
     release();
-    hold = setTimeout(() => {
+    const pressed = event.timeStamp;
+    const longPress = () => {
       hold = null;
       if (!start) return;
       held = true;
       const sentence = sentenceAt(start.x, start.y);
       if (sentence) events.onLongPress(sentence);
+    };
+    // A busy page can run this timer late, while the pointerup that ended a short tap waits behind it: a late timer
+    // gives that pointerup a moment to arrive before the long press listens from here (#589).
+    hold = setTimeout(() => {
+      if (performance.now() - pressed > HOLD_MS + 100) hold = setTimeout(longPress, 50);
+      else longPress();
     }, HOLD_MS);
   };
   const move = (event: PointerEvent) => {
@@ -369,6 +378,7 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
     if (scroller.clientHeight > 0 && now !== size) {
       size = now;
       host.setAttribute("data-view-resizes", String(++sizes));
+      if (sizes > 1) events.onBandResized();
     }
     if (waiting && scroller.clientHeight > 0) {
       const place = waiting;
