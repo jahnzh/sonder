@@ -24,7 +24,9 @@ function stub(dir, name, body) {
 
 // A throwaway repository holding a copy of deploy.sh, a stubbed docker and curl, and live-check scripts that
 // append their name (and any CLI arguments) to a log, so a test can see which checks ran.
-function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", tagFails = false, smokeFails = false, markerFails = false, markerFileFails = false, jobs = [] } = {}) {
+// `healthTimes`: what the stubbed curl prints as the answer time of each request in turn, the last one for good;
+// "fail" is a request that gets no answer.
+function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", tagFails = false, smokeFails = false, markerFails = false, markerFileFails = false, jobs = [], healthTimes = ["0.010"] } = {}) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-deploy-")));
   const repo = join(dir, "repo");
   const bin = join(dir, "bin");
@@ -95,11 +97,22 @@ function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", t
     '  *) exit 0 ;;',
     "esac",
   ].join("\n"));
-  stub(bin, "curl", "exit 0");
+  const times = join(dir, "health-times");
+  const asked = join(dir, "health-asked.log");
+  writeFileSync(times, healthTimes.join("\n") + "\n");
+  // Each request takes the next answer time; only a request that asks for the time (-w) uses one up.
+  stub(bin, "curl", [
+    `case "$*" in *time_total*) ;; *) exit 0 ;; esac`,
+    `next=$(head -n 1 ${JSON.stringify(times)})`,
+    `if [ "$(wc -l < ${JSON.stringify(times)})" -gt 1 ]; then sed -i 1d ${JSON.stringify(times)}; fi`,
+    `echo "$next" >> ${JSON.stringify(asked)}`,
+    `[ "$next" = fail ] && exit 7`,
+    `printf %s "$next"`,
+  ].join("\n"));
   const run = (args, extra = {}) => spawnSync("bash", ["scripts/deploy.sh", "HEAD", ...args], {
     cwd: repo,
     encoding: "utf8",
-    env: cleanEnv({ PATH: `${bin}:${process.env.PATH}`, SONDER_DEPLOY_DOCKER: join(bin, "docker"), SONDER_DEPLOY_LIVE_CHECKS: Object.keys(checks).map((n) => `scripts/${n}`).join(" "), ...extra }),
+    env: cleanEnv({ PATH: `${bin}:${process.env.PATH}`, SONDER_DEPLOY_DOCKER: join(bin, "docker"), SONDER_DEPLOY_LIVE_CHECKS: Object.keys(checks).map((n) => `scripts/${n}`).join(" "), SONDER_DEPLOY_SETTLE_SECONDS: "0", ...extra }),
   });
   const runProd = (args) => spawnSync("bash", ["scripts/deploy-prod.sh", "HEAD", ...args], {
     cwd: repo,
@@ -112,7 +125,8 @@ function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", t
   }
   const ran = () => { try { return readFileSync(log, "utf8").split("\n").filter(Boolean); } catch { return []; } };
   const dockerCalls = () => { try { return readFileSync(calls, "utf8").split("\n").filter(Boolean); } catch { return []; } };
-  return { dir, run, runProd, ran, dockerCalls };
+  const healthAsked = () => { try { return readFileSync(asked, "utf8").split("\n").filter(Boolean); } catch { return []; } };
+  return { dir, run, runProd, ran, dockerCalls, healthAsked };
 }
 
 test("production dry run lists the image smoke before the swap", () => {
@@ -408,5 +422,77 @@ test("deploy-prod.sh refuses with no marker flag", () => {
     const r = f.runProd([]);
     assert.equal(r.status, 2);
     assert.match(r.stderr, /refusing to deploy with no verification/);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+// The settle wait before the live checks (#822).
+const SETTLE = { SONDER_DEPLOY_SETTLE_SECONDS: "1", SONDER_DEPLOY_SETTLE_INTERVAL: "0.2", SONDER_DEPLOY_SETTLE_CEILING: "4" };
+
+test("the live checks start only after health has answered quickly for the whole stretch", () => {
+  const f = fixture({ "verify-a.mjs": 0 });
+  try {
+    const began = Date.now();
+    const r = f.run(["--no-marker"], SETTLE);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.ok(Date.now() - began >= 1000, "the stretch is waited out");
+    assert.match(r.stdout, /waiting until \/api\/health has answered in under 0\.5s for 1s in a row \(at most 4s\)/);
+    assert.match(r.stdout, /settled: \/api\/health answered in under 0\.5s for 1s/);
+    assert.ok(r.stdout.indexOf("settled:") < r.stdout.indexOf("live check: scripts/verify-a.mjs"), r.stdout);
+    assert.ok(f.healthAsked().length >= 2, "health is asked more than once");
+    assert.deepEqual(f.ran(), ["verify-a.mjs"]);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test("a slow answer or one that does not come starts the stretch again", () => {
+  // Quick, slow, quick, none, then quick for good: the stretch that counts begins after the request without an answer.
+  const f = fixture({ "verify-a.mjs": 0 }, { healthTimes: ["0.010", "0.900", "0.010", "fail", "0.010"] });
+  try {
+    const r = f.run(["--no-marker"], SETTLE);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.match(r.stdout, /settled:/);
+    const asked = f.healthAsked();
+    assert.deepEqual(asked.slice(0, 5), ["0.010", "0.900", "0.010", "fail", "0.010"]);
+    // After the fourth request at least a second of quick answers, 0.2 s apart, is needed.
+    assert.ok(asked.length >= 4 + 5, asked.join(" "));
+    assert.deepEqual(f.ran(), ["verify-a.mjs"]);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test("a server that stays slow: at the ceiling the script says so and runs the checks, and a failing check still fails the deploy", () => {
+  const f = fixture({ "verify-a.mjs": 1, "verify-b.mjs": 0 }, { healthTimes: ["0.700"] });
+  try {
+    const r = f.run(["--no-marker"], { ...SETTLE, SONDER_DEPLOY_SETTLE_CEILING: "1" });
+    assert.equal(r.status, 1, r.stderr + r.stdout);
+    assert.match(r.stderr, /not settled: \/api\/health did not answer in under 0\.5s for 1s in a row within 1s \(last answer: 0\.700s\); starting the live checks anyway/);
+    assert.doesNotMatch(r.stdout, /settled: /);
+    // Every check runs once: nothing is run again.
+    assert.deepEqual(f.ran(), ["verify-a.mjs", "verify-b.mjs"]);
+    assert.match(r.stderr, /1 live check\(s\) failed: scripts\/verify-a\.mjs/);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test("without live checks there is nothing to wait for, and 0 seconds skips the wait", () => {
+  const f = fixture({ "verify-a.mjs": 0 });
+  try {
+    const skipped = f.run(["--no-marker", "--skip-live-checks"], SETTLE);
+    assert.equal(skipped.status, 0, skipped.stderr + skipped.stdout);
+    assert.doesNotMatch(skipped.stdout, /waiting until/);
+    const none = f.run(["--no-marker"], { SONDER_DEPLOY_SETTLE_SECONDS: "0" });
+    assert.equal(none.status, 0, none.stderr + none.stdout);
+    assert.doesNotMatch(none.stdout, /waiting until/);
+    assert.deepEqual(f.healthAsked(), []);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test("the dry run names the wait and its settings, and a setting that is not whole seconds is refused", () => {
+  const f = fixture({ "verify-a.mjs": 0 });
+  try {
+    const plan = f.run(["--no-marker", "--dry-run"], { SONDER_DEPLOY_SETTLE_SECONDS: "60" });
+    assert.equal(plan.status, 0, plan.stderr + plan.stdout);
+    assert.match(plan.stdout, /7\. wait until \/api\/health has answered in under 0\.5s for 60s in a row \(at most 300s\)\n\s+8\. live checks: scripts\/verify-a\.mjs/);
+    const bad = f.run(["--no-marker"], { SONDER_DEPLOY_SETTLE_SECONDS: "a minute" });
+    assert.equal(bad.status, 2);
+    assert.match(bad.stderr, /whole seconds, got: a minute/);
+    assert.deepEqual(f.ran(), []);
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
 });

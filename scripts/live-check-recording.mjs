@@ -269,6 +269,11 @@ export function readEdition(work, deviceChoice) {
   return (pick(work?.chosenEbookId) ?? pick(deviceChoice) ?? epubs[0] ?? null)?.id ?? null;
 }
 
+// A recording that plays from the server's own copy: every file's `deliverySource` in GET /api/books is "server",
+// whatever the recording came from. One that plays from TorBox or another remote source depends on a service outside
+// the machine, so the check takes it only when no other qualifies (#822).
+const playsFromServer = (book) => !!book?.tracks?.length && book.tracks.every((track) => track.deliverySource === "server");
+
 // deploy.sh's old order: a ready map before a partial one, then the most recently updated.
 function jobOrder(a, b) {
   return Number(b.status === "ready") - Number(a.status === "ready") || (b.updatedAt || 0) - (a.updatedAt || 0);
@@ -276,7 +281,8 @@ function jobOrder(a, b) {
 
 /**
  * The (recording, map) pairs the reader check can try, from the listing alone, in the order it tries them: the
- * preferred recording first, then a ready map before a partial one, then the most recently updated. A recording with
+ * preferred recording first, then a recording that plays from the server's copy before one that streams from outside (#822), then
+ * a ready map before a partial one, then the most recently updated. A recording with
  * several maps gives one pair per map whose intervals support readerSequence.
  * listing: {books, ebooks, jobs, works} as GET /api/books, GET /api/ebooks, GET /api/alignments (its `jobs`) and
  * GET /api/library return them. Only a map of the edition Read opens with the device's choice set to the map's EPUB
@@ -335,7 +341,7 @@ export function readerPairs({ books, ebooks, jobs, works = [] }, { preferred = n
     }
   }
   if (preferred && !seen.has(preferred)) rejected.push({ recordingId: preferred, reason: "the recording is not in the book listing" });
-  pairs.sort((a, b) => Number(b.book.recordingId === preferred) - Number(a.book.recordingId === preferred) || jobOrder(a.job, b.job));
+  pairs.sort((a, b) => Number(b.book.recordingId === preferred) - Number(a.book.recordingId === preferred) || Number(playsFromServer(b.book)) - Number(playsFromServer(a.book)) || jobOrder(a.job, b.job));
   return { pairs, rejected, aligned };
 }
 

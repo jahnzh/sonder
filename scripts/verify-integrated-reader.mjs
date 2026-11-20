@@ -26,7 +26,7 @@ try {
  const get=requestFrom(context);
  const pick=await selectReaderRecording(get,{preferred,allowRecent});
  const {book,ebook,sequence}=pick;
- report.recordingId=pick.recordingId;report.selection={ebookId:ebook.id,jobId:pick.job.id,start:sequence.start,follow:sequence.follow,...(pick.preferred?{preferred:pick.preferred}:{})};
+ report.recordingId=pick.recordingId;report.selection={ebookId:ebook.id,jobId:pick.job.id,playsFrom:[...new Set(book.tracks.map(t=>t.deliverySource))].join(','),start:sequence.start,follow:sequence.follow,...(pick.preferred?{preferred:pick.preferred}:{})};
  const appearance=await getJSON(get,'/api/appearance');
  await context.addInitScript(({appearance,ebook,workId})=>{
   localStorage.setItem('sonder-appearance-device','true');localStorage.setItem('sonder-appearance',JSON.stringify({...appearance,playback:{progressScope:'book'},reader:{...appearance.reader}}));
