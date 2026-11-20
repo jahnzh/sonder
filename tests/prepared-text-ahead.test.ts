@@ -185,6 +185,37 @@ test("the sweep prepares every edition without a current output, one at a time, 
   assert.deepEqual(lines, []);
 });
 
+test("the sweep moves the places saved in a recut book, so they are right before anyone opens it", async () => {
+  // A book whose paragraphs are <div>s (ADR 0026): its standard cut held only the heading and the quotation.
+  const prose = Array.from({ length: 30 }, (_item, index) => `<div class="c"><span>The tide came in for the ${index + 1}th time that week. Nobody looked up.</span></div>`).join("");
+  await edition("sweep-recut", preparedFixture({ chapters: { "one.xhtml": `<h2>Wall</h2>${prose}<blockquote><div>A quoted line.</div></blockquote>` } }));
+  // A place saved before the change, on the quotation: sentence 0:1 of two, halfway through the book.
+  const old = { locator: { section: 0, paragraphId: "0:1", quote: "A quoted line.", progression: 0.5 }, revision: 1, eventId: "event-recut", deviceId: "device-1", updatedAt: 1_700_000_000_000, origin: "reading" };
+  sqlite.prepare("INSERT INTO user_reader_checkpoints(user_id,edition_id,data) VALUES(1,?,?)").run("sweep-recut", JSON.stringify(old));
+  lines.length = 0;
+  const summary = await sweepLibrary({ log, pauseMs: 0 });
+  assert.deepEqual(summary.prepared, ["sweep-recut"]);
+  const book = await extractBook("sweep-recut");
+  assert.equal(book.sections[0].blocks, "div");
+  const sentences = book.sections[0].paragraphs;
+  const place = readerCheckpoint("sweep-recut")!;
+  const at = sentences.findIndex((sentence) => sentence.id === place.locator.paragraphId);
+  assert.equal(sentences[at].text, "A quoted line.");
+  assert.notEqual(place.locator.paragraphId, "0:1");
+  assert.equal(place.revision, 2);
+  assert.equal(place.locator.progression, at / (sentences.length - 1), "the share the Book page shows is that of the new cut");
+  assert.ok(place.locator.progression > 0.95);
+  assert.ok(sqlite.prepare("SELECT 1 FROM settings WHERE key=?").get("reader-recut:sweep-recut"), "the edition is marked: nothing moves a second time");
+  assert.equal(lines.filter((line) => /^info reader: the book is cut by another block rule/.test(line)).length, 1);
+  // The prepared text is that of the new cut.
+  const { dir } = await located("sweep-recut");
+  assert.equal(JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")).sentences, sentences.length);
+  // A book cut by the standard rule has nothing to move and gets no mark.
+  assert.equal(sqlite.prepare("SELECT 1 FROM settings WHERE key=?").get("reader-recut:sweep-small"), undefined);
+  sqlite.prepare("DELETE FROM user_reader_checkpoints WHERE edition_id='sweep-recut'").run();
+  remove("sweep-recut");
+});
+
 test("a changed EPUB is prepared again by the next sweep, and its old output goes", async () => {
   const old = await located("sweep-small");
   writeFileSync(fileOf("sweep-small"), await book("The file was replaced by a longer one."));

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { BackgroundProcess } from "./background-runner.ts";
 import { sqlite } from "./db.ts";
 import { ensurePrepared, maxCacheBytes, preparedDir, preparedKey, short, type Log } from "./prepared-text-cache.ts";
+import { bookWithPlaces } from "./reader.ts";
 import { requireAdmin } from "./users.ts";
 
 type AheadLog = Required<Log>;
@@ -144,6 +145,10 @@ async function sweep({ log, maxBytes = maxCacheBytes(), pauseMs = PAUSE_MS }: { 
     const started = Date.now();
     try {
       const { dir } = await ensurePrepared(edition.id, log, { evict: false });
+      // Places saved in the standard cut of a book that is cut by another rule (ADR 0026) are moved now, so the
+      // Book page shows the right share before anyone opens the book. One small transaction on the server's
+      // thread; the book is still in extractBook's memory from the preparing, and a second call does nothing.
+      await bookWithPlaces(edition.id, log);
       const entry = JSON.parse(await readFile(join(dir, "entry.json"), "utf8")) as { bytes?: number };
       cacheBytes += Number(entry.bytes) || 0;
       prepared.push(edition.id);

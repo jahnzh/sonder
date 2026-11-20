@@ -103,7 +103,7 @@ export async function buildPrepared(id: string, log?: Log, options: { evict?: bo
   const { record, key, dir } = await located(id);
   const problem = process.env.PREPARED_TEXT_DIR ? null : mediaMountProblem();
   if (problem) throw Object.assign(new Error(problem), { statusCode: 503 });
-  // The sentences are cut here, on the server's thread: extractBook reads and (since #815) may write the database.
+  // The sentences are cut here, on the server's thread, where extractBook keeps them for the reader's routes.
   const { sections, ...book } = await extractBook(id);
   const temp = `${dir}.tmp-${process.pid}-${randomBytes(6).toString("hex")}`;
   try {
