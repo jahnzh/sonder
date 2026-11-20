@@ -106,11 +106,17 @@ test("places saved in the standard cut are carried over to the same text, once",
   assert.equal(first.checkpoint.locator.quote, "A quoted line stands here.");
   assert.equal(first.checkpoint.locator.cfi, checkpoint.locator.cfi);
   assert.equal(first.checkpoint.locator.section, 0);
+  // Its share of the book is that of the sentence it is on now, not the one it had among the old cut's few.
+  const order = [...byId.keys()];
+  const shareOf = (paragraphId: string) => order.indexOf(paragraphId) / (order.length - 1);
+  assert.equal(first.checkpoint.locator.progression, shareOf(first.checkpoint.locator.paragraphId));
+  assert.ok(Math.abs(first.checkpoint.locator.progression - 0.4) > 0.05, "the fixture's old share is not the new one by chance");
   assert.equal(first.checkpoint.revision, 4, "a device holding revision 3 learns of the moved place");
   assert.equal(first.checkpoint.updatedAt, checkpoint.updatedAt);
   const marks = new Map<string, { locator: { paragraphId: string; quote: string }; label: string }>(first.bookmarks.map((entry: { id: string }) => [entry.id, entry]));
   assert.equal(byId.get(marks.get("bookmark-heading")!.locator.paragraphId), "The harbour wall");
   assert.equal(marks.get("bookmark-heading")!.label, "Wall");
+  assert.equal((marks.get("bookmark-heading")!.locator as unknown as { progression: number }).progression, shareOf(marks.get("bookmark-heading")!.locator.paragraphId));
   // In the chapter read as one block, the heading is inside the sentence that now holds it.
   assert.match(byId.get(marks.get("bookmark-second")!.locator.paragraphId)!, /Low water The night tide/);
   assert.equal(marks.get("bookmark-second")!.locator.quote, byId.get(marks.get("bookmark-second")!.locator.paragraphId)!.slice(0, 300));

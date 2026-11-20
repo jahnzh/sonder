@@ -268,6 +268,11 @@ export async function extractBook(id: string) {
   cache.set(id, { stamp, book, recut: cut.recut });
   return book;
 }
+/** A sentence's place among the book's sentences, from 0 to 1, as the reader gives it to a place it saves. */
+function progressionOf(book: { sections: ReaderBook["sections"] }, paragraphId: string) {
+  const all = book.sections.flatMap((section) => section.paragraphs);
+  return Math.max(0, all.findIndex((sentence) => sentence.id === paragraphId)) / Math.max(1, all.length - 1);
+}
 /**
  * The book, with the places saved in it carried over to its cut: what a route that answers or stores a place reads.
  * For a book cut by another rule (ADR 0026) the reading places and bookmarks saved in its standard cut are moved
@@ -282,9 +287,9 @@ export async function bookWithPlaces(id: string, log?: Log) {
   const key = `reader-recut:${id}`;
   const places = sqlite.transaction(() => {
     if (sqlite.prepare("SELECT 1 FROM settings WHERE key=?").get(key)) return null;
-    const moved = <T extends { paragraphId: string; quote?: string }>(locator: T): T | null => {
+    const moved = <T extends TextLocator>(locator: T): T | null => {
       const to = recut.get(locator.paragraphId);
-      return to ? { ...locator, paragraphId: to.id, quote: to.text.slice(0, 300) } : null;
+      return to ? { ...locator, paragraphId: to.id, quote: to.text.slice(0, 300), progression: progressionOf(book, to.id) } : null;
     };
     let count = 0;
     for (const row of sqlite.prepare("SELECT user_id AS userId,data FROM user_reader_checkpoints WHERE edition_id=?").all(id) as { userId: number; data: string }[]) {
