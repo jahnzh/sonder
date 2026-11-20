@@ -231,6 +231,9 @@ test("reader keys in a gap and with modifiers leave playback and the page alone"
  // The Read face makes the book ready at 97 s without playing it (#593); the sentence before the gap stays narrated.
  const room=reader.locator(".reader-room");
  await expect(reader.getByRole("button",{name:"Play narration"}).first()).toBeAttached();
+ // The narrated sentence is there before it is read: the new view (#802) shows the text before the map has arrived,
+ // so "the text is visible" no longer means "the reader follows already" (seen on the check host).
+ await expect(room).toHaveAttribute("data-current-passage",/.+/,{timeout:45000});
  const passage=await room.getAttribute("data-current-passage");
  const writes:string[]=[];
  page.on("request",request=>{if(request.method()==="PUT"&&request.url().endsWith("/api/appearance"))writes.push(request.url());});

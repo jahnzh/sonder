@@ -338,8 +338,13 @@ async function remotePlace(page: Page, ebook: string, manifest: any) {
 // A page turn saves a place of this session after a pause; the server answers with the other session's.
 async function turnAndConflict(page: Page, room: Locator) {
   const text = (await room.locator(".reader-viewport").boundingBox())!;
-  await page.mouse.click(text.x + text.width * 0.9, text.y + text.height / 2);
-  await expect(message(room)).toHaveAttribute("data-kind", "conflict", { timeout: 15000 });
+  // A turn that arrives while the reader is still landing on the narration is taken back by it and saves nothing
+  // (#618; the new view, #802, shows its text before that landing, so on a fast host the first tap can be that
+  // early). The tap is repeated until a place of this session was saved; one that never saves still fails.
+  await expect(async () => {
+    await page.mouse.click(text.x + text.width * 0.9, text.y + text.height / 2);
+    await expect(message(room)).toHaveAttribute("data-kind", "conflict", { timeout: 4000 });
+  }).toPass({ timeout: 20000 });
 }
 
 test("a place saved elsewhere: Go there moves the reader to it", async ({ page }) => {
