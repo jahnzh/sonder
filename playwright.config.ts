@@ -272,6 +272,8 @@ const desktopProjects = [
               /(^|\/)paused-catch-up\.spec\.ts$/,
               // The Series slice's states beside their boards, opt-in with SONDER_SERIES_BOARDS=1 (#570).
               /(^|\/)series-boards\.spec\.ts$/,
+              // The slice pass, the live check of the slice finals' lists, against the suite's server (#794).
+              /(^|\/)slice-pass\.spec\.ts$/,
               // Every spec of slice 14 (#609 to #617) and the specs it must still guard, the slice's final check (#618).
               slice14Specs,
             ]
