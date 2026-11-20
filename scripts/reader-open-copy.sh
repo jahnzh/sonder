@@ -50,6 +50,7 @@ case "${1:-}" in
       --env-file "$PROD_DIR/.env" \
       -e NODE_ENV=production -e HOST=127.0.0.1 -e PORT="$APP_PORT" -e DATA_DIR=/app/data -e MEDIA_ROOT="$MEDIA" \
       -e REQUIRE_MEDIA_MOUNT=true -e TRANSMISSION_RPC_URL= -e ALIGNMENT_POOL_ENABLED=0 -e RESEND_API_KEY= \
+      -e PREPARED_TEXT_AHEAD=0 \
       -v "$STATE/data:/app/data" -v "$MEDIA:$MEDIA:ro" "$IMAGE" >/dev/null
     cat > "$STATE/Caddyfile" <<EOF
 {

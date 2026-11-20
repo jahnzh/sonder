@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { accessSync, constants, mkdtempSync, rmSync, statSync } from "node:fs";
+import { accessSync, constants, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, resolve, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -77,6 +77,25 @@ async function checkAlignmentPool() {
   console.log("image smoke passed: alignment pool health and SSH");
 }
 
+// Prepared text is made on a thread of its own (#827), started from a TypeScript file: this is the one place that
+// shows the built image can start it (the file is there, the loader reaches it, the temp folder can be written).
+async function checkPreparingThread() {
+  const { prepareOffThread } = await import(serverModule("prepared-text-cache.ts"));
+  const { default: JSZip } = await import("jszip");
+  const zip = new JSZip();
+  zip.file("META-INF/container.xml", '<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>');
+  zip.file("content.opf", '<package><manifest><item id="a" href="a.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="a"/></spine></package>');
+  zip.file("a.xhtml", "<html><body><p>Hello world.</p></body></html>");
+  const source = join(dataDir, "smoke.epub");
+  writeFileSync(source, await zip.generateAsync({ type: "nodebuffer" }));
+  const bytes = await prepareOffThread(
+    { source, temp: join(dataDir, "smoke-prepared"), base: "/api/reader/smoke/prepared/0000000000000000", key: "0000000000000000", book: { id: "smoke", fingerprint: "", language: "en" } },
+    [{ index: 0, href: "a.xhtml", title: "", paragraphs: [{ id: "0:0", text: "Hello world.", blockIndex: 0, start: 0, end: 12 }] }],
+  );
+  assert.ok(bytes > 0, "the preparing thread wrote nothing");
+  console.log("image smoke passed: prepared text is made on its own thread");
+}
+
 try {
   const { createApp } = await import(serverModule("app.ts"));
   assert.equal(typeof createApp, "function");
@@ -85,6 +104,7 @@ try {
   const rows = await runConsensusBuild("image-smoke", [[sentence], [sentence]]);
   assert.deepEqual(rows, [{ text: "Hello world.", norm: "hello world", memberParagraphIds: ["p1", "p1"] }]);
   console.log("image smoke passed: server imports and consensus worker");
+  await checkPreparingThread();
   if (process.env.ALIGNMENT_POOL_ENABLED === "1") await checkAlignmentPool();
 } finally {
   rmSync(dataDir, { recursive: true, force: true });

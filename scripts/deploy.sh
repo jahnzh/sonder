@@ -20,6 +20,11 @@
 #      It never picks a book listened to in the last 48 h (#774). SONDER_VERIFY_RECORDING=<recording id> names the
 #      recording instead, and SONDER_VERIFY_ALLOW_RECENT=1 lets that be a recently played one: both are passed through.
 #      SONDER_DEPLOY_SLICE_PASS=1 adds the slice pass (scripts/verify-slice-pass.mjs, #794) after them.
+#  10. prepare the library's text (#827): scripts/prepare-library.sh starts the server's sweep and waits for it, after
+#      the live checks have passed (or were skipped), so nothing heavy runs under a check. The deploy is live and
+#      checked by then: a book that could not be prepared, or a sweep still running after SONDER_PREPARE_TIMEOUT
+#      seconds (1800 here), is printed and named in the last lines, and the deploy still exits 0.
+#      SONDER_DEPLOY_PREPARE_LIBRARY= (empty) leaves the step out; the server sweeps by itself 15 minutes after a start.
 # Prints the rollback command (retag the old image as :local, then up -d --no-build) and reminds to
 # record the deploy in artifacts/orca/STATE.md.
 # At least one --marker or --marker-file is required; --no-marker explicitly skips image verification (non-app changes)
@@ -74,6 +79,8 @@ for value in "$settle_seconds" "$settle_ceiling"; do
   case $value in ''|*[!0-9]*) echo "SONDER_DEPLOY_SETTLE_SECONDS and SONDER_DEPLOY_SETTLE_CEILING are whole seconds, got: $value" >&2; exit 2 ;; esac
 done
 live_checks=${SONDER_DEPLOY_LIVE_CHECKS:-scripts/verify-integrated-reader.mjs scripts/verify-multi-user.mjs}
+# The command that prepares the library's text after the checks (#827); set but empty leaves the step out.
+prepare_library=${SONDER_DEPLOY_PREPARE_LIBRARY-scripts/prepare-library.sh}
 # The slice pass (#794): the slice finals' lists, walked at a phone's and a desktop's size. Optional: only with
 # SONDER_DEPLOY_SLICE_PASS=1, after the other checks (a slice's final deploy asks for it).
 if [ "${SONDER_DEPLOY_SLICE_PASS:-}" = "1" ]; then
@@ -145,6 +152,11 @@ if [ "$dry_run" -eq 1 ]; then
     echo "  7. wait until /api/health has answered in under ${settle_answer}s for ${settle_seconds}s in a row (at most ${settle_ceiling}s)"
     echo "  8. live checks: ${live_checks}"
     [ -n "${SONDER_VERIFY_RECORDING:-}" ] && echo "     recording: ${SONDER_VERIFY_RECORDING}${SONDER_VERIFY_ALLOW_RECENT:+ (SONDER_VERIFY_ALLOW_RECENT=${SONDER_VERIFY_ALLOW_RECENT})}"
+  fi
+  if [ -n "$prepare_library" ]; then
+    echo "  9. prepare the library's text: ${prepare_library} (after the live checks; its failure does not fail the deploy)"
+  else
+    echo "  9. prepare the library's text: skipped (SONDER_DEPLOY_PREPARE_LIBRARY is empty)"
   fi
   exit 0
 fi
@@ -302,7 +314,23 @@ if [ ${#failed_checks[@]} -gt 0 ]; then
   exit 1
 fi
 
+# 10. The library's text is prepared now, when the checks are through: the deploy is live either way, so a failure
+# here is said loudly and does not change the exit code.
+prepare_note=""
+if [ -n "$prepare_library" ]; then
+  echo "preparing the library's text: $prepare_library"
+  prepare_status=0
+  SONDER_ADMIN_URL="http://127.0.0.1:${port}" SONDER_PREPARE_TIMEOUT="${SONDER_PREPARE_TIMEOUT:-1800}" bash "$prepare_library" || prepare_status=$?
+  if [ "$prepare_status" -ne 0 ]; then
+    prepare_note="THE LIBRARY'S TEXT IS NOT FULLY PREPARED: $prepare_library exited $prepare_status (see its lines above). The deploy itself is live and checked; books not prepared are prepared when first opened. Run $prepare_library again, or read the server's log for 'prepared text:'."
+    echo "$prepare_note" >&2
+  fi
+fi
+
 echo "deployed ${short} (image ${new_id:0:19})"
 echo "backup: $backup_dest"
 echo "rollback: docker tag sonder-audiobooks:${rollback_tag} sonder-audiobooks:local && docker compose up -d --no-build sonder"
 echo "record the deploy in artifacts/orca/STATE.md (commit, backup, image tag, live-check results)"
+if [ -n "$prepare_note" ]; then
+  echo "$prepare_note" >&2
+fi

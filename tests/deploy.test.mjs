@@ -26,7 +26,7 @@ function stub(dir, name, body) {
 // append their name (and any CLI arguments) to a log, so a test can see which checks ran.
 // `healthTimes`: what the stubbed curl prints as the answer time of each request in turn, the last one for good;
 // "fail" is a request that gets no answer.
-function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", tagFails = false, smokeFails = false, markerFails = false, markerFileFails = false, jobs = [], healthTimes = ["0.010"] } = {}) {
+function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", tagFails = false, smokeFails = false, markerFails = false, markerFileFails = false, jobs = [], healthTimes = ["0.010"], prepareExit = 0 } = {}) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "sonder-deploy-")));
   const repo = join(dir, "repo");
   const bin = join(dir, "bin");
@@ -71,6 +71,11 @@ function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", t
     const writeSkip = skip === undefined ? "" : `if(process.env.SONDER_LIVE_CHECK_SKIP_FILE)fs.writeFileSync(process.env.SONDER_LIVE_CHECK_SKIP_FILE, ${JSON.stringify(skip)});`;
     writeFileSync(join(repo, "scripts", name), `import fs from "node:fs";fs.appendFileSync(${JSON.stringify(log)}, [${JSON.stringify(name)}, ...process.argv.slice(2), ...${JSON.stringify(logEnv ?? [])}.map((key) => key + "=" + (process.env[key] ?? ""))].join(" ") + "\\n");${writeSkip}process.exit(${exit});\n`);
   }
+  // The command that prepares the library's text (#827): it logs that it ran, with the server it was pointed at.
+  writeFileSync(
+    join(repo, "scripts", "prepare-library.sh"),
+    `#!/usr/bin/env bash\necho "prepare-library.sh $SONDER_ADMIN_URL timeout=$SONDER_PREPARE_TIMEOUT" >> ${JSON.stringify(log)}\necho "prepare-library: 3 of 4 editions prepared"\nexit ${prepareExit}\n`,
+  );
   const calls = join(dir, "docker-calls.log");
   const built = join(dir, "built");
   // Like the real daemon: once the build has moved sonder-audiobooks:local, the previous image is gone and cannot be tagged.
@@ -99,6 +104,7 @@ function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", t
   ].join("\n"));
   const times = join(dir, "health-times");
   const asked = join(dir, "health-asked.log");
+  const ended = join(dir, "health-ended.log");
   writeFileSync(times, healthTimes.join("\n") + "\n");
   // Each request takes the next answer time; only a request that asks for the time (-w) uses one up.
   stub(bin, "curl", [
@@ -106,6 +112,8 @@ function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", t
     `next=$(head -n 1 ${JSON.stringify(times)})`,
     `if [ "$(wc -l < ${JSON.stringify(times)})" -gt 1 ]; then sed -i 1d ${JSON.stringify(times)}; fi`,
     `echo "$next" >> ${JSON.stringify(asked)}`,
+    // When each request ended, in milliseconds: a test measures a stretch by the clock, not by how many requests fit in it.
+    `date +%s%3N >> ${JSON.stringify(ended)}`,
     `[ "$next" = fail ] && exit 7`,
     `printf %s "$next"`,
   ].join("\n"));
@@ -123,10 +131,13 @@ function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", t
     const r = spawnSync("git", args, { cwd: repo, encoding: "utf8", env: cleanEnv() });
     assert.equal(r.status, 0, r.stderr);
   }
-  const ran = () => { try { return readFileSync(log, "utf8").split("\n").filter(Boolean); } catch { return []; } };
+  // `ran`: the live checks, in order. `everything`: those and the preparing of the library's text after them.
+  const everything = () => { try { return readFileSync(log, "utf8").split("\n").filter(Boolean); } catch { return []; } };
+  const ran = () => everything().filter((line) => !line.startsWith("prepare-library.sh"));
   const dockerCalls = () => { try { return readFileSync(calls, "utf8").split("\n").filter(Boolean); } catch { return []; } };
   const healthAsked = () => { try { return readFileSync(asked, "utf8").split("\n").filter(Boolean); } catch { return []; } };
-  return { dir, run, runProd, ran, dockerCalls, healthAsked };
+  const healthEnded = () => { try { return readFileSync(ended, "utf8").split("\n").filter(Boolean).map(Number); } catch { return []; } };
+  return { dir, run, runProd, ran, everything, dockerCalls, healthAsked, healthEnded };
 }
 
 test("production dry run lists the image smoke before the swap", () => {
@@ -425,6 +436,63 @@ test("deploy-prod.sh refuses with no marker flag", () => {
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
 });
 
+// The library's text is prepared by the deploy, after its checks (#827, review of #829).
+test("the library's text is prepared after the live checks have passed, on the deployed server", () => {
+  const f = fixture({ "verify-a.mjs": 0, "verify-b.mjs": 0 });
+  try {
+    const r = f.run(["--no-marker"], { SONDER_DEPLOY_PORT: "3555" });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.deepEqual(f.everything(), ["verify-a.mjs", "verify-b.mjs", "prepare-library.sh http://127.0.0.1:3555 timeout=1800"]);
+    assert.ok(r.stdout.indexOf("preparing the library's text: scripts/prepare-library.sh") < r.stdout.indexOf("deployed "), r.stdout);
+    assert.match(r.stdout, /prepare-library: 3 of 4 editions prepared/);
+    assert.doesNotMatch(r.stderr, /NOT FULLY PREPARED/);
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("a library that could not be fully prepared is said loudly, in the last line too, and the deploy still exits 0", () => {
+  const f = fixture({ "verify-a.mjs": 0 }, { prepareExit: 1 });
+  try {
+    const r = f.run(["--no-marker"]);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.match(r.stdout, /deployed [0-9a-f]+ /);
+    const said = r.stderr.split("\n").filter((line) => line.startsWith("THE LIBRARY'S TEXT IS NOT FULLY PREPARED: scripts/prepare-library.sh exited 1"));
+    assert.equal(said.length, 2, r.stderr);
+    assert.equal(r.stderr.trim().split("\n").at(-1), said[1], "it is the deploy's last line");
+    assert.doesNotMatch(r.stderr, /roll back with/);
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("the library is not prepared when a live check failed, and the step can be left out", () => {
+  let f = fixture({ "verify-a.mjs": 1 });
+  try {
+    const r = f.run(["--no-marker"]);
+    assert.equal(r.status, 1);
+    assert.deepEqual(f.everything(), ["verify-a.mjs"]);
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+  f = fixture({ "verify-a.mjs": 0 });
+  try {
+    let r = f.run(["--no-marker"], { SONDER_DEPLOY_PREPARE_LIBRARY: "" });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.deepEqual(f.everything(), ["verify-a.mjs"]);
+    // Without live checks the library is still prepared: nothing else is running.
+    r = f.run(["--no-marker", "--skip-live-checks"]);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.deepEqual(f.everything(), ["verify-a.mjs", "prepare-library.sh http://127.0.0.1:3001 timeout=1800"]);
+    r = f.run(["--no-marker", "--dry-run"]);
+    assert.match(r.stdout, /  9\. prepare the library's text: scripts\/prepare-library\.sh \(after the live checks; its failure does not fail the deploy\)\n/);
+    r = f.run(["--no-marker", "--dry-run"], { SONDER_DEPLOY_PREPARE_LIBRARY: "" });
+    assert.match(r.stdout, /  9\. prepare the library's text: skipped/);
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
 // The settle wait before the live checks (#822).
 const SETTLE = { SONDER_DEPLOY_SETTLE_SECONDS: "1", SONDER_DEPLOY_SETTLE_INTERVAL: "0.2", SONDER_DEPLOY_SETTLE_CEILING: "4" };
 
@@ -447,13 +515,19 @@ test("a slow answer or one that does not come starts the stretch again", () => {
   // Quick, slow, quick, none, then quick for good: the stretch that counts begins after the request without an answer.
   const f = fixture({ "verify-a.mjs": 0 }, { healthTimes: ["0.010", "0.900", "0.010", "fail", "0.010"] });
   try {
-    const r = f.run(["--no-marker"], SETTLE);
+    // Measured by the clock and not by how many requests fit into the second, which depends on the host's load
+    // (#837). Requests 0.4 s apart and a ceiling far away: a loaded host only makes the run longer.
+    const r = f.run(["--no-marker"], { ...SETTLE, SONDER_DEPLOY_SETTLE_INTERVAL: "0.4", SONDER_DEPLOY_SETTLE_CEILING: "60" });
     assert.equal(r.status, 0, r.stderr + r.stdout);
     assert.match(r.stdout, /settled:/);
     const asked = f.healthAsked();
     assert.deepEqual(asked.slice(0, 5), ["0.010", "0.900", "0.010", "fail", "0.010"]);
-    // After the fourth request at least a second of quick answers, 0.2 s apart, is needed.
-    assert.ok(asked.length >= 4 + 5, asked.join(" "));
+    // The stretch of one second begins at the fifth request, the first quick one after the request without an
+    // answer. Had it begun at the third (the stretch not started again), it would have ended at most 0.2 s after
+    // the fifth, since the fourth and fifth each came 0.4 s later.
+    const ended = f.healthEnded();
+    assert.equal(ended.length, asked.length);
+    assert.ok(ended.at(-1) - ended[4] >= 600, `the last request ended ${ended.at(-1) - ended[4]} ms after the fifth: ${asked.join(" ")}`);
     assert.deepEqual(f.ran(), ["verify-a.mjs"]);
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
 });
