@@ -715,7 +715,9 @@ input[type="range"]::-moz-range-thumb {
     --player-height: 74px;
   }
   .main-content {
-    padding: var(--space-32) var(--space-24) var(--space-24);
+    /* The phone boards' 16 at the sides (Worker.dc.html), not the old 22 rounded up to 24: at 393 (iPhone 15) the
+       extra 4 wrapped the Restart row's line, 82 high instead of the board's 64. */
+    padding: var(--space-32) var(--space-16) var(--space-24);
     max-width: 570px;
   }
   .player-dock {
