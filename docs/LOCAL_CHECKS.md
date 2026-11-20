@@ -201,6 +201,16 @@ npx tsx scripts/check-prepared-text.ts --db data/sonder.db --out artifacts/prepa
 For every EPUB edition of the database it prepares the reader text (`server/prepared-text.ts`) and compares it with the stored sentences: every id once and in order, each tagged sentence equal to the stored text, and the manifest's counts equal to what the parts hold. It prints the counts (books, sentences, mismatches, books that failed and why) and, for the books with the most text (`--timings <n>`, default 3), the time to prepare from nothing and to serve the manifest and each part from the cache. `--only <edition id>` checks one book. Exit code 1 when a sentence differs or a book fails.
 
 It may be run against the production database: it copies the database with the online backup and opens the copy, only reads the EPUB files, and prepares into a temp folder that it removes, with `MEDIA_ROOT` pointed at that folder too. It starts no server, opens no page and saves no reading or listening position.
+## Compare the extractor before and after a change
+
+A change to `extractBook` (`server/reader.ts`) or to the block rule (`src/reading-types.ts`) must leave the sentences of every book it does not mean to change exactly as they were: alignment maps, reading places and bookmarks name them by id (ADR 0026).
+
+```bash
+npm run backup -- data/sonder.db data/backups/compare-$(date +%s).db   # or any copy of the database
+npx tsx scripts/compare-extractor.ts --db data/sonder.db --before origin/main --expect <edition id>,<edition id> --out artifacts/compare-extractor.json
+```
+
+It runs the extractor of the git ref (`--before`, default `origin/main`) and of this checkout over every EPUB edition of the database, each on its own copy of the database, and prints one line per edition: identical, or the first difference (chapter, sentence, id, length, block). The summary gives the count of identical editions and, for each changed one, its sentences and the share of its text they hold, before and after. `--expect` lists the editions that are meant to change; the exit code is 1 when the changed editions are not exactly those, when an edition could not be read on either side (it is listed as failed, never as identical), or when nothing was read. It reads the EPUB files and writes nothing outside a temp folder. On a host whose temp path is long, start it with `node --import tsx` instead of `npx tsx`.
 
 ## Live verification
 

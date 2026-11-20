@@ -389,7 +389,8 @@ async function prepareWhole(input: PrepareInput): Promise<{ manifest: PreparedMa
     // is given to the sentence whose stored range holds it.
     const pieces = new Map<Node, { block: BlockText; start: number }>();
     if (section) {
-      const blocks = countedBlocks(body, (node) => node.text)
+      // By the rule the extractor cut this chapter with (ADR 0026); without one, the standard blocks.
+      const blocks = countedBlocks(body, (node) => node.text, section.blocks)
         .map((block) => ({ block, normal: normalizeReaderText(block.text) }))
         .filter((counted) => counted.normal);
       const byBlock = new Map<number, { ordinal: number; start: number; end: number; text: string }[]>();

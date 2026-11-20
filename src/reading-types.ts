@@ -18,6 +18,11 @@ export type ReaderSection = {
   index: number;
   href: string;
   title: string;
+  /**
+   * How this chapter's blocks are counted, when not by the standard rule: only in a book whose standard blocks hold
+   * little of its text (`chapterBlockRule`, ADR 0026). `blockIndex` counts the blocks of this rule.
+   */
+  blocks?: ReaderBlockRule;
   paragraphs: {
     id: string;
     text: string;
@@ -365,12 +370,41 @@ type BlockElement = {
   querySelectorAll(selector: string): Iterable<unknown> | ArrayLike<unknown>;
   closest(selector: string): unknown;
 };
-/** The counted blocks of a section: blocks with text that contain no other block, outside skipped elements. */
-export function countedBlocks<T extends BlockElement>(root: T, text: (block: T) => string): T[] {
+/**
+ * The other ways of counting a chapter's blocks (ADR 0026), for a book whose paragraphs are not `<p>` elements:
+ * `div` counts a `<div>` as a block too, `body` takes the whole chapter as one block.
+ */
+export type ReaderBlockRule = "div" | "body";
+/** A book whose standard blocks hold less than this share of its text is cut by `chapterBlockRule`. */
+export const LOW_SHARE_BOOK = 0.5;
+/** In such a book, a chapter uses the first rule whose blocks hold at least this share of the chapter's text. */
+export const CHAPTER_SHARE = 0.9;
+/**
+ * The counted blocks of a section: blocks with text that contain no other block, outside skipped elements. Without
+ * a rule this is the standard count, which every book cut before ADR 0026 has and keeps.
+ */
+export function countedBlocks<T extends BlockElement>(root: T, text: (block: T) => string, rule?: ReaderBlockRule): T[] {
+  if (rule === "body") return [root];
+  const selector = rule === "div" ? `${readerBlockSelector},div` : readerBlockSelector;
   const blocks = (node: T) =>
-    (Array.from(node.querySelectorAll(readerBlockSelector)) as T[]).filter(
+    (Array.from(node.querySelectorAll(selector)) as T[]).filter(
       (block) => !block.closest(readerSkippedSelector),
     );
   const all = blocks(root).filter((block) => !blocks(block).length);
-  return all.length ? all.filter((block) => normalizeReaderText(text(block))) : [root];
+  return all.length || rule ? all.filter((block) => normalizeReaderText(text(block))) : [root];
+}
+/** The share of a chapter's text that its counted blocks hold, from 0 to 1; 1 for a chapter without text. */
+export function blockShare<T extends BlockElement>(root: T, text: (block: T) => string, rule?: ReaderBlockRule) {
+  const total = normalizeReaderText(text(root)).length;
+  if (!total) return 1;
+  const held = countedBlocks(root, text, rule).reduce((sum, block) => sum + (block === root ? total : normalizeReaderText(text(block)).length), 0);
+  return Math.min(1, held / total);
+}
+/**
+ * The rule for one chapter of a book whose standard blocks hold little of its text: the standard rule where it
+ * holds the chapter's text, else with `<div>` as a block, else the whole chapter as one block.
+ */
+export function chapterBlockRule<T extends BlockElement>(root: T, text: (block: T) => string): ReaderBlockRule | undefined {
+  if (blockShare(root, text) >= CHAPTER_SHARE) return undefined;
+  return blockShare(root, text, "div") >= CHAPTER_SHARE ? "div" : "body";
 }

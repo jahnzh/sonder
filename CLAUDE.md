@@ -69,6 +69,7 @@ For isolated checks of a committed revision, database backups, and live-verifica
 - Progress is saved locally first and reconciled with the server by timestamp.
 - Hardcover sync is removed (#721 part d): nothing is sent to or pulled from Hardcover. The catalogue is AudiobookDB (audiobooks) and Open Library (books without one): a work links to a catalogue book, a recording may link to a release; covers and descriptions are shown by URL, never stored. Want to read is Sonder's own shelf; Reading and Finished come from the user's progress.
 - Reader positions use CFIs plus sentence locators, not page numbers.
+- A sentence id is its chapter file and its count there (`extractBook`). The block rule in `src/reading-types.ts` decides the count, so a change to it or to the extractor is proved with `scripts/compare-extractor.ts` over the library: every book it does not mean to change stays identical (ADR 0026).
 - Alignment maps belong to one specific recording and EPUB. They are invalidated when either file changes, and their timings are labelled "estimated".
 
 ## Conventions
