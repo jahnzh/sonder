@@ -48,6 +48,7 @@ For isolated checks of a committed revision, database backups, and live-verifica
 - `acquisitions.ts` + `transmission.ts` — magnet routing: TorBox only on a confirmed cache hit (`add_only_if_cached`), otherwise local Transmission. A book is added to the library only after the torrent completes and its files validate.
 - `downloads.ts` — "Save to server" copies to `MEDIA_ROOT/saved`.
 - `ebooks.ts` + `sources/` — Anna's Archive / LibGen parsers and EPUB/PDF import.
+- `prepared-text.ts` + `prepared-text-cache.ts` — an EPUB as sanitised HTML in parts with every sentence of `extractBook` tagged by its id, a manifest, and the disk cache and routes under `/api/reader/:id/prepared` (README "Prepared reader text"). It never cuts sentences itself; the client does not use it yet. A change to its output raises `PREPARED_TEXT_VERSION`.
 - `storage.ts` — `MEDIA_ROOT` paths and the HDD volume-marker check. With `REQUIRE_MEDIA_MOUNT`, media writes are refused if the 4 TB mount is missing.
 - `range.ts` / `media-response.ts` — byte-range serving and proxying of upstream media. The proxy only accepts stored source records, never arbitrary URLs.
 

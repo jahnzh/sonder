@@ -43,6 +43,7 @@ import { registerAppearance } from "./appearance.ts";
 import { registerAccountRequests } from "./account-requests.ts";
 import { registerInvites } from "./invites.ts";
 import { registerReader } from "./reader.ts";
+import { registerPreparedText } from "./prepared-text-cache.ts";
 import { registerLibraryWorks, workMetadata } from "./library-works.ts";
 import { chapterOverrides, registerRecordingChapterRoutes } from "./recording-chapters.ts";
 import { registerMetadataMatchRoutes, retryMetadataMatch } from "./metadata-match.ts";
@@ -368,6 +369,7 @@ export async function createApp(options?: {
   registerEbookSetRoutes(app);
   registerAppearance(app);
   registerReader(app);
+  registerPreparedText(app);
   // The background loops start in this order and stop in reverse when the app closes (ADR 0010).
   const background = backgroundRunner(app, options?.background);
   registerAlignment(app); // adds the alignment loop
