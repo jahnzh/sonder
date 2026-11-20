@@ -311,6 +311,20 @@ export async function bookWithPlaces(id: string, log?: Log) {
   if (places !== null) log?.info({ edition: id, places }, "reader: the book is cut by another block rule; places saved in its standard cut were moved");
   return { book, recut };
 }
+/**
+ * A place a device sends, as a place in the book's cut; null when it is in neither cut. In a book cut by another
+ * rule (ADR 0026) a device that read on its stored copy still names sentences of the standard cut, and ids of the
+ * two cuts overlap. The place's quote, the start of its sentence, tells them apart: a place whose sentence does not
+ * start with its quote but whose standard-cut sentence does is moved to the sentence that holds it now.
+ */
+export function placeInCut<T extends TextLocator>(book: { sections: ReaderBook["sections"] }, recut: Recut | null, locator: T): T | null {
+  const sentence = book.sections.flatMap((section) => section.paragraphs).find((paragraph) => paragraph.id === locator.paragraphId);
+  if (!recut) return sentence ? locator : null;
+  if (sentence && (!locator.quote || sentence.text.startsWith(locator.quote))) return locator;
+  const old = recut.get(locator.paragraphId);
+  if (!old || !locator.quote || !old.was.startsWith(locator.quote)) return null;
+  return { ...locator, paragraphId: old.id, quote: old.text.slice(0, 300), progression: progressionOf(book, old.id) };
+}
 export function invalidateParsedBook(id: string) {
   cache.delete(id);
 }
@@ -383,17 +397,13 @@ export function registerReader(app: FastifyInstance) {
         resolve: z.boolean().optional(),
       })
       .parse(req.body);
-    const { book } = await bookWithPlaces(id, req.log);
-    if (
-      !book.sections.some((section) =>
-        section.paragraphs.some(
-          (paragraph) => paragraph.id === input.locator.paragraphId,
-        ),
-      )
-    )
+    const { book, recut } = await bookWithPlaces(id, req.log);
+    const locator = placeInCut(book, recut, input.locator);
+    if (!locator)
       throw new Error(
         "This reading position does not belong to this EPUB edition.",
       );
+    input.locator = locator;
     return sqlite.transaction(() => {
       const current = readerCheckpoint(id, currentUserId(req)),
         duplicate = sqlite
@@ -441,15 +451,10 @@ export function registerReader(app: FastifyInstance) {
         locator: locatorSchema,
       })
       .parse(req.body);
-    const { book } = await bookWithPlaces(id, req.log);
-    if (
-      !book.sections.some((section) =>
-        section.paragraphs.some(
-          (paragraph) => paragraph.id === input.locator.paragraphId,
-        ),
-      )
-    )
-      throw new Error("This bookmark does not belong to this edition.");
+    const { book, recut } = await bookWithPlaces(id, req.log);
+    const locator = placeInCut(book, recut, input.locator);
+    if (!locator) throw new Error("This bookmark does not belong to this edition.");
+    input.locator = locator;
     sqlite
       .prepare(
         "INSERT INTO user_reader_bookmarks(user_id,id,edition_id,label,locator,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(user_id,id) DO UPDATE SET label=excluded.label,locator=excluded.locator WHERE edition_id=excluded.edition_id",

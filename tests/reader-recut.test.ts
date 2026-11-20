@@ -127,11 +127,54 @@ test("places saved in the standard cut are carried over to the same text, once",
   const second = await read();
   assert.deepEqual(second.checkpoint, first.checkpoint);
   assert.deepEqual(second.bookmarks, first.bookmarks);
-  // A place saved after the change is in the new cut and is never touched.
-  const saved = await app.inject({ method: "PUT", url: `/api/reader/${id}/progress`, payload: { locator: locator("0:5", "x"), baseRevision: 4, eventId: "event-two-2", deviceId: "device-1", updatedAt: Date.now() } });
-  assert.equal(saved.statusCode, 200, saved.body);
-  invalidateParsedBook(id);
-  assert.equal((await read()).checkpoint.locator.paragraphId, "0:5");
+});
+
+test("a place sent on the old cut after the change lands on its own text, or is refused", async () => {
+  // A device that read on its stored copy of the book still names sentences of the standard cut (#821, finding 1).
+  const id = await edition("recut-late", [divChapter, looseChapter]);
+  const book = (await app.inject({ method: "GET", url: `/api/reader/${id}` })).json();
+  const all: { id: string; text: string }[] = book.sections.flatMap((section: { paragraphs: { id: string; text: string }[] }) => section.paragraphs);
+  const textOf = (paragraphId: string) => all.find((sentence) => sentence.id === paragraphId)!.text;
+  let revision = 0;
+  const send = async (paragraphId: string, quote: string | undefined, eventId: string) => {
+    const response = await app.inject({ method: "PUT", url: `/api/reader/${id}/progress`, payload: { locator: { section: Number(paragraphId.split(":")[0]), paragraphId, ...(quote === undefined ? {} : { quote }), progression: 0.4 }, baseRevision: revision, eventId, deviceId: "device-1", updatedAt: Date.now() } });
+    if (response.statusCode === 200) revision = response.json().checkpoint.revision;
+    return response;
+  };
+  // 0:2 was the quotation in the standard cut; in the new cut 0:2 is a sentence of the first paragraph.
+  assert.equal(textOf("0:2"), "Nobody on the quay looked up from the nets.");
+  const moved = (await send("0:2", "A quoted line stands here.", "event-late-1")).json().checkpoint.locator;
+  assert.notEqual(moved.paragraphId, "0:2");
+  assert.equal(textOf(moved.paragraphId), "A quoted line stands here.");
+  assert.equal(moved.quote, "A quoted line stands here.");
+  assert.equal(moved.progression, all.findIndex((sentence) => sentence.id === moved.paragraphId) / (all.length - 1));
+  // In the chapter read as one block the old heading is inside a sentence: the place goes to that sentence.
+  const inside = (await send("1:1", "Low water", "event-late-2")).json().checkpoint.locator;
+  assert.match(textOf(inside.paragraphId), /Low water The night tide/);
+  // A place of the new cut is stored as it was sent, also where the old cut had the same id.
+  const kept = (await send("0:2", textOf("0:2"), "event-late-3")).json().checkpoint.locator;
+  assert.deepEqual([kept.paragraphId, kept.progression], ["0:2", 0.4]);
+  assert.equal((await send("0:7", undefined, "event-late-4")).json().checkpoint.locator.paragraphId, "0:7", "a place without a quote is taken by its id");
+  // An id whose text is neither cut's is refused, as an unknown id is.
+  for (const [paragraphId, quote] of [["0:2", "Words that are in neither cut."], ["0:9", "A quoted line stands here."], ["9:9", "x"]] as const) {
+    const refused = await send(paragraphId, quote, `event-late-refused-${paragraphId}`);
+    assert.equal(refused.statusCode, 400, `${paragraphId} ${quote}`);
+    assert.equal(refused.json().error, "This reading position does not belong to this EPUB edition.");
+  }
+  // A bookmark sent the same way is stored on its own text.
+  const bookmark = await app.inject({ method: "POST", url: `/api/reader/${id}/bookmarks`, payload: { id: "bookmark-late", label: "Wall", locator: { section: 0, paragraphId: "0:1", quote: "The harbour wall", progression: 0.1 } } });
+  assert.equal(bookmark.statusCode, 200, bookmark.body);
+  assert.equal(textOf(bookmark.json().locator.paragraphId), "The harbour wall");
+  const stored = JSON.parse((sqlite.prepare("SELECT locator FROM user_reader_bookmarks WHERE id='bookmark-late'").get() as { locator: string }).locator);
+  assert.equal(stored.paragraphId, bookmark.json().locator.paragraphId);
+  assert.equal((await app.inject({ method: "POST", url: `/api/reader/${id}/bookmarks`, payload: { id: "bookmark-wrong", label: "No", locator: { section: 0, paragraphId: "0:2", quote: "Words that are in neither cut.", progression: 0.1 } } })).statusCode, 400);
+});
+
+test("a normal book takes a place by its id alone, whatever its quote, as before", async () => {
+  const id = await edition("recut-normal-place", [prose("summer", 5).map((text) => `<p>${text}</p>`).join(""), `<p>Second chapter.</p>`]);
+  const response = await app.inject({ method: "PUT", url: `/api/reader/${id}/progress`, payload: { locator: { section: 0, paragraphId: "0:3", quote: "Any words at all.", progression: 0.2 }, baseRevision: 0, eventId: "event-normal-place", deviceId: "device-1", updatedAt: Date.now() } });
+  assert.equal(response.statusCode, 200, response.body);
+  assert.deepEqual(response.json().checkpoint.locator, { section: 0, paragraphId: "0:3", quote: "Any words at all.", progression: 0.2 });
 });
 
 test("a normal book's saved places are never touched", async () => {
