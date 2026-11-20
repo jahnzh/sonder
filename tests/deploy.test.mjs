@@ -104,6 +104,7 @@ function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", t
   ].join("\n"));
   const times = join(dir, "health-times");
   const asked = join(dir, "health-asked.log");
+  const ended = join(dir, "health-ended.log");
   writeFileSync(times, healthTimes.join("\n") + "\n");
   // Each request takes the next answer time; only a request that asks for the time (-w) uses one up.
   stub(bin, "curl", [
@@ -111,6 +112,8 @@ function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", t
     `next=$(head -n 1 ${JSON.stringify(times)})`,
     `if [ "$(wc -l < ${JSON.stringify(times)})" -gt 1 ]; then sed -i 1d ${JSON.stringify(times)}; fi`,
     `echo "$next" >> ${JSON.stringify(asked)}`,
+    // When each request ended, in milliseconds: a test measures a stretch by the clock, not by how many requests fit in it.
+    `date +%s%3N >> ${JSON.stringify(ended)}`,
     `[ "$next" = fail ] && exit 7`,
     `printf %s "$next"`,
   ].join("\n"));
@@ -133,7 +136,8 @@ function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", t
   const ran = () => everything().filter((line) => !line.startsWith("prepare-library.sh"));
   const dockerCalls = () => { try { return readFileSync(calls, "utf8").split("\n").filter(Boolean); } catch { return []; } };
   const healthAsked = () => { try { return readFileSync(asked, "utf8").split("\n").filter(Boolean); } catch { return []; } };
-  return { dir, run, runProd, ran, everything, dockerCalls, healthAsked };
+  const healthEnded = () => { try { return readFileSync(ended, "utf8").split("\n").filter(Boolean).map(Number); } catch { return []; } };
+  return { dir, run, runProd, ran, everything, dockerCalls, healthAsked, healthEnded };
 }
 
 test("production dry run lists the image smoke before the swap", () => {
@@ -511,13 +515,19 @@ test("a slow answer or one that does not come starts the stretch again", () => {
   // Quick, slow, quick, none, then quick for good: the stretch that counts begins after the request without an answer.
   const f = fixture({ "verify-a.mjs": 0 }, { healthTimes: ["0.010", "0.900", "0.010", "fail", "0.010"] });
   try {
-    const r = f.run(["--no-marker"], SETTLE);
+    // Measured by the clock and not by how many requests fit into the second, which depends on the host's load
+    // (#837). Requests 0.4 s apart and a ceiling far away: a loaded host only makes the run longer.
+    const r = f.run(["--no-marker"], { ...SETTLE, SONDER_DEPLOY_SETTLE_INTERVAL: "0.4", SONDER_DEPLOY_SETTLE_CEILING: "60" });
     assert.equal(r.status, 0, r.stderr + r.stdout);
     assert.match(r.stdout, /settled:/);
     const asked = f.healthAsked();
     assert.deepEqual(asked.slice(0, 5), ["0.010", "0.900", "0.010", "fail", "0.010"]);
-    // After the fourth request at least a second of quick answers, 0.2 s apart, is needed.
-    assert.ok(asked.length >= 4 + 5, asked.join(" "));
+    // The stretch of one second begins at the fifth request, the first quick one after the request without an
+    // answer. Had it begun at the third (the stretch not started again), it would have ended at most 0.2 s after
+    // the fifth, since the fourth and fifth each came 0.4 s later.
+    const ended = f.healthEnded();
+    assert.equal(ended.length, asked.length);
+    assert.ok(ended.at(-1) - ended[4] >= 600, `the last request ended ${ended.at(-1) - ended[4]} ms after the fifth: ${asked.join(" ")}`);
     assert.deepEqual(f.ran(), ["verify-a.mjs"]);
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
 });
