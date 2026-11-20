@@ -111,6 +111,20 @@ history_check_result
   }
 });
 
+test("history_check_result is pass_with_flaky when the report passed on failures that passed alone (#792)", () => {
+  const flaky = runHelper(`
+RESULT=passed
+echo '{"ok":true,"result":"passed_with_flaky"}' >"$LOCAL_REPORT_DIR/report.json"
+history_check_result
+`);
+  try {
+    assert.equal(flaky.status, 0, flaky.out);
+    assert.match(flaky.out.trim().split("\n").at(-1), /^pass_with_flaky$/);
+  } finally {
+    flaky.cleanup();
+  }
+});
+
 test("a dispatch id with shell metacharacters is rejected by requireId, no command run, exit unchanged, one warning", () => {
   const dir = mkdtempSync(join(tmpdir(), "ci-history-meta-"));
   const historyLog = join(dir, "history.log");

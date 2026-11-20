@@ -42,12 +42,11 @@ timeout 4 bash -c 'exec 3<>/dev/tcp/127.0.0.1/4399'; echo $?   # prints 1, not 1
 
 Known host failures (issue #37) are listed in `tests/known-failures.wsl-host.json`:
 
-- **Chromium (1 test)**: the touch-seek test in `playback-workflow.spec.ts`.
-- **Intermittent (2 tests)**: the 409 test in `reader-theme.spec.ts`, and `users.spec.ts`.
-- **Reader ordering flakes (2 tests, added 2026-11-15)**: `integrated-reader.spec.ts` "following narration on desktop never paints another page on the way" (#369) and "back to narration right after a Contents navigation keeps following" (#407). Both failed on lisa in checks of a branch that changes only server code. Remove each entry when its issue closes; ADR 0014 (#390) moves these rules into a unit-tested module.
+- **Chromium (2 tests)**: the touch-seek test in `playback-workflow.spec.ts` (#37) and the failed event probe test in `reader-frame.spec.ts` (#145). Both fail on every WSL run.
+- The intermittent entries (the 409 test in `reader-theme.spec.ts`, the WebKit long-press in `reader-frame.spec.ts`, and the reader ordering flakes #369 and #407) were removed on 2026-11-20 (#792): a failing test that is not listed is rerun alone, and one that passes then is reported as `flaky (passed alone)` without failing the check.
 - The file itself is the full list; this section names only some entries.
 
-`scripts/ci-ssh.sh` passes that file to `npm run check -- --known-failures` by default, so a WSL run with only those failures is `passed_with_known_failures` and the report includes a `knownFailures` entry. Override the path with `SONDER_CI_KNOWN_FAILURES` (a relative repository path). For a hand-run `npm run check` on the host, pass `--known-failures tests/known-failures.wsl-host.json` yourself.
+`scripts/ci-ssh.sh` passes that file to `npm run check -- --known-failures` by default, so a WSL run with only those failures is `passed_with_known_failures` (or `passed_with_flaky` when other failures passed alone) and the report includes a `knownFailures` entry. Override the path with `SONDER_CI_KNOWN_FAILURES` (a relative repository path). For a hand-run `npm run check` on the host, pass `--known-failures tests/known-failures.wsl-host.json` yourself.
 
 ## Stopping a run
 

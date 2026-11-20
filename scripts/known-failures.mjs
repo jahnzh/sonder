@@ -129,6 +129,8 @@ export function collectPlaywrightTests(report) {
           project: test.projectName,
           file: repoPath(spec.file),
           title,
+          // spec.line is the test's line in its file; a rerun selects the test with `file:line`.
+          line: Number.isInteger(spec.line) && spec.line > 0 ? spec.line : null,
           status: test.status,
           failed,
           interrupted,
@@ -220,7 +222,7 @@ export function classifyBrowserRun({ entries, report, reportError = null, stageE
   const stagePassed = stageExitCode === 0 && !stageSignal;
   const signalError = stageSignal ? `browser stage was stopped by ${stageSignal}` : null;
 
-  const empty = { knownFailures: [], newFailures: [], listedPassed: [], listedNotRun: [] };
+  const empty = { knownFailures: [], newFailures: [], flaky: [], listedPassed: [], listedNotRun: [] };
   if (!collected.ok) {
     return {
       ...empty,
@@ -240,7 +242,7 @@ export function classifyBrowserRun({ entries, report, reportError = null, stageE
     // An interrupted test did not finish: it is never a known failure, even if it is listed.
     const entry = failure.interrupted ? null : listed.get(entryKey(failure.project, failure.file, failure.title));
     if (entry) knownFailures.push({ ...entry, message: failure.message });
-    else newFailures.push({ project: failure.project, file: failure.file, title: failure.title, message: failure.message });
+    else newFailures.push({ project: failure.project, file: failure.file, title: failure.title, line: failure.line, message: failure.message });
   }
 
   const listedPassed = [];
@@ -250,7 +252,7 @@ export function classifyBrowserRun({ entries, report, reportError = null, stageE
     if (outcome === "passed" || outcome === "flaky") listedPassed.push({ ...entry, outcome });
     else if (outcome === "not_run" || outcome === "skipped") listedNotRun.push({ ...entry, outcome });
   }
-  const parts = { knownFailures, newFailures, listedPassed, listedNotRun };
+  const parts = { knownFailures, newFailures, flaky: [], listedPassed, listedNotRun };
 
   if (stagePassed) {
     return { ...parts, result: "passed", error: null, summary: summarize("passed", parts, null) };
@@ -275,7 +277,7 @@ export function classifyBrowserRun({ entries, report, reportError = null, stageE
   return { ...parts, result, error, summary: summarize(result, parts, error) };
 }
 
-function summarize(result, { knownFailures, newFailures, listedPassed, listedNotRun }, error) {
+function summarize(result, { knownFailures, newFailures, flaky = [], listedPassed, listedNotRun }, error) {
   const byKind = KNOWN_FAILURE_KINDS
     .map((kind) => [kind, knownFailures.filter((f) => f.kind === kind).length])
     .filter(([, count]) => count > 0)
@@ -283,7 +285,128 @@ function summarize(result, { knownFailures, newFailures, listedPassed, listedNot
   const known = `${knownFailures.length} known failure${knownFailures.length === 1 ? "" : "s"}${byKind.length ? ` (${byKind.join(", ")})` : ""}`;
   const stale = `${listedPassed.length} listed test${listedPassed.length === 1 ? "" : "s"} passed`
     + (listedNotRun.length ? `, ${listedNotRun.length} not run` : "");
-  return `${result}: ${known}, ${newFailures.length} new; ${stale}${error ? `; ${error}` : ""}`;
+  return `${result}: ${known}, ${newFailures.length} new, ${flaky.length} flaky (passed alone); ${stale}${error ? `; ${error}` : ""}`;
+}
+
+// --- Rerun alone (#792) -----------------------------------------------------------------------
+// A full-suite failure that is not listed is rerun once on its own (one worker, same project) before it
+// is called a failure: under load many tests fail that pass alone. The rerun is bounded so a broken
+// build with many failures does not rerun the suite test by test.
+
+export const DEFAULT_MAX_RERUNS = 12;
+
+/**
+ * Which failures of a classified browser run to rerun alone. Only a run that failed on unlisted tests
+ * and whose report accounts for every failure is rerun; above `max` failures, or with `max` 0, none is.
+ * Returns `{ tests, skipped }`: `skipped` says why nothing is rerun when there were candidates.
+ */
+export function planReruns(gate, { max = DEFAULT_MAX_RERUNS } = {}) {
+  if (!gate || gate.result !== "failed" || gate.error || gate.newFailures.length === 0) {
+    return { tests: [], skipped: null };
+  }
+  const count = gate.newFailures.length;
+  if (max <= 0) return { tests: [], skipped: "reruns are off (--max-reruns 0)" };
+  if (count > max) {
+    return { tests: [], skipped: `${count} failures exceed the rerun bound of ${max}, so none was rerun` };
+  }
+  return { tests: gate.newFailures.map((f) => ({ ...f })), skipped: null };
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Playwright arguments that rerun one test alone: one worker, no retries, its own project, the test's
+ * `file:line` (Playwright reads a positional filter as a regular expression, so the path is escaped),
+ * a JSON report, and an output directory of its own so the full run's traces are kept.
+ */
+export function rerunPlaywrightArgs(test, index) {
+  const filter = `${escapeRegExp(test.file)}${test.line ? `:${test.line}` : "$"}`;
+  return [
+    "--workers=1",
+    "--retries=0",
+    `--project=${test.project}`,
+    "--reporter=list,json",
+    `--output=${RERUN_OUTPUT_PREFIX}${index}`,
+    filter,
+  ];
+}
+
+export const RERUN_OUTPUT_PREFIX = "test-results-rerun-";
+
+/**
+ * Fold the reruns into the classification. Each rerun is `{ test, report, reportError }` for one planned
+ * test; it passed alone only if its own report shows that (project, file, title) as passed. A test that
+ * passed alone is `flaky` and keeps its first error; one that failed again, or that the rerun did not run
+ * or report, stays a new failure. With no new failure left the result is `passed_with_flaky`.
+ */
+export function applyReruns(gate, reruns) {
+  const flaky = [];
+  const failedAgain = [];
+  for (const { test, report, reportError } of reruns) {
+    const collected = report ? collectPlaywrightTests(report) : { ok: false, error: reportError ?? "Playwright JSON report was not written" };
+    const key = entryKey(test.project, test.file, test.title);
+    const alone = collected.ok ? collected.tests.find((t) => entryKey(t.project, t.file, t.title) === key) : null;
+    if (alone && !alone.failed && alone.status === "expected") {
+      flaky.push({ project: test.project, file: test.file, title: test.title, firstError: test.message });
+    } else {
+      const rerunError = !collected.ok ? collected.error
+        : !alone ? "the rerun did not run this test"
+        : alone.message || `rerun ended ${alone.status}`;
+      failedAgain.push({ ...test, rerunError });
+    }
+  }
+  const rerunKeys = new Set(reruns.map(({ test }) => entryKey(test.project, test.file, test.title)));
+  const notRerun = gate.newFailures.filter((f) => !rerunKeys.has(entryKey(f.project, f.file, f.title)));
+  const newFailures = [...failedAgain, ...notRerun];
+  const result = gate.error || newFailures.length > 0 ? "failed"
+    : flaky.length > 0 ? "passed_with_flaky"
+    : gate.knownFailures.length > 0 ? "passed_with_known_failures" : "failed";
+  const parts = { ...gate, newFailures, flaky };
+  return { ...parts, result, summary: summarize(result, parts, gate.error) };
+}
+
+function testLine({ project, file, title }, detail) {
+  return `  ${project} ${file} › ${title}${detail ? ` — ${detail}` : ""}`;
+}
+
+/**
+ * The browser part of the check's printed summary: the headline, then one line per test under
+ * "new failures", "flaky (passed alone)" and "known", in that order, never more than `maxLines`.
+ */
+export function browserSummaryLines(gate, { maxLines = 29 } = {}) {
+  const lines = [gate.summary];
+  const sections = [
+    ["new failures", gate.newFailures, (f) => f.rerunError ?? f.message],
+    ["flaky (passed alone)", gate.flaky ?? [], (f) => f.firstError],
+    ["known", gate.knownFailures, (f) => `${f.kind}${f.issue ? ` #${f.issue}` : ""}`],
+  ];
+  for (const [label, tests, detail] of sections) {
+    if (tests.length === 0) continue;
+    lines.push(`${label} (${tests.length}):`);
+    for (const test of tests) lines.push(testLine(test, String(detail(test) ?? "").slice(0, 160)));
+  }
+  if (lines.length <= maxLines) return lines;
+  const kept = lines.slice(0, maxLines - 1);
+  kept.push(`  ... and ${lines.length - kept.length} more lines (report.json has every test)`);
+  return kept;
+}
+
+/**
+ * Read a rerun's Playwright JSON report from disk: `{ report, reportError }`.
+ */
+export function readPlaywrightReport(reportPath) {
+  try {
+    return { report: JSON.parse(fs.readFileSync(reportPath, "utf8")), reportError: null };
+  } catch (error) {
+    return {
+      report: null,
+      reportError: error.code === "ENOENT"
+        ? "Playwright JSON report was not written"
+        : `Playwright JSON report is unreadable: ${error.message}`,
+    };
+  }
 }
 
 /**

@@ -3,9 +3,9 @@
 # / RESULT / FULL_SHA are in scope. Callers must define log().
 #
 # history_check_result maps report.json + RESULT → pass | pass_with_known_failures |
-# fail | aborted | unknown. A shell RESULT of remote_check_failed|failed always wins
+# pass_with_flaky | fail | aborted | unknown. A shell RESULT of remote_check_failed|failed always wins
 # as fail. A missing report falls back to the RESULT mapping. pass_with_known_failures
-# only comes from the report's result field.
+# and pass_with_flaky only come from the report's result field.
 #
 # record_history_check <name> records when SONDER_CI_DISPATCH is set. An id that
 # fails the same allowlist as orca-history requireId is rejected with one warning
@@ -25,7 +25,7 @@ history_check_result() {
   if [[ -f $report ]]; then
     mapped=$(node -e '
       const r = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
-      const fromResult = { passed: "pass", passed_with_known_failures: "pass_with_known_failures", failed: "fail", aborted: "aborted" }[r.result];
+      const fromResult = { passed: "pass", passed_with_known_failures: "pass_with_known_failures", passed_with_flaky: "pass_with_flaky", failed: "fail", aborted: "aborted" }[r.result];
       if (fromResult) { process.stdout.write(fromResult); process.exit(0); }
       if (r.ok === false) { process.stdout.write("fail"); process.exit(0); }
       process.stdout.write("unknown");

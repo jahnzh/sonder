@@ -18,6 +18,7 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
     silent: false,
     bail: false,
     full: false,
+    maxReruns: null,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -57,6 +58,14 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
       const val = arg.slice("--known-failures=".length);
       if (!val) return { ok: false, error: "Missing required value for --known-failures option" };
       options.knownFailures = val;
+    } else if (arg === "--max-reruns" || arg.startsWith("--max-reruns=")) {
+      const inline = arg.startsWith("--max-reruns=");
+      if (!inline && (i + 1 >= argv.length || argv[i + 1].startsWith("--"))) {
+        return { ok: false, error: "Missing required value for --max-reruns option" };
+      }
+      const val = inline ? arg.slice("--max-reruns=".length) : argv[++i];
+      if (!/^\d+$/.test(val)) return { ok: false, error: "--max-reruns must be a whole number" };
+      options.maxReruns = Number(val);
     } else {
       return { ok: false, error: `Unknown argument "${arg}"` };
     }
@@ -862,6 +871,15 @@ export function preserveArtifacts(disposableDir, outputDir) {
   ];
 
   fs.mkdirSync(outputDir, { recursive: true });
+
+  // Each rerun of a failing browser test alone (#792) writes its own test-results-rerun-<n>.
+  try {
+    for (const name of fs.readdirSync(disposableDir).sort()) {
+      if (/^test-results-rerun-\d+$/.test(name)) candidateDirs.push(name);
+    }
+  } catch {
+    // no snapshot directory: nothing to preserve
+  }
 
   for (const dirName of candidateDirs) {
     const src = path.join(disposableDir, dirName);

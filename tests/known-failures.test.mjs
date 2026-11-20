@@ -11,6 +11,11 @@ import {
   validateKnownFailures,
   collectPlaywrightTests,
   slowestPlaywrightTests,
+  planReruns,
+  rerunPlaywrightArgs,
+  applyReruns,
+  browserSummaryLines,
+  DEFAULT_MAX_RERUNS,
 } from "../scripts/known-failures.mjs";
 import { playwrightReport, knownFailuresDocument } from "./playwright-report-fixture.mjs";
 
@@ -21,7 +26,6 @@ const SEEK = "tests/e2e/playback-workflow.spec.ts";
 /** Every triple here must stay in tests/known-failures.wsl-host.json; the file may add more. */
 const WSL_HOST_REQUIRED_ENTRIES = [
     {project: "chromium", file: "tests/e2e/playback-workflow.spec.ts", title: "touch seeking › releasing a fine-seek gesture keeps the exact previewed destination"},
-    {project: "chromium", file: "tests/e2e/reader-theme.spec.ts", title: "a 409 with no server checkpoint rebases to revision 0 and saves instead of looping"},
     {project: "chromium", file: "tests/e2e/reader-frame.spec.ts", title: "a failed event probe enables scripts while the content defences still block them"},
 ];
 
@@ -184,6 +188,10 @@ test("the committed WSL host list is valid and does not mask reader regressions"
             `known-failures.wsl-host.json is missing ${required.project} ${required.file}: ${required.title}`,
         );
     }
+    // An intermittent failure is rerun alone and reported as flaky (#792); listing it would only hide a test
+    // that fails twice. The list keeps the failures that fail on the host every time.
+    assert.deepEqual(loaded.entries.filter((e) => e.kind === "intermittent").map((e) => e.title), [],
+        "intermittent failures belong to the rerun, not the WSL host list");
     for (const project of ["chromium", "firefox"]) {
         const gesture = t(project, "tests/e2e/reader-frame.spec.ts", "taps, page turns and long-press on the book page reach the reader", "unexpected");
         const outcome = classifyBrowserRun({entries: loaded.entries, report: playwrightReport([gesture]), stageExitCode: 1});
@@ -292,4 +300,131 @@ test("slowestPlaywrightTests returns the longest 10 and keeps the max duration a
     // 12 distinct tests after merging the two "b" runs; the 10th is extra 3 at 30ms.
     assert.equal(ranked.tests.at(-1).durationMs, 30);
     assert.equal(ranked.tests.at(-1).title, "extra 3");
+});
+
+// --- Rerun alone (#792) ------------------------------------------------------------------------
+
+const READER = "tests/e2e/reader-frame.spec.ts";
+const failing = (project, file, title, line) => ({project, file, title, status: "unexpected", line});
+const passing = (project, file, title, line) => ({project, file, title, status: "expected", line});
+/** One rerun's input to applyReruns: its planned test and the report the rerun alone wrote. */
+const rerun = (test, report) => ({test, report, reportError: report ? null : "Playwright JSON report was not written"});
+
+test("rerun: a test that fails in the suite and passes alone is flaky, keeps its first error, and the run passes", () => {
+    const gate = classifyBrowserRun({entries: [], report: playwrightReport([
+        failing("chromium", READER, "long-press reaches a sentence", 125),
+        passing("chromium", SPEC, "reset refreshes the app shell", 20),
+    ]), stageExitCode: 1});
+    assert.equal(gate.result, "failed");
+    const plan = planReruns(gate);
+    assert.equal(plan.skipped, null);
+    assert.deepEqual(plan.tests.map((x) => [x.project, x.file, x.title, x.line]), [["chromium", READER, "long-press reaches a sentence", 125]]);
+    const outcome = applyReruns(gate, [rerun(plan.tests[0], playwrightReport([passing("chromium", READER, "long-press reaches a sentence", 125)]))]);
+    assert.equal(outcome.result, "passed_with_flaky");
+    assert.deepEqual(outcome.newFailures, []);
+    assert.deepEqual(outcome.flaky, [{project: "chromium", file: READER, title: "long-press reaches a sentence", firstError: "Error: expected 1"}]);
+    assert.match(outcome.summary, /^passed_with_flaky: 0 known failures, 0 new, 1 flaky \(passed alone\)/);
+});
+
+test("rerun: a test that fails again alone stays a new failure and keeps the run red", () => {
+    const gate = classifyBrowserRun({entries: [], report: playwrightReport([
+        failing("chromium", READER, "long-press reaches a sentence", 125),
+        failing("webkit", SPEC, "reset refreshes the app shell", 20),
+    ]), stageExitCode: 1});
+    const plan = planReruns(gate);
+    assert.equal(plan.tests.length, 2);
+    const outcome = applyReruns(gate, [
+        rerun(plan.tests[0], playwrightReport([passing("chromium", READER, "long-press reaches a sentence", 125)])),
+        rerun(plan.tests[1], playwrightReport([failing("webkit", SPEC, "reset refreshes the app shell", 20)])),
+    ]);
+    assert.equal(outcome.result, "failed");
+    assert.deepEqual(outcome.newFailures.map((f) => [f.project, f.title, f.rerunError]), [["webkit", "reset refreshes the app shell", "Error: expected 1"]]);
+    assert.deepEqual(outcome.flaky.map((f) => f.title), ["long-press reaches a sentence"]);
+});
+
+test("rerun: a rerun without a report, or whose report lacks the test, is not a pass", () => {
+    const gate = classifyBrowserRun({entries: [], report: playwrightReport([failing("chromium", READER, "long-press reaches a sentence", 125)]), stageExitCode: 1});
+    const [planned] = planReruns(gate).tests;
+    for (const [name, input, pattern] of [
+        ["no report", rerun(planned, null), /not written/],
+        ["other test only", rerun(planned, playwrightReport([passing("chromium", READER, "another test", 125)])), /did not run this test/],
+        ["other project", rerun(planned, playwrightReport([passing("firefox", READER, "long-press reaches a sentence", 125)])), /did not run this test/],
+        ["skipped alone", rerun(planned, playwrightReport([{...passing("chromium", READER, "long-press reaches a sentence", 125), status: "skipped"}])), /skipped/],
+    ]) {
+        const outcome = applyReruns(gate, [input]);
+        assert.equal(outcome.result, "failed", name);
+        assert.match(outcome.newFailures[0].rerunError, pattern, name);
+    }
+});
+
+test("rerun: above the bound nothing is rerun and the run fails as before", () => {
+    assert.equal(DEFAULT_MAX_RERUNS, 12);
+    const many = (count) => classifyBrowserRun({entries: [], report: playwrightReport(
+        Array.from({length: count}, (_, i) => failing("chromium", SPEC, `test ${i}`, 10 + i))), stageExitCode: 1});
+    assert.equal(planReruns(many(12)).tests.length, 12, "exactly the bound is still rerun");
+    const over = planReruns(many(13));
+    assert.deepEqual(over.tests, []);
+    assert.match(over.skipped, /13 failures exceed the rerun bound of 12/);
+    assert.deepEqual(planReruns(many(3), {max: 2}).tests, []);
+    assert.match(planReruns(many(1), {max: 0}).skipped, /off/);
+});
+
+test("rerun: only unlisted failures of a report that accounts for them are rerun", () => {
+    const listedOnly = classifyBrowserRun({entries, report: playwrightReport([failing("webkit", SPEC, "reset refreshes the app shell", 20)]), stageExitCode: 1});
+    assert.equal(listedOnly.result, "passed_with_known_failures");
+    assert.deepEqual(planReruns(listedOnly), {tests: [], skipped: null});
+    const runLevel = classifyBrowserRun({entries: [], report: playwrightReport([failing("chromium", READER, "x", 5)], {errors: [{message: "webServer exited"}]}), stageExitCode: 1});
+    assert.deepEqual(planReruns(runLevel).tests, [], "a run-level error is never rerun away");
+    const interrupted = classifyBrowserRun({entries: [], report: playwrightReport([{project: "chromium", file: READER, title: "x", status: "interrupted"}]), stageExitCode: 1});
+    assert.deepEqual(planReruns(interrupted).tests, []);
+    const mixed = classifyBrowserRun({entries, report: playwrightReport([
+        failing("webkit", SPEC, "reset refreshes the app shell", 20),
+        failing("chromium", READER, "long-press reaches a sentence", 125),
+    ]), stageExitCode: 1});
+    const plan = planReruns(mixed);
+    assert.deepEqual(plan.tests.map((x) => x.title), ["long-press reaches a sentence"]);
+    const outcome = applyReruns(mixed, [rerun(plan.tests[0], playwrightReport([passing("chromium", READER, "long-press reaches a sentence", 125)]))]);
+    assert.equal(outcome.result, "passed_with_flaky", "known plus flaky passes, named as flaky");
+    assert.equal(outcome.knownFailures.length, 1);
+    assert.equal(outcome.flaky.length, 1);
+});
+
+test("rerun: the Playwright arguments run one test alone in its own project", () => {
+    assert.deepEqual(rerunPlaywrightArgs({project: "mobile-chrome", file: "tests/e2e/reader-frame.spec.ts", line: 125}, 3), [
+        "--workers=1", "--retries=0", "--project=mobile-chrome", "--reporter=list,json",
+        "--output=test-results-rerun-3", "tests/e2e/reader-frame\\.spec\\.ts:125",
+    ]);
+    assert.equal(rerunPlaywrightArgs({project: "chromium", file: "tests/e2e/a.spec.ts", line: null}, 1).at(-1), "tests/e2e/a\\.spec\\.ts$");
+});
+
+test("rerun: the summary lists new, flaky and known with one line per test, under 30 lines", () => {
+    const gate = classifyBrowserRun({entries, report: playwrightReport([
+        failing("webkit", SPEC, "reset refreshes the app shell", 20),
+        failing("chromium", READER, "passes alone", 30),
+        failing("chromium", READER, "fails again", 40),
+    ]), stageExitCode: 1});
+    const plan = planReruns(gate);
+    const outcome = applyReruns(gate, [
+        rerun(plan.tests[0], playwrightReport([passing("chromium", READER, "passes alone", 30)])),
+        rerun(plan.tests[1], playwrightReport([failing("chromium", READER, "fails again", 40)])),
+    ]);
+    assert.deepEqual(browserSummaryLines(outcome), [
+        outcome.summary,
+        "new failures (1):",
+        `  chromium ${READER} › fails again — Error: expected 1`,
+        "flaky (passed alone) (1):",
+        `  chromium ${READER} › passes alone — Error: expected 1`,
+        "known (1):",
+        `  webkit ${SPEC} › reset refreshes the app shell — environment #37`,
+    ]);
+    const crowded = classifyBrowserRun({entries: [], report: playwrightReport(
+        Array.from({length: 40}, (_, i) => failing("chromium", SPEC, `test ${i}`, i + 1))), stageExitCode: 1});
+    const lines = browserSummaryLines(crowded);
+    assert.equal(lines.length, 29);
+    assert.match(lines.at(-1), /and 14 more lines/);
+});
+
+test("collectPlaywrightTests keeps each test's line so the rerun can select it", () => {
+    const collected = collectPlaywrightTests(playwrightReport([failing("chromium", READER, "x", 77), passing("chromium", READER, "y", undefined)]));
+    assert.deepEqual(collected.tests.map((x) => x.line), [77, 11]);
 });

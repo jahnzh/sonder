@@ -13,7 +13,7 @@ const UNKNOWN = "unknown";
 const MAX_TRANSCRIPT_PAGES = 200;
 const PAGE_LIMIT = 50;
 const LINK_KINDS = ["fix_of", "review_of", "retry_of"];
-const CHECK_RESULTS = ["pass", "pass_with_known_failures", "fail", "aborted", "unknown"];
+const CHECK_RESULTS = ["pass", "pass_with_known_failures", "pass_with_flaky", "fail", "aborted", "unknown"];
 const SEVERITIES = ["blocking", "high", "medium", "low"];
 const AGENT_VERSION_COMMANDS = { claude: ["claude", "--version"], cursor: ["agent", "--version"], antigravity: ["agy", "--version"], codex: ["codex", "--version"] };
 const SECRET_ENV_NAME = /KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL/i;
@@ -575,7 +575,7 @@ function recordCheck(store, options, env, now) {
     } catch (error) {
       throw new HistoryError(`cannot read the check report: ${error.message}`);
     }
-    const mapped = { passed: "pass", passed_with_known_failures: "pass_with_known_failures", failed: "fail", aborted: "aborted" }[report.result] ?? UNKNOWN;
+    const mapped = { passed: "pass", passed_with_known_failures: "pass_with_known_failures", passed_with_flaky: "pass_with_flaky", failed: "fail", aborted: "aborted" }[report.result] ?? UNKNOWN;
     result = result ?? mapped;
     commit = commit ?? report.sha ?? undefined;
     detail = { reportResult: known(report.result), failedStage: report.failedStage ?? null, knownFailures: report.knownFailures?.summary ?? null };

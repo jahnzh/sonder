@@ -227,6 +227,19 @@ test("missing outcomes and shared usage never count as success or per-worker cos
   }
 });
 
+test("a check that passed with flaky tests counts like one that passed with known failures, below a plain pass (#792)", () => {
+  const box = sandbox();
+  try {
+    putRecord(box.history, { id: "ctx_flaky", outcome: "succeeded", checks: [{ name: "ci:ssh", result: "pass_with_flaky" }] });
+    const store = openStore(box.history);
+    const check = signalContributions(viewRecord(store, store.getRecord("ctx_flaky"))).signals.find((s) => s.name === "check");
+    assert.equal(check.value, 0.25);
+    assert.equal(check.detail, "ci:ssh:pass_with_flaky");
+  } finally {
+    box.cleanup();
+  }
+});
+
 test("an override is not treated as a correctness label in signal contributions", () => {
   const box = sandbox();
   try {

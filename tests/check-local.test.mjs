@@ -82,6 +82,9 @@ let currentStage = '';
 if (argv[0] === 'ci') currentStage = 'ci';
 else if (argv[0] === 'run' && argv[1] === 'build') currentStage = 'build';
 else if (argv[0] === 'test') currentStage = 'test';
+else if (argv[0] === 'run' && argv[1] === 'test:browser' && argv.some((arg) => arg.startsWith('--output=test-results-rerun-'))) {
+  currentStage = 'browser-rerun';
+}
 else if (argv[0] === 'run' && argv[1] === 'test:browser') {
   currentStage = argv.includes('--reporter=list,json') ? 'browser'
     : argv.includes('--repeat-each=2') ? 'browser-changed-repeat' : 'browser-changed-ordered';
@@ -111,6 +114,16 @@ if (currentStage.startsWith('browser') && createTraces) {
 
 if (currentStage === 'browser' && process.env.STUB_NPM_JSON_REPORT && process.env.PLAYWRIGHT_JSON_OUTPUT_NAME) {
   fs.copyFileSync(process.env.STUB_NPM_JSON_REPORT, process.env.PLAYWRIGHT_JSON_OUTPUT_NAME);
+}
+
+// A rerun alone (#792) copies STUB_NPM_RERUN_REPORTS/<project>-<line>.json and fails unless that report has no failure.
+if (currentStage === 'browser-rerun') {
+  const project = (argv.find((arg) => arg.startsWith('--project=')) || '').slice('--project='.length);
+  const line = (argv[argv.length - 1].match(/:(\\d+)$/) || [])[1];
+  const source = process.env.STUB_NPM_RERUN_REPORTS && path.join(process.env.STUB_NPM_RERUN_REPORTS, project + '-' + line + '.json');
+  if (!source || !fs.existsSync(source)) process.exit(1);
+  fs.copyFileSync(source, process.env.PLAYWRIGHT_JSON_OUTPUT_NAME);
+  process.exit(JSON.parse(fs.readFileSync(source, 'utf8')).stats.unexpected > 0 ? 1 : 0);
 }
 
 if (sleepMs > 0 && currentStage === 'ci') {
@@ -1483,6 +1496,155 @@ test("known failures: a malformed list or a missing value stops the run before a
         assert.match(missing.error, /Missing required value for --known-failures/);
     }
     finally {
+        fixture.cleanup();
+    }
+});
+
+// --- Rerun a failing browser test alone (#792) ---------------------------------------------------
+const READER = "tests/e2e/reader-frame.spec.ts";
+/** Writes the full run's report and, per rerun, the report the stub copies for `<project>-<line>`. */
+function writeRerunFixture(fixture, suite, reruns) {
+    const reportFile = path.join(fixture.tempBase, "stub-playwright.json");
+    fs.writeFileSync(reportFile, JSON.stringify(playwrightReport(suite)));
+    const rerunDir = path.join(fixture.tempBase, "reruns");
+    fs.mkdirSync(rerunDir, {recursive: true});
+    for (const test of reruns) {
+        fs.writeFileSync(path.join(rerunDir, `${test.project}-${test.line}.json`), JSON.stringify(playwrightReport([test])));
+    }
+    return {reportFile, env: {...knownFailuresEnv(fixture, reportFile), STUB_NPM_RERUN_REPORTS: rerunDir}};
+}
+const rerunCalls = (fixture) => readNpmLogs(fixture.npmLogPath).filter((log) => log.argv.some((arg) => arg.startsWith("--output=test-results-rerun-")));
+
+test("rerun: a check whose only failures pass alone ends passed_with_flaky, exit 0, and names them", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const {env} = writeRerunFixture(fixture, [
+            {...status("chromium", READER, "long-press reaches a sentence", "unexpected"), line: 125},
+            {...status("firefox", SPEC, "reset refreshes the app shell", "unexpected"), line: 20},
+            status("chromium", SPEC, "reset refreshes the app shell", "expected"),
+        ], [
+            {...status("chromium", READER, "long-press reaches a sentence", "expected"), line: 125},
+            {...status("firefox", SPEC, "reset refreshes the app shell", "expected"), line: 20},
+        ]);
+        const result = await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, STUB_NPM_CREATE_TRACES: "1"}});
+        assert.equal(result.exitCode, 0);
+        assert.equal(result.ok, true);
+        assert.equal(result.report.result, "passed_with_flaky");
+        assert.ok(result.report.artifacts.includes("test-results-rerun-1") && result.report.artifacts.includes("test-results-rerun-2"),
+            "each rerun's traces are kept beside the full run's");
+        assert.equal(fs.readFileSync(path.join(result.outputDir, "test-results-rerun-1", "trace.zip"), "utf8"), "browser-rerun");
+        assert.equal(result.report.failedStage, null);
+        assert.equal(result.report.stages[3].status, "failed", "the stage record keeps the real exit");
+        assert.equal(result.report.stages[3].toleratedBy, "rerun-alone");
+        assert.deepEqual(result.report.browserFailures.flaky.map((f) => [f.project, f.file, f.title, f.firstError]), [
+            ["chromium", READER, "long-press reaches a sentence", "Error: expected 1"],
+            ["firefox", SPEC, "reset refreshes the app shell", "Error: expected 1"],
+        ]);
+        assert.deepEqual(result.report.browserFailures.new, []);
+        assert.match(result.report.browserFailures.summary, /^passed_with_flaky: .*2 flaky \(passed alone\)/);
+        const calls = rerunCalls(fixture);
+        assert.deepEqual(calls.map((log) => log.argv), [
+            ["run", "test:browser", "--", "--workers=1", "--retries=0", "--project=chromium", "--reporter=list,json", "--output=test-results-rerun-1", "tests/e2e/reader-frame\\.spec\\.ts:125"],
+            ["run", "test:browser", "--", "--workers=1", "--retries=0", "--project=firefox", "--reporter=list,json", "--output=test-results-rerun-2", "tests/e2e/device-reset\\.spec\\.ts:20"],
+        ]);
+        assert.equal(calls[0].env.PLAYWRIGHT_JSON_OUTPUT_NAME, path.join(result.outputDir, "playwright-rerun-1.json"));
+        assert.deepEqual(result.report.browserReruns.tests.map((r) => [r.outcome, r.exitCode, r.logFile]), [
+            ["passed_alone", 0, "stage-4-browser-rerun-1.log"],
+            ["passed_alone", 0, "stage-4-browser-rerun-2.log"],
+        ]);
+        assert.ok(fs.existsSync(path.join(result.outputDir, "stage-4-browser-rerun-1.log")));
+        assert.equal(JSON.parse(fs.readFileSync(path.join(result.outputDir, "report.json"), "utf8")).result, "passed_with_flaky");
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+test("rerun: a test failing twice keeps the check red with the stage's exit code", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const {env} = writeRerunFixture(fixture, [
+            {...status("chromium", READER, "long-press reaches a sentence", "unexpected"), line: 125},
+            {...status("chromium", SPEC, "reset refreshes the app shell", "unexpected"), line: 20},
+        ], [
+            {...status("chromium", READER, "long-press reaches a sentence", "expected"), line: 125},
+            {...status("chromium", SPEC, "reset refreshes the app shell", "unexpected"), line: 20},
+        ]);
+        const result = await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, STUB_NPM_FAIL_CODE: "7"}});
+        assert.equal(result.ok, false);
+        assert.equal(result.exitCode, 7);
+        assert.equal(result.report.result, "failed");
+        assert.equal(result.report.failedStage, "browser");
+        assert.equal(result.report.stages[3].toleratedBy, undefined);
+        assert.deepEqual(result.report.browserFailures.new.map((f) => [f.title, f.rerunError]), [["reset refreshes the app shell", "Error: expected 1"]]);
+        assert.deepEqual(result.report.browserFailures.flaky.map((f) => f.title), ["long-press reaches a sentence"]);
+        assert.deepEqual(result.report.browserReruns.tests.map((r) => r.outcome), ["passed_alone", "failed_again"]);
+        assert.equal(rerunCalls(fixture).length, 2);
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+test("rerun: above the bound no reruns happen and the check fails as before", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const suite = Array.from({length: 13}, (_, i) => ({...status("chromium", SPEC, `test ${i}`, "unexpected"), line: 10 + i}));
+        const {env} = writeRerunFixture(fixture, suite, suite.map((t) => ({...t, status: "expected"})));
+        const result = await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env});
+        assert.equal(result.ok, false);
+        assert.equal(result.report.result, "failed");
+        assert.equal(rerunCalls(fixture).length, 0);
+        assert.equal(readNpmLogs(fixture.npmLogPath).length, 4);
+        assert.match(result.report.browserReruns.skipped, /13 failures exceed the rerun bound of 12/);
+        assert.deepEqual(result.report.browserReruns.tests, []);
+        assert.equal(result.report.browserFailures.new.length, 13);
+
+        const lowered = await runCheckLocal(["--silent", "--max-reruns", "1"], {cwd: fixture.repoDir, env: {...env, STUB_NPM_JSON_REPORT: writeRerunFixture(fixture, suite.slice(0, 2), []).reportFile}});
+        assert.equal(lowered.report.result, "failed");
+        assert.equal(rerunCalls(fixture).length, 0, "--max-reruns lowers the bound");
+        assert.match(lowered.report.browserReruns.skipped, /2 failures exceed the rerun bound of 1/);
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+test("rerun: with a known-failures list, listed failures are not rerun and known plus flaky passes", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const {env} = writeRerunFixture(fixture, [
+            {...status("webkit", SPEC, "reset refreshes the app shell", "unexpected"), line: 20},
+            {...status("chromium", READER, "long-press reaches a sentence", "unexpected"), line: 125},
+        ], [{...status("chromium", READER, "long-press reaches a sentence", "expected"), line: 125}]);
+        const listFile = path.join(fixture.tempBase, "known-failures.json");
+        fs.writeFileSync(listFile, JSON.stringify(knownFailuresDocument(listed)));
+        const result = await runCheckLocal(["--silent", "--known-failures", listFile], {cwd: fixture.repoDir, env});
+        assert.equal(result.exitCode, 0);
+        assert.equal(result.report.result, "passed_with_flaky");
+        assert.deepEqual(result.report.knownFailures.known.map((f) => f.title), ["reset refreshes the app shell"]);
+        assert.deepEqual(result.report.knownFailures.flaky.map((f) => f.title), ["long-press reaches a sentence"]);
+        assert.deepEqual(result.report.knownFailures.new, []);
+        assert.deepEqual(rerunCalls(fixture).map((log) => log.argv.find((a) => a.startsWith("--project="))), ["--project=chromium"]);
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+test("rerun: nothing is rerun after an earlier stage failed, or with --max-reruns 0", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const {env} = writeRerunFixture(fixture, [{...status("chromium", READER, "long-press reaches a sentence", "unexpected"), line: 125}],
+            [{...status("chromium", READER, "long-press reaches a sentence", "expected"), line: 125}]);
+        const afterUnit = await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, STUB_NPM_FAIL_STAGE: "test,browser", STUB_NPM_FAIL_CODE: "3,1"}});
+        assert.equal(afterUnit.report.result, "failed");
+        assert.equal(afterUnit.report.failedStage, "unit");
+        assert.equal(rerunCalls(fixture).length, 0);
+        const off = await runCheckLocal(["--silent", "--max-reruns=0"], {cwd: fixture.repoDir, env});
+        assert.equal(off.report.result, "failed");
+        assert.equal(rerunCalls(fixture).length, 0);
+        assert.match(off.report.browserReruns.skipped, /off/);
+        const bad = await runCheckLocal(["--silent", "--max-reruns", "lots"], {cwd: fixture.repoDir, env});
+        assert.equal(bad.exitCode, 1);
+        assert.match(bad.error, /whole number/);
+    } finally {
         fixture.cleanup();
     }
 });
