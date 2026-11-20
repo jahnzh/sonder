@@ -37,6 +37,7 @@ export const PREPARED_TEXT_VERSION = 1;
 export const PART_TARGET_BYTES = 120_000;
 /** A part this full ends at the next chapter file or heading rather than in the middle of the one after. */
 const PART_NATURAL_BYTES = PART_TARGET_BYTES * 0.75;
+const MAX_PICTURE_SIDE = 16_384;
 const LIMITS = { text: 5 * 1024 * 1024, picture: 20 * 1024 * 1024 };
 
 export type PreparedPart = {
@@ -83,8 +84,6 @@ export type PreparedManifest = {
   key: string;
   id: string;
   fingerprint: string;
-  title: string;
-  author: string;
   language: string;
   chars: number;
   sentences: number;
@@ -98,8 +97,6 @@ export type PreparedManifest = {
 export type PreparedBookInput = {
   id: string;
   fingerprint: string;
-  title: string;
-  author: string;
   language: string;
   sections: ReaderSection[];
 };
@@ -119,7 +116,10 @@ export const pictureType = (name: string) => (PREPARED_PICTURE_NAME.test(name) ?
 const xml = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", removeNSPrefix: true, processEntities: false });
 const array = (value: any): any[] => (value == null ? [] : Array.isArray(value) ? value : [value]);
 // A browser's parser turns a carriage return into a line feed; doing it here keeps `chars` equal to what it counts.
-const lines = (text: string) => (text.includes("\r") ? text.replace(/\r\n?/g, "\n") : text);
+// It also drops U+0000, so that character is left out here too (`shownText`), out of the text and out of `chars`.
+const lines = (text: string) => (text.includes("\r") || text.includes("\u0000") ? text.replace(/\r\n?/g, "\n").replace(/\u0000/g, "") : text);
+/** A stored sentence as a page can show it: a browser's parser drops U+0000, so prepared text never holds it. */
+export const shownText = (stored: string) => (stored.includes("\u0000") ? normalizeReaderText(stored.replace(/\u0000/g, "")) : stored);
 const esc = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const attr = (text: string) => esc(text).replace(/"/g, "&quot;");
 const isElement = (node: Node): node is HTMLElement => node.nodeType === 1;
@@ -239,7 +239,8 @@ export function normalizedOffsets(raw: string, normal = normalizeReaderText(raw)
 
 /** Width and height from a picture's header; undefined for a type or file it cannot read. */
 export function pictureSize(data: Buffer, extension: string): { width: number; height: number } | undefined {
-  const ok = (width: number, height: number) => (width > 0 && height > 0 && width < 65536 && height < 65536 ? { width, height } : undefined);
+  // A size no picture of a book has (a file that only starts like a picture) reserves no box.
+  const ok = (width: number, height: number) => (width > 0 && height > 0 && width <= MAX_PICTURE_SIDE && height <= MAX_PICTURE_SIDE ? { width, height } : undefined);
   try {
     if (extension === ".png" && data.readUInt32BE(0) === 0x89504e47) return ok(data.readUInt32BE(16), data.readUInt32BE(20));
     if (extension === ".gif" && data.toString("latin1", 0, 3) === "GIF") return ok(data.readUInt16LE(6), data.readUInt16LE(8));
@@ -285,7 +286,16 @@ type Anchor = { unit: number; after: number; section: number };
 /** A counted block's text as the extractor reads it: which stored sentence, if any, owns each character. */
 type BlockText = { owner: Int32Array };
 
-export async function prepareEpub(input: {
+export async function prepareEpub(input: PrepareInput): Promise<{ manifest: PreparedManifest; parts: string[] }> {
+  try {
+    return await prepareWhole(input);
+  } catch (error) {
+    // Markup nested thousands deep runs the writer out of stack: say what is wrong with the book.
+    if (error instanceof RangeError && /call stack/i.test(error.message)) throw new Error("This EPUB is nested too deeply to open.");
+    throw error;
+  }
+}
+type PrepareInput = {
   epub: Buffer;
   /** The book as extractBook returns it: its sentences are tagged, never cut again. */
   book: PreparedBookInput;
@@ -294,7 +304,8 @@ export async function prepareEpub(input: {
   key: string;
   /** Called once per picture the text shows, one at a time. */
   writePicture: (name: string, data: Buffer) => Promise<void>;
-}): Promise<{ manifest: PreparedManifest; parts: string[] }> {
+};
+async function prepareWhole(input: PrepareInput): Promise<{ manifest: PreparedManifest; parts: string[] }> {
   const { book, base } = input;
   const zip = await JSZip.loadAsync(input.epub);
   const sizeOf = (name: string) => Number((zip.file(name) as any)?._data?.uncompressedSize || 0);
@@ -661,18 +672,20 @@ export async function prepareEpub(input: {
   // Every stored sentence must have been tagged with its own text.
   ordinals.forEach((sentence, ordinal) => {
     if (!tagged[ordinal].length) problem(`sentence ${sentence.id} is not tagged`);
-    else if (normalizeReaderText(tagged[ordinal].join("")) !== sentence.text) problem(`sentence ${sentence.id} is tagged with other text than the stored one`);
+    else if (normalizeReaderText(tagged[ordinal].join("")) !== shownText(sentence.text)) problem(`sentence ${sentence.id} is tagged with other text than the stored one`);
   });
   if (!units.length) throw new Error("This EPUB contains no readable text.");
 
   // Parts: units are added until the next would pass the size. A sentence that runs from one unit into the
   // next keeps them together.
+  // `nextOrdinal[i]` is the first sentence at or after unit i, read from the end so the pass stays linear however
+  // many units hold no sentence.
+  const nextOrdinal = new Int32Array(units.length + 1).fill(-1);
+  for (let index = units.length - 1; index >= 0; index--) nextOrdinal[index] = units[index].firstOrdinal >= 0 ? units[index].firstOrdinal : nextOrdinal[index + 1];
   const tied: boolean[] = [];
   let before = -1;
   for (let index = 0; index < units.length; index++) {
-    let next = -1;
-    for (let ahead = index; ahead < units.length && next < 0; ahead++) next = units[ahead].firstOrdinal;
-    tied.push(before >= 0 && before === next);
+    tied.push(before >= 0 && before === nextOrdinal[index]);
     if (units[index].lastOrdinal >= 0) before = units[index].lastOrdinal;
   }
   const partOf: number[] = [];
@@ -845,8 +858,6 @@ export async function prepareEpub(input: {
       key: input.key,
       id: book.id,
       fingerprint: book.fingerprint,
-      title: book.title,
-      author: book.author,
       language: book.language,
       chars: charStart,
       sentences: ordinals.length,

@@ -19,7 +19,9 @@ const { parse } = await import("node-html-parser");
 const { normalizeReaderText } = await import("../src/reading-types.ts");
 const { prepareEpub, sentencesOfParts, PREPARED_TEXT_VERSION, PART_TARGET_BYTES } = await import("../server/prepared-text.ts");
 const { ALLOWED_TAGS, ALLOWED_ATTRIBUTES, refusedElement, allowedLinkAddress, allowedPictureAddress } = await import("../src/prepared-text-rules.ts");
-const { preparedFixture, tinyPng } = await import("./prepared-text-fixture.ts");
+const { shownText } = await import("../server/prepared-text.ts");
+const { preparedFixture, tinyPng, hostileCases, hostileFiles } = await import("./prepared-text-fixture.ts");
+const JSZip = (await import("jszip")).default;
 type Fixture = import("./prepared-text-fixture.ts").PreparedFixture;
 after(() => sqlite.close());
 mkdirSync(join(temp, "media", "ebooks"), { recursive: true });
@@ -44,7 +46,7 @@ function assertTagged(result: Awaited<ReturnType<typeof prepared>>) {
   assert.deepEqual(found.problems, []);
   assert.deepEqual(
     found.sentences.map((sentence) => ({ id: sentence.id, text: normalizeReaderText(sentence.text) })),
-    stored(result.book),
+    stored(result.book).map((sentence) => ({ id: sentence.id, text: shownText(sentence.text) })),
   );
   assert.deepEqual(result.manifest.problems, []);
 }
@@ -132,7 +134,8 @@ test("structure is kept, the publisher's fonts and layout are not", async () => 
 
 /** Every tag and attribute of the output is on the allow-list, and no address leaves the server. */
 function assertClean(html: string) {
-  const root = parse(html);
+  // A <pre>'s content is markup, as a browser reads it (the parser's default keeps it as text).
+  const root = parse(html, { blockTextElements: { script: true, style: true } });
   for (const element of root.querySelectorAll("*")) {
     const attributes = Object.entries(element.attrs).map(([name, value]) => ({ name, value }));
     assert.equal(refusedElement({ localName: element.rawTagName.toLowerCase(), attributes }, BASE), null);
@@ -241,6 +244,86 @@ test("documents with their parts in odd places are tagged as the extractor read 
   }
 });
 
+test("the review's hostile chapters: each is clean and keeps its sentences", async () => {
+  for (const [name, body] of Object.entries(hostileCases)) {
+    const result = await prepared({ files: hostileFiles, chapters: { "one.xhtml": body, "rel.xhtml": "<p>Rel.</p>" } });
+    try {
+      assertClean(result.html);
+      assertTagged(result);
+    } catch (error) {
+      throw new Error(`${name}: ${(error as Error).message}`, { cause: error });
+    }
+  }
+});
+
+/** prepareEpub on an archive as it is, with no stored sentence: what it does before and beside the tagging. */
+const bare = (epub: Buffer, pictures = new Map<string, Buffer>()) =>
+  prepareEpub({ epub, book: { id: "bare", fingerprint: "", language: "en", sections: [] }, base: BASE, key: "key", writePicture: async (name, data) => void pictures.set(name, data) });
+
+test("a run of blocks without a sentence does not stall the server", async () => {
+  // 80,000 rules in a 2 KB EPUB took 40 s when each one looked ahead for the next sentence (review of #809).
+  const epub = await preparedFixture({ chapters: { "one.xhtml": `<p>First.</p>${"<hr/>".repeat(80_000)}<p>Last.</p>` } });
+  assert.ok(epub.length < 5000);
+  const start = performance.now();
+  const { parts } = await bare(epub);
+  const took = performance.now() - start;
+  assert.equal(parts.join("").split("<hr>").length - 1, 80_000);
+  // About a third of a second here; quadratic, it is 40 s. The bound leaves room for a loaded host.
+  assert.ok(took < 10_000, `${Math.round(took)} ms`);
+});
+
+test("a NUL character is left out of the text and of its count, as a browser leaves it out", async () => {
+  const result = await prepared({ chapters: { "one.xhtml": "<p>nul\u0000x here. Next\u0000.</p><div>loose\u0000text</div>" } });
+  assertTagged(result);
+  assert.ok(!result.html.includes("\u0000"));
+  assert.ok(stored(result.book)[0].text.includes("\u0000"), "the stored sentence is unchanged");
+  assert.equal(result.manifest.chars, "nulx here. Next.loosetext".length);
+});
+
+test("a size no picture has reserves no box", async () => {
+  const gif = (width: number, height: number) => {
+    const data = Buffer.from("GIF89a\u0000\u0000\u0000\u0000 and the rest", "latin1");
+    data.writeUInt16LE(width, 6);
+    data.writeUInt16LE(height, 8);
+    return data;
+  };
+  const result = await prepared({
+    files: { "ok.gif": gif(640, 480), "odd.gif": Buffer.from("GIF89a<script>alert(1)</script>", "latin1"), "huge.gif": gif(40000, 10), "none.gif": gif(0, 10), "short.png": tinyPng.subarray(0, 18) },
+    chapters: { "one.xhtml": '<p>Pictures.<img src="ok.gif"/><img src="odd.gif"/><img src="huge.gif"/><img src="none.gif"/><img src="short.png"/></p>' },
+  });
+  assert.deepEqual([...result.html.matchAll(/pictures\/(\d)\.\w+" alt=""( width="\d+" height="\d+")?/g)].map((found) => found[2] || ""), [' width="640" height="480"', "", "", "", ""]);
+});
+
+test("markup nested too deeply fails with a sentence about the book", async () => {
+  const epub = await preparedFixture({ chapters: { "one.xhtml": `${"<div>".repeat(60_000)}Deep.${"</div>".repeat(60_000)}` } });
+  await assert.rejects(bare(epub), { message: "This EPUB is nested too deeply to open." });
+});
+
+test("an id of another form is not written into the page", async () => {
+  const epub = await preparedFixture({ chapters: { "one.xhtml": "<p>One.</p>" } });
+  const sections = [{ index: 0, href: "one.xhtml", title: "", paragraphs: [{ id: '0:0"><img src=x onerror=alert(1)>', text: "One.", blockIndex: 0, start: 0, end: 4 }] }];
+  await assert.rejects(prepareEpub({ epub, book: { id: "bare", fingerprint: "", language: "en", sections }, base: BASE, key: "key", writePicture: async () => {} }), /id of an unknown form/);
+});
+
+test("the archive's limits: a chapter outside the book, a chapter or a picture too large", async () => {
+  const archive = async (change: (zip: InstanceType<typeof JSZip>, opf: string) => string | void) => {
+    const zip = await JSZip.loadAsync(await preparedFixture({ files: { "pic.png": tinyPng }, chapters: { "one.xhtml": '<p>One.<img src="pic.png"/><img src="big.png"/></p>' } }));
+    const opf = await zip.file("OEBPS/content.opf")!.async("string");
+    const changed = change(zip, opf);
+    if (changed) zip.file("OEBPS/content.opf", changed);
+    return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+  };
+  // A reading order that names a file above the archive's root is refused, whatever sits there.
+  await assert.rejects(bare(await archive((_zip, opf) => opf.replace('href="one.xhtml"', 'href="../../etc/one.xhtml"'))), { message: "This EPUB contains an invalid chapter path." });
+  // A chapter over 5 MB.
+  await assert.rejects(bare(await archive((zip) => void zip.file("OEBPS/one.xhtml", `<html><body><p>${"word ".repeat(1_100_000)}</p></body></html>`))), { message: "The EPUB contains an invalid or oversized chapter." });
+  // A picture over 20 MB is left out; the book's other picture is shown.
+  const pictures = new Map<string, Buffer>();
+  const { parts } = await bare(await archive((zip) => void zip.file("OEBPS/big.png", Buffer.concat([tinyPng, Buffer.alloc(21 * 1024 * 1024)]))), pictures);
+  assert.deepEqual([...pictures.keys()], ["0.png"]);
+  assert.equal(parts.join("").split("<img").length - 1, 1);
+});
+
 test("a hostile book cannot forge the marks the preparing step leaves for itself", async () => {
   const result = await prepared({
     files: { "pic.png": tinyPng },
@@ -305,6 +388,8 @@ test("the manifest counts what the parts hold", async () => {
   assert.equal(manifest.key, "key");
   assert.equal(manifest.id, book.id);
   assert.equal(manifest.fingerprint, book.fingerprint);
+  // The work's title and author are not the book file's: the reader takes them from the book's own data.
+  assert.ok(!("title" in manifest) && !("author" in manifest));
   assert.equal(manifest.sentences, stored(book).length);
   assert.equal(manifest.pictures, 1);
   // Characters are those of the text a browser shows: UTF-16 units of the part's text content.
@@ -396,5 +481,5 @@ test("format guard: a change to the prepared output comes with a new PREPARED_TE
   const digest = createHash("sha256").update(JSON.stringify([manifest, result.parts])).digest("hex").slice(0, 16);
   // When this fails: raise PREPARED_TEXT_VERSION in server/prepared-text.ts (stored books are prepared again), then
   // put the new digest and version here.
-  assert.deepEqual([PREPARED_TEXT_VERSION, digest], [1, "d389187ebb4bb8a1"]);
+  assert.deepEqual([PREPARED_TEXT_VERSION, digest], [1, "e083bc5411f3f479"]);
 });

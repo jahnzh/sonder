@@ -37,7 +37,7 @@ process.env.REQUIRE_MEDIA_MOUNT = "false";
 process.env.NODE_ENV = "test";
 const { sqlite } = await import("../server/db.ts");
 const { extractBook, invalidateParsedBook } = await import("../server/reader.ts");
-const { sentencesOfParts } = await import("../server/prepared-text.ts");
+const { sentencesOfParts, shownText } = await import("../server/prepared-text.ts");
 const { buildPrepared, registerPreparedText } = await import("../server/prepared-text-cache.ts");
 const { normalizeReaderText } = await import("../src/reading-types.ts");
 const { default: Fastify } = await import("fastify");
@@ -100,7 +100,8 @@ for (const row of rows.filter((candidate) => !only || candidate.id === only)) {
       const tagged = byId.get(sentence.id);
       if (!tagged) return note(`${sentence.id}: not tagged`);
       if (found.sentences[index]?.id !== sentence.id) note(`${sentence.id}: out of order (place ${index} holds ${found.sentences[index]?.id})`);
-      if (normalizeReaderText(tagged.text) !== sentence.text) return note(`${sentence.id}: tagged ${JSON.stringify(tagged.text.slice(0, 80))}, stored ${JSON.stringify(sentence.text.slice(0, 80))}`);
+      // (A page cannot hold U+0000, so a stored sentence is compared without it.)
+      if (normalizeReaderText(tagged.text) !== shownText(sentence.text)) return note(`${sentence.id}: tagged ${JSON.stringify(tagged.text.slice(0, 80))}, stored ${JSON.stringify(sentence.text.slice(0, 80))}`);
       result.equal++;
       if (tagged.text === sentence.text) result.identical++;
     });
