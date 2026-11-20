@@ -149,7 +149,10 @@ export function narratedOnPage(room) {
   return room.locator(".reader-viewport").evaluate((host) => {
     const bounds = host.getBoundingClientRect();
     for (const mark of host.querySelectorAll(".sonder-follow")) {
-      for (const rect of [...mark.querySelectorAll("rect")].map((r) => r.getBoundingClientRect())) {
+      // epub.js draws the highlight as rects in an SVG; the view of prepared text (#802) marks the sentence's own
+      // elements, whose line boxes are the highlight.
+      const drawn = mark.querySelectorAll("rect");
+      for (const rect of drawn.length ? [...drawn].map((r) => r.getBoundingClientRect()) : mark.getClientRects?.() ?? []) {
         const width = Math.min(bounds.right, rect.right) - Math.max(bounds.left, rect.left);
         const height = Math.min(bounds.bottom, rect.bottom) - Math.max(bounds.top, rect.top);
         if (width > 2 && height > 2) return true;

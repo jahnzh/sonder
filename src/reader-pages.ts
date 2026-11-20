@@ -31,6 +31,11 @@ export type LiveReader = {
   removeBookmark: (bookmark: Bookmark) => void;
   /** Shows the reader again with an entry of its own, so Back returns to the page. */
   show: () => void;
+  /**
+   * Only on a reader whose `sections` hold no sentences (the new view, #802): every sentence of the book, loaded
+   * when Search asks for it.
+   */
+  text?: () => Promise<readonly ReaderSection[]>;
 };
 
 let opener: LiveReader | null = null;

@@ -362,22 +362,50 @@ export function registerReader(app: FastifyInstance) {
     await autoQueueAlignmentsForWork(workId, { ebookId: id }, req.log);
     return { ok: true };
   });
-  app.get("/api/reader/:id", async (req) => {
-    const { id } = req.params as { id: string };
-    const { book } = await bookWithPlaces(id, req.log);
+  /** What this user saved in the edition: where they are and their bookmarks. */
+  const savedState = (id: string, userId: number) => {
     const bookmarks = sqlite
       .prepare(
         "SELECT id,label,locator,created_at AS createdAt FROM user_reader_bookmarks WHERE edition_id=? AND user_id=? ORDER BY created_at",
       )
-      .all(id, currentUserId(req)) as { id: string; label: string; locator: string; createdAt: number }[];
+      .all(id, userId) as { id: string; label: string; locator: string; createdAt: number }[];
     return {
-      ...book,
-      checkpoint: readerCheckpoint(id, currentUserId(req)),
+      checkpoint: readerCheckpoint(id, userId),
       bookmarks: bookmarks.map((bookmark) => ({
         ...bookmark,
         locator: JSON.parse(bookmark.locator),
       })),
     };
+  };
+  app.get("/api/reader/:id", async (req) => {
+    const { id } = req.params as { id: string };
+    const { book } = await bookWithPlaces(id, req.log);
+    return { ...book, ...savedState(id, currentUserId(req)) };
+  });
+  // The reader of prepared text (ADR 0025) takes the book's text from the prepared parts, so it asks for what the
+  // user saved without the sentences. The edition is checked and its saved places are carried over to its cut
+  // (ADR 0026) exactly as the route above does, so a place answered here names a sentence of the prepared text.
+  app.get("/api/reader/:id/state", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await bookWithPlaces(id, req.log);
+    const record = ebookRecord(id);
+    const work = db.select().from(s.works).where(eq(s.works.id, record.workId)).get();
+    reply.header("Cache-Control", "private, no-store");
+    return { id, workId: record.workId, title: work?.title ?? "", author: work?.author ?? "", ...savedState(id, currentUserId(req)) };
+  });
+  // The reader of prepared text makes a part's nodes against an allow-list (src/prepared-html.ts) and leaves out what
+  // is not on it. The server's own sanitiser should have left nothing to leave out, so each such part is reported
+  // here once and logged: a miss in the sanitiser is seen, not papered over.
+  app.post("/api/reader/:id/prepared-refused", { bodyLimit: 4096 }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const input = z
+      .object({ key: z.string().regex(/^[0-9a-f]{16}$/), part: z.number().int().min(0).max(99999), refused: z.array(z.string().min(1).max(80)).min(1).max(20) })
+      .parse(req.body);
+    ebookRecord(id);
+    // A reason may quote the book (a class, an id): only printable characters reach the log.
+    const refused = input.refused.map((reason) => reason.replace(/[^\x20-\x7e]/g, "?"));
+    req.log.warn({ edition: id, key: input.key, part: input.part, refused }, "prepared text: the reader refused markup the sanitiser let through");
+    return reply.code(204).send();
   });
   app.put("/api/reader/:id/progress", async (req, reply) => {
     const { id } = req.params as { id: string };
