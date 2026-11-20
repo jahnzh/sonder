@@ -29,6 +29,78 @@ export const FOLLOW_ADVANCE_SECONDS = 10;
 
 const seconds = (value) => `${Math.round(value)} s`;
 
+// A live check never chooses what the owner is listening to (#774): a recording whose saved progress for the signed-in
+// user (GET /api/books, `progress.updatedAt`) changed in the last 48 hours is skipped, and so is every other recording
+// of its work. An explicit choice (the first argument or SONDER_VERIFY_RECORDING) of such a recording is refused unless
+// SONDER_VERIFY_ALLOW_RECENT=1.
+export const RECENT_LISTENING_HOURS = 48;
+export const RECENT_LISTENING_MS = RECENT_LISTENING_HOURS * 60 * 60 * 1000;
+export const RECENT_LISTENING_REASON = `listened to in the last ${RECENT_LISTENING_HOURS} h`;
+
+/**
+ * The works listened to in the last 48 hours: workId -> {recordingId, updatedAt} of its most recently saved recording.
+ * A progress time in the future (another device's clock) counts as recent.
+ */
+export function recentlyListened(books, now = Date.now()) {
+  const cutoff = now - RECENT_LISTENING_MS;
+  const recent = new Map();
+  for (const book of books ?? []) {
+    const updatedAt = Number(book?.progress?.updatedAt);
+    if (!Number.isFinite(updatedAt) || !(updatedAt >= cutoff)) continue;
+    const known = recent.get(book.workId);
+    if (!known || updatedAt > known.updatedAt) recent.set(book.workId, { recordingId: book.recordingId, updatedAt });
+  }
+  return recent;
+}
+
+// Why the recent-listening rule skips this book, or null: the recording itself, or another recording of its work.
+export function recentReason(book, recent) {
+  const listened = recent.get(book.workId);
+  if (!listened) return null;
+  return listened.recordingId === book.recordingId ? RECENT_LISTENING_REASON : `${RECENT_LISTENING_REASON} (recording ${listened.recordingId} of the same work)`;
+}
+
+/**
+ * What the operator chose, from a live check's arguments and environment: the first argument, else
+ * SONDER_VERIFY_RECORDING (deploy.sh passes it through), as the preferred recording; SONDER_VERIFY_ALLOW_RECENT=1 lets
+ * that choice be a recording the recent-listening rule skips.
+ */
+export function verifyChoice(argv = process.argv.slice(2), env = process.env) {
+  return { preferred: argv[0] || env.SONDER_VERIFY_RECORDING || null, allowRecent: env.SONDER_VERIFY_ALLOW_RECENT === "1" };
+}
+
+// Thrown when the explicit choice was listened to in the last 48 hours: an ordinary failure (exit 1), not a skip.
+export class RecentChoiceRefused extends Error {
+  constructor(recordingId, reason) {
+    super(`refusing to check recording ${recordingId}: ${reason}, and a live check could clash with that listening; set SONDER_VERIFY_ALLOW_RECENT=1 to check it anyway`);
+    this.recordingId = recordingId;
+  }
+}
+
+/**
+ * The book the multi-user check's temporary user resolves and saves its own progress on (scripts/verify-multi-user.mjs):
+ * the first of the user's books with tracks whose work the administrator (`adminBooks`, their GET /api/books) did not
+ * listen to in the last 48 hours; the first with tracks when every one was (the user's writes never reach the
+ * administrator's progress, so the check still runs). Returns {book, recent: reason|null}, book null without tracks.
+ */
+export function multiUserPlayable(userBooks, adminBooks, now = Date.now()) {
+  const recent = recentlyListened(adminBooks, now);
+  const playable = (userBooks ?? []).filter((b) => b?.tracks?.length);
+  const quiet = playable.find((b) => !recent.has(b.workId));
+  if (quiet) return { book: quiet, recent: null };
+  const book = playable[0] ?? null;
+  return { book, recent: book ? recentReason(book, recent) : null };
+}
+
+// Throws RecentChoiceRefused when the preferred recording is one the recent-listening rule skips and allowRecent is off.
+export function refuseRecentChoice(books, { preferred = null, allowRecent = false, now = Date.now() } = {}) {
+  if (!preferred || allowRecent) return;
+  const recent = recentlyListened(books, now);
+  const book = (books ?? []).find((b) => b?.recordingId === preferred);
+  const reason = book && recentReason(book, recent);
+  if (reason) throw new RecentChoiceRefused(preferred, reason);
+}
+
 // Where "Continue listening" / "Start listening" starts in a fresh browser (src/player.tsx load()): the track named by
 // the saved progress at its saved position, or the first track at 0 without progress.
 export function savedStart(book) {
@@ -211,11 +283,12 @@ function jobOrder(a, b) {
  * counts (`readEdition`): with a shared default only that edition's, and none of a work missing from GET /api/library.
  * Returns {pairs: [{book, job, ebook}], rejected: [{recordingId, jobId?, reason}], aligned: Set<recordingId>}.
  */
-export function readerPairs({ books, ebooks, jobs, works = [] }, { preferred = null } = {}) {
+export function readerPairs({ books, ebooks, jobs, works = [] }, { preferred = null, allowRecent = false, now = Date.now() } = {}) {
   const pairs = [];
   const rejected = [];
   const aligned = new Set();
   const seen = new Set();
+  const recent = recentlyListened(books, now);
   for (const book of books) {
     if (seen.has(book.recordingId)) continue;
     seen.add(book.recordingId);
@@ -229,6 +302,12 @@ export function readerPairs({ books, ebooks, jobs, works = [] }, { preferred = n
       continue;
     }
     aligned.add(book.recordingId);
+    // Not the book the owner is listening to (#774), unless it is the explicit choice and SONDER_VERIFY_ALLOW_RECENT=1.
+    const recentWhy = recentReason(book, recent);
+    if (recentWhy && !(allowRecent && book.recordingId === preferred)) {
+      rejected.push({ recordingId: book.recordingId, reason: recentWhy });
+      continue;
+    }
     // Only a map of the edition Read opens once the check has set this device's choice to the map's EPUB.
     const work = (works ?? []).find((w) => w?.workId === book.workId);
     if (!work) {
@@ -350,16 +429,19 @@ export function readMapAnswer(path, answer, job) {
  * The reader check's recording, map and sequence, read through `get(path) -> {status, text}` (requestFrom(context)).
  * Tries each (recording, map) pair in order; the map's own intervals decide, through readerSequence.
  * Returns {recordingId, book, ebook, job, map, sequence, listing, preferred?}; throws NoSuitableRecording when no pair
- * qualifies, and an ordinary Error naming the request for any answer that does not say so.
+ * qualifies, RecentChoiceRefused when `preferred` was listened to in the last 48 hours and `allowRecent` is off (#774),
+ * and an ordinary Error naming the request for any answer that does not say so.
  */
-export async function selectReaderRecording(get, { preferred = null } = {}) {
+export async function selectReaderRecording(get, { preferred = null, allowRecent = false, now = Date.now() } = {}) {
+  const books = await getJSON(get, "/api/books");
+  refuseRecentChoice(books, { preferred, allowRecent, now });
   const listing = {
-    books: await getJSON(get, "/api/books"),
+    books,
     ebooks: await getJSON(get, "/api/ebooks"),
     jobs: (await getJSON(get, "/api/alignments")).jobs,
     works: await getJSON(get, "/api/library"),
   };
-  const { pairs, rejected, aligned } = readerPairs(listing, { preferred });
+  const { pairs, rejected, aligned } = readerPairs(listing, { preferred, allowRecent, now });
   for (const { book, job, ebook } of pairs) {
     const path = `/api/alignments/${encodeURIComponent(job.id)}/map`;
     const answer = readMapAnswer(path, await get(path), job);

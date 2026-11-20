@@ -6,6 +6,7 @@
 import type { FormEvent } from "react";
 import { Button } from "../parts/Button";
 import type { LibraryWork } from "../types";
+import { Cover } from "../parts/Cover";
 import "./get-audiobook-sheet.css";
 
 export function SearchIcon() {
@@ -35,10 +36,10 @@ export function LeavingMark() {
 }
 
 /** The book the sheet gets a file for: its cover, the title as the sheet's one heading, the author under it. */
-export function GetSheetBook({ work }: { work: Pick<LibraryWork, "title" | "author" | "cover"> | null }) {
+export function GetSheetBook({ work }: { work: (Pick<LibraryWork, "title" | "author" | "cover"> & { workId?: string }) | null }) {
   return (
     <div className="get-sheet-book">
-      {work?.cover ? <img className="get-sheet-cover" src={work.cover} alt="" /> : <span className="get-sheet-cover" aria-hidden="true" />}
+      <Cover className="get-sheet-cover" src={work?.cover} title={work?.title ?? ""} workId={work?.workId} compact />
       <div className="get-sheet-names">
         <h1 className="get-sheet-title type-heading">{work?.title ?? ""}</h1>
         {work?.author && <p className="get-sheet-author type-label">{work.author}</p>}

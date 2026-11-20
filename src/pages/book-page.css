@@ -109,8 +109,8 @@
   /* The reason may take two lines: the row grows from 64 as the board's (padding 10, min-height 64). */
   height: auto;
   min-height: var(--height-bar);
-  padding-top: 10px;
-  padding-bottom: 10px;
+  padding-top: 10px; /* tokens: Book.dc.html, a two-line row 10 inside */
+  padding-bottom: 10px; /* tokens: Book.dc.html, a two-line row 10 inside */
 }
 .book-page-keep-failure .part-file-row-status {
   white-space: normal;

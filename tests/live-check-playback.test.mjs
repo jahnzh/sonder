@@ -101,7 +101,26 @@ test("playback selection: only a listing read successfully can be 'none qualifie
 
 test("the playback check reads its recording through the selection and checks the slider against it (static)", () => {
   const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "verify-playback-workflow.mjs"), "utf8");
-  assert.match(source, /selectPlaybackRecording\(requestFrom\(context\),\{preferred\}\)/);
+  assert.match(source, /selectPlaybackRecording\(requestFrom\(context\),\{preferred,allowRecent\}\)/);
+  assert.match(source, /^const \{preferred,allowRecent\}=verifyChoice\(\);$/m);
   assert.match(source, /if\(!\(chapterDuration>=PLAYBACK_MIN_CHAPTER_SECONDS\)\) throw/);
   assert.doesNotMatch(source, /context\.request\.get\(/, "every selection GET goes through requestFrom");
+});
+
+// #774: the playback check put the most recently listened book first, which is the one the owner is listening to.
+test("#774: playback check: the book played an hour ago is skipped for the next most recently listened, with the reason", async () => {
+  const NOW = 1795600000000, HOUR = 60 * 60 * 1000;
+  const gate = book("torbox-139288314", { progress: { position: 42, updatedAt: NOW - HOUR } });
+  const excession = book("excession", { progress: { position: 42, updatedAt: NOW - 3 * 24 * HOUR } });
+  const older = book("older", { progress: { position: 42, updatedAt: NOW - 9 * 24 * HOUR } });
+  const books = [gate, excession, older];
+  const pick = play.pickPlaybackRecording({ books }, { now: NOW });
+  assert.equal(pick.recordingId, excession.recordingId);
+  const none = play.pickPlaybackRecording({ books: [gate] }, { now: NOW });
+  assert.equal(none.reason, "1 recording(s) in the library, none qualifies: recording-torbox-139288314: listened to in the last 48 h");
+  const get = async (path) => answer(path === "/api/books" ? books : []);
+  await assert.rejects(play.selectPlaybackRecording(async (path) => answer(path === "/api/books" ? [gate] : []), { now: NOW }), NoSuitableRecording);
+  await assert.rejects(play.selectPlaybackRecording(get, { preferred: gate.recordingId, now: NOW }), /^Error: refusing to check recording recording-torbox-139288314: listened to in the last 48 h/);
+  assert.equal((await play.selectPlaybackRecording(get, { preferred: gate.recordingId, allowRecent: true, now: NOW })).recordingId, gate.recordingId);
+  assert.equal((await play.selectPlaybackRecording(get, { preferred: older.recordingId, now: NOW })).recordingId, older.recordingId);
 });

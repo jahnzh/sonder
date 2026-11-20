@@ -8,7 +8,7 @@
   flex: none;
   width: var(--height-control);
   height: var(--height-control);
-  margin: -11px -12px;
+  margin: -11px -12px; /* tokens: Tooltips.dc.html, the info mark's 44 hit area around its 22 mark */
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -67,7 +67,7 @@
 .part-icon-name {
   box-sizing: border-box;
   z-index: 60;
-  padding: 6px var(--space-8);
+  padding: 6px var(--space-8); /* tokens: Tooltips.dc.html, an icon's name 6 by 8 inside */
   border-radius: var(--corner-control);
   background: var(--text);
   color: var(--background);

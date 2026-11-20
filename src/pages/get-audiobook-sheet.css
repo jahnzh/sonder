@@ -20,7 +20,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 2px; /* tokens: GetAudiobook.dc.html, 2 between a row's name and its line */
 }
 .get-sheet-title {
   margin: 0;

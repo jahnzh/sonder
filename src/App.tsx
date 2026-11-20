@@ -9,6 +9,7 @@ import { PlayerProvider } from "./player";
 import { OfflineLine, PlaceNav, Toast, useConnection } from "./shell";
 import { offlineLineShown } from "./connection";
 import { SeriesPage } from "./pages/series-page";
+import { placeShown } from "./place-shown";
 import { REMOVED_TOAST as SERIES_REMOVED_TOAST } from "./pages/series-remove-model";
 import { useSavedSeries } from "./pages/library-series";
 import { isSavedSeries, SERIES_CHIP } from "./pages/library-series-model";
@@ -47,6 +48,7 @@ import type {
 import { SignIn, type Account } from "./components/SignIn";
 import { Join } from "./components/Join";
 import { PlayerDock } from "./components/Player";
+import { publishCoverBooks } from "./cover-choice";
 import { NowPlaying } from "./pages/now-playing";
 import { AppUpdate } from "./components/AppUpdate";
 import { type Page, Mark } from "./pages/shared";
@@ -243,6 +245,8 @@ function LibraryApp({
   onLogout: () => void;
 }) {
   const [books, setBooks] = useState<Book[]>([]);
+  // The rows the one cover choice reads for an edition without its own cover (#763).
+  useEffect(() => publishCoverBooks(books), [books]);
   // The library by work with this device's places (#528): the Library's Listening, Not started and Finished
   // follow the work of each entry, so a book read in the reader is In progress (#556).
   const deviceWorks = useStoredWorksWithPlaces();
@@ -314,6 +318,8 @@ function LibraryApp({
   // A desktop shows a saved series beside the chip's list (DesktopSeries.dc.html); a series that is not saved stays one
   // column. Until the list is read the series is taken as saved: the page itself sends one that is not to the Library.
   const seriesBeside = seriesRouteId !== null && sideBySide && (savedSeries.items === undefined || isSavedSeries(savedSeries.items, seriesRouteId));
+  // The place rendered: beside a saved series it is the Library alone, never the place shown before it (#713).
+  const shownPlace = placeShown(page, seriesBeside);
   // On a desktop choosing a series replaces the entry, as choosing a worker beside the Server list does (ADR 0020).
   const openSeries = (id: string) => address.navigate({ name: "series", id }, { replace: sideBySide });
   const findSeries = () => {
@@ -858,7 +864,7 @@ function LibraryApp({
                 onGetEdition={(work) => findEbook(work.workId)}
               />
             ) : <>
-            {(page === "library" || seriesBeside) && (
+            {shownPlace === "library" && (
               <LibraryPage
                 works={libraryWorks}
                 stored={worksStored}
@@ -884,7 +890,7 @@ function LibraryApp({
                 navigate={navigate}
               />
             )}
-            {page === "discover" && (
+            {shownPlace === "discover" && (
               <DiscoverPage
                 // Opened on the Get sheet without a book (a reload, a link: #576), Discover stands under it without its
                 // entry's search; Close mounts it again from its own entry, with its kept query and results.
@@ -899,7 +905,7 @@ function LibraryApp({
                 notify={notify}
               />
             )}
-            {page === "activity" && (
+            {shownPlace === "activity" && (
               <ActivityPlace
                 admin={user.role === "admin"}
                 part={address.route.name === "activity" ? address.route.part : address.route.name === "worker" ? "server" : "now"}
@@ -977,7 +983,7 @@ function LibraryApp({
                 />}
               />
             )}
-            {page === "settings" && (
+            {shownPlace === "settings" && (
               <SettingsPage
                 user={user}
                 settings={settings}

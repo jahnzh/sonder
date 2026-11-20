@@ -13,7 +13,9 @@
 #   6. smoke-test the built image with the service's environment, network and mounts
 #   7. docker compose up -d sonder, wait for the health check, curl /api/health
 #   8. run the live verification scripts (reader + multi-user) unless --skip-live-checks; a check picks its own
-#      recording, and one that exits 3 found no recording it can run on and is reported as skipped, not failed (#431)
+#      recording, and one that exits 3 found no recording it can run on and is reported as skipped, not failed (#431).
+#      It never picks a book listened to in the last 48 h (#774). SONDER_VERIFY_RECORDING=<recording id> names the
+#      recording instead, and SONDER_VERIFY_ALLOW_RECENT=1 lets that be a recently played one: both are passed through.
 # Prints the rollback command (retag the old image as :local, then up -d --no-build) and reminds to
 # record the deploy in artifacts/orca/STATE.md.
 # At least one --marker or --marker-file is required; --no-marker explicitly skips image verification (non-app changes)
@@ -123,6 +125,7 @@ if [ "$dry_run" -eq 1 ]; then
     echo "  7. live checks: skipped (--skip-live-checks)"
   else
     echo "  7. live checks: ${live_checks}"
+    [ -n "${SONDER_VERIFY_RECORDING:-}" ] && echo "     recording: ${SONDER_VERIFY_RECORDING}${SONDER_VERIFY_ALLOW_RECENT:+ (SONDER_VERIFY_ALLOW_RECENT=${SONDER_VERIFY_ALLOW_RECENT})}"
   fi
   exit 0
 fi
@@ -230,6 +233,8 @@ if [ "$skip_live" -eq 0 ]; then
     status=0
     skip_file=$(mktemp) || { echo "cannot create a temporary file for $script" >&2; failed_checks+=("$script"); continue; }
     echo "live check: $script"
+    # SONDER_VERIFY_RECORDING and SONDER_VERIFY_ALLOW_RECENT, when set, reach the check from this environment (#774):
+    # do not clear them here. Without them each check chooses its own recording.
     SONDER_VERIFY_PRODUCTION=1 SONDER_LIVE_CHECK_SKIP_FILE="$skip_file" node "$script" || status=$?
     # Exit 3 counts as skipped only together with a written reason: any other exit 3 stays a failure.
     if [ "$status" -eq "$no_suitable_exit" ] && [ -s "$skip_file" ]; then
