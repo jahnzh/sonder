@@ -96,15 +96,24 @@ const BROWSER_TEMP_PATH = new RegExp(`/[^\\0\\s:=]*/${BROWSER_SERVER_PREFIX}[A-Z
  * for the dir. A process whose details cannot be read is passed over.
  */
 export function browserTempsInUse(procRoot = "/proc") {
-  const inUse = new Set();
+  return new Set(browserTempUsers(procRoot).keys());
+}
+
+/** The same dirs, each with the pid of the first process found naming it: what the cleaner prints as the reason. */
+export function browserTempUsers(procRoot = "/proc") {
+  const inUse = new Map();
   let pids;
   try {
     pids = fs.readdirSync(procRoot).filter((name) => /^\d+$/.test(name));
   } catch {
     return inUse;
   }
+  let pid = "";
   const named = (text) => {
-    for (const match of text.match(BROWSER_TEMP_PATH) ?? []) inUse.add(path.resolve(match));
+    for (const match of text.match(BROWSER_TEMP_PATH) ?? []) {
+      const dir = path.resolve(match);
+      if (!inUse.has(dir)) inUse.set(dir, pid);
+    }
   };
   const attempt = (read) => {
     try {
@@ -113,7 +122,7 @@ export function browserTempsInUse(procRoot = "/proc") {
       // unreadable: another user's process, or one that has ended
     }
   };
-  for (const pid of pids) {
+  for (pid of pids) {
     const dir = path.join(procRoot, pid);
     attempt(() => fs.readFileSync(path.join(dir, "environ"), "utf8"));
     attempt(() => fs.readFileSync(path.join(dir, "cmdline"), "utf8"));
@@ -152,23 +161,36 @@ export function changedSince(dir, since) {
 /**
  * Removes browser-server temp dirs that a killed run left behind: nothing in them changed for `maxAgeMs` and no live
  * process names them. Returns the names removed. A run that ends normally removes its own dir.
+ * Every dir it looks at is reported through `report`, one line each: removed, or kept with the reason (#825), so a
+ * check's log shows what the cleaner did while other runs were live. `inUse` is a Set of dirs, or a Map of dir to the
+ * pid that names it.
  */
 export function removeStaleBrowserTemps({
   tmpRoot = os.tmpdir(),
   maxAgeMs = STALE_BROWSER_TEMP_MS,
   now = Date.now(),
-  inUse = browserTempsInUse(),
+  inUse = browserTempUsers(),
+  report = () => {},
 } = {}) {
   const removed = [];
+  const minutes = Math.round(maxAgeMs / 60000);
   for (const name of listBrowserServerTemps(tmpRoot)) {
     const dir = path.join(tmpRoot, name);
-    if (inUse.has(path.resolve(dir))) continue;
+    if (inUse.has(path.resolve(dir))) {
+      const pid = inUse instanceof Map ? inUse.get(path.resolve(dir)) : "";
+      report(`kept browser temp: ${dir} (in use by ${pid ? `process ${pid}` : "a running process"})`);
+      continue;
+    }
     try {
-      if (changedSince(dir, now - maxAgeMs)) continue;
+      if (changedSince(dir, now - maxAgeMs)) {
+        report(`kept browser temp: ${dir} (changed in the last ${minutes} min)`);
+        continue;
+      }
       fs.rmSync(dir, { recursive: true, force: true });
       removed.push(name);
-    } catch {
-      // ignore
+      report(`removed stale browser temp: ${dir}`);
+    } catch (error) {
+      report(`could not remove browser temp: ${dir} (${error?.message || error})`);
     }
   }
   return removed;
@@ -365,7 +387,8 @@ if (isDirectCli) {
   process.on("SIGINT", forward("SIGINT"));
   process.on("SIGTERM", forward("SIGTERM"));
 
-  removeStaleBrowserTemps();
+  // Into the run's own output, so a check's browser log shows what was removed and what was kept, and why (#825).
+  removeStaleBrowserTemps({ report: (line) => console.log(`[test-browser] ${line}`) });
   runTestBrowser({ args: process.argv.slice(2), track: (child) => children.add(child) })
     .then((code) => {
       const finalCode = interruptedBy ? (EXIT_BY_SIGNAL[interruptedBy] ?? 1) : code ?? 1;

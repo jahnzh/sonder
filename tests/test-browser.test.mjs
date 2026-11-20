@@ -17,6 +17,7 @@ import {
   mergePlaywrightReports,
   mergeShardOutputs,
   browserTempsInUse,
+  browserTempUsers,
   removeStaleBrowserTemps,
 } from "../scripts/test-browser.mjs";
 
@@ -348,13 +349,46 @@ test("removeStaleBrowserTemps removes old unowned sonder-browser dirs and keeps 
       fs.utimesSync(path.join(dir, name, "file"), old, old);
       fs.utimesSync(path.join(dir, name), old, old);
     }
+    const lines = [];
     const removed = removeStaleBrowserTemps({
       tmpRoot: dir,
       now,
-      inUse: new Set([path.resolve(dir, "sonder-browser-inuse")]),
+      inUse: new Map([[path.resolve(dir, "sonder-browser-inuse"), "4242"]]),
+      report: (line) => lines.push(line),
     });
     assert.deepEqual(removed, ["sonder-browser-old"]);
+    // Every sonder-browser dir is reported once: removed, or kept with the reason (#825). Other names are not.
+    assert.deepEqual(lines, [
+      `kept browser temp: ${path.join(dir, "sonder-browser-changed")} (changed in the last 30 min)`,
+      `kept browser temp: ${path.join(dir, "sonder-browser-fresh")} (changed in the last 30 min)`,
+      `kept browser temp: ${path.join(dir, "sonder-browser-inuse")} (in use by process 4242)`,
+      `removed stale browser temp: ${path.join(dir, "sonder-browser-old")}`,
+    ]);
     assert.deepEqual(fs.readdirSync(dir).sort(), ["sonder-browser-changed", "sonder-browser-fresh", "sonder-browser-inuse", "sonder-other-old"]);
+  }));
+
+test("the cleaner works without a report and with a plain Set of dirs in use, and says so without a pid", () =>
+  withTempDir((dir) => {
+    const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    for (const name of ["sonder-browser-a", "sonder-browser-b"]) {
+      fs.mkdirSync(path.join(dir, name));
+      fs.utimesSync(path.join(dir, name), old, old);
+    }
+    const lines = [];
+    assert.deepEqual(removeStaleBrowserTemps({ tmpRoot: dir, inUse: new Set([path.resolve(dir, "sonder-browser-a")]), report: (line) => lines.push(line) }), ["sonder-browser-b"]);
+    assert.deepEqual(lines, [`kept browser temp: ${path.join(dir, "sonder-browser-a")} (in use by a running process)`, `removed stale browser temp: ${path.join(dir, "sonder-browser-b")}`]);
+    fs.mkdirSync(path.join(dir, "sonder-browser-b"));
+    fs.utimesSync(path.join(dir, "sonder-browser-b"), old, old);
+    assert.deepEqual(removeStaleBrowserTemps({ tmpRoot: dir, inUse: new Set() }), ["sonder-browser-a", "sonder-browser-b"]);
+  }));
+
+test("browserTempUsers names the process that uses each dir", () =>
+  withTempDir((proc) => {
+    fs.mkdirSync(path.join(proc, "301", "fd"), { recursive: true });
+    fs.writeFileSync(path.join(proc, "301", "environ"), `${BROWSER_TEMP_ENV}=/tmp/sonder-browser-a\0`);
+    fs.mkdirSync(path.join(proc, "302", "fd"), { recursive: true });
+    fs.symlinkSync("/tmp/sonder-browser-b/db", path.join(proc, "302", "fd", "5"));
+    assert.deepEqual([...browserTempUsers(proc)].sort(), [["/tmp/sonder-browser-a", "301"], ["/tmp/sonder-browser-b", "302"]]);
   }));
 
 test("browserTempsInUse also finds a dir named on a command line, as a working directory or among the open files", () =>
