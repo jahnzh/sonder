@@ -1,3 +1,4 @@
+// @projects firefox, webkit, mobile-chrome, mobile-firefox, mobile-safari, mobile-iphone-slice13-sw
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

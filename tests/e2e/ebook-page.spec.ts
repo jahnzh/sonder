@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice14
 // The Ebook page (#531, spec #526 "The Ebook page"; board Ebook.dc.html): `#book/<workId>/ebook`, opened from the
 // book dialog's Ebook row. Editions with their checks; the administrator's choice sets the shared default and Read
 // opens it, someone else's sets this device's choice; a PDF opens in a new tab; Import a file; Export the file; the

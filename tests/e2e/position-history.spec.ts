@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";

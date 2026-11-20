@@ -1,3 +1,4 @@
+// @projects firefox
 // The slice pass (#794, scripts/verify-slice-pass.mjs) against the suite's server: the same walk the deploy runs on
 // production, at 390 by 844 and 1280 by 800, on a book with audio, an EPUB and a narration map, and an ebook-only book
 // made here first. Every item passes, a screenshot of each is written, and no write reaches the server: what the server

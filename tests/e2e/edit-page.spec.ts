@@ -1,3 +1,4 @@
+// @projects firefox
 import { test, expect, request as playwrightRequest, type Page } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";

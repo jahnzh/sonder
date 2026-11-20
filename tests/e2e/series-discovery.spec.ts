@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13, mobile-iphone-series
 import { test, expect } from "@playwright/test";
 import { openSeriesResult, searchSeries, seriesResult } from "./discover-search";
 import { openSavedSeries, savedSeriesList, savedSeriesRow, showSavedSeries } from "./library-series";

@@ -1,3 +1,4 @@
+// @projects firefox
 // The Get audiobook sheet's language and Load more (#602, spec #600 "The sheet", "The rows", "Searching, a failing
 // source, nothing found"; board GetAudiobook.dc.html): the stored language on open, a change kept after a reload of
 // the sheet and in a new sheet, All languages showing every row with its language, Load more adding AudioBookBay's

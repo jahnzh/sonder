@@ -1,3 +1,4 @@
+// @projects firefox
 // Turning Keep off, and an earlier recording's copy (#553; boards KeepOff.dc.html and KeepEarlier.dc.html; spec #548
 // "Off", "Earlier copies", "The Book page's This device group"). Off asks in place with the size of every file of the
 // book on this device; Cancel keeps everything; Remove leaves no file of the book (downloads, sections, EPUB, map, save

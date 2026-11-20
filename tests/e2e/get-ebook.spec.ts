@@ -1,3 +1,4 @@
+// @projects firefox
 // The Get ebook sheet (#604, spec #600; boards GetEbook.dc.html, BookGetting.dc.html): `#book/<workId>/get/ebook`,
 // opened from the Book page's Ebook row and the Ebook page's Get another edition, on a reload and from a link (Close
 // to the Book page); the search with the title and author; Library Genesis's answer routed (the suite's server cannot

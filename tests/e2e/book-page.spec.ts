@@ -1,3 +1,4 @@
+// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing, mobile-iphone-series, mobile-iphone-slice14
 // The Book page (#532, spec #526 "The Book page"; boards Book, BookMore, BookGetting, BookSeries): `#book/<workId>`.
 // A book with both files and a ready reading sync, one whose audiobook is downloading, the place line in each, Listen
 // and Read, the rows that open the Audiobook and Ebook pages, the series line, Mark as finished and back, Remove from

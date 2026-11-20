@@ -1,3 +1,4 @@
+// @projects firefox, webkit-iphone-now-playing
 // Now playing on a desktop (#595, spec #586 "Desktop"; boards DesktopReader.dc.html, DesktopNowPlaying.dc.html),
 // against the suite's own server at 1280 by 800 and at 760, where the desktop's layout starts: Read and Listen
 // measured against their boards, the head and the footer in the same place on both faces, no control in two places
