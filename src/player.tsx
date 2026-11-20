@@ -9,7 +9,8 @@ import {
 } from "react";
 import { liveQuery } from "dexie";
 import { createProgressClock } from "./progress-clock";
-import { api, forgetPositionHistory, localDB, offlineUrl, peekPositionHistory, positionHistorySettled, prunePositionHistory, saveProgress, syncProgress, updatePositionHistory } from "./lib";
+import { api, forgetPositionHistory, keepServerProgress, localDB, offlineUrl, peekPositionHistory, positionHistorySettled, prunePositionHistory, saveProgress, serverProgressOf, syncProgress, updatePositionHistory } from "./lib";
+import { catchUpDecision, CATCH_UP_TIMEOUT_MS } from "./paused-catch-up";
 import { HISTORY_LIFETIME, planUndo, recentPositions, restored, type JumpKind, type PositionEntry } from "./position-history";
 import {
   listeningChapters,
@@ -387,6 +388,7 @@ export function PlayerProvider({
       saveAfterLoad = false,
       onRecord?: RecordedPosition,
       moved?: () => void,
+      saveLeaving = true,
     ) => {
       const request = ++playRequests.current;
       const el = audio.current;
@@ -477,7 +479,9 @@ export function PlayerProvider({
           : progress?.trackId === selected.id
             ? progress.position
             : start;
-      persist();
+      // A move to a place another device saved later (#773) does not save the place it leaves: that save would be
+      // stamped newer and set the server's place back.
+      if (saveLeaving) persist();
       const currentGeneration = ++generation.current;
       stall.current?.cancel();
       el.pause();
@@ -607,14 +611,15 @@ export function PlayerProvider({
       previousProgress?: Progress | null,
       saveAfterLoad = false,
       onRecord?: RecordedPosition,
+      saveLeaving = true,
     ) => {
-      if (!jump) return load(b, t, start, autoplay, forceReload, jump, previousProgress, saveAfterLoad, onRecord);
+      if (!jump) return load(b, t, start, autoplay, forceReload, jump, previousProgress, saveAfterLoad, onRecord, undefined, saveLeaving);
       let moved!: () => void;
       const gate = new Promise<void>((resolve) => { moved = resolve; });
       pendingJumps.current.add(gate);
       void gate.then(() => pendingJumps.current.delete(gate));
       try {
-        await load(b, t, start, autoplay, forceReload, jump, previousProgress, saveAfterLoad, onRecord, moved);
+        await load(b, t, start, autoplay, forceReload, jump, previousProgress, saveAfterLoad, onRecord, moved, saveLeaving);
       } finally {
         moved();
       }
@@ -654,7 +659,7 @@ export function PlayerProvider({
     if (target) void playRef.current(book, target.track, target.start, true, false, "chapter");
   }, [persist, rememberCurrent, elementPlace, aim]);
   const seekTo = useCallback(
-    (n: number, kind: JumpKind | null) => {
+    (n: number, kind: JumpKind | null, save = true) => {
       const el = audio.current;
       if (!el.src) return false;
       const max = Number.isFinite(el.duration)
@@ -668,7 +673,7 @@ export function PlayerProvider({
       // A load still waiting for its saved position takes the newest target.
       if (pendingSeek.current !== null) pendingSeek.current = target;
       setPosition(elementPlace());
-      persist();
+      if (save) persist();
       return true;
     },
     [persist, rememberCurrent, elementPlace, aim],
@@ -778,18 +783,75 @@ export function PlayerProvider({
       .finally(() => { undoing.current = false; });
   }, [seekTo]);
   const undoJump = useCallback(() => restoreJump(), [restoreJump]);
+  // A paused player picks up a newer place saved on another device (#773): it reads the server's place for the loaded
+  // recording, and moves there, recording the place it leaves as a jump, when catchUpDecision says so. A playing
+  // player is never moved. `resume` plays on from the new place when the move loads another track; on the same track
+  // the caller plays. "superseded": a pause, another load or a newer check came meanwhile, so nothing more is done.
+  const catchUpRequests = useRef(0);
+  const catchUp = useCallback(async (resume: boolean): Promise<"stayed" | "moved" | "loaded" | "superseded"> => {
+    const { book } = state.current;
+    const el = audio.current;
+    if (!book || !el.src || !el.paused) return "stayed";
+    const id = ++catchUpRequests.current;
+    const requests = playRequests.current;
+    const live = () =>
+      id === catchUpRequests.current && requests === playRequests.current && state.current.book?.recordingId === book.recordingId;
+    const server = await serverProgressOf(book.recordingId, CATCH_UP_TIMEOUT_MS);
+    if (!live()) return "superseded";
+    if (server === undefined) return "stayed";
+    const saved = await localDB.progress.get(book.recordingId).catch(() => undefined);
+    if (!live()) return "superseded";
+    const place = currentPosition();
+    if (!place) return "stayed";
+    const decision = catchUpDecision({
+      playing: !el.paused,
+      recordingId: book.recordingId,
+      trackIds: book.tracks.map((item) => item.id),
+      place: { trackId: place.track.id, position: place.position },
+      savedAt: Math.max(saved?.updatedAt ?? 0, book.progress?.updatedAt ?? 0),
+      server,
+    });
+    if (decision.action === "stay") return "stayed";
+    // The picked-up place is this device's last save now: the next save is stamped after it, and the throttled save
+    // of the seek's `timeupdate` does not stamp it again.
+    progressClock(book.recordingId, decision.progress.updatedAt);
+    lastSave.current = Date.now();
+    void keepServerProgress(decision.progress).catch(() => {});
+    onProgressRef.current(decision.progress);
+    if (decision.trackId === place.track.id) {
+      seekTo(decision.position, "device", false);
+      return "moved";
+    }
+    const target = book.tracks.find((item) => item.id === decision.trackId)!;
+    await playRef.current(book, target, decision.position, resume, false, "device", undefined, false, undefined, false);
+    return "loaded";
+  }, [currentPosition, seekTo, progressClock]);
+  /** A resume from a pause (play button, keyboard, Media Session play): first the check above, at most ~1.5 s. */
+  const resumeFromPause = useCallback(() => {
+    const el = audio.current;
+    if (!el.src || !el.paused) return;
+    setError(null);
+    const requests = playRequests.current;
+    let spinning = false;
+    const spinner = setTimeout(() => { spinning = true; setLoading(true); }, 150);
+    void catchUp(true).then((outcome) => {
+      clearTimeout(spinner);
+      if (spinning && outcome !== "loaded") setLoading(false);
+      if (outcome === "superseded" || outcome === "loaded") return;
+      if (playRequests.current !== requests || !el.paused) return;
+      const { book, track } = state.current;
+      if (book && track) void playRef.current(book, track, pendingSeek.current ?? elementPlace());
+    });
+  }, [catchUp, elementPlace]);
   const toggle = useCallback(() => {
     const el = audio.current;
     if (!el.src) return;
-    if (el.paused) {
-      setError(null);
-      const { book, track } = state.current;
-      if (book && track) void playRef.current(book, track, pendingSeek.current ?? elementPlace());
-    } else {
+    if (el.paused) resumeFromPause();
+    else {
       ++playRequests.current;
       el.pause();
     }
-  }, [elementPlace]);
+  }, [resumeFromPause]);
   const pause = useCallback(() => {
     ++playRequests.current;
     audio.current.pause();
@@ -1019,6 +1081,10 @@ export function PlayerProvider({
     };
     const ready = () => setLoading(false);
     const pagehide = () => persist();
+    // Back in view while paused: the place another device saved since shows before play is pressed (#773).
+    const visible = () => {
+      if (document.visibilityState === "visible") void catchUp(false);
+    };
     const online = () => {
       failures.clear();
       void syncProgress().catch(() => {});
@@ -1070,12 +1136,14 @@ export function PlayerProvider({
     el.addEventListener("progress", checkLanding);
     el.addEventListener("canplay", ready);
     window.addEventListener("pagehide", pagehide);
+    document.addEventListener("visibilitychange", visible);
     window.addEventListener("online", online);
     window.addEventListener("keydown", keydown);
     navigator.serviceWorker?.addEventListener("message", mediaSource);
     if ("mediaSession" in navigator) {
       for (const [action, handler] of Object.entries({
-        play: () => void el.play(),
+        // Lock screen and headphones: the same check before resuming as the play button (#773).
+        play: () => resumeFromPause(),
         pause: () => el.pause(),
         seekbackward: () => skip(-30),
         seekforward: () => skip(30),
@@ -1112,11 +1180,12 @@ export function PlayerProvider({
       stall.current = null;
       el.removeEventListener("canplay", ready);
       window.removeEventListener("pagehide", pagehide);
+      document.removeEventListener("visibilitychange", visible);
       window.removeEventListener("online", online);
       window.removeEventListener("keydown", keydown);
       navigator.serviceWorker?.removeEventListener("message", mediaSource);
     };
-  }, [persist, next, previous, skip, seek, toggle, recoverOnDevice, failures, rememberPosition]);
+  }, [persist, next, previous, skip, seek, toggle, recoverOnDevice, failures, rememberPosition, catchUp, resumeFromPause]);
   const speedTarget = book?.recordingId ?? fallback?.recordingId;
   useEffect(() => {
     // Shows the fallback book's speed before playback and follows a changed
