@@ -11,6 +11,7 @@ import {
   loadConfig,
   parseProbe,
   probeCommand,
+  pruneArtifacts,
 } from "../scripts/ci-dispatch.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -114,6 +115,13 @@ function probeText({ cpus, load1, memAvailKB, diskFreeKB, checks = 0 }) {
 const fullWsl = probeText({ cpus: 16, load1: 41, memAvailKB: 15000000, diskFreeKB: 800000000 });
 const fullLisa = probeText({ cpus: 20, load1: 41, memAvailKB: 15000000, diskFreeKB: 80000000 });
 
+// A df -P stub: the shape of real `df -P /` output (GNU coreutils, build host,
+// 2026-11-20), with the use from $STUB_DF_USE.
+const dfStubScript = `#!/usr/bin/env bash
+use=\${STUB_DF_USE:-42}
+printf 'Filesystem     1024-blocks      Used Available Capacity Mounted on\\n/dev/nvme0n1p2   479596204 431636583  23524945      %s%% /\\n' "$use"
+`;
+
 function fixture() {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-ci-run-"));
   const repo = path.join(base, "repo");
@@ -123,7 +131,8 @@ function fixture() {
   const sleeps = path.join(base, "sleeps");
   const state = path.join(base, "state");
   for (const d of [path.join(repo, "scripts"), bin, remote, probes, sleeps]) fs.mkdirSync(d, { recursive: true });
-  for (const f of ["ci-run.sh", "ci-dispatch.mjs"]) {
+  for (const f of ["ci-run.sh", "ci-dispatch.mjs", "lib/ci-disk.sh"]) {
+    fs.mkdirSync(path.dirname(path.join(repo, "scripts", f)), { recursive: true });
     fs.copyFileSync(path.join(repoRoot, "scripts", f), path.join(repo, "scripts", f));
   }
   // The tracked hosts file, with the probe cache off so tests can change a
@@ -137,6 +146,10 @@ function fixture() {
   fs.writeFileSync(path.join(repo, "scripts", "ci-ssh.sh"), runnerStubFor("ssh"), { mode: 0o755 });
   fs.writeFileSync(path.join(repo, "package.json"), '{"name":"fixture"}\n');
   fs.writeFileSync(path.join(bin, "ssh"), sshStub, { mode: 0o755 });
+  // The disk guard (#791) reads this df stub, never the machine's own disk:
+  // $STUB_DF_USE percent used (default 42).
+  const dfStub = path.join(base, "df-stub");
+  fs.writeFileSync(dfStub, dfStubScript, { mode: 0o755 });
   const git = (...args) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
   git("init", "-q");
   git("config", "user.name", "Test");
@@ -165,6 +178,7 @@ function fixture() {
     STUB_RUNNER_LOG: logs.runner,
     STUB_PROBE_DIR: probes,
     STUB_SLEEP_DIR: sleeps,
+    SONDER_CI_DF: dfStub,
     ...extra,
   });
 
@@ -1062,4 +1076,158 @@ test("failed lisa result reports the actual host", () => {
     writeResult(f.repo, f.second, "lisa", "remote_check_failed");
     assert.match(f.run().output, /host=lisa result=remote_check_failed/);
   } finally { f.cleanup(); }
+});
+
+// ---- artifact pruning and the disk guard (#791) --------------------------
+
+const HOUR = 3600 * 1000;
+
+// artifacts/ci/<sha>/<run>/ with a log, every entry dated `hoursAgo` back.
+function writeArtifacts(root, sha, hoursAgo, files = { "run-1/check.log": "log\n" }) {
+  const dir = path.join(root, sha);
+  for (const [rel, body] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), body);
+  }
+  const when = new Date(Date.now() - hoursAgo * HOUR);
+  const touch = (p) => {
+    for (const e of fs.readdirSync(p, { withFileTypes: true })) {
+      if (e.isDirectory()) touch(path.join(p, e.name));
+      fs.utimesSync(path.join(p, e.name), when, when);
+    }
+  };
+  touch(dir);
+  fs.utimesSync(dir, when, when);
+  return dir;
+}
+
+const sha40 = (c) => c.repeat(40);
+
+test("pruneArtifacts removes commit dirs older than the limit and keeps fresh, kept, live and foreign ones", () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-ci-prune-"));
+  try {
+    const old = writeArtifacts(base, sha40("a"), 7);
+    const fresh = writeArtifacts(base, sha40("b"), 1);
+    const kept = writeArtifacts(base, sha40("c"), 30);
+    // A runner started without the dispatcher (npm run ci:ssh) holds a live pid file.
+    const live = writeArtifacts(base, sha40("d"), 30, { "sonder-ci-x/ci-ssh.pid": `${process.pid}\n` });
+    const deadPid = Number(spawnSync("bash", ["-c", "echo $$"], { encoding: "utf8" }).stdout.trim());
+    const dead = writeArtifacts(base, sha40("e"), 30, { "sonder-ci-x/ci-ssh.pid": `${deadPid}\n` });
+    // An old commit dir whose run is still writing its log is in use: only the
+    // log itself (a grandchild) is fresh, appending changes no directory.
+    const mixed = writeArtifacts(base, sha40("f"), 30);
+    fs.appendFileSync(path.join(mixed, "run-1", "check.log"), "now\n");
+    const foreign = writeArtifacts(base, "unresolved-main", 30);
+    const removed = pruneArtifacts({ root: base, hours: 6, keep: [sha40("c")] });
+    assert.deepEqual(removed.sort(), [old, dead].sort());
+    for (const d of [fresh, kept, live, mixed, foreign]) assert.ok(fs.existsSync(d), `${d} kept`);
+    for (const d of [old, dead]) assert.ok(!fs.existsSync(d), `${d} removed`);
+    // A missing artifacts root is no error.
+    assert.deepEqual(pruneArtifacts({ root: path.join(base, "none"), hours: 6 }), []);
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("ci:run removes an old artifacts dir on start and keeps a running check's", async () => {
+  const f = fixture();
+  try {
+    const root = path.join(f.repo, "artifacts", "ci");
+    const old = writeArtifacts(root, f.commits[3], 7);
+    const runningDir = writeArtifacts(root, f.commits[0], 7);
+    const queuedDir = writeArtifacts(root, f.commits[4], 7);
+    const young = writeArtifacts(root, f.commits[5], 5);
+    // A check for commits[0] is running (registered by the dispatcher) and one
+    // for commits[4] is queued.
+    const holder = spawn("sleep", ["60"], { stdio: "ignore" });
+    try {
+      fs.mkdirSync(path.join(f.state, "runs"), { recursive: true });
+      fs.mkdirSync(path.join(f.state, "queue"), { recursive: true });
+      fs.writeFileSync(path.join(f.state, "runs", `${holder.pid}-run.json`),
+        JSON.stringify({ host: "lisa", sha: f.commits[0], pid: holder.pid, startedAt: Math.floor(Date.now() / 1000), port: 4400 }));
+      fs.writeFileSync(path.join(f.state, "queue", "999999999999999-00000001.json"),
+        JSON.stringify({ sha: f.commits[4], pid: holder.pid, queuedAt: Math.floor(Date.now() / 1000) }));
+      // The queued ticket's name sorts after the one ci:run writes, so ours is first.
+      const result = f.run([], f.commits[1], { SONDER_CI_HOSTS: "wsl" });
+      assert.equal(result.status, 0, result.output);
+      assert.match(result.stdout, new RegExp(`^pruned ${old.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m"));
+      assert.ok(!fs.existsSync(old), "the old artifacts dir is removed");
+      assert.ok(fs.existsSync(runningDir), "a running check's artifacts are kept");
+      assert.ok(fs.existsSync(queuedDir), "a queued check's artifacts are kept");
+      assert.ok(fs.existsSync(young), "artifacts younger than the limit are kept");
+    } finally {
+      holder.kill("SIGKILL");
+    }
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("ci:run keeps the artifacts of the commit it starts, so an old failure still refuses it", () => {
+  const f = fixture();
+  try {
+    const dir = writeResult(f.repo, f.second, "wsl", "failed");
+    const when = new Date(Date.now() - 30 * HOUR);
+    fs.utimesSync(path.join(dir, "ci-ssh-result.txt"), when, when);
+    fs.utimesSync(dir, when, when);
+    fs.utimesSync(path.dirname(dir), when, when);
+    const out = f.run();
+    assert.equal(out.status, 1, out.output);
+    assert.match(out.stdout, /refusing to run/);
+    assert.ok(fs.existsSync(dir));
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("SONDER_CI_ARTIFACT_HOURS sets the age limit; a bad value is a usage error", () => {
+  const f = fixture();
+  try {
+    const root = path.join(f.repo, "artifacts", "ci");
+    const twoHours = writeArtifacts(root, f.commits[3], 2);
+    let out = f.run([], f.commits[1], { SONDER_CI_ARTIFACT_HOURS: "1.5" });
+    assert.equal(out.status, 0, out.output);
+    assert.ok(!fs.existsSync(twoHours));
+    out = f.run([], f.commits[2], { SONDER_CI_ARTIFACT_HOURS: "six" });
+    assert.equal(out.status, 2, out.output);
+    assert.match(out.stderr, /SONDER_CI_ARTIFACT_HOURS must be a non-negative number/);
+    assert.equal(f.invocations().length, 1, "no check started with a bad setting");
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("above SONDER_CI_DISK_MAX_PERCENT the check does not start and says why", () => {
+  const f = fixture();
+  try {
+    const out = f.run([], f.commits[1], { STUB_DF_USE: "93" });
+    assert.equal(out.status, 8, out.output);
+    assert.match(out.stdout, /^\[ci-run\] disk at 93%: free space before checks \(\/ is above SONDER_CI_DISK_MAX_PERCENT=90\)$/m);
+    assert.match(out.stdout, new RegExp(`^refused disk_full ${f.second}$`, "m"));
+    assert.doesNotMatch(out.stdout, /^(queued|started) /m);
+    assert.equal(f.invocations().length, 0, "no runner started");
+    assert.equal(f.read(f.logs.ssh), "", "no host probed");
+    assert.deepEqual(fs.readdirSync(path.join(f.state, "queue")), [], "no queue ticket left");
+    assert.equal(fs.existsSync(path.join(f.repo, "artifacts", "ci", f.second)), false, "nothing written for the commit");
+    // At the threshold it still starts; the threshold is configurable.
+    assert.equal(f.run([], f.commits[1], { STUB_DF_USE: "90" }).status, 0);
+    const strict = f.run([], f.commits[2], { STUB_DF_USE: "90", SONDER_CI_DISK_MAX_PERCENT: "80" });
+    assert.equal(strict.status, 8, strict.output);
+    assert.match(strict.stdout, /disk at 90%: free space before checks .*SONDER_CI_DISK_MAX_PERCENT=80/);
+    assert.equal(f.run([], f.commits[2], { SONDER_CI_DISK_MAX_PERCENT: "ninety" }).status, 2);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("an unreadable df does not block the check", () => {
+  const f = fixture();
+  try {
+    const out = f.run([], f.commits[1], { SONDER_CI_DF: "false" });
+    assert.equal(out.status, 0, out.output);
+    assert.match(out.stderr, /could not read the disk use/);
+    assert.equal(f.invocations().length, 1);
+  } finally {
+    f.cleanup();
+  }
 });

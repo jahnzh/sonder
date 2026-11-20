@@ -18,6 +18,12 @@
 #   queued  <sha> position=<N> log=<path>
 #   started <host> <sha> log=<path>
 #   finished <host> <sha> exit=<rc> log=<path>
+#   refused disk_full <sha>
+#
+# On every start it first prunes artifacts/ci/<sha>/ directories older than
+# SONDER_CI_ARTIFACT_HOURS, never those of a running or queued check (#791),
+# and refuses to start, with "disk at N%: free space before checks", while the
+# filesystem of this checkout is fuller than SONDER_CI_DISK_MAX_PERCENT.
 #
 # A commit that already has a finished run with a failing check result on any
 # host is refused: a failure is a failure and is never rerun on another host to
@@ -26,8 +32,8 @@
 # another host.
 #
 # Exit status: the downstream runner's exit status; 1 the ref is not a commit
-# or the commit already failed on a finished run; 2 usage; 124 the queue wait
-# cap was reached.
+# or the commit already failed on a finished run; 2 usage; 8 the disk is full
+# (disk_full, nothing started); 124 the queue wait cap was reached.
 #
 # Environment:
 #   SONDER_CI_HOSTS        comma-separated host ids in priority order (wsl,
@@ -46,6 +52,10 @@
 #   SONDER_CI_HOST_CONFIG  hosts file (default scripts/ci-hosts.json)
 #   SONDER_CI_POLL_INTERVAL queue poll in seconds (default 5)
 #   SONDER_CI_QUEUE_TIMEOUT queue wait cap in seconds (default 3600)
+#   SONDER_CI_ARTIFACT_HOURS commit artifact dirs older than this are pruned at
+#                          every start (default 6)
+#   SONDER_CI_DISK_MAX_PERCENT refuse to start above this use of the
+#                          checkout's filesystem (default 90)
 #
 # No `set -e`: every step handles its own failure so a failing step can never
 # skip the code that records the outcome.
@@ -73,6 +83,12 @@ Environment:
   SONDER_CI_STATE_DIR      shared queue/state dir
   SONDER_CI_POLL_INTERVAL  queue poll in seconds (default 5)
   SONDER_CI_QUEUE_TIMEOUT  queue wait cap in seconds (default 3600)
+  SONDER_CI_ARTIFACT_HOURS prune artifacts/ci/<sha>/ older than this many
+                           hours at every start, except running or queued
+                           checks (default 6)
+  SONDER_CI_DISK_MAX_PERCENT
+                           refuse to start (disk_full, exit 8) above this use
+                           of the checkout's filesystem (default 90)
 EOF
 }
 
@@ -99,6 +115,8 @@ done
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 DISPATCHER="$ROOT/scripts/ci-dispatch.mjs"
+# shellcheck source=lib/ci-disk.sh
+source "$ROOT/scripts/lib/ci-disk.sh" || { echo "[ci-run] cannot read scripts/lib/ci-disk.sh" >&2; exit 2; }
 
 # Same allowlist as scripts/lib/ci-history.sh: reject invalid IDs before doing work.
 [[ -z $DISPATCH || $DISPATCH =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
@@ -131,6 +149,14 @@ LOG_FILE=""
 log() {
   echo "[ci-run] $*"
 }
+
+# Old check artifacts filled the coordinator's disk once (#791): drop those of
+# finished checks before anything else. The commit being started keeps its own
+# (its finished runs decide below whether it may run again).
+prune_rc=0
+node "$DISPATCHER" prune --artifacts "$ROOT/artifacts/ci" --keep "$FULL_SHA" || prune_rc=$?
+[[ $prune_rc -eq 2 ]] && exit 2
+[[ $prune_rc -eq 0 ]] || log "warning: pruning old artifacts failed (status ${prune_rc}); starting anyway"
 
 # The commit's finished runs under artifacts/ci/<sha>/. Prints one line per
 # blocking run: <host> <result> <run_dir>. A check result of failed or
@@ -189,6 +215,16 @@ if [[ -n $BLOCKING ]]; then
   done <<<"$BLOCKING"
   log "A failure is a failure: the commit is not rerun on the other host to obtain a pass."
   exit 1
+fi
+
+# Refuse before taking a queue slot or writing a log: a full disk made the
+# bundle fail and read like flakiness (#791).
+ci_disk_guard "$ROOT" ci-run
+disk_rc=$?
+if [[ $disk_rc -eq 2 ]]; then exit 2; fi
+if [[ $disk_rc -ne 0 ]]; then
+  echo "refused disk_full ${FULL_SHA}"
+  exit "$CI_DISK_FULL_EXIT"
 fi
 
 new_log_file() {
