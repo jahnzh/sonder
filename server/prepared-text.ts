@@ -12,6 +12,19 @@ import { XMLParser } from "fast-xml-parser";
 import { parse, type HTMLElement, type Node } from "node-html-parser";
 import { posix } from "node:path";
 import { randomBytes } from "node:crypto";
+import {
+  ALLOWED_ATTRIBUTES,
+  ALLOWED_TAGS,
+  PREPARED_BLOCK_TAGS,
+  PREPARED_INLINE_TAGS,
+  PREPARED_LANG,
+  PREPARED_PICTURE_NAME,
+  PREPARED_PICTURE_TYPES,
+  PREPARED_TABLE_TAGS,
+  SENTENCE_ID,
+  allowedLinkAddress,
+  preparedPictureAddress,
+} from "../src/prepared-text-rules.ts";
 import { countedBlocks, normalizeReaderText, readerSkippedSelector, type ReaderSection } from "../src/reading-types.ts";
 
 /**
@@ -91,19 +104,17 @@ export type PreparedBookInput = {
   sections: ReaderSection[];
 };
 
-const KEEP_BLOCK = new Set(["p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "ul", "ol", "li", "pre", "figure", "figcaption", "dl", "dt", "dd"]);
-const KEEP_INLINE = new Set(["em", "i", "strong", "b", "u", "s", "small", "sub", "sup", "code", "cite", "q", "mark", "span", "ruby", "rt", "rp", "del", "ins"]);
-const TABLE = new Set(["table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption"]);
+const KEEP_BLOCK = PREPARED_BLOCK_TAGS;
+const KEEP_INLINE = PREPARED_INLINE_TAGS;
+const TABLE = PREPARED_TABLE_TAGS;
 /** Block-level names: a run of text ends at them, and a `<p>` that holds one is written as a `<div>`. */
 const BLOCK = new Set([...KEEP_BLOCK, ...TABLE, "hr", "section", "article", "aside", "header", "footer", "nav", "main", "address", "center", "details", "summary", "colgroup", "col", "form", "fieldset"]);
 /** Containers a part may be cut inside: closing one and opening it again in the next part changes nothing on the page. */
 const CUT_INSIDE = new Set(["div", "section", "article", "aside", "header", "footer", "main", "blockquote", "center", "body", "html"]);
-/** Every tag and attribute this module can write. The tests hold the output to them. */
-export const ALLOWED_TAGS = new Set([...KEEP_BLOCK, ...KEEP_INLINE, ...TABLE, "a", "br", "hr", "img", "section"]);
-export const ALLOWED_ATTRIBUTES = new Set(["class", "lang", "data-s", "data-id", "data-section", "data-part", "data-sentence", "data-anchor", "href", "target", "rel", "src", "alt", "width", "height", "loading", "decoding", "colspan", "rowspan", "start"]);
-const PICTURE_TYPES: Record<string, string> = { ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml" };
+// The allow-list itself is src/prepared-text-rules.ts, which the reader checks each part against as well.
+export { ALLOWED_TAGS, ALLOWED_ATTRIBUTES };
 /** The content type a picture of a prepared book is served with, by its name; undefined for any other name. */
-export const pictureType = (name: string) => (/^\d{1,6}\.[a-z]{3,4}$/.test(name) ? PICTURE_TYPES[posix.extname(name)] : undefined);
+export const pictureType = (name: string) => (PREPARED_PICTURE_NAME.test(name) ? PREPARED_PICTURE_TYPES[name.slice(name.lastIndexOf(".") + 1)] : undefined);
 
 const xml = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", removeNSPrefix: true, processEntities: false });
 const array = (value: any): any[] => (value == null ? [] : Array.isArray(value) ? value : [value]);
@@ -316,7 +327,11 @@ export async function prepareEpub(input: {
   const firstOrdinal = new Map<number, number>();
   for (const section of book.sections) {
     firstOrdinal.set(section.index, ordinals.length);
-    for (const paragraph of section.paragraphs) ordinals.push({ id: paragraph.id, section: section.index, text: paragraph.text });
+    for (const paragraph of section.paragraphs) {
+      // An id is written into attributes as it is, so it must be the one form an id has.
+      if (!SENTENCE_ID.test(paragraph.id)) throw new Error("This book's sentences cannot be shown: one has an id of an unknown form.");
+      ordinals.push({ id: paragraph.id, section: section.index, text: paragraph.text });
+    }
   }
   const tagged: string[][] = ordinals.map(() => []);
   const problems: string[] = [];
@@ -494,7 +509,7 @@ export async function prepareEpub(input: {
         if (!anchors.has(key)) anchors.set(key, { unit: units.length, after: lastOrdinal, section: index });
       }
       const lang = node.attrs.lang || node.attrs["xml:lang"] || "";
-      if (/^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8}){0,4}$/.test(lang)) out += ` lang="${lang}"`;
+      if (PREPARED_LANG.test(lang)) out += ` lang="${lang}"`;
       return out;
     };
     const picture = (node: HTMLElement) => {
@@ -504,10 +519,10 @@ export async function prepareEpub(input: {
       const target = resolve(path, href);
       const extension = posix.extname(target).toLowerCase();
       const entry = entryName(target);
-      if (!entry || !PICTURE_TYPES[extension] || !sizeOf(entry) || sizeOf(entry) > LIMITS.picture) return "";
+      if (!entry || !PREPARED_PICTURE_TYPES[extension.slice(1)] || !sizeOf(entry) || sizeOf(entry) > LIMITS.picture) return "";
       if (!pictures.has(entry)) pictures.set(entry, { name: `${pictures.size}${extension}`, entry, index: pictures.size });
       const known = pictures.get(entry)!;
-      return `<img src="${attr(base)}/pictures/${known.name}" alt="${attr(node.attrs.alt || "")}"${mark("d", known.index)} loading="lazy" decoding="async">`;
+      return `<img src="${attr(preparedPictureAddress(base, known.name))}" alt="${attr(node.attrs.alt || "")}"${mark("d", known.index)} loading="lazy" decoding="async">`;
     };
     const firstImage = (node: HTMLElement): HTMLElement | undefined => {
       for (const child of node.childNodes) {
@@ -572,7 +587,7 @@ export async function prepareEpub(input: {
       if (name === "a") {
         const href = (node.attrs.href || "").trim();
         let extra = "";
-        if (/^(https?:\/\/|mailto:)/i.test(href) && !/[\u0000-\u001f]/.test(href)) extra = ` href="${attr(href)}" target="_blank" rel="noopener noreferrer nofollow"`;
+        if (allowedLinkAddress(href)) extra = ` href="${attr(href)}" target="_blank" rel="noopener noreferrer nofollow"`;
         else if (href && !/^[a-z][a-z0-9+.-]*:/i.test(href) && !href.startsWith("//")) {
           links.push(href.startsWith("#") ? `${path}#${decodeSafe(href.slice(1))}` : withFragment(resolve(path, href), href));
           extra = mark("g", links.length - 1);

@@ -17,7 +17,8 @@ const s = await import("../server/schema.ts");
 const { extractBook } = await import("../server/reader.ts");
 const { parse } = await import("node-html-parser");
 const { normalizeReaderText } = await import("../src/reading-types.ts");
-const { prepareEpub, sentencesOfParts, PREPARED_TEXT_VERSION, PART_TARGET_BYTES, ALLOWED_TAGS, ALLOWED_ATTRIBUTES } = await import("../server/prepared-text.ts");
+const { prepareEpub, sentencesOfParts, PREPARED_TEXT_VERSION, PART_TARGET_BYTES } = await import("../server/prepared-text.ts");
+const { ALLOWED_TAGS, ALLOWED_ATTRIBUTES, refusedElement, allowedLinkAddress, allowedPictureAddress } = await import("../src/prepared-text-rules.ts");
 const { preparedFixture, tinyPng } = await import("./prepared-text-fixture.ts");
 type Fixture = import("./prepared-text-fixture.ts").PreparedFixture;
 after(() => sqlite.close());
@@ -133,18 +134,60 @@ test("structure is kept, the publisher's fonts and layout are not", async () => 
 function assertClean(html: string) {
   const root = parse(html);
   for (const element of root.querySelectorAll("*")) {
-    const tag = element.rawTagName.toLowerCase();
-    assert.ok(ALLOWED_TAGS.has(tag), `tag ${tag}`);
-    for (const [name, value] of Object.entries(element.attrs)) {
-      assert.ok(ALLOWED_ATTRIBUTES.has(name), `attribute ${name} on ${tag}`);
-      if (name === "src") assert.ok(value.startsWith(`${BASE}/pictures/`), `src ${value}`);
-      if (name === "href") assert.match(value, /^(https?:\/\/|mailto:)/, `href ${value}`);
-    }
+    const attributes = Object.entries(element.attrs).map(([name, value]) => ({ name, value }));
+    assert.equal(refusedElement({ localName: element.rawTagName.toLowerCase(), attributes }, BASE), null);
   }
   assert.doesNotMatch(html, /javascript:|vbscript:|data:|<script|<style|<iframe|<object|<embed|<form|<link|<meta|<base/i);
   // What the parser of this test accepts as text, a browser must too: no raw "<" survives outside a tag we wrote.
   assert.equal(root.querySelectorAll("*").length, (html.match(/<[a-z]/g) || []).length);
 }
+
+test("the allow-list the server and the reader share refuses what is not prepared text", () => {
+  const element = (localName: string, attributes: Record<string, string> = {}, namespaceURI?: string) => ({ localName, namespaceURI, attributes: Object.entries(attributes).map(([name, value]) => ({ name, value })) });
+  const ok = [
+    element("p", { class: "t-c t-i", lang: "en-GB", "data-id": 'any "text"' }),
+    element("span", { "data-s": "12:340" }, "http://www.w3.org/1999/xhtml"),
+    element("a", { href: "https://example.org/a?b=1", target: "_blank", rel: "noopener noreferrer nofollow" }),
+    element("a", { href: "MAILTO:someone@example.org" }),
+    element("a", { "data-part": "3", "data-sentence": "2:0", "data-anchor": "x" }),
+    element("img", { src: `${BASE}/pictures/12.png`, alt: "", width: "20", height: "30", loading: "lazy", decoding: "async" }),
+    element("td", { colspan: "2", rowspan: "3" }),
+    element("ol", { start: "4" }),
+    element("section", { "data-section": "7" }),
+  ];
+  for (const one of ok) assert.equal(refusedElement(one, BASE), null, JSON.stringify(one));
+  const refused = [
+    element("script"),
+    element("svg"),
+    element("p", {}, "http://www.w3.org/2000/svg"),
+    element("iframe", { src: `${BASE}/pictures/0.png` }),
+    element("p", { onclick: "x()" }),
+    element("p", { style: "color:red" }),
+    element("p", { id: "root" }),
+    element("p", { class: "t-c app" }),
+    element("p", { lang: 'en" x="' }),
+    element("p", { href: "https://example.org/" }),
+    element("p", { src: `${BASE}/pictures/0.png` }),
+    element("span", { "data-s": "1:2x" }),
+    element("a", { "data-sentence": "<i>" }),
+    element("a", { href: "javascript:alert(1)" }),
+    element("a", { href: " https://example.org/" }),
+    element("a", { href: "//example.org/" }),
+    element("a", { href: "data:text/html,x" }),
+    element("a", { href: "https://example.org/\njavascript:x" }),
+    element("img", { src: "https://example.org/a.png" }),
+    element("img", { src: "/api/reader/other/prepared/key/pictures/0.png" }),
+    element("img", { src: `${BASE}/pictures/../p0.html` }),
+    element("img", { src: `${BASE}/pictures/0.html` }),
+    element("img", { src: `${BASE}/pictures/0.png?x` }),
+    element("img", { src: `${BASE}/pictures/0.png`, srcset: "https://example.org/2x.png 2x" }),
+    element("img", { src: `${BASE}/pictures/0.png`, width: "100%" }),
+    element("td", { colspan: "2e3" }),
+  ];
+  for (const one of refused) assert.notEqual(refusedElement(one, BASE), null, JSON.stringify(one));
+  assert.ok(allowedLinkAddress("http://example.org") && !allowedLinkAddress("ftp://example.org") && !allowedLinkAddress("mailto:a\u0000b"));
+  assert.ok(allowedPictureAddress(`${BASE}/pictures/3.svg`, BASE) && !allowedPictureAddress(`${BASE}/pictures/3.svg`, `${BASE}x`));
+});
 
 test("hostile markup: scripts, handlers, frames, forms and outside addresses do not survive", async () => {
   const result = await prepared({

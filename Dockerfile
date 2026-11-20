@@ -19,6 +19,7 @@ COPY --from=build --chown=node:node /app/src/types.ts ./src/types.ts
 COPY --from=build --chown=node:node /app/src/series-selection.ts ./src/series-selection.ts
 COPY --from=build --chown=node:node /app/src/appearance.ts ./src/appearance.ts
 COPY --from=build --chown=node:node /app/src/reading-types.ts ./src/reading-types.ts
+COPY --from=build --chown=node:node /app/src/prepared-text-rules.ts ./src/prepared-text-rules.ts
 COPY --from=build --chown=node:node /app/package.json /app/tsconfig.json ./
 USER node
 EXPOSE 3001
