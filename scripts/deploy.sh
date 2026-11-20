@@ -16,6 +16,7 @@
 #      recording, and one that exits 3 found no recording it can run on and is reported as skipped, not failed (#431).
 #      It never picks a book listened to in the last 48 h (#774). SONDER_VERIFY_RECORDING=<recording id> names the
 #      recording instead, and SONDER_VERIFY_ALLOW_RECENT=1 lets that be a recently played one: both are passed through.
+#      SONDER_DEPLOY_SLICE_PASS=1 adds the slice pass (scripts/verify-slice-pass.mjs, #794) after them.
 # Prints the rollback command (retag the old image as :local, then up -d --no-build) and reminds to
 # record the deploy in artifacts/orca/STATE.md.
 # At least one --marker or --marker-file is required; --no-marker explicitly skips image verification (non-app changes)
@@ -61,6 +62,11 @@ backup_dir=${SONDER_DEPLOY_BACKUP_DIR:-$repo_root/data/backups}
 health_timeout=${SONDER_DEPLOY_HEALTH_TIMEOUT:-180}
 port=${SONDER_DEPLOY_PORT:-3001}
 live_checks=${SONDER_DEPLOY_LIVE_CHECKS:-scripts/verify-integrated-reader.mjs scripts/verify-multi-user.mjs}
+# The slice pass (#794): the slice finals' lists, walked at a phone's and a desktop's size. Optional: only with
+# SONDER_DEPLOY_SLICE_PASS=1, after the other checks (a slice's final deploy asks for it).
+if [ "${SONDER_DEPLOY_SLICE_PASS:-}" = "1" ]; then
+  live_checks="$live_checks scripts/verify-slice-pass.mjs"
+fi
 
 cd "$repo_root"
 

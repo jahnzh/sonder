@@ -254,6 +254,26 @@ test("SONDER_VERIFY_RECORDING and SONDER_VERIFY_ALLOW_RECENT reach every live ch
   }
 });
 
+// #794: the slice pass is one of the optional live checks, run only when asked for, after the others.
+test("SONDER_DEPLOY_SLICE_PASS=1 adds the slice pass after the other live checks; without it the deploy does not run it", () => {
+  const f = fixture({ "verify-a.mjs": 0, "verify-slice-pass.mjs": 0 });
+  try {
+    let r = f.run(["--no-marker"], { SONDER_DEPLOY_LIVE_CHECKS: "scripts/verify-a.mjs" });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.deepEqual(f.ran(), ["verify-a.mjs"]);
+    r = f.run(["--no-marker"], { SONDER_DEPLOY_LIVE_CHECKS: "scripts/verify-a.mjs", SONDER_DEPLOY_SLICE_PASS: "1" });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.deepEqual(f.ran(), ["verify-a.mjs", "verify-a.mjs", "verify-slice-pass.mjs"]);
+    // Any other value is not the opt-in.
+    r = f.run(["--no-marker", "--dry-run"], { SONDER_DEPLOY_LIVE_CHECKS: "", SONDER_DEPLOY_SLICE_PASS: "yes" });
+    assert.match(r.stdout, /live checks: scripts\/verify-integrated-reader\.mjs scripts\/verify-multi-user\.mjs\n/);
+    r = f.run(["--no-marker", "--dry-run"], { SONDER_DEPLOY_LIVE_CHECKS: "", SONDER_DEPLOY_SLICE_PASS: "1" });
+    assert.match(r.stdout, /live checks: scripts\/verify-integrated-reader\.mjs scripts\/verify-multi-user\.mjs scripts\/verify-slice-pass\.mjs\n/);
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
 test("the reader check is started without a recording id even when the database has a mapped recording", () => {
   const interval = { paragraphId: "p1", section: 0, trackId: "t1", start: 0, end: 5, confidence: 1 };
   const f = fixture(

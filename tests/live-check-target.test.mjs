@@ -76,7 +76,7 @@ test("a URL the guard cannot classify is refused without the flag (a LAN address
 
 test("every live verification script resolves its server through verifyBaseURL before it launches a browser", () => {
   const live = readdirSync(scripts).filter((name) => /^verify-.*\.mjs$/.test(name) && /SONDER_VERIFY_URL|chromium\.launch/.test(readFileSync(join(scripts, name), "utf8")));
-  assert.deepEqual(live.sort(), ["verify-integrated-reader.mjs", "verify-multi-user.mjs", "verify-playback-workflow.mjs", "verify-reading-sync.mjs"]);
+  assert.deepEqual(live.sort(), ["verify-integrated-reader.mjs", "verify-multi-user.mjs", "verify-playback-workflow.mjs", "verify-reading-sync.mjs", "verify-slice-pass.mjs"]);
   for (const name of live) {
     const source = readFileSync(join(scripts, name), "utf8");
     assert.doesNotMatch(source, /SONDER_VERIFY_URL\s*\|\|/, name);
