@@ -141,6 +141,9 @@ function fixture() {
   config.dispatch.probeTtlSeconds = 0;
   // Synthetic capacity fixture exercises multiple slots independent of production costs.
   config.dispatch.cost.memGB = 4;
+  // lisa's own ceiling is an operating setting (one check beside the alignment worker); these tests exercise the
+  // dispatcher with the shared ceiling on every host.
+  delete config.lisa.ceiling;
   fs.writeFileSync(path.join(repo, "scripts", "ci-hosts.json"), JSON.stringify(config, null, 2));
   fs.writeFileSync(path.join(repo, "scripts", "ci-deck.sh"), runnerStubFor("deck"), { mode: 0o755 });
   fs.writeFileSync(path.join(repo, "scripts", "ci-ssh.sh"), runnerStubFor("ssh"), { mode: 0o755 });
@@ -985,6 +988,10 @@ test("tracked ci-hosts.json: WSL and lisa primary, the Deck fallback, named admi
   assert.equal(cfg.hosts.lisa.remoteBase, "/home/jahn/sonder-ci-tmp");
   assert.equal(cfg.hosts.lisa.tmpdir, "/home/jahn/sonder-ci-tmp");
   assert.equal(cfg.hosts.lisa.maxWait, 3600);
+  // One check at a time on lisa while the pool's alignment worker shares its CPU (docs/agents/ci-host.md).
+  assert.equal(raw.lisa.ceiling, 1);
+  assert.equal(cfg.hosts.lisa.ceiling, 1);
+  assert.equal(cfg.hosts.wsl.ceiling, 2);
   assert.equal(cfg.hosts.wsl.ssh, WSL);
   assert.equal(cfg.hosts.deck.ssh, DECK);
   assert.equal(cfg.hosts.deck.runner, "ci-deck.sh");
