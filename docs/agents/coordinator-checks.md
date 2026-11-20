@@ -53,7 +53,7 @@ The coordinator does host work itself and does not leave it for the owner: `scri
 
 ## Disk
 
-`scripts/orca-spawn.sh` refuses to start a worker under 15 GB free. What fills the disk between runs: old rollback images (`docker images sonder-audiobooks`; keep the three newest `before-*` tags), the build cache (`docker builder prune -f`), `artifacts/ci/` (keep the newest few), finished worktrees, and temp folders of killed browser runs (the heartbeat removes those). Tests remove their own temp folders (`tests/temp-leftovers.test.mjs`).
+`scripts/orca-spawn.sh` refuses to start a worker under 15 GB free. What fills the disk between runs: old rollback images (`docker images sonder-audiobooks`; keep the three newest `before-*` tags), the build cache (`docker builder prune -f`), `artifacts/ci/` (keep the newest few), finished worktrees, and temp folders of killed browser runs. The heartbeat removes those, and `scripts/clean-temp.sh` does it on request, also while browser tests run: a folder goes only when nothing in it changed in the last 30 minutes and no running process names it on its command line, working directory, environment or open files; each folder kept is printed with the reason (#825). The heartbeat's cleaner, which also runs at the start of every browser run, prints the same lines (`removed stale browser temp: …`, `kept browser temp: … (in use by process N)` or `(changed in the last 30 min)`): in the heartbeat's output, and in a check's browser log with `[test-browser]` in front. Tests remove their own temp folders (`tests/temp-leftovers.test.mjs`).
 
 ## Stopping a run
 

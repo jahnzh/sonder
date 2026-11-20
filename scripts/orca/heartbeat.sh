@@ -52,5 +52,6 @@ df -BG . | awk 'NR==2 {print "disk free: " $4}'
 df -h / | awk 'NR==2 {print "root filesystem: " $5 " used, " $4 " free of " $2 " (" $1 ")"}'
 health=$(curl -s -m 5 "${SONDER_HEALTH_URL:-http://127.0.0.1:3001/api/health}" || true)
 echo "production: ${health:-no answer}"
-removed=$(node -e 'import("./scripts/test-browser.mjs").then((m) => console.log(m.removeStaleBrowserTemps().length))' 2>/dev/null)
-echo "stale browser temp folders removed: ${removed:-0}"
+# Each folder is printed, removed or kept with the reason (#825), then the count.
+node -e 'import("./scripts/test-browser.mjs").then((m) => console.log("stale browser temp folders removed: " + m.removeStaleBrowserTemps({ report: (line) => console.log(line) }).length))' 2>/dev/null \
+  || echo "stale browser temp folders removed: 0"
