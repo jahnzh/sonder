@@ -147,6 +147,19 @@ test("without a map the administrator's Back to narration locates the passage, s
   await expect.poll(async () => { const saved = await checkpointOf(page, ebook); return saved && { origin: saved.origin, paragraphId: saved.locator.paragraphId }; }, { timeout: 10000 })
     .toEqual({ origin: "listening", paragraphId: target.id });
   await expect(backButton(page)).toBeEnabled();
+  // The page laid out anew does not unmark the located sentence (#831). Its chapter's fonts finishing after the
+  // mark was drawn did that in about one run of three in Firefox on a loaded host; a band of another size asks
+  // for the same redraw every time.
+  const pages = room.locator(".reader-viewport");
+  const sized = Number(await pages.getAttribute("data-view-resizes"));
+  const size = page.viewportSize()!;
+  await page.setViewportSize({ width: size.width, height: size.height - 60 });
+  await expect.poll(async () => Number(await pages.getAttribute("data-view-resizes"))).toBeGreaterThan(sized);
+  // The redraw's own steps have run: two frames after the band was sized.
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect(page.locator(".inline-reader .reader-viewport .sonder-follow").first()).toBeVisible();
+  // And it is the located sentence's page that is shown.
+  await expect(page.frameLocator(".inline-reader .reader-viewport iframe").getByText(target.text.slice(0, 24))).toBeVisible();
 });
 
 test("a failed locating is the foot's error, with Retry; F does the same as the button", async ({ page }, testInfo) => {
