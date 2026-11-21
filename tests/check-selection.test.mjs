@@ -106,10 +106,11 @@ test("a spec's weight is its tests times the projects it runs in", () => {
 
 test("the number of parts follows the host's processors, or the setting", () => {
   assert.equal(changedStageShardCount({}, 4), 1, "the production machine: one run");
-  assert.equal(changedStageShardCount({}, 8), 3);
-  assert.equal(changedStageShardCount({}, 16), 6);
-  assert.equal(changedStageShardCount({}, 20), 8);
-  assert.equal(changedStageShardCount({}, 64), 8, "never more than eight by itself");
+  assert.equal(changedStageShardCount({}, 8), 2);
+  assert.equal(changedStageShardCount({}, 16), 5, "WSL: as many as its browser shards");
+  assert.equal(changedStageShardCount({}, 20), 6, "lisa: six, as its browser stage, not eight");
+  assert.equal(changedStageShardCount({}, 64), 6);
+  assert.equal(changedStageShardCount({ SONDER_BROWSER_SHARDS: "3" }, 20), 3, "it follows the browser stage's width when that is set");
   assert.equal(changedStageShardCount({ SONDER_BROWSER_CHANGED_SHARDS: "12" }, 4), 12);
   assert.equal(changedStageShardCount({ SONDER_BROWSER_CHANGED_SHARDS: "1" }, 20), 1);
   for (const bad of ["0", "17", "two", "2.5"]) assert.equal(changedStageShardCount({ SONDER_BROWSER_CHANGED_SHARDS: bad }, 20), 1, bad);

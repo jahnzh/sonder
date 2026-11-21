@@ -15,6 +15,8 @@
 // the one file the check reads. N comes from SONDER_BROWSER_SHARDS, or from the CPU count when unset
 // (one shard on a small host such as the 4-core production machine). Filtered runs, repeated runs and runs
 // that choose their own --output or --shard stay a single serial run.
+// With tests/e2e/spec-seconds.json the shards are not `--shard` slices (dealt by count: 11 to 35 minutes on lisa)
+// but the spec files dealt by measured time, every file in exactly one shard (#845).
 //
 // Parts (#845): the check's changed-spec stages name their spec files and ask for one worker, so `--shard` is not
 // for them: it would put a spec's two repeats on two servers. Instead SONDER_BROWSER_PARTS holds the files dealt
@@ -30,6 +32,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { browserShardCount, partitionSpecs } from "./check-local-support.mjs";
 
 const PROFILE_PREFIX = "playwright_chromiumdev_profile-";
 export const BROWSER_SERVER_PREFIX = "sonder-browser-";
@@ -203,16 +206,50 @@ export function removeStaleBrowserTemps({
   return removed;
 }
 
-const MAX_SHARDS = 16;
+export { browserShardCount };
 
-/** Number of parallel browser shards: SONDER_BROWSER_SHARDS when valid, else from the CPU count. */
-export function browserShardCount(env = process.env, cpus = os.availableParallelism()) {
-  const raw = env.SONDER_BROWSER_SHARDS;
-  if (raw !== undefined && raw !== "") {
-    const value = Number(raw);
-    return Number.isInteger(value) && value >= 1 && value <= MAX_SHARDS ? value : 1;
+/** The file that holds what each spec file's tests took in a full browser stage, in seconds (#845). */
+export const SPEC_SECONDS_FILE = "tests/e2e/spec-seconds.json";
+
+/** Every browser spec file under tests/e2e, as repo paths in order: what an unfiltered run runs. */
+export function listSpecFiles(cwd = process.cwd()) {
+  const found = [];
+  const walk = (dir) => {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(path.join(cwd, dir), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const file = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) walk(file);
+      // Playwright's own rule for a test file.
+      else if (/\.(test|spec)\.(js|ts|mjs)$/.test(entry.name)) found.push(file);
+    }
+  };
+  walk("tests/e2e");
+  return found.sort();
+}
+
+/**
+ * The spec files of a full run dealt into `shards` parts of about equal time, as Playwright filters, or null when
+ * there is no table of times (then the run is split by `--shard`, which deals by count). Every spec file is in
+ * exactly one part; a file the table does not know (a new spec) weighs the middle value of those it knows.
+ */
+export function dealSpecFiles(cwd, shards) {
+  let seconds;
+  try {
+    seconds = JSON.parse(fs.readFileSync(path.join(cwd, SPEC_SECONDS_FILE), "utf8")).seconds;
+  } catch {
+    return null;
   }
-  return cpus >= 8 ? Math.min(6, Math.floor(cpus / 3)) : 1;
+  const files = listSpecFiles(cwd);
+  const known = files.map((file) => seconds?.[file]).filter((value) => Number.isFinite(value) && value > 0).sort((a, b) => a - b);
+  if (!known.length || files.length < 2) return null;
+  const middle = known[Math.floor(known.length / 2)];
+  const parts = partitionSpecs(files, shards, (file) => (Number.isFinite(seconds[file]) && seconds[file] > 0 ? seconds[file] : middle));
+  return parts.length > 1 ? parts.map((part) => part.map((file) => `${file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`)) : null;
 }
 
 const RUN_SHAPING_FLAG = /^--(shard|repeat-each|output|grep|grep-invert|last-failed|only-changed|list|workers)(=|$)/;
@@ -322,6 +359,12 @@ export function runTestBrowser({
 // browser temp directory, output directory and JSON report file, so shards never share state or clean
 // each other's artifacts. Resolves with the worst exit code (null if any shard was signalled).
 function runShardedBrowser({ cwd, args, shards, spawnCommand, createBrowserTemp, env, track, beforeProfiles }) {
+  // By time when the table of times is there: each shard is then its own files, none split and none left out.
+  const dealt = dealSpecFiles(cwd, shards);
+  if (dealt) {
+    shards = dealt.length;
+    console.log(`[test-browser] ${shards} shards dealt by ${SPEC_SECONDS_FILE}: ${dealt.map((part) => part.length).join(", ")} files`);
+  }
   const basePort = Number(env.PLAYWRIGHT_PORT || 4173);
   const jsonName = env.PLAYWRIGHT_JSON_OUTPUT_NAME;
   const temps = [];
@@ -339,7 +382,8 @@ function runShardedBrowser({ cwd, args, shards, spawnCommand, createBrowserTemp,
       jsonFiles.push(file);
       shardEnv.PLAYWRIGHT_JSON_OUTPUT_NAME = file;
     }
-    const child = spawnCommand("npx", ["playwright", "test", ...args, `--shard=${index}/${shards}`, `--output=${output}`], {
+    const piece = dealt ? [`--output=${output}`, ...dealt[index - 1]] : [`--shard=${index}/${shards}`, `--output=${output}`];
+    const child = spawnCommand("npx", ["playwright", "test", ...args, ...piece], {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
       env: shardEnv,

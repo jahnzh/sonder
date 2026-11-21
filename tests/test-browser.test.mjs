@@ -4,6 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
+import { execFileSync } from "node:child_process";
+import { SPEC_SECONDS_FILE, dealSpecFiles, listSpecFiles } from "../scripts/test-browser.mjs";
 import {
   BROWSER_TEMP_ENV,
   listProfileDirs,
@@ -487,3 +489,71 @@ test("a run whose parts do not match its files runs as one, as it always did", (
     assert.equal(code, 0);
     assert.deepEqual(calls, [["playwright", "test", ...args]]);
   }));
+
+// --- The browser stage's shards dealt by time (#845) ---------------------------------------------
+
+const specFixture = (dir, seconds) => {
+  fs.mkdirSync(path.join(dir, "tests/e2e/nested"), { recursive: true });
+  for (const name of ["a.spec.ts", "b.spec.ts", "c.spec.ts", "nested/d [x].spec.ts", "helper.ts", "notes.md"]) fs.writeFileSync(path.join(dir, "tests/e2e", name), "");
+  if (seconds) fs.writeFileSync(path.join(dir, SPEC_SECONDS_FILE), JSON.stringify({ from: "a test", seconds }));
+};
+
+test("the spec files of a full run are dealt by the table of times, each file in exactly one part", () =>
+  withTempDir((dir) => {
+    specFixture(dir);
+    assert.deepEqual(listSpecFiles(dir), ["tests/e2e/a.spec.ts", "tests/e2e/b.spec.ts", "tests/e2e/c.spec.ts", "tests/e2e/nested/d [x].spec.ts"]);
+    assert.equal(dealSpecFiles(dir, 2), null, "no table: the run is split by --shard");
+    // c is the long one; d is not in the table (a new spec) and weighs the middle value, 20.
+    specFixture(dir, { "tests/e2e/a.spec.ts": 10, "tests/e2e/b.spec.ts": 20, "tests/e2e/c.spec.ts": 100, "tests/e2e/gone.spec.ts": 500 });
+    assert.deepEqual(dealSpecFiles(dir, 2), [
+      ["tests/e2e/a\\.spec\\.ts$", "tests/e2e/b\\.spec\\.ts$", "tests/e2e/nested/d \\[x\\]\\.spec\\.ts$"],
+      ["tests/e2e/c\\.spec\\.ts$"],
+    ]);
+    assert.equal(dealSpecFiles(dir, 9).length, 4, "never more parts than files");
+    assert.equal(dealSpecFiles(dir, 1), null);
+    fs.writeFileSync(path.join(dir, SPEC_SECONDS_FILE), "not json");
+    assert.equal(dealSpecFiles(dir, 2), null);
+  }));
+
+test("a sharded run with the table runs each shard's own files instead of --shard, with its own port and report", () =>
+  withTempDir(async (dir) => {
+    specFixture(dir, { "tests/e2e/a.spec.ts": 10, "tests/e2e/b.spec.ts": 20, "tests/e2e/c.spec.ts": 100 });
+    const calls = [];
+    const reportName = path.join(dir, "playwright-results.json");
+    const spawnCommand = (_cmd, argv, opts) => {
+      calls.push({ argv, env: opts.env });
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      setImmediate(() => {
+        fs.writeFileSync(opts.env.PLAYWRIGHT_JSON_OUTPUT_NAME, JSON.stringify({ suites: [{ file: `call-${calls.length}` }], errors: [], stats: { duration: 1, expected: 1, unexpected: 0, flaky: 0, skipped: 0 } }));
+        child.emit("close", 0, null);
+      });
+      return child;
+    };
+    const code = await runTestBrowser({ shards: 2, cwd: dir, tmpRoot: dir, args: ["--reporter=list,json"], spawnCommand, env: { PLAYWRIGHT_PORT: "5000", PLAYWRIGHT_JSON_OUTPUT_NAME: reportName } });
+    assert.equal(code, 0);
+    assert.equal(calls.length, 2);
+    assert.equal(calls.some((call) => call.argv.some((arg) => arg.startsWith("--shard="))), false);
+    assert.deepEqual(calls.map((call) => call.argv), [
+      ["playwright", "test", "--reporter=list,json", "--output=test-results-shard-1", "tests/e2e/a\\.spec\\.ts$", "tests/e2e/b\\.spec\\.ts$", "tests/e2e/nested/d \\[x\\]\\.spec\\.ts$"],
+      ["playwright", "test", "--reporter=list,json", "--output=test-results-shard-2", "tests/e2e/c\\.spec\\.ts$"],
+    ]);
+    assert.deepEqual(calls.map((call) => call.env.PLAYWRIGHT_PORT), ["5000", "5001"]);
+    assert.equal(JSON.parse(fs.readFileSync(reportName, "utf8")).suites.length, 2, "the shards' reports are merged");
+  }));
+
+test("no test is dropped: the dealt shards hold exactly the spec files Playwright itself lists, each once", () => {
+  // Playwright's own list of the suite (no browser starts), against the files the dealing starts from.
+  const listed = JSON.parse(execFileSync("npx", ["playwright", "test", "--list", "--reporter=json"], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] }));
+  const playwrightFiles = [...new Set(listed.suites.map((suite) => `tests/e2e/${suite.file}`))].sort();
+  assert.deepEqual(listSpecFiles(), playwrightFiles);
+  for (const shards of [5, 6]) {
+    const dealt = dealSpecFiles(process.cwd(), shards);
+    assert.equal(dealt.length, shards);
+    const files = dealt.flat().map((filter) => filter.replace(/\\(.)/g, "$1").replace(/\$$/, "")).sort();
+    assert.deepEqual(files, playwrightFiles, "every spec file in exactly one shard");
+    // Each filter selects its own file and no other.
+    for (const filter of dealt.flat()) assert.equal(playwrightFiles.filter((file) => new RegExp(filter).test(file)).length, 1, filter);
+  }
+});
