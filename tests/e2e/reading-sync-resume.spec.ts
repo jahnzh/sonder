@@ -9,8 +9,13 @@ import { readerFixture } from "../reader-fixture";
 // listing does. Every test makes its own book and removes it, so the file can run twice against one server.
 test.use({ serviceWorkers: "block" });
 const made: string[] = [];
+const jobs: string[] = [];
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "ignoreErrors" });
+  // A job this spec left stopped is cancelled: a failed job needs attention on the server's Activity for everyone
+  // after it, which lit the dot in keep-cleared whenever the two shared a server (#874). One that ran on to a map
+  // or is gone refuses the cancel, which is fine.
+  for (const id of jobs.splice(0)) await page.request.patch(`/api/alignments/${id}`, { data: { action: "cancel" } });
   for (const workId of made.splice(0))
     expect((await page.request.delete(`/api/works/${encodeURIComponent(workId)}/library`)).ok()).toBe(true);
 });
@@ -50,6 +55,7 @@ async function failedJob(page: Page, name: string) {
       (job) => job.recordingId === book.recordingId,
     );
   await expect.poll(async () => (await listed())?.status, { timeout: 20000 }).toBe("error");
+  jobs.push((await listed()).id);
   return { workId: book.workId as string, ebook, recordingId: book.recordingId as string, job: await listed(), listed };
 }
 
