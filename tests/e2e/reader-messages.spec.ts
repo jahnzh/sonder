@@ -97,6 +97,25 @@ async function toggleControls(page: Page, room: Locator) {
   await page.mouse.click(text.x + text.width / 2, text.y + text.height / 2);
   await expect(room).toHaveAttribute("data-controls-visible", String(!shown));
 }
+// Which sentence the page marks as narrated, or null while none is marked: the mark's address in the book in
+// today's reader, the sentence's id in the view of prepared text.
+async function followMark(room: Locator) {
+  const mark = room.locator(".reader-viewport .sonder-follow");
+  if (!(await mark.count())) return null;
+  return (await mark.first().getAttribute("data-epubcfi")) ?? (await mark.first().getAttribute("data-s"));
+}
+// Moves the narration and waits until the reader has shown the sentence narrated there. The narrated sentence is
+// known (`data-current-passage`) some milliseconds before the follow jump has opened its chapter: in between the
+// old chapter's frame is taken out and the new one has no text yet, and a test that measured the page just then
+// found no paragraph, or a frame that was gone (#816). The jump is over when the pages are shown again and the mark
+// drawn is another one than before.
+async function narrateAt(page: Page, room: Locator, position: number) {
+  const before = await followMark(room);
+  await setPosition(page, position);
+  await expect(room).toHaveAttribute("data-current-passage", /.+/);
+  await expect.poll(async () => { const now = await followMark(room); return !!now && now !== before; }).toBe(true);
+  await expect(room.locator(".reader-viewport")).not.toHaveAttribute("data-jumping", /.*/);
+}
 // A long-press on the first sentence wholly on the page: Listen from here.
 async function longPress(page: Page, room: Locator) {
   const paragraphs = frame(room).locator("p");
@@ -173,8 +192,7 @@ test("Listening from here: Undo in the foot takes back what it recorded and is n
   const { title, book } = await fixture(page, "Listen notice");
   await page.clock.install();
   const room = await openNowPlaying(page, title);
-  await setPosition(page, 170.25);
-  await expect(room).toHaveAttribute("data-current-passage", /.+/);
+  await narrateAt(page, room, 170.25);
   await longPress(page, room);
   await expectInFootBothWays(page, room, "notice", "Listening from here", ["Undo"]);
   await expect.poll(async () => (await history(page, book.recordingId)).map((entry) => entry.position)).toEqual([170.25]);
@@ -196,8 +214,7 @@ test("a notice leaves after 8 seconds or at the next tap on a control; Undo is n
   const { title } = await fixture(page, "Notice timing");
   await page.clock.install();
   const room = await openNowPlaying(page, title);
-  await setPosition(page, 170.25);
-  await expect(room).toHaveAttribute("data-current-passage", /.+/);
+  await narrateAt(page, room, 170.25);
   await longPress(page, room);
   await expect(message(room)).toBeVisible();
   // A tap on the text is not a tap on a control: the notice stays.
