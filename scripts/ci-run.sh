@@ -290,7 +290,9 @@ rc=0
 # Preserve caller overrides, including explicitly empty values.
 [[ ${SONDER_CI_REMOTE_BASE+x} ]] || { [[ -z $DISPATCH_REMOTE_BASE ]] || export SONDER_CI_REMOTE_BASE="$DISPATCH_REMOTE_BASE"; }
 [[ ${SONDER_CI_TMPDIR+x} ]] || { [[ -z $DISPATCH_TMPDIR ]] || export SONDER_CI_TMPDIR="$DISPATCH_TMPDIR"; }
-[[ ${SONDER_CI_MAX_WAIT+x} ]] || { [[ -z $DISPATCH_MAX_WAIT ]] || export SONDER_CI_MAX_WAIT="$DISPATCH_MAX_WAIT"; }
+# The host's own cap is passed on as that, not as a cap set by hand: the runner may add to it for the commit's
+# changed browser specs (#845), which it never does to a cap the caller chose.
+[[ ${SONDER_CI_MAX_WAIT+x} ]] || { [[ -z $DISPATCH_MAX_WAIT ]] || export SONDER_CI_HOST_MAX_WAIT="$DISPATCH_MAX_WAIT"; }
 # Distinct loopback ports so two checks admitted on one host do not share
 # Playwright's readiness probe (prototype used 4400+).
 if [[ -n $DISPATCH ]]; then

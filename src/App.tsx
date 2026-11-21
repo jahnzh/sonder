@@ -75,7 +75,7 @@ import { GetMagnetSheet } from "./pages/get-magnet-sheet";
 import { GetEbookSheet } from "./pages/get-ebook-sheet";
 import { deviceImports } from "./device-import";
 import { Gallery, isGalleryRoute } from "./gallery/Gallery";
-import { refreshLibraryWorks, startLibraryWorks, useLibraryWorksStored, useStoredWorksWithPlaces } from "./library-works-store";
+import { refreshLibraryWorks, startLibraryWorks, useLibraryDecided, useStoredWorksWithPlaces } from "./library-works-store";
 import { toggleFavoriteWork, WORK_FAVORITES_KEY } from "./favorites-by-work";
 import { ALL_CHIP, readChip, readShelf, readSort, readView, type LibraryChip, type LibraryView, type ShelfFilter, type SortOrder } from "./pages/library-filter";
 
@@ -250,7 +250,7 @@ function LibraryApp({
   // The library by work with this device's places (#528): the Library's Listening, Not started and Finished
   // follow the work of each entry, so a book read in the reader is In progress (#556).
   const deviceWorks = useStoredWorksWithPlaces();
-  const worksStored = useLibraryWorksStored();
+  const libraryDecided = useLibraryDecided();
   // The Library's shelf (#577): one entry per work in the library, never `GET /api/books`.
   const libraryWorks = useMemo(() => [...deviceWorks.values()].filter((work) => work.inLibrary), [deviceWorks]);
   // The address, read by SignedIn once the user is known. The page modules in
@@ -867,7 +867,7 @@ function LibraryApp({
             {shownPlace === "library" && (
               <LibraryPage
                 works={libraryWorks}
-                stored={worksStored}
+                decided={libraryDecided}
                 books={books}
                 query={libraryQuery}
                 setQuery={setLibraryQuery}

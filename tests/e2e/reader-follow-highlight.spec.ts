@@ -131,6 +131,7 @@ test(`the follow highlight stays through a gap and moves when the next sentence 
   // at one instant, until the highlight has moved on or 20 s passed.
   // The fixture's gap lasts over a minute: a second and a half into it the audio skips, still inside it, to two
   // seconds before the next sentence, as a seek in the player would.
+  await page.waitForFunction(()=>((window as any).__gapAudio as HTMLAudioElement[]|undefined)?.some(a=>!!a.src));
   const samples:{time:number;passage:string|null;text:string|null;view:string}[]=await page.evaluate(async({previous,end,next})=>{
    const out:any[]=[];
    const audio=((window as any).__gapAudio as HTMLAudioElement[]).find(a=>!!a.src)!;

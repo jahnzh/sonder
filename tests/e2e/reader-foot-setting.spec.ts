@@ -96,11 +96,14 @@ async function instrument(page: Page) {
     }
   });
 }
-const audioOf = (page: Page) =>
-  page.evaluate(() => {
+// The page has no audio element with a source for a moment after it opens; taking one at once fails the test for nothing.
+const audioOf = async (page: Page) => {
+  await page.waitForFunction(() => ((window as any).__footAudio as HTMLAudioElement[] | undefined)?.some((a) => !!a.src));
+  return page.evaluate(() => {
     const audio = ((window as any).__footAudio as HTMLAudioElement[]).find((a) => !!a.src)!;
     return { rate: audio.playbackRate, paused: audio.paused, position: audio.currentTime, duration: audio.duration };
   });
+};
 /**
  * Whether the narration plays once Play was pressed. Firefox cannot play audio on every host of the suite (#656):
  * there the test is skipped, in Chromium a narration that does not play fails it.

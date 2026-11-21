@@ -65,6 +65,7 @@ if (logPath) {
       SONDER_VERIFY_URL: process.env.SONDER_VERIFY_URL,
       NODE_ENV: process.env.NODE_ENV,
       PLAYWRIGHT_JSON_OUTPUT_NAME: process.env.PLAYWRIGHT_JSON_OUTPUT_NAME,
+      SONDER_BROWSER_PARTS: process.env.SONDER_BROWSER_PARTS,
     },
     snapshotFiles: {
       hasUncommitted: fs.existsSync(path.join(process.cwd(), 'uncommitted.txt')),
@@ -365,6 +366,39 @@ test("changed spec discovery uses the selected commit and ignores deleted and no
             base: baseline,
             files: ["tests/e2e/modify.spec.ts", "tests/e2e/nested/new [x].spec.ts", "tests/e2e/renamed.spec.ts"],
         });
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+test("the changed specs are dealt into parts by the browser stage's times, by the count of tests without them (#845)", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const tests = (count) => Array.from({length: count}, (_item, index) => `test("t${index}", async () => {});\n`).join("");
+        writeFixtureFile(fixture, "tests/e2e/a.spec.ts", tests(6));
+        writeFixtureFile(fixture, "tests/e2e/b.spec.ts", tests(1));
+        writeFixtureFile(fixture, "tests/e2e/c.spec.ts", tests(1));
+        commitFixture(fixture, "add specs");
+        // a's six tests are quick, b's one test is the slow one: the count says [a] [b c], the times say [a c] [b].
+        const spec = (file, seconds) => ({file, title: file, line: 1, tests: [{projectName: "chromium", status: "expected", results: [{status: "passed", duration: seconds * 1000}]}]});
+        const reportFile = path.join(fixture.repoDir, "..", `times-${process.pid}.json`);
+        fs.writeFileSync(reportFile, JSON.stringify({config: {rootDir: "/checkout/tests/e2e", configFile: "/checkout/playwright.config.ts"}, stats: {expected: 3, unexpected: 0}, errors: [], suites: [{title: "", specs: [spec("a.spec.ts", 10), spec("b.spec.ts", 100), spec("c.spec.ts", 50)], suites: []}]}));
+        const env = {PATH: `${fixture.binDir}:${process.env.PATH}`, STUB_NPM_LOG: fixture.npmLogPath, SONDER_BROWSER_CHANGED_SHARDS: "2"};
+        const filter = (name) => `tests/e2e/${name}\\.spec\\.ts$`;
+        const partsOf = (runs) => runs.slice(4).map((run) => JSON.parse(run.env.SONDER_BROWSER_PARTS));
+        try {
+            const timed = await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, STUB_NPM_JSON_REPORT: reportFile}});
+            assert.equal(timed.ok, true);
+            assert.deepEqual(partsOf(readNpmLogs(fixture.npmLogPath)), [[[filter("a"), filter("c")], [filter("b")]], [[filter("a"), filter("c")], [filter("b")]]]);
+            assert.match(timed.report.stages[4].command, /\(in 2 parts\)$/);
+            fs.rmSync(fixture.npmLogPath);
+            // No report (or one that lacks a changed file): the count of tests stays the weight.
+            const counted = await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env});
+            assert.equal(counted.ok, true);
+            assert.deepEqual(partsOf(readNpmLogs(fixture.npmLogPath)), [[[filter("a")], [filter("b"), filter("c")]], [[filter("a")], [filter("b"), filter("c")]]]);
+        } finally {
+            fs.rmSync(reportFile, {force: true});
+        }
     } finally {
         fixture.cleanup();
     }
