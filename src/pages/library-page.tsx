@@ -57,7 +57,7 @@ const MARK_KIND: Record<CoverMark, FileKind> = { audiobook: "audiobook", ebook: 
 
 export function LibraryPage({
   works,
-  stored,
+  decided,
   books,
   query,
   setQuery,
@@ -81,8 +81,12 @@ export function LibraryPage({
 }: {
   /** The works in the library, with this device's newer places (`useStoredWorksWithPlaces`). */
   works: LibraryWork[];
-  /** The stored works have been read from the device: until then an empty list is not an empty library. */
-  stored: boolean;
+  /**
+   * The works decide what stands above the chips (`libraryDecided`, #841): the device's stored works and places have
+   * been read, and a device that holds no works has the server's first answer. Until then an empty list is not an
+   * empty library, and neither the Continue block nor the chips are drawn: the chips do not move once they are shown.
+   */
+  decided: boolean;
   /** `GET /api/books` as the player knows it: Continue's Play plays the chosen recording's entry. */
   books: Book[];
   query: string;
@@ -184,15 +188,24 @@ export function LibraryPage({
           </Button>
         </div>
       </header>
-      {featured && !seriesShown && <ContinueCard work={featured} books={books} onOpen={() => openWork(featured.workId)} />}
-      <div className="library-chips" role="group" aria-label="Filter your library">
-        {LIBRARY_CHIPS.map((value) => (
-          <Chip key={value} selected={chip === value} className={value === SERIES_CHIP ? "library-series-chip" : undefined} onClick={() => choose(value)}>
-            {chipLabel(value)}
-          </Chip>
-        ))}
-      </div>
-      {seriesShown ? (
+      {featured && decided && !seriesShown && <ContinueCard work={featured} books={books} onOpen={() => openWork(featured.workId)} />}
+      {/* The chips come with what stands above them, never before it: drawn first and pushed down by the Continue
+          block a moment later, a tap on one landed on that block (#841). The Series chip's list has no Continue
+          block above it, so there they are drawn at once. */}
+      {(decided || seriesShown) && (
+        <div className="library-chips" role="group" aria-label="Filter your library">
+          {LIBRARY_CHIPS.map((value) => (
+            <Chip key={value} selected={chip === value} className={value === SERIES_CHIP ? "library-series-chip" : undefined} onClick={() => choose(value)}>
+              {chipLabel(value)}
+            </Chip>
+          ))}
+        </div>
+      )}
+      {!decided && !seriesShown ? (
+        <p className="library-reading type-label" role="status">
+          <Loader2 size={16} className="spin" aria-hidden="true" /> Loading
+        </p>
+      ) : seriesShown ? (
         beside ? (
           <div className="library-series-beside">
             <SeriesList {...savedSeries} query={query} current={beside.id} beside onOpen={openSeries} onFind={findSeries} />
@@ -241,11 +254,7 @@ export function LibraryPage({
             shelf={shelf}
             setShelf={setShelf}
           />
-          {!stored && works.length === 0 ? (
-            <p className="library-reading type-label" role="status">
-              <Loader2 size={16} className="spin" aria-hidden="true" /> Loading
-            </p>
-          ) : shown.length ? (
+          {shown.length ? (
             view === "grid" ? (
               <ul className="library-grid" aria-label={shelfHeading(chip)}>
                 {shown.map((work) => (

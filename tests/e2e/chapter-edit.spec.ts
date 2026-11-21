@@ -3,6 +3,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import { listenFace, openListen } from "./now-playing";
+import { withFirstAnswers } from "./first-answers";
 
 // A recording's chapters on the book's Edit page (#719 part c): the Chapters row of the recording opens its editor;
 // chapter titles and starts are typed, one is added and one removed, all are shifted by 2 s, and Save chapters keeps
@@ -54,7 +55,8 @@ for (const [size, viewport] of [["phone", { width: 390, height: 844 }], ["deskto
       // A saved place 30 s in: it stays where it is through every edit.
       expect((await page.request.post("/api/progress", { data: { recordingId: book.recordingId, trackId: file.id, position: 30, duration: file.duration, updatedAt: Date.now() } })).ok()).toBe(true);
 
-      await page.goto(`/#book/${encodeURIComponent(book.workId)}/edit`);
+      // The page has its first answers before the first click: a click made while they arrive can be lost (#841).
+      await withFirstAnswers(page, () => page.goto(`/#book/${encodeURIComponent(book.workId)}/edit`));
       const group = page.getByTestId("edit-chapters");
       await expect(group).toBeVisible();
       const row = group.getByRole("button", { name: /1 chapter · From the files/ });
