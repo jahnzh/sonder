@@ -597,6 +597,48 @@ test("a toast Undo for Listen from here takes back what it recorded and is not r
   }
 });
 
+test("Pause pressed while the toast's Undo is still on its way keeps the Undo: the narration is back where it was, paused", async ({ page }) => {
+  // A move of the narration first asks the server which sources the recording has, and only then moves the audio.
+  // A pause in that wait used to drop the whole move (#419): the audio stayed where Listen from here had put it.
+  // On a slow connection the wait is long enough for a person; here the answer is held until Pause was pressed.
+  const book = await narratedRecording(page, "Undo then pause");
+  await instrument(page);
+  await page.goto("/");
+  await startPaused(page, book.title);
+  await openReaderPlayer(page);
+  const room = page.locator(".inline-reader");
+  await setPosition(page, 170.25);
+  await expect(room).toHaveAttribute("data-current-passage", /.+/);
+  await listenFromHere(page, room);
+  const toast = room.getByRole("status").filter({ hasText: "Listening from here" });
+  await expect(toast).toBeVisible();
+  await expect.poll(async () => (await history(page, book.recordingId)).map((entry: any) => entry.position)).toEqual([170.25]);
+  const listened = (await audioState(page)).position;
+  expect(listened).toBeLessThan(170);
+  let answer = () => {};
+  const held = new Promise<void>((resolve) => (answer = resolve));
+  let asked = 0;
+  await page.route(`**/api/recordings/${encodeURIComponent(book.recordingId)}/sources`, async (route) => {
+    asked++;
+    await held;
+    await route.continue();
+  });
+  await room.locator(".reader-message").getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(toast).toBeHidden();
+  // The Undo's move is waiting for the server when Pause is pressed.
+  await expect.poll(() => asked).toBe(1);
+  await room.getByRole("button", { name: "Pause narration", exact: true }).click();
+  await expect.poll(async () => (await audioState(page)).paused).toBe(true);
+  answer();
+  // The move is made, and the pause holds: back at the place left, not playing.
+  await expect.poll(async () => (await audioState(page)).position).toBeCloseTo(170.25, 2);
+  await page.waitForTimeout(300);
+  expect(await audioState(page)).toMatchObject({ position: 170.25, paused: true });
+  await expect(room.getByRole("button", { name: "Play narration", exact: true })).toBeVisible();
+  await expect.poll(async () => (await history(page, book.recordingId)).length).toBe(0);
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+});
+
 test("an undo that cannot restore keeps its entry and works once it can", async ({ page }) => {
   const book = await importWithEbook(page, "Undo that cannot restore", 2);
   await instrument(page);
