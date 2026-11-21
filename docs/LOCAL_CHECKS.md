@@ -54,6 +54,10 @@ Port leases coordinate runners that use the current contender protocol. Do not o
 
 ## Known failures
 
+**The repeat stage and the list.** The repeat stage honours the host's list as the browser stage does, for entries of kind `environment` only: a test that fails on a host for the host's sake fails there twice in a row as well, whatever the pull request changed (the fine-seek test of `playback-workflow.spec.ts` on WSL, #37, failed the repeat stage of a one-expression change to another test of its file). When every failure of the stage is such an entry, the stage is let through, the check's result is `passed_with_known_failures`, never a plain pass, and the summary names each test with the host and its issue ("Repeat stage PASSED WITH KNOWN FAILURES on <host>: …"); `report.json` holds it as `repeatFailures`. Any other failure of the stage fails it: an unlisted test, an `intermittent` entry, a listed test beside an unlisted one.
+
+**Each host has its own list.** A host's entry in `scripts/ci-hosts.json` names it (`"knownFailures"`: WSL's is `tests/known-failures.wsl-host.json`; lisa has `""`, none), and `scripts/ci-ssh.sh` passes that one to the check. Until this rule lisa's checks were given WSL's list, so a test listed as failing on WSL for WSL's sake would have been excused on lisa too; now it fails there. `SONDER_CI_KNOWN_FAILURES` sets the list for one run.
+
 ```bash
 npm run check -- --ref <commit> --known-failures tests/known-failures.wsl-host.json
 ```

@@ -75,6 +75,18 @@ export function changedBrowserStages(files, parts = [{ files, projects: null }])
 }
 
 /**
+ * The summary's lines for a repeat stage that passed only by the host's list: each test with the host and its issue,
+ * so the allowance is never silent. Nothing when the stage was not let through.
+ */
+export function repeatKnownLines(repeatGate, host) {
+  if (!repeatGate || repeatGate.result !== "passed_with_known_failures") return [];
+  return [
+    `Repeat stage PASSED WITH KNOWN FAILURES on ${host}: ${repeatGate.knownFailures.length} test(s) listed as failing on this host for the host's sake (kind environment); every other test of the changed specs passed twice.`,
+    ...repeatGate.knownFailures.map((test) => `  [${test.project}] ${test.file} › ${test.title} (known on ${host}${test.issue ? `, #${test.issue}` : ""})`),
+  ];
+}
+
+/**
  * One line for the summary on what the unit stage's worker tests ran with on this host, or "" on a machine that
  * names no interpreter. A host without torch says so here, so its 33 skipped tests are never a silent gap (#878).
  */
@@ -621,6 +633,11 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     let firstFailedStage = null;
     let toleratedStage = null;
     let gate = null;
+    // The repeat stage's own judgement against the list's "environment" entries, and its stage when that let it pass.
+    let repeatGate = null;
+    let toleratedRepeat = null;
+    const environmentEntries = (knownFailures?.entries ?? []).filter((entry) => entry.kind === "environment");
+    const repeatReportPath = path.join(outputDir, "playwright-changed-repeat.json");
     let browserReruns = null;
     const maxReruns = options.maxReruns ?? DEFAULT_MAX_RERUNS;
 
@@ -723,11 +740,16 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       // The browser stage always writes a JSON report so the check can list the slowest tests;
       // with a known-failures list that same report is also used to classify failures.
       const jsonReport = stageDef.name === "browser";
+      // The repeat stage writes one too when there is a list: only then can its failures be told apart (below).
+      const repeatReport = stageDef.name === "browser-changed-repeat" && environmentEntries.length > 0;
       const stageArgs = jsonReport
         ? [...stageDef.args, "--", "--reporter=list,json", ...(selection.scope === "chromium" ? ["--project=chromium"] : [])]
-        : stageDef.args;
+        : repeatReport
+          ? [...stageDef.args.slice(0, 3), "--reporter=list,json", ...stageDef.args.slice(3)]
+          : stageDef.args;
       const stageEnv = {...childEnv, ...(stageDef.name.startsWith("browser") ? shardSetting : {}), ...(stageDef.name === "unit" ? workerPython : {}), ...stageDef.env, NODE_ENV: stageDef.name === "build" ? "production" : "test"};
       if (jsonReport) stageEnv.PLAYWRIGHT_JSON_OUTPUT_NAME = playwrightReportPath;
+      if (repeatReport) stageEnv.PLAYWRIGHT_JSON_OUTPUT_NAME = repeatReportPath;
 
       let stageRes;
       try {
@@ -838,9 +860,25 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
           }
         }
       }
+      // The repeat stage honours the host's list as the browser stage does, for entries of kind "environment" only:
+      // a test that fails on this host for the host's sake fails there twice in a row as well, whatever the pull
+      // request changed (playback-workflow.spec.ts's fine-seek test on WSL, #37, failed the repeat stage of a
+      // one-line change to another test of its file). Every other failure of the stage still fails it, and a host
+      // whose list does not hold the test gets no such allowance. Never a silent pass: the summary names each one.
+      if (!stagePassed && repeatReport && !interruptedSignal) {
+        repeatGate = evaluateBrowserRun({
+          entries: environmentEntries,
+          reportPath: repeatReportPath,
+          stageExitCode: stageRes.signal ? null : stageRes.exitCode,
+          stageSignal: stageRes.signal ?? null,
+        });
+      }
       if (!stagePassed && jsonReport && (gate?.result === "passed_with_known_failures" || gate?.result === "passed_with_flaky")) {
         toleratedStage = stageRecord;
         stageRecord.toleratedBy = gate.result === "passed_with_flaky" ? "rerun-alone" : "known-failures";
+      } else if (!stagePassed && repeatReport && repeatGate?.result === "passed_with_known_failures") {
+        toleratedRepeat = stageRecord;
+        stageRecord.toleratedBy = "known-failures (environment)";
       } else if (!stagePassed) {
         firstFailedStage ??= stageRecord;
         if (!options.silent) {
@@ -881,7 +919,7 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     const finalExitCode = interruptedSignal ? (interruptedSignal === "SIGINT" ? 130 : 143)
       : blockingStage ? blockingExitCode : artifactError ? 1 : 0;
     const result = interruptedSignal ? "aborted"
-      : isOverallSuccess ? (toleratedStage ? gate.result : "passed") : "failed";
+      : isOverallSuccess ? (toleratedRepeat ? "passed_with_known_failures" : toleratedStage ? gate.result : "passed") : "failed";
 
     const report = {
       runId,
@@ -930,6 +968,15 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
         known: gate.knownFailures,
       }} : {}),
       ...(browserReruns ? {browserReruns} : {}),
+      // The repeat stage judged against the list's "environment" entries, when it failed and there is a list.
+      ...(repeatGate ? {repeatFailures: {
+        result: repeatGate.result,
+        tolerated: !!toleratedRepeat,
+        host: os.hostname(),
+        summary: repeatGate.summary,
+        new: repeatGate.newFailures,
+        known: repeatGate.knownFailures,
+      }} : {}),
       setup: {
         status: "passed",
         startedAt: setupStartedAt,
@@ -943,7 +990,8 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     writeReportFiles(outputDir, report);
 
     if (!options.silent) {
-      if (isOverallSuccess && !toleratedStage) {
+      for (const line of repeatKnownLines(toleratedRepeat ? repeatGate : null, os.hostname())) console.log(`[check-local] ${line}`);
+      if (isOverallSuccess && !toleratedStage && !toleratedRepeat) {
         console.log(`\n[check-local] All checks PASSED successfully.`);
       } else if (!isOverallSuccess) {
         console.error(`\n[check-local] Checks failed: ${interruptedSignal || artifactError || blockingStage?.name}.`);

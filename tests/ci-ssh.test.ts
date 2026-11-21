@@ -599,6 +599,25 @@ test("a remote check passes the WSL known-failures file by default", (t) => {
   );
 });
 
+test("a host's own list is the one its check gets, and a host that has none gets none", (t) => {
+  const f = fixture(t);
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: f.repo, encoding: "utf8" }).trim();
+  fs.writeFileSync(path.join(f.repo, "scripts", "ci-hosts.json"), JSON.stringify({ wsl: { host: "wsl", knownFailures: "tests/known-failures.wsl-host.json" }, lisa: { host: "lisa", knownFailures: "" } }) + "\n");
+  git("add", ".");
+  git("commit", "-qm", "hosts");
+  const sha = git("rev-parse", "HEAD");
+  assert.equal(f.run(sha, { SONDER_CI_HOST: "wsl" }).status, 0);
+  assert.equal(f.run(sha, { SONDER_CI_HOST: "lisa" }).status, 0);
+  // One run with a list set by hand, on the host that has none.
+  assert.equal(f.run(sha, { SONDER_CI_HOST: "lisa", SONDER_CI_KNOWN_FAILURES: "tests/custom-known.json" }).status, 0);
+  const calls = f.checkCalls();
+  assert.match(calls[0], new RegExp(`--ref ${sha} --known-failures tests/known-failures\\.wsl-host\\.json --output-dir `));
+  // A test listed as failing on WSL for WSL's sake is not excused on lisa: its check has no list at all.
+  assert.match(calls[1], new RegExp(`args=run check -- --ref ${sha} --output-dir `));
+  assert.doesNotMatch(calls[1], /known-failures/);
+  assert.match(calls[2], /--known-failures tests\/custom-known\.json /);
+});
+
 test("SONDER_CI_KNOWN_FAILURES overrides the known-failures path", (t) => {
   const f = fixture(t);
   const out = f.run(f.second, { SONDER_CI_KNOWN_FAILURES: "tests/custom-known.json" });

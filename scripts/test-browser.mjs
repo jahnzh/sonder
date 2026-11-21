@@ -456,6 +456,9 @@ function runBrowserParts({ cwd, args, parts, spawnCommand, createBrowserTemp, en
   const flags = args.filter((arg) => arg.startsWith("-") && !arg.startsWith("--output="));
   const target = args.find((arg) => arg.startsWith("--output="))?.slice("--output=".length) || "test-results";
   const { SONDER_BROWSER_PARTS: _parts, ...partBase } = env;
+  // One JSON report a part when the run asks for one, joined into the file it named.
+  const jsonName = env.PLAYWRIGHT_JSON_OUTPUT_NAME;
+  const jsonFiles = [];
   const temps = [];
   const outputs = [];
   const runs = [];
@@ -470,8 +473,14 @@ function runBrowserParts({ cwd, args, parts, spawnCommand, createBrowserTemp, en
     const child = spawnCommand("npx", ["playwright", "test", ...flags, ...only, `--output=${output}`, ...filters], {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...partBase, PLAYWRIGHT_PORT: String(basePort + index - 1), [BROWSER_TEMP_ENV]: temp },
+      env: {
+        ...partBase,
+        PLAYWRIGHT_PORT: String(basePort + index - 1),
+        [BROWSER_TEMP_ENV]: temp,
+        ...(jsonName ? { PLAYWRIGHT_JSON_OUTPUT_NAME: `${jsonName}.part-${index}` } : {}),
+      },
     });
+    if (jsonName) jsonFiles.push(`${jsonName}.part-${index}`);
     track(child);
     prefixLines(child.stdout, process.stdout, `[part ${index}/${parts.length}] `);
     prefixLines(child.stderr, process.stderr, `[part ${index}/${parts.length}] `);
@@ -483,6 +492,19 @@ function runBrowserParts({ cwd, args, parts, spawnCommand, createBrowserTemp, en
     );
   }
   return Promise.all(runs).then((codes) => {
+    if (jsonName) {
+      const reports = [];
+      for (const file of jsonFiles) {
+        try {
+          reports.push(JSON.parse(fs.readFileSync(file, "utf8")));
+        } catch {
+          // a part that crashed before writing its report is already a non-zero exit
+        }
+        fs.rmSync(file, { force: true });
+      }
+      const merged = mergePlaywrightReports(reports);
+      if (merged) fs.writeFileSync(jsonName, JSON.stringify(merged));
+    }
     mergeShardOutputs(cwd, outputs, target);
     removeProfileDirs(cwd, diffProfileDirs(beforeProfiles, listProfileDirs(cwd)));
     for (const temp of temps) removeOwnedBrowserTemp(temp);

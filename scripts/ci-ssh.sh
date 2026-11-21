@@ -21,7 +21,7 @@
 # SONDER_CI_MAX_PARALLEL (unset uses configured host maxParallel),
 # SONDER_CI_HOST_CONFIG (default scripts/ci-hosts.json),
 # SONDER_CI_LOOPBACK_PORT (default 4399),
-# SONDER_CI_KNOWN_FAILURES (repository path, default tests/known-failures.wsl-host.json),
+# SONDER_CI_KNOWN_FAILURES (repository path; default: the host's "knownFailures" in the hosts file),
 # SONDER_CI_ALLOW_STALE_SCRIPTS (1 skips the check that scripts/ci-ssh.sh and scripts/lib match the commit),
 # SONDER_CI_DISPATCH (when set, records the finished check on that worker history
 # dispatch; a recording failure warns only and never changes the exit code).
@@ -52,7 +52,10 @@ SONDER_CI_STATUS_CONTEXT=${SONDER_CI_STATUS_CONTEXT:-ci/ssh}
 SONDER_CI_POST_STATUS=${SONDER_CI_POST_STATUS:-1}
 POLL_INTERVAL=${SONDER_CI_POLL_INTERVAL:-15}
 LOOPBACK_PORT=${SONDER_CI_LOOPBACK_PORT:-4399}
-KNOWN_FAILURES=${SONDER_CI_KNOWN_FAILURES:-tests/known-failures.wsl-host.json}
+# The list of tests known to fail on the host for the host's sake. A host's entry in the hosts file names its own
+# ("knownFailures"; "" for a host that has none), so that a test listed for WSL is not excused on lisa. A host
+# without the key keeps the old default; SONDER_CI_KNOWN_FAILURES sets it for one run.
+KNOWN_FAILURES_DEFAULT=tests/known-failures.wsl-host.json
 POLL_FAILURE_LIMIT=3
 POLL_CALL_TIMEOUT=60
 # Hard cap for one scp transfer (the bundle upload, the report download).
@@ -115,6 +118,7 @@ if (Number.isInteger(shards) && shards >= 1 && shards <= 16) console.log(`CONFIG
 // The interpreter the check runs the worker's Python tests with on this host (scripts/setup-check-python.sh): with it
 // named, those tests fail instead of being skipped when it cannot run them.
 if (typeof entry.workerPython === "string" && entry.workerPython) console.log(`CONFIG_WORKER_PYTHON=${esc(entry.workerPython)}`);
+if (typeof entry.knownFailures === "string") console.log(`CONFIG_KNOWN_FAILURES=${esc(entry.knownFailures)}; CONFIG_KNOWN_FAILURES_SET=1`);
 // Whether that interpreter has torch, so that the 33 tests needing it run and fail instead of skip (#878). A host
 // says so either way; "0" is a stated gap that the check's summary names.
 if (typeof entry.workerTorch === "boolean") console.log(`CONFIG_WORKER_TORCH=${entry.workerTorch ? 1 : 0}`);
@@ -129,6 +133,8 @@ CONFIG_MAX_WAIT=""
 CONFIG_MAX_PARALLEL=""
 CONFIG_SHARDS=""
 CONFIG_WORKER_PYTHON=""
+CONFIG_KNOWN_FAILURES=""
+CONFIG_KNOWN_FAILURES_SET=""
 CONFIG_WORKER_TORCH=""
 
 if [[ -f "$HOST_CONFIG_FILE" ]]; then
@@ -174,8 +180,15 @@ fi
 [[ $POLL_INTERVAL =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "[ci-ssh] SONDER_CI_POLL_INTERVAL must be a number of seconds" >&2; exit 2; }
 [[ $LOOPBACK_PORT =~ ^[0-9]+$ ]] || { echo "[ci-ssh] SONDER_CI_LOOPBACK_PORT must be a port number" >&2; exit 2; }
 [[ $MAX_PARALLEL =~ ^[0-9]+$ ]] || { echo "[ci-ssh] SONDER_CI_MAX_PARALLEL must be a whole number" >&2; exit 2; }
-# The list path goes into the remote command line, so keep it to a plain relative path.
-[[ $KNOWN_FAILURES =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ && $KNOWN_FAILURES != *..* ]] \
+if [[ -v SONDER_CI_KNOWN_FAILURES ]]; then
+  KNOWN_FAILURES=$SONDER_CI_KNOWN_FAILURES
+elif [[ -n $CONFIG_KNOWN_FAILURES_SET ]]; then
+  KNOWN_FAILURES=$CONFIG_KNOWN_FAILURES
+else
+  KNOWN_FAILURES=$KNOWN_FAILURES_DEFAULT
+fi
+# The list path goes into the remote command line, so keep it to a plain relative path (or none).
+[[ -z $KNOWN_FAILURES || ( $KNOWN_FAILURES =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ && $KNOWN_FAILURES != *..* ) ]] \
   || { echo "[ci-ssh] SONDER_CI_KNOWN_FAILURES must be a relative repository path" >&2; exit 2; }
 
 if ! FULL_SHA=$(git rev-parse --verify "${REQUESTED_REF}^{commit}" 2>/dev/null); then
@@ -694,7 +707,11 @@ setsid nohup bash -c '
   if [ -n "$6" ]; then export SONDER_BROWSER_SHARDS="$6"; fi
   if [ -n "$7" ]; then export SONDER_WORKER_PYTHON="$7"; fi
   if [ -n "$8" ]; then export SONDER_WORKER_TORCH="$8"; fi
-  nice -n 10 npm run check -- --ref "$1" --known-failures "$4" --output-dir "$2"
+  if [ -n "$4" ]; then
+    nice -n 10 npm run check -- --ref "$1" --known-failures "$4" --output-dir "$2"
+  else
+    nice -n 10 npm run check -- --ref "$1" --output-dir "$2"
+  fi
   rc=$?
   echo "$rc" >"$3.tmp" && mv "$3.tmp" "$3"
 ' _ "$sha" "$run_dir/report" "$run_dir/check.exit" "$known_failures" "$remote_tmpdir" "$shards" "$worker_python" "$worker_torch" >"$run_dir/check.log" 2>&1 </dev/null &

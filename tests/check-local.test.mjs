@@ -97,8 +97,7 @@ else if (argv[0] === 'run' && argv[1] === 'test:browser' && argv.some((arg) => a
   currentStage = 'browser-rerun';
 }
 else if (argv[0] === 'run' && argv[1] === 'test:browser') {
-  currentStage = argv.includes('--reporter=list,json') ? 'browser'
-    : 'browser-changed-repeat';
+  currentStage = argv.includes('--repeat-each=2') ? 'browser-changed-repeat' : 'browser';
 }
 
 // Exercise Playwright's scheduler with a filesystem-only fixture, without a browser or web server.
@@ -125,6 +124,10 @@ if (currentStage.startsWith('browser') && createTraces) {
 
 if (currentStage === 'browser' && process.env.STUB_NPM_JSON_REPORT && process.env.PLAYWRIGHT_JSON_OUTPUT_NAME) {
   fs.copyFileSync(process.env.STUB_NPM_JSON_REPORT, process.env.PLAYWRIGHT_JSON_OUTPUT_NAME);
+}
+// The repeat stage's own report, when the check asked for one.
+if (currentStage === 'browser-changed-repeat' && process.env.STUB_NPM_REPEAT_REPORT && process.env.PLAYWRIGHT_JSON_OUTPUT_NAME) {
+  fs.copyFileSync(process.env.STUB_NPM_REPEAT_REPORT, process.env.PLAYWRIGHT_JSON_OUTPUT_NAME);
 }
 
 // A rerun alone (#792) copies STUB_NPM_RERUN_REPORTS/<project>-<line>.json and fails unless that report has no failure.
@@ -1412,6 +1415,80 @@ test("known failures in the full suite do not skip changed-spec stages", async (
         assert.equal(readNpmLogs(fixture.npmLogPath).length, 5);
     } finally {
         fixture.cleanup();
+    }
+});
+
+// The repeat stage and the host's list: entries of kind "environment" only, named in the summary, and nothing else.
+const FINE_SEEK = {project: "chromium", file: "tests/e2e/playback-workflow.spec.ts", title: ["touch seeking", "releasing a fine-seek gesture keeps the exact previewed destination"]};
+const fineSeekEntry = (kind) => ({project: FINE_SEEK.project, file: FINE_SEEK.file, title: FINE_SEEK.title.join(" \u203a "), kind, reason: "fails on this host; cause not found", issue: 37});
+async function repeatStageWith(fixture, {entries, repeatTests}) {
+    writeFixtureFile(fixture, "tests/e2e/playback-workflow.spec.ts", "fixture\n");
+    commitFixture(fixture, "change the spec");
+    const listFile = path.join(fixture.tempBase, "known-failures.json");
+    fs.writeFileSync(listFile, JSON.stringify({version: 1, entries}));
+    const suiteReport = path.join(fixture.tempBase, "suite.json");
+    fs.writeFileSync(suiteReport, JSON.stringify(playwrightReport([status("chromium", SPEC, "reset refreshes the app shell", "expected")])));
+    const repeatReport = path.join(fixture.tempBase, "repeat.json");
+    fs.writeFileSync(repeatReport, JSON.stringify(playwrightReport(repeatTests)));
+    const lines = [];
+    const log = console.log;
+    console.log = (line) => lines.push(String(line));
+    try {
+        const result = await runCheckLocal(["--known-failures", listFile], {
+            cwd: fixture.repoDir,
+            env: {PATH: `${fixture.binDir}:${process.env.PATH}`, STUB_NPM_LOG: fixture.npmLogPath, STUB_NPM_JSON_REPORT: suiteReport, STUB_NPM_REPEAT_REPORT: repeatReport, STUB_NPM_FAIL_STAGE: "browser-changed-repeat"},
+        });
+        return {result, lines, repeat: readNpmLogs(fixture.npmLogPath)[4]};
+    } finally {
+        console.log = log;
+    }
+}
+const otherTest = (state) => status("chromium", "tests/e2e/playback-workflow.spec.ts", "whole-audiobook seeking crosses real audio files and preserves pause", state);
+
+test("the repeat stage passes with known failures when all that failed is listed for this host as kind environment, and says so", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const {result, lines, repeat} = await repeatStageWith(fixture, {
+            entries: [fineSeekEntry("environment")],
+            repeatTests: [{...FINE_SEEK, status: "unexpected"}, otherTest("expected")],
+        });
+        assert.equal(result.ok, true, lines.join("\n"));
+        assert.equal(result.report.result, "passed_with_known_failures", "never a plain pass");
+        assert.equal(result.report.stages[4].status, "failed");
+        assert.equal(result.report.stages[4].toleratedBy, "known-failures (environment)");
+        assert.equal(result.report.repeatFailures.tolerated, true);
+        assert.deepEqual(result.report.repeatFailures.known.map((test) => [test.project, test.title, test.issue]), [["chromium", "touch seeking \u203a releasing a fine-seek gesture keeps the exact previewed destination", 37]]);
+        // The stage was asked for a report of its own, and the summary names the test, the host and the issue.
+        assert.ok(repeat.argv.includes("--reporter=list,json") && repeat.argv.includes("--repeat-each=2"));
+        assert.match(repeat.env.PLAYWRIGHT_JSON_OUTPUT_NAME, /playwright-changed-repeat\.json$/);
+        const said = lines.filter((line) => /Repeat stage PASSED WITH KNOWN FAILURES|known on /.test(line));
+        assert.equal(said.length, 2, lines.join("\n"));
+        assert.match(said[0], new RegExp(`Repeat stage PASSED WITH KNOWN FAILURES on ${os.hostname()}: 1 test\\(s\\) listed as failing on this host`));
+        assert.match(said[1], new RegExp(`\\[chromium\\] tests/e2e/playback-workflow\\.spec\\.ts › touch seeking › releasing a fine-seek gesture keeps the exact previewed destination \\(known on ${os.hostname()}, #37\\)`));
+        assert.equal(lines.some((line) => /All checks PASSED successfully/.test(line)), false, "not announced as a plain pass");
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+test("the repeat stage still fails for any other failure, for an entry of another kind, and on a host whose list does not hold the test", async () => {
+    for (const [why, entries, repeatTests] of [
+        ["another test failed beside the listed one", [fineSeekEntry("environment")], [{...FINE_SEEK, status: "unexpected"}, otherTest("unexpected")]],
+        ["the entry is of kind intermittent", [fineSeekEntry("intermittent")], [{...FINE_SEEK, status: "unexpected"}, otherTest("expected")]],
+        ["this host's list does not hold the test", [{...fineSeekEntry("environment"), file: "tests/e2e/reader-frame.spec.ts", title: "another host's known failure"}], [{...FINE_SEEK, status: "unexpected"}, otherTest("expected")]],
+        ["this host has an empty list", [], [{...FINE_SEEK, status: "unexpected"}, otherTest("expected")]],
+    ]) {
+        const fixture = setupGitFixture();
+        try {
+            const {result, lines} = await repeatStageWith(fixture, {entries, repeatTests});
+            assert.equal(result.ok, false, why);
+            assert.equal(result.report.result, "failed", why);
+            assert.equal(result.report.failedStage, "browser-changed-repeat", why);
+            assert.equal(result.report.stages[4].toleratedBy, undefined, why);
+            assert.equal(lines.some((line) => /PASSED WITH KNOWN FAILURES/.test(line)), false, why);
+        } finally {
+            fixture.cleanup();
+        }
     }
 });
 

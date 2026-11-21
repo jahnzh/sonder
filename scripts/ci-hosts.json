@@ -29,6 +29,7 @@
     "maxWait": 3600,
     "maxParallel": 1,
     "ceiling": 1,
+    "knownFailures": "",
     "workerPython": "/usr/bin/python3",
     "workerTorch": false,
     "estimate": {
@@ -44,6 +45,7 @@
     "tmpdir": "",
     "maxWait": 1800,
     "maxParallel": 1,
+    "knownFailures": "tests/known-failures.wsl-host.json",
     "workerPython": "/home/jahn/sonder-ci-python/bin/python3",
     "workerTorch": true,
     "estimate": {
@@ -59,6 +61,7 @@
     "tmpdir": "",
     "maxWait": 1800,
     "maxParallel": 1,
+    "knownFailures": "tests/known-failures.wsl-host.json",
     "workerPython": "/home/jahn/sonder-ci-python/bin/python3",
     "workerTorch": true,
     "estimate": {
