@@ -701,6 +701,34 @@ test("config resolution: SONDER_CI_HOST=lisa uses SSD base without other env", (
   );
 });
 
+test("the wait cap grows with the commit's changed browser specs, unless it is set by hand (#845)", (t) => {
+  const f = fixture(t);
+  // The check's support module is in the checkout, and the commit changes two specs since origin/main.
+  fs.copyFileSync(path.resolve("scripts/check-local-support.mjs"), path.join(f.repo, "scripts", "check-local-support.mjs"));
+  fs.mkdirSync(path.join(f.repo, "tests", "e2e"), { recursive: true });
+  const tests = (count: number) => Array.from({ length: count }, (_item, index) => `test("t${index}", async () => {});`).join("\n");
+  fs.writeFileSync(path.join(f.repo, "tests", "e2e", "long.spec.ts"), `// @projects firefox\n${tests(50)}\n`);
+  fs.writeFileSync(path.join(f.repo, "tests", "e2e", "short.spec.ts"), `${tests(4)}\n`);
+  fs.writeFileSync(path.join(f.repo, "tests", "e2e", "helper.ts"), "export const x = 1;\n");
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: f.repo, encoding: "utf8" }).trim();
+  git("add", ".");
+  git("commit", "-qm", "specs");
+  const third = git("rev-parse", "HEAD");
+  fs.writeFileSync(path.join(f.repo, "scripts", "ci-hosts.json"), JSON.stringify({ lisa: { host: "lisa", maxWait: 3600, maxParallel: 1 } }) + "\n");
+  git("add", ".");
+  git("commit", "-qm", "hosts");
+  const fourth = git("rev-parse", "HEAD");
+  // The heaviest file is 50 tests in two projects: 100, three times, 5 s each.
+  const grown = f.run(fourth, { SONDER_CI_HOST: "lisa" });
+  assert.equal(grown.status, 0, grown.output);
+  assert.match(grown.output, /Waiting for the check \(cap 5100s, 3600 \+ 1500 for 2 changed browser spec\(s\), poll every/);
+  // Set by hand, the cap is what was set.
+  const byHand = f.run(fourth, { SONDER_CI_HOST: "lisa", SONDER_CI_MAX_WAIT: "900" });
+  assert.equal(byHand.status, 0, byHand.output);
+  assert.match(byHand.output, /Waiting for the check \(cap 900s, poll every/);
+  assert.ok(third !== fourth);
+});
+
 test("config resolution: custom host config resolves remote base, tmpdir, max wait and parallel cap", (t) => {
   const f = fixture(t);
   const customBase = path.join(f.base, "custom-base");

@@ -12,6 +12,9 @@ import {
   findChangedE2eSpecs,
   findChangedFiles,
   selectBrowserScope,
+  specWeight,
+  partitionSpecs,
+  changedStageShardCount,
   checkCallerDirty,
   extractSnapshot,
   acquirePortLease,
@@ -45,15 +48,19 @@ const STAGE_DEFINITIONS = [
 const PLAYWRIGHT_REPORT_NAME = "playwright-results.json";
 
 // Playwright treats positional file filters as regular expressions, not literal paths.
-function changedBrowserStages(files) {
+// With more than one part (`parts`, the files dealt out by partitionSpecs), the stages run their parts at the same
+// time, each on its own server with one worker (#845, scripts/test-browser.mjs): SONDER_BROWSER_PARTS carries them.
+export function changedBrowserStages(files, parts = [files]) {
   if (files.length === 0) return [];
-  const filters = files.map((file) => `${file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+  const filter = (file) => `${file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`;
+  const filters = files.map(filter);
+  const env = parts.length > 1 ? { SONDER_BROWSER_PARTS: JSON.stringify(parts.map((part) => part.map(filter))) } : {};
   return [
     { name: "browser-changed-repeat", options: ["--workers=1", "--repeat-each=2", "--output=test-results-changed-repeat"] },
     { name: "browser-changed-ordered", options: ["--workers=1", "--output=test-results-changed-ordered"] },
   ].map(({ name, options }) => {
     const args = ["run", "test:browser", "--", ...options, ...filters];
-    return { name, command: "npm", args, fullCommand: `npm ${args.map((arg) => JSON.stringify(arg)).join(" ")}` };
+    return { name, command: "npm", args, env, fullCommand: `npm ${args.map((arg) => JSON.stringify(arg)).join(" ")}${parts.length > 1 ? ` (in ${parts.length} parts)` : ""}` };
   });
 }
 
@@ -542,7 +549,18 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     // 5. Execute stages sequentially
     const playwrightReportPath = path.join(outputDir, PLAYWRIGHT_REPORT_NAME);
     const stageResults = [];
-    const stageDefinitions = [...STAGE_DEFINITIONS, ...changedBrowserStages(changedBrowserSpecs.files)];
+    // The changed specs dealt into parts of about equal work, for the two stages that run them (#845).
+    const specWeights = new Map(
+      changedBrowserSpecs.files.map((file) => {
+        try {
+          return [file, specWeight(fs.readFileSync(path.join(disposableDir, file), "utf8"))];
+        } catch {
+          return [file, 1];
+        }
+      }),
+    );
+    const changedParts = partitionSpecs(changedBrowserSpecs.files, changedStageShardCount(process.env), (file) => specWeights.get(file) ?? 1);
+    const stageDefinitions = [...STAGE_DEFINITIONS, ...changedBrowserStages(changedBrowserSpecs.files, changedParts)];
     // The browser stage scope follows the changed files (#34); --full or SONDER_CHECK_FULL=1 runs everything.
     const selection = selectBrowserScope(changedFiles.files, {
       full: options.full || process.env.SONDER_CHECK_FULL === "1",
@@ -630,7 +648,7 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       const stageArgs = jsonReport
         ? [...stageDef.args, "--", "--reporter=list,json", ...(selection.scope === "chromium" ? ["--project=chromium"] : [])]
         : stageDef.args;
-      const stageEnv = {...childEnv, NODE_ENV: stageDef.name === "build" ? "production" : "test"};
+      const stageEnv = {...childEnv, ...stageDef.env, NODE_ENV: stageDef.name === "build" ? "production" : "test"};
       if (jsonReport) stageEnv.PLAYWRIGHT_JSON_OUTPUT_NAME = playwrightReportPath;
 
       let stageRes;

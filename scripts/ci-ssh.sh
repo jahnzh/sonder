@@ -167,6 +167,22 @@ if ! FULL_SHA=$(git rev-parse --verify "${REQUESTED_REF}^{commit}" 2>/dev/null);
   exit 1
 fi
 
+# The cap is set for a check without changed browser specs. The two stages that run a change's own specs grow with
+# it (#845: 26 changed reader specs are half an hour more even in parts), so the cap grows by what they may take,
+# unless it was set by hand for this run. Nothing is added when no spec changed or the estimate cannot be made.
+CAP_NOTE=""
+if [[ ! -v SONDER_CI_MAX_WAIT ]]; then
+  if allowance=$(node --input-type=module -e '
+      const { changedSpecsAllowance } = await import(process.argv[1]);
+      const { seconds, specs } = changedSpecsAllowance(process.argv[2], process.argv[3]);
+      console.log(`${seconds} ${specs}`);
+    ' "$ROOT/scripts/check-local-support.mjs" "$ROOT" "$FULL_SHA" 2>/dev/null) \
+    && [[ $allowance =~ ^([0-9]+)\ ([0-9]+)$ ]] && [[ ${BASH_REMATCH[1]} -gt 0 ]]; then
+    CAP_NOTE=", $MAX_WAIT + ${BASH_REMATCH[1]} for ${BASH_REMATCH[2]} changed browser spec(s)"
+    MAX_WAIT=$((MAX_WAIT + BASH_REMATCH[1]))
+  fi
+fi
+
 # This runner executes the checkout's own scripts, not the target commit's. When
 # they differ (a worktree behind or ahead of the commit) the run could fail in
 # seconds or test the wrong thing, so refuse with a clear message instead.
@@ -658,7 +674,7 @@ REMOTE
     return 4
   fi
 
-  log "Waiting for the check (cap ${MAX_WAIT}s, poll every ${POLL_INTERVAL}s)"
+  log "Waiting for the check (cap ${MAX_WAIT}s${CAP_NOTE}, poll every ${POLL_INTERVAL}s)"
   wait_for_remote
 
   case "$WAIT_RESULT" in

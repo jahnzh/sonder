@@ -137,6 +137,82 @@ export function findChangedE2eSpecs(cwd, sha) {
   }
 }
 
+// --- The changed-spec stages in parts (#845) -------------------------------------------------
+// `browser-changed-repeat` and `browser-changed-ordered` ran every changed spec on one worker: 1,094 and 547 test
+// runs for a pull request that changes 26 reader specs, three hours on a host whose wait cap is one. The stages
+// now split the changed spec FILES into parts that run at the same time, each part on its own server with one
+// worker. A file is never split, so what the stages prove is unchanged: every test of a changed spec still runs
+// twice in a row on one server (repeat), and the specs of a part still run once, in file order, on one worker and
+// one server (ordered). What a part no longer has is the specs of the other parts before it on the same server.
+
+/** How many parts the changed-spec stages run in: SONDER_BROWSER_CHANGED_SHARDS, else from the CPU count. */
+export function changedStageShardCount(env = process.env, cpus = os.availableParallelism()) {
+  const raw = env.SONDER_BROWSER_CHANGED_SHARDS;
+  if (raw !== undefined && raw !== "") {
+    const value = Number(raw);
+    return Number.isInteger(value) && value >= 1 && value <= 16 ? value : 1;
+  }
+  // A part is one server, one browser and one runner: about one busy core and under a gigabyte. The browser stage
+  // keeps a core in three (its shards load every project's browsers); these parts get two in five, and at most eight.
+  return cpus >= 8 ? Math.min(8, Math.floor(cpus / 2.5)) : 1;
+}
+
+/**
+ * How much work a spec file is, for dealing files into parts of about the same length: its tests times the
+ * projects it runs in (chromium, and those its first line names: `// @projects firefox, prepared-view`).
+ */
+export function specWeight(source) {
+  const tests = (source.match(/^\s*test(?:\.(?:fixme|skip|only|fail|slow))?\(/gm) || []).length;
+  const named = /^\/\/ @projects (.*)$/m.exec(source.split("\n", 1)[0] ?? "");
+  const projects = 1 + (named ? named[1].split(",").map((name) => name.trim()).filter(Boolean).length : 0);
+  return Math.max(1, tests) * projects;
+}
+
+/**
+ * Deals `files` into at most `count` parts of about equal weight: the heaviest file first, each to the lightest
+ * part. Every part keeps its files in the order they were given (the order one worker runs them in), and the parts
+ * come in the order of their first file. A file is never split.
+ */
+export function partitionSpecs(files, count, weightOf = () => 1) {
+  const parts = Array.from({ length: Math.max(1, Math.min(count, files.length)) }, () => ({ weight: 0, files: [] }));
+  const order = new Map(files.map((file, index) => [file, index]));
+  for (const file of [...files].sort((a, b) => weightOf(b) - weightOf(a) || order.get(a) - order.get(b))) {
+    const lightest = parts.reduce((best, part) => (part.weight < best.weight ? part : best));
+    lightest.files.push(file);
+    lightest.weight += weightOf(file);
+  }
+  return parts
+    .filter((part) => part.files.length)
+    .map((part) => part.files.sort((a, b) => order.get(a) - order.get(b)))
+    .sort((a, b) => order.get(a[0]) - order.get(b[0]));
+}
+
+/**
+ * The seconds the two changed-spec stages may take for `sha`, which a runner adds to its wait cap (#845): the cap is
+ * set for a check without them, and they grow with the change. The longest part's work (the total dealt into
+ * `parts`, or the heaviest file when that is more) runs three times, twice in the repeat stage and once in the
+ * ordered one, at `secondsPerRun` for one unit of weight (measured on lisa: 7.3 s a test run, and a weight counts
+ * about 1.75 runs because not every named project runs everywhere). Nothing when no spec changed or it cannot be told.
+ */
+export function changedSpecsAllowance(cwd, sha, { parts = 6, secondsPerRun = 5 } = {}) {
+  let files;
+  try {
+    ({ files } = findChangedE2eSpecs(cwd, sha));
+  } catch {
+    return { seconds: 0, specs: 0 };
+  }
+  const weights = files.map((file) => {
+    try {
+      return specWeight(execFileSync("git", ["show", `${sha}:${file}`], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 16 * 1024 * 1024 }));
+    } catch {
+      return 1;
+    }
+  });
+  if (!weights.length) return { seconds: 0, specs: 0 };
+  const longest = Math.max(Math.ceil(weights.reduce((sum, weight) => sum + weight, 0) / parts), ...weights);
+  return { seconds: longest * 3 * secondsPerRun, specs: files.length };
+}
+
 /** Every file changed between origin/main and `sha` (added, copied, modified, deleted, type changes). */
 export function findChangedFiles(cwd, sha) {
   const baseline = resolveGitRevision(cwd, "refs/remotes/origin/main");
