@@ -443,6 +443,11 @@ const toEnd = (page: Page) => band(page).locator(".prepared-scroll").evaluate((s
 
 test("a part that always fails is asked for three times, then the foot says so and Retry loads it", async ({ page }) => {
   test.setTimeout(120000);
+  // Following is off here (Settings › Playback), as in "reading far": the fixture's book has a reading sync map, and a
+  // reader that follows lands on the narrated sentence once the map has answered. On a loaded host that was after the
+  // scroll to the end below: the view went back to the top, the failed part's answer was one nobody waited for any
+  // more, and no message was owed (#861).
+  await page.addInitScript(() => localStorage.setItem("sonder-follow-narration", "off"));
   const { ebook } = await bookWith(page, `Failing part ${randomUUID()}`, await longBookFixture({ chapters: 12, sentences: 400, title: `Failing part ${randomUUID()}` }));
   const manifest = await (await page.request.get(`/api/reader/${ebook}/prepared`)).json();
   expect(manifest.parts.length).toBeGreaterThan(3);
@@ -478,6 +483,8 @@ test("a part that always fails is asked for three times, then the foot says so a
 
 test("a part answered with 429 is not asked for again by itself", async ({ page }) => {
   test.setTimeout(120000);
+  // Following is off, as in the test above (#861).
+  await page.addInitScript(() => localStorage.setItem("sonder-follow-narration", "off"));
   const { ebook } = await bookWith(page, `Limited part ${randomUUID()}`, await longBookFixture({ chapters: 12, sentences: 400, title: `Limited part ${randomUUID()}` }));
   await page.route(/\/prepared\/[0-9a-f]+\/parts\/1$/, (route) => route.fulfill({ status: 429, headers: { "Retry-After": "60" }, json: { error: "Rate limit exceeded, retry in 1 minute" } }));
   await choosePreparedView(page);
