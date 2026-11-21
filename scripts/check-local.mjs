@@ -30,6 +30,7 @@ import {
   loadKnownFailures,
   evaluateBrowserRun,
   readSlowestPlaywrightTests,
+  readSpecSeconds,
   planReruns,
   rerunPlaywrightArgs,
   applyReruns,
@@ -559,8 +560,10 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
         }
       }),
     );
-    const changedParts = partitionSpecs(changedBrowserSpecs.files, changedStageShardCount(process.env), (file) => specWeights.get(file) ?? 1);
+    const changedShards = changedStageShardCount({...process.env, ...overrides.env});
+    const changedParts = partitionSpecs(changedBrowserSpecs.files, changedShards, (file) => specWeights.get(file) ?? 1);
     const stageDefinitions = [...STAGE_DEFINITIONS, ...changedBrowserStages(changedBrowserSpecs.files, changedParts)];
+    let changedPartsBy = "the count of tests";
     // The browser stage scope follows the changed files (#34); --full or SONDER_CHECK_FULL=1 runs everything.
     const selection = selectBrowserScope(changedFiles.files, {
       full: options.full || process.env.SONDER_CHECK_FULL === "1",
@@ -593,7 +596,7 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     warnLocalDisk();
 
     for (let i = 0; i < stageDefinitions.length; i++) {
-      const stageDef = stageDefinitions[i];
+      let stageDef = stageDefinitions[i];
       const stageIndex = i + 1;
 
       if (stageDef.name === "browser" && selection.scope === "skip") {
@@ -634,6 +637,19 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
         });
         continue;
       }
+
+      // The browser stage has just timed every changed spec on this host: deal the parts by those times, which
+      // a count of tests cannot know (a file of slow tests made one part run 23 minutes beside one of 9, #845).
+      if (stageDef.name === "browser-changed-repeat" && changedParts.length > 1) {
+        const measured = readSpecSeconds(playwrightReportPath);
+        if (measured && changedBrowserSpecs.files.every((file) => measured.get(file) > 0)) {
+          const byTime = changedBrowserStages(changedBrowserSpecs.files, partitionSpecs(changedBrowserSpecs.files, changedShards, (file) => measured.get(file)));
+          for (const definition of byTime) stageDefinitions[stageDefinitions.findIndex((entry) => entry.name === definition.name)] = definition;
+          changedPartsBy = "the browser stage's times";
+        }
+        if (!options.silent) console.log(`[check-local] Changed specs in ${changedParts.length} parts, dealt by ${changedPartsBy}`);
+      }
+      stageDef = stageDefinitions[i];
 
       if (!options.silent) {
         console.log(`\n=== [Stage ${stageIndex}/${stageDefinitions.length}] ${stageDef.fullCommand} ===`);

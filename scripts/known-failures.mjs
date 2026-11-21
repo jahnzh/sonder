@@ -179,6 +179,25 @@ export function slowestPlaywrightTests(report, {limit = 10} = {}) {
 }
 
 /**
+ * The seconds each spec file's tests took in a Playwright JSON report, all projects together: Map of repo path to
+ * seconds. Null when the report is missing, unreadable or malformed.
+ */
+export function readSpecSeconds(reportPath) {
+  let collected;
+  try {
+    collected = collectPlaywrightTests(JSON.parse(fs.readFileSync(reportPath, "utf8")));
+  } catch {
+    return null;
+  }
+  if (!collected.ok) return null;
+  const seconds = new Map();
+  for (const test of collected.tests) {
+    if (Number.isFinite(test.durationMs)) seconds.set(test.file, (seconds.get(test.file) ?? 0) + test.durationMs / 1000);
+  }
+  return seconds;
+}
+
+/**
  * Read a Playwright JSON report from disk and return its slowest tests.
  */
 export function readSlowestPlaywrightTests(reportPath, {limit = 10} = {}) {
