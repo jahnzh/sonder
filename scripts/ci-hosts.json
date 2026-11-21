@@ -32,9 +32,9 @@
     "workerPython": "/usr/bin/python3",
     "workerTorch": false,
     "estimate": {
-      "fixedSeconds": 212,
+      "fixedSeconds": 224,
       "speed": 1.0,
-      "shards": 6,
+      "shards": 8,
       "startSeconds": 80
     }
   },
@@ -48,7 +48,7 @@
     "workerTorch": true,
     "estimate": {
       "fixedSeconds": 85,
-      "speed": 0.49,
+      "speed": 0.45,
       "shards": 5,
       "startSeconds": 60
     }
@@ -63,7 +63,7 @@
     "workerTorch": true,
     "estimate": {
       "fixedSeconds": 85,
-      "speed": 0.49,
+      "speed": 0.45,
       "shards": 5,
       "startSeconds": 60
     }
