@@ -3,7 +3,12 @@ import { test, expect, type BrowserContext } from "@playwright/test";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { launchInstalledProfile, unreachableProxyArgs } from "./installed-profile";
+
+// Each test makes a book and plays it by its title. The book stays on the server, so the title is new each time: the
+// spec's second project on the same server, or a repeat, would otherwise find two books of one title.
+const fresh = (title: string) => `${title} ${randomUUID().slice(0, 8)}`;
 
 function wave() {
   const n = 8000 * 10,
@@ -151,7 +156,7 @@ for (const [mode, choice] of [
   ["unreachable", "server"],
 ] as const) {
   test(`${mode} launch after a browser restart plays the device copy (${choice ?? "automatic"} source choice)`, async () => {
-    const title = `Restart story ${mode} ${choice ?? "auto"}`;
+    const title = fresh(`Restart story ${mode} ${choice ?? "auto"}`);
     const profile = await mkdtemp(join(tmpdir(), "sonder-restart-"));
     await mkdir("artifacts/7", { recursive: true });
     let book: { recordingId: string };
@@ -180,7 +185,7 @@ for (const [mode, choice] of [
   });
 }
 test("unreachable launch keeps the stream error when the device copy is incomplete (server source choice)", async () => {
-  const title = "Restart story partial copy";
+  const title = fresh("Restart story partial copy");
   const profile = await mkdtemp(join(tmpdir(), "sonder-restart-"));
   try {
     let context = await launch(profile);
@@ -231,7 +236,7 @@ async function relaunchAnswering(profile: string, status: number) {
 }
 for (const status of [502, 503, 504]) {
   test(`a ${status} answer for the server source plays the device copy (server source choice)`, async () => {
-    const title = `Restart story gateway ${status}`;
+    const title = fresh(`Restart story gateway ${status}`);
     const profile = await mkdtemp(join(tmpdir(), "sonder-restart-"));
     try {
       let context = await launch(profile);
@@ -250,7 +255,7 @@ for (const status of [502, 503, 504]) {
   });
 }
 test("a 404 answer for the server source keeps the stream error (server source choice)", async () => {
-  const title = "Restart story refusal";
+  const title = fresh("Restart story refusal");
   const profile = await mkdtemp(join(tmpdir(), "sonder-restart-"));
   try {
     let context = await launch(profile);
@@ -269,7 +274,7 @@ test("a 404 answer for the server source keeps the stream error (server source c
   }
 });
 test("pausing while the connection is being checked keeps the device copy paused (server source choice)", async () => {
-  const title = "Restart story paused during probe";
+  const title = fresh("Restart story paused during probe");
   const profile = await mkdtemp(join(tmpdir(), "sonder-restart-"));
   try {
     let context = await launch(profile);
@@ -320,7 +325,7 @@ const audioTime = (page: import("@playwright/test").Page) =>
 const serverStream = /\/api\/media\/[^/?]+\?source=server/;
 test("a stream that stalls after its first bytes switches to the device copy at the same position (server source choice)", async () => {
   test.setTimeout(60_000);
-  const title = "Restart story stalled stream";
+  const title = fresh("Restart story stalled stream");
   const profile = await mkdtemp(join(tmpdir(), "sonder-restart-"));
   try {
     let context = await launch(profile);
@@ -376,7 +381,7 @@ test("a stream that stalls after its first bytes switches to the device copy at 
 });
 test("a stall that clears while the connection check hangs keeps the stream and checks once (server source choice)", async () => {
   test.setTimeout(60_000);
-  const title = "Restart story resumed stream";
+  const title = fresh("Restart story resumed stream");
   const profile = await mkdtemp(join(tmpdir(), "sonder-restart-"));
   try {
     let context = await launch(profile);
@@ -433,7 +438,7 @@ test("a stall that clears while the connection check hangs keeps the stream and 
 });
 test("the next chapter of an unreachable server plays the device copy without another stream request (server source choice)", async () => {
   test.setTimeout(60_000);
-  const title = "Restart story outage chapters";
+  const title = fresh("Restart story outage chapters");
   const profile = await mkdtemp(join(tmpdir(), "sonder-restart-"));
   try {
     let context = await launch(profile);

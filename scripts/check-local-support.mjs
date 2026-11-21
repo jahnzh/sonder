@@ -145,16 +145,28 @@ export function findChangedE2eSpecs(cwd, sha) {
 // twice in a row on one server (repeat), and the specs of a part still run once, in file order, on one worker and
 // one server (ordered). What a part no longer has is the specs of the other parts before it on the same server.
 
-/** How many parts the changed-spec stages run in: SONDER_BROWSER_CHANGED_SHARDS, else from the CPU count. */
+/** Number of parallel browser shards: SONDER_BROWSER_SHARDS when valid, else from the CPU count. */
+export function browserShardCount(env = process.env, cpus = os.availableParallelism()) {
+  const raw = env.SONDER_BROWSER_SHARDS;
+  if (raw !== undefined && raw !== "") {
+    const value = Number(raw);
+    return Number.isInteger(value) && value >= 1 && value <= 16 ? value : 1;
+  }
+  return cpus >= 8 ? Math.min(6, Math.floor(cpus / 3)) : 1;
+}
+
+/**
+ * How many parts the changed-spec stages run in: SONDER_BROWSER_CHANGED_SHARDS, else as many as the browser stage
+ * has shards on this host. That width is the one the full suite runs at on every check; with eight parts on lisa
+ * two measured checks each failed on one Firefox audio test, with none clean (#845).
+ */
 export function changedStageShardCount(env = process.env, cpus = os.availableParallelism()) {
   const raw = env.SONDER_BROWSER_CHANGED_SHARDS;
   if (raw !== undefined && raw !== "") {
     const value = Number(raw);
     return Number.isInteger(value) && value >= 1 && value <= 16 ? value : 1;
   }
-  // A part is one server, one browser and one runner: about one busy core and under a gigabyte. The browser stage
-  // keeps a core in three (its shards load every project's browsers); these parts get two in five, and at most eight.
-  return cpus >= 8 ? Math.min(8, Math.floor(cpus / 2.5)) : 1;
+  return browserShardCount(env, cpus);
 }
 
 /**
