@@ -114,7 +114,14 @@ test("the reader offers no view switch, P does nothing and F returns to the narr
    await expect(room.getByRole("button",{name,exact:true})).toHaveCount(0);
    await expect(room.getByRole("radio",{name,exact:true})).toHaveCount(0);
   }
+  // Closing Appearance gives its band back to the text: the reader sizes its view to the band, and epub.js takes the
+  // chapter's frame out and shows it again. A tap in between lands on no page and is lost (#856, the window of
+  // #445), so the test goes on when the view was sized and the narrated sentence is on the page again.
+  const pages=room.locator(".reader-viewport");
+  const sized=Number(await pages.getAttribute("data-view-resizes"));
   await closeAppearance(room);
+  await expect.poll(async()=>Number(await pages.getAttribute("data-view-resizes"))).toBeGreaterThan(sized);
+  await expectBookText(page,manifest,interval.paragraphId);
   // Now Playing has no view button either.
   const nowPlaying=page.getByRole("dialog",{name:"Now playing",exact:true});
   for(const name of ["Page","Lyrics","Word"])await expect(nowPlaying.getByRole("button",{name,exact:true})).toHaveCount(0);
