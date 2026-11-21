@@ -88,7 +88,7 @@ export async function applyInsets(page: Page, browserName: string, insets: Inset
 export async function showControls(page: Page, room: Locator) {
   const topbar = room.locator(".reader-topbar");
   if (await topbar.isVisible()) return;
-  await expect(room.locator(".reader-viewport iframe").first()).toBeVisible();
+  await expect(room.locator(".reader-viewport :is(iframe, .prepared-text)").first()).toBeVisible();
   const text = await box(room.locator(".reader-viewport"));
   await page.mouse.click(text.x + text.width / 2, text.y + text.height / 2);
   await expect(topbar).toBeVisible();

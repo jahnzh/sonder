@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -41,6 +41,10 @@ function fixture({ missing, failSsh } = {}) {
       return [{ text: "Hello world.", norm: "hello world", memberParagraphIds: ["p1", "p1"] }];
     }
   `);
+  // The preparing thread (#827) is the real one in the image; here its starter only answers.
+  writeFileSync(join(repo, "server", "prepared-text-cache.ts"), "export async function prepareOffThread(job, sections) { return job.source && sections.length ? 1 : 0; }\n");
+  // The smoke test builds its small EPUB with the image's own jszip.
+  symlinkSync(join(repoRoot, "node_modules"), join(repo, "node_modules"), "dir");
   const sshLog = join(dir, "ssh.log");
   for (const command of ["ssh", "scp"]) {
     if (command === missing) continue;

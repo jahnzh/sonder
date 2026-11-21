@@ -13,6 +13,7 @@ import {
   removeOwnedBrowserTemp,
   runTestBrowser,
   browserShardCount,
+  browserParts,
   canShardArgs,
   mergePlaywrightReports,
   mergeShardOutputs,
@@ -414,4 +415,75 @@ test("browserTempsInUse reads the owned temp from each process environment and s
     fs.mkdirSync(path.join(proc, "self"));
     fs.writeFileSync(path.join(proc, "self", "environ"), `${BROWSER_TEMP_ENV}=/tmp/sonder-browser-b\0`);
     assert.deepEqual([...browserTempsInUse(proc)], ["/tmp/sonder-browser-a"]);
+  }));
+
+// Parts (#845): the check's changed-spec stages run their spec files in parts, each part on its own server.
+test("browserParts takes parts only when they are exactly the run's files", () => {
+  const args = ["--workers=1", "--repeat-each=2", "a\\.spec\\.ts$", "b\\.spec\\.ts$", "c\\.spec\\.ts$"];
+  const parts = [["a\\.spec\\.ts$", "c\\.spec\\.ts$"], ["b\\.spec\\.ts$"]];
+  assert.deepEqual(browserParts({ SONDER_BROWSER_PARTS: JSON.stringify(parts) }, args), parts);
+  assert.equal(browserParts({}, args), null, "no variable: one run");
+  assert.equal(browserParts({ SONDER_BROWSER_PARTS: JSON.stringify([parts.flat()]) }, args), null, "one part: one run");
+  assert.equal(browserParts({ SONDER_BROWSER_PARTS: "not json" }, args), null);
+  assert.equal(browserParts({ SONDER_BROWSER_PARTS: JSON.stringify([["a\\.spec\\.ts$"], ["b\\.spec\\.ts$"]]) }, args), null, "a file left out");
+  assert.equal(browserParts({ SONDER_BROWSER_PARTS: JSON.stringify([...parts, ["d\\.spec\\.ts$"]]) }, args), null, "a file added");
+  assert.equal(browserParts({ SONDER_BROWSER_PARTS: JSON.stringify([["a\\.spec\\.ts$", "b\\.spec\\.ts$"], ["a\\.spec\\.ts$", "c\\.spec\\.ts$"]]) }, args), null, "a file twice");
+  assert.equal(browserParts({ SONDER_BROWSER_PARTS: JSON.stringify(parts) }, ["--workers=1"]), null, "a run without files has no parts");
+});
+
+test("a run in parts starts one playwright per part, with the run's flags, its own files, port, temp and output", () =>
+  withTempDir(async (dir) => {
+    const calls = [];
+    const parts = [["a\\.spec\\.ts$", "c\\.spec\\.ts$"], ["b\\.spec\\.ts$"], ["d\\.spec\\.ts$"]];
+    const spawnCommand = (_cmd, argv, opts) => {
+      const output = argv.find((arg) => arg.startsWith("--output=")).slice("--output=".length);
+      calls.push({ argv, env: opts.env, output });
+      const child = new EventEmitter();
+      setImmediate(() => {
+        fs.mkdirSync(path.join(opts.cwd, output, `trace-of-${argv.at(-1).slice(0, 1)}`), { recursive: true });
+        child.emit("close", output.endsWith("-2") ? 1 : 0, null);
+      });
+      return child;
+    };
+    let tempCounter = 0;
+    const code = await runTestBrowser({
+      cwd: dir,
+      args: ["--workers=1", "--repeat-each=2", "--output=test-results-changed-repeat", ...parts.flat().sort()],
+      // The shard count is not what splits such a run.
+      shards: 6,
+      env: { PLAYWRIGHT_PORT: "5000", SONDER_BROWSER_PARTS: JSON.stringify(parts), OTHER: "kept" },
+      spawnCommand,
+      createBrowserTemp: () => fs.mkdtempSync(path.join(dir, `temp-${tempCounter++}-`)),
+    });
+    assert.equal(code, 1, "the worst part's exit code wins");
+    assert.deepEqual(
+      calls.map((call) => call.argv),
+      [
+        ["playwright", "test", "--workers=1", "--repeat-each=2", "--output=test-results-changed-repeat-part-1", "a\\.spec\\.ts$", "c\\.spec\\.ts$"],
+        ["playwright", "test", "--workers=1", "--repeat-each=2", "--output=test-results-changed-repeat-part-2", "b\\.spec\\.ts$"],
+        ["playwright", "test", "--workers=1", "--repeat-each=2", "--output=test-results-changed-repeat-part-3", "d\\.spec\\.ts$"],
+      ],
+      "no --shard: a file's repeats stay in its part",
+    );
+    assert.deepEqual(calls.map((call) => call.env.PLAYWRIGHT_PORT), ["5000", "5001", "5002"]);
+    assert.equal(new Set(calls.map((call) => call.env[BROWSER_TEMP_ENV])).size, 3, "every part has its own server state");
+    assert.ok(calls.every((call) => call.env.OTHER === "kept" && !("SONDER_BROWSER_PARTS" in call.env)));
+    // What the parts wrote is in the directory the run asked for; their own directories and temps are gone.
+    assert.deepEqual(fs.readdirSync(path.join(dir, "test-results-changed-repeat")).sort(), ["trace-of-b", "trace-of-c", "trace-of-d"]);
+    assert.deepEqual(fs.readdirSync(dir).filter((name) => name.includes("-part-") || name.startsWith("temp-")), []);
+  }));
+
+test("a run whose parts do not match its files runs as one, as it always did", () =>
+  withTempDir(async (dir) => {
+    const calls = [];
+    const spawnCommand = (_cmd, argv) => {
+      calls.push(argv);
+      const child = new EventEmitter();
+      setImmediate(() => child.emit("close", 0, null));
+      return child;
+    };
+    const args = ["--workers=1", "--output=test-results-changed-ordered", "a\\.spec\\.ts$", "b\\.spec\\.ts$"];
+    const code = await runTestBrowser({ cwd: dir, args, shards: 6, env: { SONDER_BROWSER_PARTS: JSON.stringify([["a\\.spec\\.ts$"], ["other$"]]) }, spawnCommand, tmpRoot: dir });
+    assert.equal(code, 0);
+    assert.deepEqual(calls, [["playwright", "test", ...args]]);
   }));

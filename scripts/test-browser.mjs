@@ -16,6 +16,13 @@
 // (one shard on a small host such as the 4-core production machine). Filtered runs, repeated runs and runs
 // that choose their own --output or --shard stay a single serial run.
 //
+// Parts (#845): the check's changed-spec stages name their spec files and ask for one worker, so `--shard` is not
+// for them: it would put a spec's two repeats on two servers. Instead SONDER_BROWSER_PARTS holds the files dealt
+// into parts (a JSON array of arrays of the positional filters), and each part is one `playwright test` of its
+// own files, with the run's own flags, on its own server port, temp state and output directory, all at the same
+// time. A file is in one part, so each of its tests still repeats on one server and its part still runs in file
+// order on one worker.
+//
 // The list/diff/cleanup logic is exported as pure functions so tests can exercise it against a
 // temp directory with a fake child (no real browser launch).
 import { spawn } from "node:child_process";
@@ -289,6 +296,8 @@ export function runTestBrowser({
   track = () => {},
 } = {}) {
   const beforeProfiles = listProfileDirs(cwd);
+  const parts = browserParts(env, args);
+  if (parts) return runBrowserParts({ cwd, args, parts, spawnCommand, createBrowserTemp, env, track, beforeProfiles });
   if (shards > 1 && canShardArgs(args))
     return runShardedBrowser({ cwd, args, shards, spawnCommand, createBrowserTemp, env, track, beforeProfiles });
   const browserTemp = createBrowserTemp();
@@ -360,6 +369,67 @@ function runShardedBrowser({ cwd, args, shards, spawnCommand, createBrowserTemp,
       if (merged) fs.writeFileSync(jsonName, JSON.stringify(merged));
     }
     mergeShardOutputs(cwd, outputs);
+    removeProfileDirs(cwd, diffProfileDirs(beforeProfiles, listProfileDirs(cwd)));
+    for (const temp of temps) removeOwnedBrowserTemp(temp);
+    return codes.some((code) => code === null) ? null : Math.max(...codes);
+  });
+}
+
+/**
+ * The parts SONDER_BROWSER_PARTS asks for, or null when the run is one piece: the variable must be a JSON array of
+ * two or more arrays of filters that together are exactly the run's positional filters, so a part can neither add
+ * a file to the run nor drop one from it.
+ */
+export function browserParts(env, args) {
+  const raw = env.SONDER_BROWSER_PARTS;
+  if (!raw) return null;
+  let parts;
+  try {
+    parts = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parts) || parts.length < 2 || !parts.every((part) => Array.isArray(part) && part.length && part.every((filter) => typeof filter === "string"))) return null;
+  const named = args.filter((arg) => !arg.startsWith("-")).sort();
+  const dealt = parts.flat().sort();
+  return named.length === dealt.length && named.every((filter, index) => filter === dealt[index]) ? parts : null;
+}
+
+// One `playwright test` child per part, at the same time: the run's flags, the part's own files. Each part has
+// its own server port, browser temp directory and output directory, which are merged into the directory the run
+// asked for (`--output`). Resolves with the worst exit code (null if any part was signalled).
+function runBrowserParts({ cwd, args, parts, spawnCommand, createBrowserTemp, env, track, beforeProfiles }) {
+  const basePort = Number(env.PLAYWRIGHT_PORT || 4173);
+  const flags = args.filter((arg) => arg.startsWith("-") && !arg.startsWith("--output="));
+  const target = args.find((arg) => arg.startsWith("--output="))?.slice("--output=".length) || "test-results";
+  const { SONDER_BROWSER_PARTS: _parts, ...partBase } = env;
+  const temps = [];
+  const outputs = [];
+  const runs = [];
+  console.log(`[test-browser] ${parts.length} parts, each on its own server with its own files: ${parts.map((part) => part.length).join(", ")} files`);
+  for (const [at, filters] of parts.entries()) {
+    const index = at + 1;
+    const temp = createBrowserTemp();
+    const output = `${target}-part-${index}`;
+    temps.push(temp);
+    outputs.push(output);
+    const child = spawnCommand("npx", ["playwright", "test", ...flags, `--output=${output}`, ...filters], {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...partBase, PLAYWRIGHT_PORT: String(basePort + index - 1), [BROWSER_TEMP_ENV]: temp },
+    });
+    track(child);
+    prefixLines(child.stdout, process.stdout, `[part ${index}/${parts.length}] `);
+    prefixLines(child.stderr, process.stderr, `[part ${index}/${parts.length}] `);
+    runs.push(
+      new Promise((resolve) => {
+        child.on("close", (code, signal) => resolve(signal ? null : code));
+        child.on("error", () => resolve(1));
+      }),
+    );
+  }
+  return Promise.all(runs).then((codes) => {
+    mergeShardOutputs(cwd, outputs, target);
     removeProfileDirs(cwd, diffProfileDirs(beforeProfiles, listProfileDirs(cwd)));
     for (const temp of temps) removeOwnedBrowserTemp(temp);
     return codes.some((code) => code === null) ? null : Math.max(...codes);

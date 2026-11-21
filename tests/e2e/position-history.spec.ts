@@ -1,4 +1,4 @@
-// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing
+// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing, prepared-view
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -8,6 +8,8 @@ import { listenFace, nowPlaying, openListen, openRead } from "./now-playing";
 import { playFromLibrary } from "./library-play";
 import { installCpuThrottle } from "./cpu-throttle";
 import { revealControls } from "./reader-controls";
+import {bookText,textFrame} from "./reader-view";
+import { withFirstAnswers } from "./first-answers";
 // SONDER_E2E_CPU_THROTTLE=4 runs it on a processor slowed four times (Chromium).
 installCpuThrottle(test);
 
@@ -109,7 +111,7 @@ async function openReaderPlayer(page: Page) {
   const dialog = nowPlaying(page);
   if (await dialog.isVisible()) await switchFace(page, "read");
   else await openRead(page);
-  await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible({ timeout: 20000 });
+  await expect(textFrame(page.locator(".inline-reader"))).toBeVisible({ timeout: 20000 });
   return dialog;
 }
 
@@ -127,7 +129,7 @@ async function switchFace(page: Page, face: "listen" | "read") {
     await expect(listenFace(page)).toBeVisible();
   } else {
     await listenFace(page).getByRole("radio", { name: "Read", exact: true }).click();
-    await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible({ timeout: 20000 });
+    await expect(textFrame(page.locator(".inline-reader"))).toBeVisible({ timeout: 20000 });
   }
 }
 
@@ -437,7 +439,8 @@ test("recordings keep separate histories across switches and reload", async ({ p
   await expect.poll(async () => (await history(page, second.recordingId)).length).toBe(1);
   expect((await history(page, first.recordingId)).map((entry: any) => entry.position)).toEqual([80.25, 180]);
   expect((await history(page, second.recordingId)).map((entry: any) => entry.position)).toEqual([50.5]);
-  await page.reload();
+  // The page has its first answers before the first click: a click made while they arrive can be lost (#841).
+  await withFirstAnswers(page, () => page.reload());
   // The address names Now playing (#593), so the reload shows it again: close it to reach the Library.
   await nowPlaying(page).getByRole("button", { name: "Close now playing", exact: true }).click();
   await expect(nowPlaying(page)).toBeHidden();
@@ -529,7 +532,7 @@ test("source reloads only record a jump when the new source moves the position",
 // Listen from here is the long-press on a sentence (#592). Long-press a sentence that is on the page. The reader may
 // still be moving to the new position's passage, so look again until one is on the page.
 async function listenFromHere(page: Page, room: Locator) {
-  const paragraphs = page.frameLocator(".inline-reader .reader-viewport iframe").locator("p");
+  const paragraphs = bookText(page,".inline-reader").locator("p");
   await paragraphs.first().waitFor();
   const view = (await room.locator(".reader-viewport").boundingBox())!;
   let box: { x: number; y: number; width: number; height: number } | null = null;
@@ -593,6 +596,48 @@ test("a toast Undo for Listen from here takes back what it recorded and is not r
     await historyButton.click();
     await expect(page.getByRole("dialog", { name: "Position history", exact: true }).getByText("No jumps in the last 24 hours")).toBeVisible();
   }
+});
+
+test("Pause pressed while the toast's Undo is still on its way keeps the Undo: the narration is back where it was, paused", async ({ page }) => {
+  // A move of the narration first asks the server which sources the recording has, and only then moves the audio.
+  // A pause in that wait used to drop the whole move (#419): the audio stayed where Listen from here had put it.
+  // On a slow connection the wait is long enough for a person; here the answer is held until Pause was pressed.
+  const book = await narratedRecording(page, "Undo then pause");
+  await instrument(page);
+  await page.goto("/");
+  await startPaused(page, book.title);
+  await openReaderPlayer(page);
+  const room = page.locator(".inline-reader");
+  await setPosition(page, 170.25);
+  await expect(room).toHaveAttribute("data-current-passage", /.+/);
+  await listenFromHere(page, room);
+  const toast = room.getByRole("status").filter({ hasText: "Listening from here" });
+  await expect(toast).toBeVisible();
+  await expect.poll(async () => (await history(page, book.recordingId)).map((entry: any) => entry.position)).toEqual([170.25]);
+  const listened = (await audioState(page)).position;
+  expect(listened).toBeLessThan(170);
+  let answer = () => {};
+  const held = new Promise<void>((resolve) => (answer = resolve));
+  let asked = 0;
+  await page.route(`**/api/recordings/${encodeURIComponent(book.recordingId)}/sources`, async (route) => {
+    asked++;
+    await held;
+    await route.continue();
+  });
+  await room.locator(".reader-message").getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(toast).toBeHidden();
+  // The Undo's move is waiting for the server when Pause is pressed.
+  await expect.poll(() => asked).toBe(1);
+  await room.getByRole("button", { name: "Pause narration", exact: true }).click();
+  await expect.poll(async () => (await audioState(page)).paused).toBe(true);
+  answer();
+  // The move is made, and the pause holds: back at the place left, not playing.
+  await expect.poll(async () => (await audioState(page)).position).toBeCloseTo(170.25, 2);
+  await page.waitForTimeout(300);
+  expect(await audioState(page)).toMatchObject({ position: 170.25, paused: true });
+  await expect(room.getByRole("button", { name: "Play narration", exact: true })).toBeVisible();
+  await expect.poll(async () => (await history(page, book.recordingId)).length).toBe(0);
+  await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 
 test("an undo that cannot restore keeps its entry and works once it can", async ({ page }) => {

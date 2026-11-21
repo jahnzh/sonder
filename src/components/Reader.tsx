@@ -402,6 +402,13 @@ export function ReaderView({
   const narrationAt = (book: Book | null | undefined, trackId: string | undefined, position: number) =>
     !!following.narratedSentence(mapRef.current, placeOf(book, trackId, position));
   const [followRevision,setFollowRevision]=useState(0);
+  // A sentence Back to narration located without a map (#831): where the narration was when it was found. Its
+  // highlight is no narrated sentence's, so the follow step below keeps it itself while the narration is still there.
+  const located = useRef<{ paragraphId: string; recordingId: string; trackId: string; position: number } | null>(null);
+  // The follow step's run that last drew the located sentence, so one layout draws it once.
+  const highlightDrawn = useRef(-1);
+  const followRevisionRef = useRef(0);
+  followRevisionRef.current = followRevision;
   // Following the narration or paged away, and which input wins (ADR 0014).
   const followingEvents = useRef({
     manualSave: (_locator: TextLocator) => {},
@@ -1435,7 +1442,10 @@ export function ReaderView({
       if (!back.current() || now.book?.recordingId !== recordingId || now.track?.id !== trackId) return;
       // The recovered passage is the narration to follow: what the return kept is dropped.
       back.confirm();
-      await jumpRef.current(result.locator.paragraphId, true, recordingId);
+      if (await jumpRef.current(result.locator.paragraphId, true, recordingId)) {
+        highlightDrawn.current = followRevisionRef.current;
+        located.current = { paragraphId: result.locator.paragraphId, recordingId, trackId, position: playerRef.current.position };
+      }
     } catch {
       messages.error("locate");
     } finally {
@@ -1486,9 +1496,23 @@ export function ReaderView({
       {
         following.forgetFollowed();
         pagedSentence.current = null;
+        // The sentence located without a map stays marked while the reader follows and the narration has not
+        // moved from where it was found. This step runs again when the page is laid out anew (the chapter's fonts
+        // loaded, the band resized): the sentence is then shown and marked again where the layout has it now,
+        // not unmarked (#831).
+        const place = located.current;
+        if (place && follow && rendered && !map && !following.explicitJump() && p.book?.recordingId === place.recordingId && p.track?.id === place.trackId && p.position === place.position) {
+          if (!highlight.current || highlightDrawn.current !== followRevision) {
+            highlightDrawn.current = followRevision;
+            void jumpRef.current(place.paragraphId, false).catch(() => false);
+          }
+          return;
+        }
+        located.current = null;
         clearHighlight();
         return;
       }
+    located.current = null;
     // The sentence the highlight marks (the following module's rule). In a gap it is still the last narrated
     // sentence: the same key, so nothing moves and the highlight stays until the next sentence begins.
     const interval = following.highlightedSentence(map, placeOf(p.book, p.track?.id, p.position));

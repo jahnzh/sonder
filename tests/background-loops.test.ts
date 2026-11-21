@@ -24,7 +24,7 @@ const app = await createApp({ background: { manual: true } });
 const runner = backgroundRunner(app);
 after(() => rmSync(temp, { recursive: true, force: true }));
 
-test("the app runs its ten loops in one runner (Hardcover sync went, #721 part d), with the intervals and immediate runs they always had", { timeout: 10_000 }, () => {
+test("the app runs its eleven loops in one runner (Hardcover sync went, #721 part d), with the intervals and immediate runs they always had", { timeout: 10_000 }, () => {
   assert.deepEqual(
     runner.processes().map(({ id, intervalMs, runAtStart, pausedBy }) => ({ id, intervalMs, runAtStart: !!runAtStart, pausedBy })),
     [
@@ -41,6 +41,8 @@ test("the app runs its ten loops in one runner (Hardcover sync went, #721 part d
       // series saved again after the reset, at start so a restart resumes it.
       { id: "series-refresh", intervalMs: 3_600_000, runAtStart: false, pausedBy: undefined },
       { id: "series-resave", intervalMs: 900_000, runAtStart: true, pausedBy: undefined },
+      // Prepared text made ahead (#827): each minute the loop looks whether a sweep is due (after the start, then hourly).
+      { id: "prepared-text", intervalMs: 60_000, runAtStart: false, pausedBy: undefined },
     ],
     "start order; the app stops them in reverse",
   );

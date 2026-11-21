@@ -1,9 +1,13 @@
-// @projects firefox, webkit, mobile-chrome, mobile-firefox, mobile-safari, webkit-iphone-now-playing, mobile-iphone-slice14
+// @projects firefox, webkit, mobile-chrome, mobile-firefox, mobile-safari, webkit-iphone-now-playing, mobile-iphone-slice14, prepared-view
 import {test,expect,type Page,type Locator} from "@playwright/test";
 import {showControls} from "./reader-bands";
 import {readFileSync} from "node:fs";
 import {readerFixture} from "../reader-fixture";
 import { gotoRead } from "./read-face";
+import {bookText,textFrame} from "./reader-view";
+import { installReaderFrames } from "./reader-frames";
+import {notOnPreparedView,onPreparedView} from "./prepared-view";
+installReaderFrames(test);
 // WebKit needs allow-scripts so the reader's own listeners run on the page (#37).
 // EPUB content itself must still never run script. These checks run in all three engines.
 const sandboxFor=(browserName:string)=>browserName==="webkit" ? "allow-same-origin allow-scripts" : "allow-same-origin";
@@ -22,7 +26,7 @@ async function importBook(page:Page,title:string,script=false,variant?:"svg-root
 async function openReader(page:Page,title:string,script=false,link=true){
  const id=await importBook(page,title,script,undefined,link);
  const room=page.locator(".reader-room");
- const frame=page.frameLocator(".reader-room .reader-viewport iframe");
+ const frame=bookText(page);
  await expect(frame.getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
  return {id,room,frame};
 }
@@ -31,7 +35,7 @@ async function openReader(page:Page,title:string,script=false,link=true){
 async function visibleSentencePoint(viewport:Locator){
  return viewport.evaluate(host=>{
   const bounds=host.getBoundingClientRect();
-  for(const frame of host.querySelectorAll("iframe")){
+  for(const frame of (window as any).__readerFrames(host)){
    const doc=frame.contentDocument,frameBounds=frame.getBoundingClientRect();
    if(!doc || doc.fonts.status!=="loaded")continue;
    for(const paragraph of doc.querySelectorAll("p")){
@@ -44,7 +48,9 @@ async function visibleSentencePoint(viewport:Locator){
      if(right-left<4 || bottom-top<4)continue;
      const x=(left+right)/2,y=(top+bottom)/2;
      const element=doc.elementFromPoint(x-frameBounds.left,y-frameBounds.top);
-     if(document.elementFromPoint(x,y)===frame && element && paragraph.contains(element))return {x,y};
+     // The point is on the book's text: the frame itself, or the prepared text of the new view (#802).
+     const hit=document.elementFromPoint(x,y),onText=(frame as any).prepared?!!hit?.closest(".prepared-text"):hit===frame;
+     if(onText && element && paragraph.contains(element))return {x,y};
     }
    }
   }
@@ -74,15 +80,16 @@ async function expectNoAlignment(page:Page,id:string){
  expect((await response.json()).jobs).toEqual([]);
 }
 test("the reader frame only permits scripts when the engine needs them",async({page,browserName})=>{
+ notOnPreparedView("it tests the EPUB's frame itself: its sandbox, the Content-Security-Policy put into each section, and what epub.js does with a hostile file. The new view has no frame and never shows the EPUB's markup; its counterparts are the hostile part in prepared-view.spec.ts and the hostile chapters in prepared-text.spec.ts");
  const {room}=await openReader(page,"Frame sandbox");
- const frames=room.locator(".reader-viewport iframe");
+ const frames=textFrame(room);
  await expect(frames.first()).toHaveAttribute("sandbox",sandboxFor(browserName));
  for(const sandbox of await frames.evaluateAll(els=>els.map(el=>el.getAttribute("sandbox"))))expect(sandbox).toBe(sandboxFor(browserName));
 });
 test("taps, page turns and long-press on the book page reach the reader",async({page,browserName},testInfo)=>{
  const {id,room}=await openReader(page,`Frame gestures ${browserName} ${testInfo.repeatEachIndex}`,false,false);
  await expectNoAlignment(page,id);
- await expect(room.locator(".reader-viewport iframe").first()).toHaveAttribute("sandbox",sandboxFor(browserName));
+ if(!onPreparedView())await expect(textFrame(room).first()).toHaveAttribute("sandbox",sandboxFor(browserName));
  const topbar=room.locator(".reader-topbar"),box=(await room.locator(".reader-viewport").boundingBox())!;
  await expect(topbar).toBeHidden();
  await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
@@ -110,7 +117,7 @@ test("a short tap shows the controls while the page is busy as the finger lifts"
  // After the reader's own pointerdown listener, the page is held for 700 ms, past the 550 of a long press. The
  // listener comes from the app's window, as the reader's do: the book's frame itself runs no script.
  const blocked=await room.locator(".reader-viewport").evaluate(host=>{
-  const frames=[...host.querySelectorAll("iframe")].filter(frame=>frame.contentDocument);
+  const frames=[...(window as any).__readerFrames(host)].filter(frame=>frame.contentDocument);
   for(const frame of frames)frame.contentDocument!.addEventListener("pointerdown",()=>{const until=Date.now()+700;while(Date.now()<until);},{once:true});
   return frames.length;
  });
@@ -161,7 +168,7 @@ test("a no-map long-press stays isolated from an already prepared ebook",async({
 const attack=(viewport:Locator)=>viewport.evaluate(async(host)=>{
  const run="window.__frameScript=true;parent.__epubScriptExecuted=true";
  const results=[];
- for(const iframe of host.querySelectorAll("iframe")){
+ for(const iframe of (window as any).__readerFrames(host)){
   const doc=iframe.contentDocument!,first=doc.head.firstElementChild;
   const section={
    sandbox:iframe.getAttribute("sandbox"),
@@ -178,6 +185,7 @@ const attack=(viewport:Locator)=>viewport.evaluate(async(host)=>{
  return {sections:results,parent:(window as any).__epubScriptExecuted};
 });
 test("EPUB scripts cannot run in the reader frame or reach the app",async({page,browserName})=>{
+ notOnPreparedView("it tests the EPUB's frame itself: its sandbox, the Content-Security-Policy put into each section, and what epub.js does with a hostile file. The new view has no frame and never shows the EPUB's markup; its counterparts are the hostile part in prepared-view.spec.ts and the hostile chapters in prepared-text.spec.ts");
  const {room,frame}=await openReader(page,"Frame scripts",true);
  const viewport=room.locator(".reader-viewport");
  const expected={sandbox:sandboxFor(browserName),csp:"default-src 'none'; style-src 'unsafe-inline' blob: data:; img-src blob: data:; font-src blob: data:; media-src blob: data:; frame-src 'none'; form-action 'none'; base-uri 'none'",leftovers:0,ran:false};
@@ -199,6 +207,7 @@ test("EPUB scripts cannot run in the reader frame or reach the app",async({page,
 });
 
 test("a failed event probe enables scripts while the content defences still block them",async({page,browserName})=>{
+ notOnPreparedView("it tests the EPUB's frame itself: its sandbox, the Content-Security-Policy put into each section, and what epub.js does with a hostile file. The new view has no frame and never shows the EPUB's markup; its counterparts are the hostile part in prepared-view.spec.ts and the hostile chapters in prepared-text.spec.ts");
  test.skip(browserName!=="chromium","WebKit and Firefox exercise their native sandbox in the other tests");
  // Stop the probe's synthetic pointer events bubbling to its document, as in WebKit's blocked-listener case.
  await page.addInitScript(()=>{
@@ -224,9 +233,10 @@ test("a failed event probe enables scripts while the content defences still bloc
 // refused and the section renders empty.
 for(const variant of ["svg-root","iframe-root","nav-root","template-root"] as const){
  test(`a section with a ${variant.replace("-"," ")} is emptied and runs nothing`,async({page,browserName})=>{
+ notOnPreparedView("it tests the EPUB's frame itself: its sandbox, the Content-Security-Policy put into each section, and what epub.js does with a hostile file. The new view has no frame and never shows the EPUB's markup; its counterparts are the hostile part in prepared-view.spec.ts and the hostile chapters in prepared-text.spec.ts");
   const leaks:string[]=[];page.on("response",r=>{if(r.url().includes("/leak"))leaks.push(r.url())});
   await importBook(page,`Frame ${variant}`,false,variant);
-  const iframe=page.locator(".reader-room .reader-viewport iframe");
+  const iframe=textFrame(page.locator(".reader-room"));
   await expect(iframe.first()).toBeAttached();
   await page.waitForTimeout(1500);
   expect(await page.evaluate(()=>(window as any).__epubScriptExecuted)).toBeUndefined();
@@ -240,12 +250,13 @@ for(const variant of ["svg-root","iframe-root","nav-root","template-root"] as co
  });
 }
 test("a section without a head still gets the CSP first and runs nothing",async({page,browserName})=>{
+ notOnPreparedView("it tests the EPUB's frame itself: its sandbox, the Content-Security-Policy put into each section, and what epub.js does with a hostile file. The new view has no frame and never shows the EPUB's markup; its counterparts are the hostile part in prepared-view.spec.ts and the hostile chapters in prepared-text.spec.ts");
  await importBook(page,"Frame no head",false,"no-head");
- const frame=page.frameLocator(".reader-room .reader-viewport iframe");
+ const frame=bookText(page);
  await expect(frame.getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
  await page.waitForTimeout(1000);
  expect(await page.evaluate(()=>(window as any).__epubScriptExecuted)).toBeUndefined();
- const state=await page.locator(".reader-room .reader-viewport iframe").first().evaluate((f:HTMLIFrameElement)=>({
+ const state=await textFrame(page.locator(".reader-room")).first().evaluate((f:HTMLIFrameElement)=>({
   sandbox:f.getAttribute("sandbox"),
   csp:f.contentDocument!.head.firstElementChild?.getAttribute("http-equiv")==="Content-Security-Policy"?f.contentDocument!.head.firstElementChild!.getAttribute("content"):null,
  }));
@@ -257,10 +268,11 @@ test("a section without a head still gets the CSP first and runs nothing",async(
 // epub.js turns book resources into blob: URLs on the app's origin after the content hook has run. An SVG that
 // carries script must not get such a URL: navigating the frame to it would run the script as the app.
 test("a book's SVG asset is a data: URL, so navigating the frame to it reaches nothing",async({page,browserName})=>{
+ notOnPreparedView("it tests the EPUB's frame itself: its sandbox, the Content-Security-Policy put into each section, and what epub.js does with a hostile file. The new view has no frame and never shows the EPUB's markup; its counterparts are the hostile part in prepared-view.spec.ts and the hostile chapters in prepared-text.spec.ts");
  await importBook(page,"Frame svg asset",false,"svg-asset");
- const frame=page.frameLocator(".reader-room .reader-viewport iframe");
+ const frame=bookText(page);
  await expect(frame.getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
- const iframe=page.locator(".reader-room .reader-viewport iframe").first();
+ const iframe=textFrame(page.locator(".reader-room")).first();
  const seen=await iframe.evaluate((f:HTMLIFrameElement)=>{
   const doc=f.contentDocument!;
   const image=doc.querySelector("#svg-image") as HTMLImageElement|null,link=doc.querySelector("#svg-link") as HTMLAnchorElement|null,ext=doc.querySelector("#ext-link") as HTMLAnchorElement|null;
@@ -279,12 +291,13 @@ test("a book's SVG asset is a data: URL, so navigating the frame to it reaches n
 // Content before <head> makes the HTML parser move the head, CSP meta included, into <body>, where browsers
 // ignore it. The head must come first, so the CSP is in force and the remote URLs in srcset and CSS stay blocked.
 test("a section with content before its head still has the CSP in the head",async({page})=>{
+ notOnPreparedView("it tests the EPUB's frame itself: its sandbox, the Content-Security-Policy put into each section, and what epub.js does with a hostile file. The new view has no frame and never shows the EPUB's markup; its counterparts are the hostile part in prepared-view.spec.ts and the hostile chapters in prepared-text.spec.ts");
  const leaks:string[]=[];page.on("response",r=>{if(r.url().includes("/leak"))leaks.push(r.url())});
  await importBook(page,"Frame late head",false,"head-late");
- const frame=page.frameLocator(".reader-room .reader-viewport iframe");
+ const frame=bookText(page);
  await expect(frame.getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
  await page.waitForTimeout(1000);
- const csp=await page.locator(".reader-room .reader-viewport iframe").first().evaluate((f:HTMLIFrameElement)=>{
+ const csp=await textFrame(page.locator(".reader-room")).first().evaluate((f:HTMLIFrameElement)=>{
   const doc=f.contentDocument!,meta=doc.querySelector('meta[http-equiv="Content-Security-Policy"]');
   // A bare character before <head> also makes the parser move the head into <body>, so the meta must be
   // inside the head the frame parsed, not merely the first element of the head in the source tree.
@@ -299,12 +312,13 @@ test("a section with content before its head still has the CSP in the head",asyn
 // One non-whitespace character before <head> is enough for the HTML parser to move the head, CSP meta
 // included, into <body>: a first-element check passes while the meta silently stops applying.
 test("a section with a character before its head still has the CSP in the head",async({page})=>{
+ notOnPreparedView("it tests the EPUB's frame itself: its sandbox, the Content-Security-Policy put into each section, and what epub.js does with a hostile file. The new view has no frame and never shows the EPUB's markup; its counterparts are the hostile part in prepared-view.spec.ts and the hostile chapters in prepared-text.spec.ts");
  const leaks:string[]=[];page.on("response",r=>{if(r.url().includes("/leak"))leaks.push(r.url())});
  await importBook(page,"Frame text head",false,"text-before-head");
- const frame=page.frameLocator(".reader-room .reader-viewport iframe");
+ const frame=bookText(page);
  await expect(frame.getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
  await page.waitForTimeout(1000);
- const csp=await page.locator(".reader-room .reader-viewport iframe").first().evaluate((f:HTMLIFrameElement)=>{
+ const csp=await textFrame(page.locator(".reader-room")).first().evaluate((f:HTMLIFrameElement)=>{
   const doc=f.contentDocument!,meta=doc.querySelector('meta[http-equiv="Content-Security-Policy"]');
   return {parent:meta?.parentElement?.tagName,first:doc.head.firstElementChild===meta,inHead:doc.head.contains(meta),srcset:doc.querySelectorAll("[srcset]").length};
  });

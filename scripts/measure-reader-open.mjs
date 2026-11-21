@@ -8,6 +8,11 @@
 //
 //   SONDER_VERIFY_URL=http://127.0.0.1:3106 node scripts/measure-reader-open.mjs \
 //     [--books short=<ebook id>,average=<ebook id>,long=<ebook id>] [--runs 5] [--profiles desktop,phone] [--out <file.json>]
+//     [--view prepared]
+//
+// --view prepared measures the new reading view (#802): the browser has the hidden switch set, as
+// `?reader-view=prepared` leaves it, and the report adds what making a part's nodes cost in the page. Without it the
+// reader measured is the one a device without the switch gets.
 //
 // Without --books it takes the shortest, the middle and the longest text among the books that have an EPUB with a
 // reading sync map and were not listened to in the last 48 hours, and prints the choice; pass that choice as
@@ -29,6 +34,8 @@ const option = (name, fallback) => {
 };
 const RUNS = Math.max(1, Number(option("runs", 5)) || 5);
 const PROFILE_NAMES = option("profiles", "desktop,phone").split(",").filter(Boolean);
+const VIEW = option("view", "default");
+if (VIEW !== "default" && VIEW !== "prepared") throw new Error("--view takes prepared; leave it out for the reader a device gets without the switch");
 const OPEN_TIMEOUT = Number(option("open-timeout", 180)) * 1000;
 const FOLLOW_TIMEOUT = 20_000;
 const QUIET_MS = 1000;
@@ -116,9 +123,14 @@ const characters = (text) => text.sections.reduce((sum, section) => sum + sectio
 // ---- In the page -----------------------------------------------------------------------------------------------
 
 /** Runs in the page before the app: keeps writes off the server, finds the audio element and times the reader. */
-function instrument({ origin, choices }) {
+function instrument({ origin, choices, view }) {
   if (window.top !== window) return;
   for (const [workId, ebookId] of Object.entries(choices)) localStorage.setItem(`reader-ebook:${workId}`, ebookId);
+  // The hidden switch of the reading view (src/reader-view-switch.ts), and the view's own record of what each part cost.
+  if (view === "prepared") {
+    localStorage.setItem("sonder-reader-view", "prepared");
+    window.__sonderPartTimings = [];
+  } else localStorage.removeItem("sonder-reader-view");
   const NativeAudio = window.Audio;
   const audio = [];
   window.Audio = class extends NativeAudio {
@@ -165,6 +177,9 @@ function instrument({ origin, choices }) {
       return !!inner?.body && getComputedStyle(element).visibility !== "hidden" && readableAt(inner, x - box.left, y - box.top, null);
     }
     if (element === doc.documentElement || element === doc.body || element.closest?.('[role="status"]')) return false;
+    // A picture of the book that has loaded is something to look at too: a book that opens on its cover has no
+    // text on its first screen.
+    if (element.localName === "img" && element.complete && element.naturalWidth > 0) return true;
     for (const node of element.childNodes) if (node.nodeType === 3 && node.data.trim()) return true;
     return false;
   };
@@ -235,6 +250,10 @@ function kindOf(url, type) {
   const { pathname } = new URL(url);
   if (/^\/api\/ebooks\/[^/]+\/file$/.test(pathname)) return "book file";
   if (/^\/api\/reader\/[^/]+$/.test(pathname)) return "book text";
+  if (/^\/api\/reader\/[^/]+\/prepared$/.test(pathname)) return "prepared manifest";
+  if (/^\/api\/reader\/[^/]+\/prepared\/[^/]+\/parts\//.test(pathname)) return "prepared part";
+  if (/^\/api\/reader\/[^/]+\/prepared\/[^/]+\/pictures\//.test(pathname)) return "prepared picture";
+  if (/^\/api\/reader\/[^/]+\/state$/.test(pathname)) return "saved place and bookmarks";
   if (pathname.startsWith("/api/alignments")) return "reading sync map";
   if (pathname.startsWith("/api/media/") || type === "Media") return "audio";
   if (type === "Script") return "script";
@@ -297,6 +316,7 @@ async function watchNetwork(session) {
     /** The bytes of one phase: transferred over the wire, by kind, and each script with its size once unpacked. */
     summary(name) {
       const kinds = {};
+      const counts = {};
       const scripts = [];
       let transferred = 0;
       let audio = 0;
@@ -309,9 +329,10 @@ async function watchNetwork(session) {
         }
         transferred += entry.transferred;
         kinds[kind] = (kinds[kind] || 0) + entry.transferred;
+        counts[kind] = (counts[kind] || 0) + 1;
         if (kind === "script") scripts.push({ file: new URL(entry.url).pathname, transferred: entry.transferred, size: entry.size, cached: entry.cached });
       }
-      return { transferred, audio, kinds, scripts };
+      return { transferred, audio, kinds, counts, scripts };
     },
   };
 }
@@ -339,10 +360,14 @@ async function openOnce(page, network, book, phase) {
     marks: window.__readerMeasure.state.marks,
     ebook: document.querySelector(".inline-reader")?.getAttribute("data-ebook") ?? null,
     frames: document.querySelectorAll(".inline-reader .reader-viewport iframe").length,
+    view: document.querySelector(".inline-reader .reader-viewport")?.getAttribute("data-view") ?? "epub",
+    // What the new view spent making each part's nodes since the page loaded (parse, allow-list walk, nodes).
+    parts: (window.__sonderPartTimings ?? []).map((entry) => ({ ...entry })),
   }));
+  if ((VIEW === "prepared") !== (opened.view === "prepared")) throw new Error(`Read opened the ${opened.view} view, not the one asked for (--view ${VIEW})`);
   if (opened.ebook !== book.ebook.id) throw new Error(`Read opened EPUB ${opened.ebook}, not ${book.ebook.id}`);
   network.phase("after");
-  return { ...opened.marks, frames: opened.frames, ...network.summary(phase) };
+  return { ...opened.marks, frames: opened.frames, parts: opened.parts, ...network.summary(phase) };
 }
 
 /** Seeks the paused narration to the middle of the loaded file's map and times the reader showing that sentence. */
@@ -370,7 +395,7 @@ async function run(browser, cookies, profileName, book) {
   const errors = [];
   try {
     await context.addCookies(cookies);
-    await context.addInitScript(instrument, { origin, choices: { [book.ebook.workId]: book.ebook.id } });
+    await context.addInitScript(instrument, { origin, choices: { [book.ebook.workId]: book.ebook.id }, view: VIEW });
     const page = await context.newPage();
     page.on("pageerror", (error) => errors.push(error.message));
     const session = await context.newCDPSession(page);
@@ -397,7 +422,13 @@ const kb = (bytes) => (bytes == null ? "–" : `${Math.round(bytes / 1024).toLoc
 const ms = (value) => (value == null ? "–" : `${Math.round(value).toLocaleString("en-US")} ms`);
 
 const browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || "/home/jahn/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome" });
-const report = { measuredAt: new Date().toISOString(), target: origin, build: null, runs: RUNS, profiles: PROFILE_NAMES, books: [], results: [] };
+const report = { measuredAt: new Date().toISOString(), target: origin, build: null, view: VIEW, runs: RUNS, profiles: PROFILE_NAMES, books: [], results: [] };
+// The report is written after every row, so a run that is stopped keeps what it measured.
+const out = option("out", path.join("artifacts", `reader-open-${report.measuredAt.replace(/[:.]/g, "-")}.json`));
+const write = () => {
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  fs.writeFileSync(out, JSON.stringify(report, null, 1));
+};
 try {
   const signIn = await browser.newContext({ baseURL: origin });
   if (process.env.APP_PASSWORD) {
@@ -413,6 +444,20 @@ try {
     report.books.push({ label: book.label, ebookId: book.ebook.id, recordingId: book.job.recordingId, fileBytes: book.ebook.size, sections: text.sections.length, sentences, characters: characters(text), mapped: book.job.intervals.length });
   }
   console.log(`--books ${books.map((book) => `${book.label}=${book.ebook.id}`).join(",")}`);
+  if (VIEW === "prepared") {
+    // The server prepares a book's text the first time it is asked for and keeps it. That first preparing is timed
+    // here, apart from the opens, which then measure the reader and not the server's one-time work.
+    for (const book of books) {
+      const started = Date.now();
+      const manifest = await lib.read(`/api/reader/${encodeURIComponent(book.ebook.id)}/prepared`);
+      const entry = report.books.find((item) => item.label === book.label);
+      entry.firstManifestMs = Date.now() - started;
+      entry.parts = manifest.parts.length;
+      await lib.read(`/api/reader/${encodeURIComponent(book.ebook.id)}/state`);
+      console.error(`${book.label}: manifest in ${entry.firstManifestMs} ms (prepared now unless the copy kept it), ${entry.parts} parts`);
+    }
+    write();
+  }
   const cookies = await signIn.cookies();
   await signIn.close();
   for (const book of books)
@@ -429,6 +474,11 @@ try {
         follow: median(runs.map((entry) => entry[state].follow)),
         transferred: median(runs.map((entry) => entry[state].transferred)),
         kinds: runs[0][state].kinds,
+        counts: runs[0][state].counts,
+        // Each part made into nodes during this open, over all runs: how long one took, and per 100,000 characters of HTML.
+        partMs: median(runs.flatMap((entry) => entry[state].parts.map((part) => part.ms))),
+        partMsPer100k: median(runs.flatMap((entry) => entry[state].parts.filter((part) => part.characters > 0).map((part) => (part.ms * 100_000) / part.characters))),
+        partsMade: median(runs.map((entry) => entry[state].parts.length)),
         scripts: runs[0][state].scripts,
         frames: runs[0][state].frames,
       });
@@ -444,16 +494,17 @@ try {
         pageErrors: [...new Set(runs.flatMap((entry) => entry.errors))],
         runs,
       });
+      write();
+      const done = report.results.at(-1);
+      console.error(`${book.label} ${profileName} median of ${RUNS}: cold ${ms(done.cold.text)} / ${ms(done.cold.place)} / ${ms(done.cold.follow)}, ${kb(done.cold.transferred)}; warm ${ms(done.warm.text)} / ${ms(done.warm.place)} / ${ms(done.warm.follow)}, ${kb(done.warm.transferred)}; jump ${ms(done.jump)}`);
     }
 } finally {
   await browser.close();
 }
 
-const out = option("out", path.join("artifacts", `reader-open-${report.measuredAt.replace(/[:.]/g, "-")}.json`));
-fs.mkdirSync(path.dirname(out), { recursive: true });
-fs.writeFileSync(out, JSON.stringify(report, null, 1));
+write();
 
-console.log(`\nBuild ${report.build}, median of ${RUNS} runs. Times from opening Read; bytes over the wire without audio.\n`);
+console.log(`\nBuild ${report.build}, ${VIEW === "prepared" ? "the new reading view (--view prepared)" : "the reader without the switch"}, median of ${RUNS} runs. Times from opening Read; bytes over the wire without audio.\n`);
 console.log("| Book | EPUB | Sentences | Profile | State | First text | Place shown | Following | Bytes | Scripts loaded (unpacked) |");
 console.log("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
 for (const result of report.results) {
@@ -467,6 +518,17 @@ for (const result of report.results) {
 console.log("\n| Book | Profile | Jump to a narrated place | App shell, first visit |");
 console.log("| --- | --- | --- | --- |");
 for (const result of report.results) console.log(`| ${result.book} | ${result.profile} | ${ms(result.jump)}${result.jumpNote ? ` (${result.jumpNote})` : ""} | ${kb(result.shell.transferred)} |`);
+if (VIEW === "prepared") {
+  console.log("\n| Book | Profile | State | Parts made into nodes | One part | Per 100,000 characters of HTML | Requests: manifest, saved place, parts, book text, book file, map |");
+  console.log("| --- | --- | --- | --- | --- | --- | --- |");
+  const oneDecimal = (value) => (value == null ? "–" : `${value.toFixed(1)} ms`);
+  for (const result of report.results)
+    for (const state of ["cold", "warm"]) {
+      const row = result[state];
+      const count = (kind) => row.counts[kind] || 0;
+      console.log(`| ${result.book} | ${result.profile} | ${state} | ${row.partsMade ?? 0} | ${oneDecimal(row.partMs)} | ${oneDecimal(row.partMsPer100k)} | ${count("prepared manifest")}, ${count("saved place and bookmarks")}, ${count("prepared part")}, ${count("book text")}, ${count("book file")}, ${count("reading sync map")} |`);
+    }
+}
 const blocked = [...new Set(report.results.flatMap((result) => result.blockedWrites))];
 if (blocked.length) console.log(`\nWrites the page tried that the measurement does not know: ${blocked.join(", ")}`);
 const errors = [...new Set(report.results.flatMap((result) => result.pageErrors))];

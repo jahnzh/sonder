@@ -1,7 +1,9 @@
-// @projects firefox, mobile-chrome, mobile-firefox, mobile-safari, webkit-iphone-now-playing, mobile-iphone-slice14
+// @projects firefox, mobile-chrome, mobile-firefox, mobile-safari, webkit-iphone-now-playing, mobile-iphone-slice14, prepared-view
 import {test,expect,type Page} from "@playwright/test";
 import JSZip from "jszip";
 import { gotoRead } from "./read-face";
+import {textFrame} from "./reader-view";
+import {onPreparedView} from "./prepared-view";
 // The reader torn down while epub.js is still opening its book (#427). Destroying an epub.js book whose
 // navigation or opening is still pending made epub.js's own later callbacks throw page errors such as
 // "Cannot read properties of undefined (reading 'navigation')", "(reading 'package')" or "(reading 'displayOptions')".
@@ -39,9 +41,10 @@ function recordErrors(page:Page){
  return errors;
 }
 const reader=(page:Page)=>page.getByRole("dialog", { name: "Now playing", exact: true });
-const pages=(page:Page)=>reader(page).locator(".reader-viewport iframe");
+const pages=(page:Page)=>textFrame(reader(page));
 // The reader's manifest has arrived, so the next render starts opening the EPUB.
-const manifestLoaded=(page:Page,id:string)=>page.waitForResponse(response=>response.url().endsWith(`/api/reader/${encodeURIComponent(id)}`)&&response.request().method()==="GET");
+// (On the new view, #802, the reader's own data is its saved state; the prepared text opens next.)
+const manifestLoaded=(page:Page,id:string)=>page.waitForResponse(response=>response.url().endsWith(`/api/reader/${encodeURIComponent(id)}${onPreparedView()?"/state":""}`)&&response.request().method()==="GET");
 // Each cycle tears the reader down a little later into the opening (0 to 360 ms after its manifest arrived),
 // sweeping the window where epub.js is still loading the book. On main, 62 of 200 such cycles threw.
 const delay=(cycle:number)=>cycle*40;

@@ -37,5 +37,11 @@ export const test = base.extend({
       await exited;
     }
   },
+  // The project that runs the reader's specs on the new reading view (#802) sets its switch for the suite's own
+  // address; a test's own server has another, so the switch is set as the app loads there.
+  context: async ({ context }, use, info) => {
+    if (info.project.name === "prepared-view") await context.addInitScript(() => localStorage.setItem("sonder-reader-view", "prepared"));
+    await use(context);
+  },
 });
 export { expect };

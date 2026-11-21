@@ -1,14 +1,18 @@
-// @projects firefox, mobile-chrome, mobile-firefox, mobile-safari, webkit-iphone-now-playing
+// @projects firefox, mobile-chrome, mobile-firefox, mobile-safari, webkit-iphone-now-playing, prepared-view
 import {test,expect,type Page} from "@playwright/test";
 import {readFileSync} from "node:fs";
 import {randomUUID} from "node:crypto";
 import {readerFixture} from "../reader-fixture";
 import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
 import {openRead} from "./now-playing";
+import {bookText,textFrame} from "./reader-view";
+import {installReaderFrames} from "./reader-frames";
+import {notOnPreparedView,onPreparedView} from "./prepared-view";
 // The service worker would answer the script request below before page.route sees it.
 test.use({serviceWorkers:"block"});
 // Per-step expect ceilings are up to 45 s; leave room for many highlight waits.
 installReaderWaitBudget(test);
+installReaderFrames(test);
 test.afterEach(async({page})=>{await page.unrouteAll({behavior:"wait"});});
 // Chapter one: counted blocks inside <nav> and text inside <svg> before the narrated text (#69).
 const navChapter=`<nav epub:type="landmarks" xmlns:epub="http://www.idpf.org/2007/ops"><ol><li>Skip to the story</li><li>Notes on this edition</li></ol></nav>`+
@@ -40,8 +44,13 @@ async function fixture(page:Page,title:string,unique=false){
  return {book,ebook,map,manifest};
 }
 // The text of the follow highlight: its CFI resolved in the page by epub.js's own CFI class.
+// In the view of prepared text (#802) the highlight is the sentence's own elements: its text is theirs.
 async function highlighted(page:Page){
  const follow=page.locator(".inline-reader .reader-viewport .sonder-follow");
+ if(onPreparedView()){
+  await timedWait("follow-highlight",()=>expect(follow.first()).toBeVisible({timeout:READER_WAIT_MS.followHighlight}),{testName:test.info().title});
+  return (await follow.allTextContents()).join("").replace(/\s+/g," ");
+ }
  await timedWait("follow-highlight",()=>expect(follow).toHaveAttribute("data-epubcfi",/^epubcfi\(/,{timeout:READER_WAIT_MS.followHighlight}),{testName:test.info().title});
  if(!await page.evaluate(()=>"ePub" in window)){
   // An inline script (addScriptTag with a path) would be refused by the app's script-src 'self' (#76), so serve the file from the app's own origin.
@@ -49,7 +58,7 @@ async function highlighted(page:Page){
   await page.addScriptTag({url:"/__epub-test.js"});
  }
  const cfi=(await follow.getAttribute("data-epubcfi"))!;
- return page.locator(".inline-reader .reader-viewport iframe").evaluate((iframe:HTMLIFrameElement,cfi)=>
+ return textFrame(page.locator(".inline-reader")).evaluate((iframe:HTMLIFrameElement,cfi)=>
   new (window as any).ePub.CFI(cfi).toRange(iframe.contentDocument).toString().replace(/\s+/g," "),cfi);
 }
 async function open(page:Page,book:any,interval:any){
@@ -111,8 +120,10 @@ test(`the follow highlight stays through a gap and moves when the next sentence 
   // Shortly before the end of chapter one's last sentence, so the narration crosses the whole gap.
   await open(page,book,{...last,start:Math.max(last.start,last.end-1.5)-.5});
   expect((await highlighted(page)).normalize("NFKC").trim()).toBe(text(last));
-  await page.route("**/__epub-test.js",route=>route.fulfill({path:"node_modules/epubjs/dist/epub.min.js",contentType:"text/javascript"}));
-  if(!await page.evaluate(()=>"ePub" in window))await page.addScriptTag({url:"/__epub-test.js"});
+  if(!onPreparedView()){
+   await page.route("**/__epub-test.js",route=>route.fulfill({path:"node_modules/epubjs/dist/epub.min.js",contentType:"text/javascript"}));
+   if(!await page.evaluate(()=>"ePub" in window))await page.addScriptTag({url:"/__epub-test.js"});
+  }
   const room=page.locator(".inline-reader");
   await expect(room.locator(".reader-viewport")).not.toHaveAttribute("data-jumping",/.*/);
   await room.getByRole("button",{name:"Play narration",exact:true}).click();
@@ -120,6 +131,7 @@ test(`the follow highlight stays through a gap and moves when the next sentence 
   // at one instant, until the highlight has moved on or 20 s passed.
   // The fixture's gap lasts over a minute: a second and a half into it the audio skips, still inside it, to two
   // seconds before the next sentence, as a seek in the player would.
+  await page.waitForFunction(()=>((window as any).__gapAudio as HTMLAudioElement[]|undefined)?.some(a=>!!a.src));
   const samples:{time:number;passage:string|null;text:string|null;view:string}[]=await page.evaluate(async({previous,end,next})=>{
    const out:any[]=[];
    const audio=((window as any).__gapAudio as HTMLAudioElement[]).find(a=>!!a.src)!;
@@ -131,10 +143,12 @@ test(`the follow highlight stays through a gap and moves when the next sentence 
     const viewport=room.querySelector(".reader-viewport")!;
     const follow=viewport.querySelector(".sonder-follow");
     const iframe=viewport.querySelector("iframe") as HTMLIFrameElement|null;
-    const container=viewport.querySelector(".epub-container") as HTMLElement|null;
+    const container=viewport.querySelector(":is(.epub-container,.prepared-scroll)") as HTMLElement|null;
     const cfi=follow?.getAttribute("data-epubcfi");
     let text:string|null=null;
     try{if(cfi&&iframe?.contentDocument)text=new (window as any).ePub.CFI(cfi).toRange(iframe.contentDocument).toString().replace(/\s+/g," ").trim();}catch{}
+    // The view of prepared text: the marked elements' own text.
+    if(!iframe&&follow)text=[...viewport.querySelectorAll(".sonder-follow")].map(element=>element.textContent).join("").replace(/\s+/g," ").trim();
     const passage=room.getAttribute("data-current-passage");
     out.push({time:audio.currentTime,passage,text,view:`${container?.scrollLeft}:${container?.scrollTop}:${iframe?.contentWindow?.scrollX}:${iframe?.contentWindow?.scrollY}`});
     if((passage&&passage!==previous)||Date.now()>deadline)break;
@@ -171,9 +185,10 @@ test("long-press on a sentence's first letter listens from that sentence, not th
  const second=map.intervals.find((interval:any)=>interval.paragraphId==="0:2");
  await withReader(page,{mode:"paginated"},async()=>{
   await open(page,book,map.intervals[0]);
-  await page.frameLocator(".inline-reader .reader-viewport iframe").getByText("It carries a second sentence.").waitFor();
+  await bookText(page,".inline-reader").getByText("It carries a second sentence.").waitFor();
   // The left edge of "It carries a second sentence.": a caret there sits right after the previous sentence's space.
-  const point=await page.locator(".inline-reader .reader-viewport iframe").evaluate((iframe:HTMLIFrameElement)=>{
+  const point=await page.locator(".inline-reader .reader-viewport").evaluate((host)=>{
+   const iframe=(window as any).__readerFrames(host)[0] as HTMLIFrameElement;
    const doc=iframe.contentDocument!,walker=doc.createTreeWalker(doc.body,NodeFilter.SHOW_TEXT),box=iframe.getBoundingClientRect();
    let node:Node|null;
    while((node=walker.nextNode())){
@@ -193,6 +208,7 @@ test("long-press on a sentence's first letter listens from that sentence, not th
  });
 });
 test("the follow highlight is re-measured when fonts finish loading and cleans up listeners on chapter change",async({page})=>{
+ notOnPreparedView("it watches epub.js's drawn highlight (SVG rectangles over the frame) being measured again when the frame's fonts load, and the frame's own listeners; in the new view the highlight is the sentence's own elements, which the browser lays out with the text, and there is no frame");
  const {book,map}=await fixture(page,"Highlight font load redraw");
  await withReader(page,{mode:"paginated"},async()=>{
   await open(page,book,map.intervals[0]);
@@ -201,7 +217,7 @@ test("the follow highlight is re-measured when fonts finish loading and cleans u
   const widthBefore=await rect.evaluate((el:SVGRectElement)=>el.width.baseVal.value);
 
   // Alter letter-spacing in the rendered chapter to change text width
-  await page.locator(".inline-reader .reader-viewport iframe").evaluate((iframe:HTMLIFrameElement)=>{
+  await textFrame(page.locator(".inline-reader")).evaluate((iframe:HTMLIFrameElement)=>{
     iframe.contentDocument!.body.style.letterSpacing="8px";
   });
 
@@ -218,7 +234,7 @@ test("the follow highlight is re-measured when fonts finish loading and cleans u
   },{timeout:3000}).not.toBe(widthBefore);
 
   // Alter letter-spacing again and dispatch loadingdone on the frame document's fonts
-  await page.locator(".inline-reader .reader-viewport iframe").evaluate((iframe:HTMLIFrameElement)=>{
+  await textFrame(page.locator(".inline-reader")).evaluate((iframe:HTMLIFrameElement)=>{
     iframe.contentDocument!.body.style.letterSpacing="16px";
     iframe.contentDocument!.fonts.dispatchEvent(new Event("loadingdone"));
   });
@@ -234,7 +250,7 @@ test("the follow highlight is re-measured when fonts finish loading and cleans u
   const ch2Before=await ch2Rect.evaluate((el:SVGRectElement)=>el.width.baseVal.value);
 
   // Changing letter-spacing in chapter 2 and dispatching loadingdone on chapter 2 re-measures
-  await page.locator(".inline-reader .reader-viewport iframe").evaluate((iframe:HTMLIFrameElement)=>{
+  await textFrame(page.locator(".inline-reader")).evaluate((iframe:HTMLIFrameElement)=>{
     iframe.contentDocument!.body.style.letterSpacing="8px";
     iframe.contentDocument!.fonts.dispatchEvent(new Event("loadingdone"));
   });

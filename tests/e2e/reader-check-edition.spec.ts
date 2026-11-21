@@ -1,4 +1,4 @@
-// @projects firefox, webkit-iphone-now-playing
+// @projects firefox, webkit-iphone-now-playing, prepared-view
 // #742 second round: the live reader check's automatic pick took a work with no shared default and two EPUBs, sampled
 // the map of the second, set this device's choice to it, and Read opened another EPUB ("Read opened EPUB
 // libgen-201c3bd3…, not libgen-1dafeaa8… of the sampled map"). The check reloaded the app before opening Read; its
@@ -14,6 +14,7 @@ import {installReaderWaitBudget} from "./timing";
 import {openRead} from "./now-playing";
 import {readEdition,sharedEdition} from "../../scripts/live-check-recording.mjs";
 import {protectBrowserMutations} from "../../scripts/verification-safety.mjs";
+import {textFrame} from "./reader-view";
 
 test.use({viewport:{width:390,height:844}});
 installReaderWaitBudget(test);
@@ -103,7 +104,7 @@ test("the reader check opens the EPUB of the map it sampled for a work with no s
  await openRead(page);
  expect(await page.evaluate(()=>decodeURIComponent(location.hash.slice("#read/".length)))).toBe(target.workId);
  await expect(room(page)).toHaveAttribute("data-ebook",mapped);
- await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
+ await expect(textFrame(page.locator(".inline-reader"))).toBeVisible();
  expect(report.protectedWrites).toBeGreaterThan(0);
  await page.screenshot({path:`artifacts/reader-check-edition-390-${test.info().project.name}.png`});
  await page.setViewportSize({width:1280,height:800});

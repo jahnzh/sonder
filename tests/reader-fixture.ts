@@ -1,4 +1,12 @@
 import JSZip from "jszip";
+import { randomUUID } from "node:crypto";
+/**
+ * An EPUB for the reader's tests. Every call makes another file: the book's identifier is new each time. An
+ * uploaded edition is named by the hash of its bytes, and a zip's timestamps move in steps of two seconds, so two
+ * fixtures made in the same two seconds were one file and one edition: a test then opened a book that held the
+ * place, the bookmarks and the work of the test before it (#840). A test that wants the same file twice keeps the
+ * buffer it got.
+ */
 export async function readerFixture(
   options: { language?: string; title?: string; script?: boolean; cover?: boolean; bodies?: [string, string]; variant?: "svg-root" | "iframe-root" | "nav-root" | "no-head" | "head-late" | "text-before-head" | "template-root" | "svg-asset" } = {},
 ) {
@@ -11,7 +19,7 @@ export async function readerFixture(
   );
   zip.file(
     "OEBPS/content.opf",
-    `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="bookid">sonder-reader-test</dc:identifier><dc:title>${title}</dc:title><dc:creator>Lewis Carroll</dc:creator><dc:language>${options.language || "en"}</dc:language><meta property="dcterms:modified">2026-10-26T00:00:00Z</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="one" href="one.xhtml" media-type="application/xhtml+xml"/><item id="two" href="two.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="one"/><itemref idref="two"/></spine></package>`,
+    `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="bookid">sonder-reader-test-${randomUUID()}</dc:identifier><dc:title>${title}</dc:title><dc:creator>Lewis Carroll</dc:creator><dc:language>${options.language || "en"}</dc:language><meta property="dcterms:modified">2026-10-26T00:00:00Z</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="one" href="one.xhtml" media-type="application/xhtml+xml"/><item id="two" href="two.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="one"/><itemref idref="two"/></spine></package>`,
   );
   if (options.variant === "svg-asset") {
     // A manifest SVG that carries script, reached from an image, a link and an image map in chapter one.

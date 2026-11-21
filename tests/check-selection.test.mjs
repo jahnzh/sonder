@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseCliArgs, selectBrowserScope } from "../scripts/check-local-support.mjs";
+import { changedStageShardCount, cutOffSummary, parseCliArgs, partitionSpecs, selectBrowserScope, specWeight } from "../scripts/check-local-support.mjs";
+import { changedBrowserStages } from "../scripts/check-local.mjs";
 import { formatSummary } from "../scripts/ci-summary.mjs";
 
 const scope = (...files) => selectBrowserScope(files).scope;
@@ -79,4 +80,72 @@ test("ci-summary shows why the browser stage was skipped and any scope smaller t
   assert.match(chromium, /browser scope: chromium \(no client or layout change\)/);
   const full = formatSummary({ ...base, stages: [{ name: "browser", status: "passed", durationMs: 1000 }], selection: { browser: "full", reason: "x" } });
   assert.doesNotMatch(full, /browser scope/);
+});
+
+// The changed-spec stages in parts (#845).
+test("the changed specs are dealt into parts of about equal work, each part in file order, no file split or lost", () => {
+  const weights = { "a.spec.ts": 10, "b.spec.ts": 1, "c.spec.ts": 9, "d.spec.ts": 2, "e.spec.ts": 8, "f.spec.ts": 3, "g.spec.ts": 1 };
+  const files = Object.keys(weights);
+  const parts = partitionSpecs(files, 3, (file) => weights[file]);
+  assert.deepEqual(parts, [["a.spec.ts", "b.spec.ts", "g.spec.ts"], ["c.spec.ts", "d.spec.ts"], ["e.spec.ts", "f.spec.ts"]]);
+  assert.deepEqual(parts.map((part) => part.reduce((sum, file) => sum + weights[file], 0)), [12, 11, 11]);
+  assert.deepEqual(parts.flat().sort(), files, "every file once");
+  for (const part of parts) assert.deepEqual(part, [...part].sort(), "in the order one worker runs them");
+  // Never more parts than files, and one part is the list as it was.
+  assert.deepEqual(partitionSpecs(["x.spec.ts", "y.spec.ts"], 8), [["x.spec.ts"], ["y.spec.ts"]]);
+  assert.deepEqual(partitionSpecs(files, 1, (file) => weights[file]), [files]);
+  assert.deepEqual(partitionSpecs([], 4), []);
+});
+
+test("a spec's weight is its tests times the projects it runs in", () => {
+  assert.equal(specWeight('import { test } from "@playwright/test";\ntest("a", async () => {});\n  test("b", async () => {});\ntest.fixme("c", async () => {});\n'), 3);
+  assert.equal(specWeight('// @projects firefox, prepared-view\nimport { test } from "@playwright/test";\ntest("a", async () => {});\ntest("b", async () => {});\n'), 6);
+  assert.equal(specWeight("// no test call that the count can see\nfor (const name of names) run(name);\n"), 1, "never nothing");
+  assert.equal(specWeight('test("a", () => {});\n// @projects firefox\n'), 1, "the projects line counts only as the first line");
+});
+
+test("the number of parts follows the host's processors, or the setting", () => {
+  assert.equal(changedStageShardCount({}, 4), 1, "the production machine: one run");
+  assert.equal(changedStageShardCount({}, 8), 3);
+  assert.equal(changedStageShardCount({}, 16), 6);
+  assert.equal(changedStageShardCount({}, 20), 8);
+  assert.equal(changedStageShardCount({}, 64), 8, "never more than eight by itself");
+  assert.equal(changedStageShardCount({ SONDER_BROWSER_CHANGED_SHARDS: "12" }, 4), 12);
+  assert.equal(changedStageShardCount({ SONDER_BROWSER_CHANGED_SHARDS: "1" }, 20), 1);
+  for (const bad of ["0", "17", "two", "2.5"]) assert.equal(changedStageShardCount({ SONDER_BROWSER_CHANGED_SHARDS: bad }, 20), 1, bad);
+});
+
+test("both changed-spec stages keep one worker and every changed file, and carry the same parts", () => {
+  const files = ["tests/e2e/a.spec.ts", "tests/e2e/b (1).spec.ts", "tests/e2e/c.spec.ts"];
+  const one = changedBrowserStages(files);
+  assert.deepEqual(one.map((stage) => [stage.name, stage.env]), [["browser-changed-repeat", {}], ["browser-changed-ordered", {}]]);
+  const parts = [[files[0], files[2]], [files[1]]];
+  const [repeat, ordered] = changedBrowserStages(files, parts);
+  const filters = ["tests/e2e/a\\.spec\\.ts$", "tests/e2e/b \\(1\\)\\.spec\\.ts$", "tests/e2e/c\\.spec\\.ts$"];
+  assert.deepEqual(repeat.args, ["run", "test:browser", "--", "--workers=1", "--repeat-each=2", "--output=test-results-changed-repeat", ...filters]);
+  assert.deepEqual(ordered.args, ["run", "test:browser", "--", "--workers=1", "--output=test-results-changed-ordered", ...filters]);
+  assert.deepEqual(JSON.parse(repeat.env.SONDER_BROWSER_PARTS), [[filters[0], filters[2]], [filters[1]]]);
+  assert.equal(ordered.env.SONDER_BROWSER_PARTS, repeat.env.SONDER_BROWSER_PARTS);
+  assert.match(repeat.fullCommand, / \(in 2 parts\)$/);
+  assert.deepEqual(changedBrowserStages([]), []);
+});
+
+test("a cut-off check's log gives the stage that was running and how far it had come (#845)", () => {
+  const log = [
+    "=== [Stage 4/6] npm run test:browser ===",
+    "[shard 1/6] Running 300 tests using 1 worker, shard 1 of 6",
+    "[shard 1/6]   ✓  1 [chromium] › a.spec.ts:1:1 › one (1.0s)",
+    '=== [Stage 5/6] npm "run" "test:browser" "--" "--workers=1" "--repeat-each=2" "--output=test-results-changed-repeat" "a\\.spec\\.ts$" (in 2 parts) ===',
+    "[part 1/2] Running 40 tests using 1 worker",
+    "[part 2/2] Running 30 tests using 1 worker",
+    "[part 1/2]   ✓  1 [chromium] › a.spec.ts:1:1 › one (1.0s)",
+    "[part 1/2]   ✘  2 [chromium] › a.spec.ts:2:1 › two (1.0s)",
+    "[part 2/2]   -  1 [firefox] › b.spec.ts:1:1 › three",
+    "  ✓  9 [chromium] › c.spec.ts:1:1 › a run without parts (2ms)",
+  ].join("\n");
+  assert.equal(cutOffSummary(log), "cut off in stage 5 of 6, browser-changed-repeat: 4 of 70 test runs done (2 passed, 1 failed, 1 skipped)");
+  assert.equal(cutOffSummary(log.split("\n").slice(0, 3).join("\n")), "cut off in stage 4 of 6, browser: 1 of 300 test runs done (1 passed, 0 failed, 0 skipped)");
+  assert.equal(cutOffSummary("=== [Stage 3/6] npm test ===\nok 1 - a unit test"), "cut off in stage 3 of 6, unit");
+  assert.equal(cutOffSummary('=== [Stage 6/6] npm "run" "test:browser" "--" "--workers=1" "--output=test-results-changed-ordered" "a" ==='), "cut off in stage 6 of 6, browser-changed-ordered");
+  assert.equal(cutOffSummary("no stage began"), "");
 });
