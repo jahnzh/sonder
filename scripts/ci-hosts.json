@@ -30,7 +30,7 @@
     "maxParallel": 1,
     "ceiling": 1,
     "estimate": {
-      "fixedSeconds": 308,
+      "fixedSeconds": 212,
       "speed": 1.0,
       "shards": 6,
       "startSeconds": 80
