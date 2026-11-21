@@ -722,6 +722,10 @@ test("the wait cap grows with the commit's changed browser specs, unless it is s
   const grown = f.run(fourth, { SONDER_CI_HOST: "lisa" });
   assert.equal(grown.status, 0, grown.output);
   assert.match(grown.output, /Waiting for the check \(cap 5100s, 3600 \+ 1500 for 2 changed browser spec\(s\), poll every/);
+  // Through the dispatcher the host's cap arrives as SONDER_CI_HOST_MAX_WAIT, and grows the same way.
+  const dispatched = f.run(fourth, { SONDER_CI_HOST: "lisa", SONDER_CI_HOST_MAX_WAIT: "2000" });
+  assert.equal(dispatched.status, 0, dispatched.output);
+  assert.match(dispatched.output, /Waiting for the check \(cap 3500s, 2000 \+ 1500 for 2 changed browser spec\(s\), poll every/);
   // Set by hand, the cap is what was set.
   const byHand = f.run(fourth, { SONDER_CI_HOST: "lisa", SONDER_CI_MAX_WAIT: "900" });
   assert.equal(byHand.status, 0, byHand.output);

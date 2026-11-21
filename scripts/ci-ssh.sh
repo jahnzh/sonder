@@ -140,6 +140,9 @@ fi
 
 if [[ -v SONDER_CI_MAX_WAIT ]]; then
   MAX_WAIT=$SONDER_CI_MAX_WAIT
+elif [[ -n "${SONDER_CI_HOST_MAX_WAIT:-}" ]]; then
+  # The dispatcher's reading of the host's cap (scripts/ci-run.sh).
+  MAX_WAIT=$SONDER_CI_HOST_MAX_WAIT
 elif [[ -n "${CONFIG_MAX_WAIT:-}" ]]; then
   MAX_WAIT=$CONFIG_MAX_WAIT
 else
