@@ -6,6 +6,10 @@
 # SONDER_ADMIN_URL (default http://127.0.0.1:3001), runs the request and removes the cookie jar.
 # This writes to the real application when the request does: read-only requests need no care,
 # anything else is the caller's decision.
+# SONDER_ADMIN_JAR=<file>: keep the session there. The first call signs in and writes it, later calls use it and
+# do not sign in again (the server allows 10 sign-ins in 15 minutes from one address, #858); the caller removes it.
+# Exit codes: the request's own curl status; 1 no password, or the sign-in failed; 2 usage; 3 the sign-in was
+# refused because of too many sign-ins (HTTP 429).
 set -euo pipefail
 if [[ $# -lt 1 || $1 != /* ]]; then
   sed -n '2,4p' "$0" | sed 's/^# \{0,1\}//' >&2
@@ -28,7 +32,19 @@ node -e '
   fs.writeFileSync(process.argv[2], JSON.stringify({ password }), { mode: 0o600 });
 ' "$env_file" "$work/login.json" || { echo "No APP_PASSWORD in $env_file" >&2; exit 1; }
 
-login=$(curl -s -m 20 -o /dev/null -w '%{http_code}' -c "$work/jar" -H 'content-type: application/json' -H "origin: $base" \
-  --data @"$work/login.json" "$base/api/auth/login")
-[[ $login == 200 ]] || { echo "Login failed (HTTP $login)" >&2; exit 1; }
-curl -s -m 120 -b "$work/jar" -H 'content-type: application/json' -H "origin: $base" "$@" "$base$request_path"
+jar=${SONDER_ADMIN_JAR:-$work/jar}
+if [[ ! -s $jar ]]; then
+  login=$(curl -s -m 20 -o /dev/null -w '%{http_code}' -c "$jar" -H 'content-type: application/json' -H "origin: $base" \
+    --data @"$work/login.json" "$base/api/auth/login") || login=000
+  if [[ $login != 200 ]]; then
+    rm -f "$jar"
+    if [[ $login == 429 ]]; then
+      echo "Sign-in refused (HTTP 429): too many sign-ins from this address; the server allows 10 in 15 minutes. Wait and try again." >&2
+      exit 3
+    fi
+    echo "Login failed (HTTP $login)" >&2
+    exit 1
+  fi
+  chmod 600 "$jar"
+fi
+curl -s -m 120 -b "$jar" -H 'content-type: application/json' -H "origin: $base" "$@" "$base$request_path"

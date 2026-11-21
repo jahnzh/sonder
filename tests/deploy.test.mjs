@@ -466,6 +466,21 @@ test("a library that could not be fully prepared is said loudly, in the last lin
   }
 });
 
+test("a command that could not ask the server is not reported as an unprepared library (#858)", () => {
+  const f = fixture({ "verify-a.mjs": 0 }, { prepareExit: 3 });
+  try {
+    const r = f.run(["--no-marker"]);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.doesNotMatch(r.stderr, /NOT FULLY PREPARED/);
+    const said = r.stderr.split("\n").filter((line) => line.startsWith("THE LIBRARY'S TEXT WAS NOT CHECKED: scripts/prepare-library.sh could not ask the server (exit 3"));
+    assert.equal(said.length, 2, r.stderr);
+    assert.match(said[0], /This says nothing about the library/);
+    assert.equal(r.stderr.trim().split("\n").at(-1), said[1]);
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
 test("the library is not prepared when a live check failed, and the step can be left out", () => {
   let f = fixture({ "verify-a.mjs": 1 });
   try {
