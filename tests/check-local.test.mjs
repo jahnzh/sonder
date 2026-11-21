@@ -88,7 +88,7 @@ else if (argv[0] === 'run' && argv[1] === 'test:browser' && argv.some((arg) => a
 }
 else if (argv[0] === 'run' && argv[1] === 'test:browser') {
   currentStage = argv.includes('--reporter=list,json') ? 'browser'
-    : argv.includes('--repeat-each=2') ? 'browser-changed-repeat' : 'browser-changed-ordered';
+    : 'browser-changed-repeat';
 }
 
 // Exercise Playwright's scheduler with a filesystem-only fixture, without a browser or web server.
@@ -389,13 +389,13 @@ test("the changed specs are dealt into parts by the browser stage's times, by th
         try {
             const timed = await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, STUB_NPM_JSON_REPORT: reportFile}});
             assert.equal(timed.ok, true);
-            assert.deepEqual(partsOf(readNpmLogs(fixture.npmLogPath)), [[[filter("a"), filter("c")], [filter("b")]], [[filter("a"), filter("c")], [filter("b")]]]);
+            assert.deepEqual(partsOf(readNpmLogs(fixture.npmLogPath)), [[[filter("a"), filter("c")], [filter("b")]]]);
             assert.match(timed.report.stages[4].command, /\(in 2 parts\)$/);
             fs.rmSync(fixture.npmLogPath);
             // No report (or one that lacks a changed file): the count of tests stays the weight.
             const counted = await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env});
             assert.equal(counted.ok, true);
-            assert.deepEqual(partsOf(readNpmLogs(fixture.npmLogPath)), [[[filter("a")], [filter("b"), filter("c")]], [[filter("a")], [filter("b"), filter("c")]]]);
+            assert.deepEqual(partsOf(readNpmLogs(fixture.npmLogPath)), [[[filter("a")], [filter("b"), filter("c")]]]);
         } finally {
             fs.rmSync(reportFile, {force: true});
         }
@@ -404,7 +404,7 @@ test("the changed specs are dealt into parts by the browser stage's times, by th
     }
 });
 
-test("changed specs run repeated then in order and appear as separate report stages", async () => {
+test("changed specs run repeated, as a report stage of their own, and no ordered stage follows", async () => {
     const fixture = setupGitFixture();
     try {
         writeFixtureFile(fixture, "tests/e2e/new [x].spec.ts", "fixture\n");
@@ -415,21 +415,19 @@ test("changed specs run repeated then in order and appear as separate report sta
         });
         assert.equal(result.ok, true);
         const runs = readNpmLogs(fixture.npmLogPath);
-        assert.equal(runs.length, 6);
+        assert.equal(runs.length, 5);
         const filter = "tests/e2e/new \\[x\\]\\.spec\\.ts$";
         assert.deepEqual(runs[4].argv, ["run", "test:browser", "--", "--workers=1", "--repeat-each=2", "--output=test-results-changed-repeat", filter]);
-        assert.deepEqual(runs[5].argv, ["run", "test:browser", "--", "--workers=1", "--output=test-results-changed-ordered", filter]);
         assert.equal(runs[4].env.PLAYWRIGHT_JSON_OUTPUT_NAME, undefined);
         const written = JSON.parse(fs.readFileSync(path.join(result.outputDir, "report.json"), "utf8"));
         assert.deepEqual(written.changedBrowserSpecs, {
             baseRef: "origin/main", baseSha: fixture.initialSha, files: ["tests/e2e/new [x].spec.ts"],
         });
         assert.deepEqual(written.stages.slice(4).map(({name, status}) => [name, status]), [
-            ["browser-changed-repeat", "passed"], ["browser-changed-ordered", "passed"],
+            ["browser-changed-repeat", "passed"],
         ]);
         for (const [dir, name] of [
             ["test-results", "browser"], ["test-results-changed-repeat", "browser-changed-repeat"],
-            ["test-results-changed-ordered", "browser-changed-ordered"],
         ]) {
             assert.equal(fs.readFileSync(path.join(result.outputDir, dir, "trace.zip"), "utf8"), name);
             assert.ok(written.artifacts.includes(dir));
@@ -468,7 +466,7 @@ test('leaves state behind', () => {
         assert.equal(result.report.failedStage, "browser-changed-repeat");
         assert.equal(result.report.stages[3].status, "passed");
         assert.equal(result.report.stages[4].status, "failed");
-        assert.equal(result.report.stages[5].status, "skipped");
+        assert.equal(result.report.stages.length, 5);
         assert.match(result.report.stages[4].stdout + result.report.stages[4].stderr, /leaves state behind/);
         assert.equal(readNpmLogs(fixture.npmLogPath).length, 5);
     } finally {
@@ -476,18 +474,54 @@ test('leaves state behind', () => {
     }
 });
 
-test("the ordered changed-spec stage runs every test in file order", async () => {
+test("a spec whose only change is its @projects line is repeated in the projects it gained; another byte changed, in every project", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const body = 'test("one", async () => {});\ntest("two", async () => {});\n';
+        writeFixtureFile(fixture, "tests/e2e/gains.spec.ts", `// @projects firefox\n${body}`);
+        writeFixtureFile(fixture, "tests/e2e/edited.spec.ts", `// @projects firefox\n${body}`);
+        const base = commitFixture(fixture, "the specs as main has them");
+        execFileSync("git", ["update-ref", "refs/remotes/origin/main", base], {cwd: fixture.repoDir});
+        writeFixtureFile(fixture, "tests/e2e/gains.spec.ts", `// @projects firefox, prepared-view\n${body}`);
+        writeFixtureFile(fixture, "tests/e2e/edited.spec.ts", `// @projects firefox, prepared-view\n${body}test("three", async () => {});\n`);
+        writeFixtureFile(fixture, "tests/e2e/new.spec.ts", `// @projects firefox, prepared-view\n${body}`);
+        commitFixture(fixture, "a project more");
+        const result = await runCheckLocal(["--silent"], {
+            cwd: fixture.repoDir,
+            env: {PATH: `${fixture.binDir}:${process.env.PATH}`, STUB_NPM_LOG: fixture.npmLogPath, SONDER_BROWSER_CHANGED_SHARDS: "1"},
+        });
+        assert.equal(result.ok, true);
+        const repeat = readNpmLogs(fixture.npmLogPath)[4];
+        const filter = (name) => `tests/e2e/${name}\\.spec\\.ts$`;
+        // Every changed spec is in the run; only the one whose first line alone changed is narrowed.
+        assert.deepEqual(repeat.argv.slice(6).sort(), [filter("edited"), filter("gains"), filter("new")]);
+        assert.deepEqual(JSON.parse(repeat.env.SONDER_BROWSER_PARTS), [
+            [filter("edited"), filter("new")],
+            {filters: [filter("gains")], projects: ["prepared-view"]},
+        ]);
+        assert.match(result.report.stages[4].command, /\(in 2 parts; 1 spec\(s\) only in the projects they gained\)$/);
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+test("the repeat stage's first pass is every changed file in order on one worker and one server; the second is the same again", async () => {
+    // What the removed browser-changed-ordered stage ran. Real Playwright schedules this (no browser, no server):
+    // if a later version interleaved the repeats (a a b b), the first pass would no longer be the files in order,
+    // and this fails.
     const fixture = setupGitFixture();
     try {
         const require = createRequire(import.meta.url);
-        writeFixtureFile(fixture, "playwright.config.cjs", "module.exports = { testDir: './tests/e2e', workers: 1 };\n");
-        writeFixtureFile(fixture, "tests/e2e/ordered.spec.js", `
-const { test } = require(${JSON.stringify(require.resolve("@playwright/test"))});
+        const playwright = JSON.stringify(require.resolve("@playwright/test"));
+        writeFixtureFile(fixture, "playwright.config.cjs", "module.exports = { testDir: './tests/e2e', workers: 1, projects: [{ name: 'one' }, { name: 'two' }] };\n");
+        for (const name of ["a", "b"]) {
+            writeFixtureFile(fixture, `tests/e2e/${name}.spec.js`, `
+const { test } = require(${playwright});
 const fs = require('node:fs');
-test('first', () => fs.appendFileSync(process.env.STUB_NPM_STATE_FILE, 'first\\n'));
-test('second', () => fs.appendFileSync(process.env.STUB_NPM_STATE_FILE, 'second\\n'));
+for (const title of ['first', 'second']) test(title, ({}, info) => fs.appendFileSync(process.env.STUB_NPM_STATE_FILE, info.project.name + ' ${name} ' + title + ' worker ' + info.parallelIndex + '\\n'));
 `);
-        commitFixture(fixture, "add ordered spec");
+        }
+        commitFixture(fixture, "add two specs");
         const stateFile = path.join(fixture.tempBase, "test-order");
         const result = await runCheckLocal(["--silent"], {
             cwd: fixture.repoDir,
@@ -496,12 +530,15 @@ test('second', () => fs.appendFileSync(process.env.STUB_NPM_STATE_FILE, 'second\
                 STUB_NPM_LOG: fixture.npmLogPath,
                 STUB_NPM_PLAYWRIGHT_CLI: require.resolve("@playwright/test/cli"),
                 STUB_NPM_STATE_FILE: stateFile,
+                SONDER_BROWSER_CHANGED_SHARDS: "1",
             },
         });
         assert.equal(result.ok, true, result.report.stages.map((stage) => stage.stderr).join("\n"));
-        assert.equal(result.report.stages[5].name, "browser-changed-ordered");
-        assert.equal(result.report.stages[5].status, "passed");
-        assert.equal(fs.readFileSync(stateFile, "utf8"), "first\nsecond\n");
+        assert.deepEqual(result.report.stages.map((stage) => stage.name), ["install", "build", "unit", "browser", "browser-changed-repeat"]);
+        assert.equal(readNpmLogs(fixture.npmLogPath)[4].argv.includes("--workers=1"), true);
+        const pass = (project) => ["a first", "a second", "b first", "b second"].map((line) => `${project} ${line} worker 0`);
+        // The stub clears the state file at the start of each stage, so this is the repeat stage alone.
+        assert.deepEqual(fs.readFileSync(stateFile, "utf8").trim().split("\n"), [...pass("one"), ...pass("one"), ...pass("two"), ...pass("two")]);
     } finally {
         fixture.cleanup();
     }
@@ -1299,8 +1336,8 @@ test("known failures in the full suite do not skip changed-spec stages", async (
         });
         assert.equal(result.report.result, "passed_with_known_failures");
         assert.equal(result.report.stages[3].toleratedBy, "known-failures");
-        assert.deepEqual(result.report.stages.slice(4).map((stage) => stage.status), ["passed", "passed"]);
-        assert.equal(readNpmLogs(fixture.npmLogPath).length, 6);
+        assert.deepEqual(result.report.stages.slice(4).map((stage) => stage.status), ["passed"]);
+        assert.equal(readNpmLogs(fixture.npmLogPath).length, 5);
     } finally {
         fixture.cleanup();
     }
@@ -1319,7 +1356,7 @@ test("known-failures list never tolerates a failed repeated changed-spec stage",
         assert.equal(result.ok, false);
         assert.equal(result.report.failedStage, "browser-changed-repeat");
         assert.equal(result.report.stages[4].status, "failed");
-        assert.equal(result.report.stages[5].status, "skipped");
+        assert.equal(result.report.stages.length, 5);
     } finally {
         fixture.cleanup();
     }

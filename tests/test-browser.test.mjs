@@ -423,7 +423,12 @@ test("browserTempsInUse reads the owned temp from each process environment and s
 test("browserParts takes parts only when they are exactly the run's files", () => {
   const args = ["--workers=1", "--repeat-each=2", "a\\.spec\\.ts$", "b\\.spec\\.ts$", "c\\.spec\\.ts$"];
   const parts = [["a\\.spec\\.ts$", "c\\.spec\\.ts$"], ["b\\.spec\\.ts$"]];
-  assert.deepEqual(browserParts({ SONDER_BROWSER_PARTS: JSON.stringify(parts) }, args), parts);
+  assert.deepEqual(browserParts({ SONDER_BROWSER_PARTS: JSON.stringify(parts) }, args), parts.map((filters) => ({ filters, projects: null })));
+  // A part may name the projects it runs in; one such part alone is still a run in parts.
+  const named = [parts[0], { filters: parts[1], projects: ["firefox"] }];
+  assert.deepEqual(browserParts({ SONDER_BROWSER_PARTS: JSON.stringify(named) }, args), [{ filters: parts[0], projects: null }, { filters: parts[1], projects: ["firefox"] }]);
+  assert.deepEqual(browserParts({ SONDER_BROWSER_PARTS: JSON.stringify([{ filters: parts.flat(), projects: ["firefox"] }]) }, args), [{ filters: parts.flat(), projects: ["firefox"] }]);
+  assert.equal(browserParts({ SONDER_BROWSER_PARTS: JSON.stringify([{ filters: parts.flat(), projects: [] }]) }, args), null, "no project named");
   assert.equal(browserParts({}, args), null, "no variable: one run");
   assert.equal(browserParts({ SONDER_BROWSER_PARTS: JSON.stringify([parts.flat()]) }, args), null, "one part: one run");
   assert.equal(browserParts({ SONDER_BROWSER_PARTS: "not json" }, args), null);
@@ -473,6 +478,27 @@ test("a run in parts starts one playwright per part, with the run's flags, its o
     // What the parts wrote is in the directory the run asked for; their own directories and temps are gone.
     assert.deepEqual(fs.readdirSync(path.join(dir, "test-results-changed-repeat")).sort(), ["trace-of-b", "trace-of-c", "trace-of-d"]);
     assert.deepEqual(fs.readdirSync(dir).filter((name) => name.includes("-part-") || name.startsWith("temp-")), []);
+  }));
+
+test("a part that names projects runs its files in those projects only", () =>
+  withTempDir(async (dir) => {
+    const calls = [];
+    const spawnCommand = (_cmd, argv) => {
+      calls.push(argv);
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      setImmediate(() => child.emit("close", 0, null));
+      return child;
+    };
+    const args = ["--workers=1", "--repeat-each=2", "--output=test-results-changed-repeat", "a\\.spec\\.ts$", "b\\.spec\\.ts$"];
+    const parts = [["a\\.spec\\.ts$"], { filters: ["b\\.spec\\.ts$"], projects: ["prepared-view", "firefox"] }];
+    const code = await runTestBrowser({ cwd: dir, args, shards: 6, env: { SONDER_BROWSER_PARTS: JSON.stringify(parts) }, spawnCommand, tmpRoot: dir });
+    assert.equal(code, 0);
+    assert.deepEqual(calls, [
+      ["playwright", "test", "--workers=1", "--repeat-each=2", "--output=test-results-changed-repeat-part-1", "a\\.spec\\.ts$"],
+      ["playwright", "test", "--workers=1", "--repeat-each=2", "--project=prepared-view", "--project=firefox", "--output=test-results-changed-repeat-part-2", "b\\.spec\\.ts$"],
+    ]);
   }));
 
 test("a run whose parts do not match its files runs as one, as it always did", () =>
