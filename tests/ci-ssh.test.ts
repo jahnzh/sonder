@@ -49,6 +49,9 @@ if [[ $1 == run && $2 == check ]]; then
     die) kill -KILL "$PPID"; sleep 5 ;;
     vanish) rm -rf "$(dirname "$PWD")"; sleep 5 ;;
     hang) sleep 60 ;;
+    hang-in-stage)
+      printf '%s\\n' '=== [Stage 4/6] npm run test:browser ===' '  3 passed' '=== [Stage 5/6] npm "run" "test:browser" "--" "--workers=1" "--repeat-each=2" "a.spec.ts" (in 2 parts) ===' '[part 1/2] Running 40 tests using 1 worker' '[part 2/2] Running 30 tests using 1 worker' '[part 1/2]   ✓  1 [chromium] › a.spec.ts:1:1 › one (1.0s)' '[part 2/2]   ✓  1 [firefox] › b.spec.ts:1:1 › two (1.0s)' '[part 2/2]   -  2 [firefox] › b.spec.ts:2:1 › three'
+      sleep 60 ;;
   esac
 fi
 exit 0
@@ -470,6 +473,17 @@ test("the wait stops at the configured cap", (t) => {
   assert.deepEqual(fs.readdirSync(f.remote), []);
 });
 
+test("a check cut off by the cap says which stage was running and how far it had come (#845)", (t) => {
+  const f = fixture(t);
+  fs.copyFileSync(path.resolve("scripts/check-local-support.mjs"), path.join(f.repo, "scripts", "check-local-support.mjs"));
+  const out = f.run(f.second, { STUB_NPM_MODE: "hang-in-stage", SONDER_CI_MAX_WAIT: "2" });
+  assert.equal(out.status, 124, out.output);
+  const said = "cut off in stage 5 of 6, browser-changed-repeat: 3 of 70 test runs done (2 passed, 0 failed, 1 skipped)";
+  assert.ok(out.output.includes(`The check was ${said}`), out.output);
+  assert.equal(f.result(f.second).result, "timeout");
+  assert.equal(f.result(f.second).cut_off, said);
+});
+
 test("a host whose closed port does not refuse fails fast without running tests", (t) => {
   const f = fixture(t);
   const out = f.run(f.second, { STUB_LOOPBACK: "hang" });
@@ -699,6 +713,38 @@ test("config resolution: SONDER_CI_HOST=lisa uses SSD base without other env", (
     sshLog,
     new RegExp(` -- browser_check [^ ]+ ${ssdBase.replaceAll("/", "\\/")}`),
   );
+});
+
+test("the wait cap grows with the commit's changed browser specs, unless it is set by hand (#845)", (t) => {
+  const f = fixture(t);
+  // The check's support module is in the checkout, and the commit changes two specs since origin/main.
+  fs.copyFileSync(path.resolve("scripts/check-local-support.mjs"), path.join(f.repo, "scripts", "check-local-support.mjs"));
+  fs.mkdirSync(path.join(f.repo, "tests", "e2e"), { recursive: true });
+  const tests = (count: number) => Array.from({ length: count }, (_item, index) => `test("t${index}", async () => {});`).join("\n");
+  fs.writeFileSync(path.join(f.repo, "tests", "e2e", "long.spec.ts"), `// @projects firefox\n${tests(50)}\n`);
+  fs.writeFileSync(path.join(f.repo, "tests", "e2e", "short.spec.ts"), `${tests(4)}\n`);
+  fs.writeFileSync(path.join(f.repo, "tests", "e2e", "helper.ts"), "export const x = 1;\n");
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: f.repo, encoding: "utf8" }).trim();
+  git("add", ".");
+  git("commit", "-qm", "specs");
+  const third = git("rev-parse", "HEAD");
+  fs.writeFileSync(path.join(f.repo, "scripts", "ci-hosts.json"), JSON.stringify({ lisa: { host: "lisa", maxWait: 3600, maxParallel: 1 } }) + "\n");
+  git("add", ".");
+  git("commit", "-qm", "hosts");
+  const fourth = git("rev-parse", "HEAD");
+  // The heaviest file is 50 tests in two projects: 100, three times, 5 s each.
+  const grown = f.run(fourth, { SONDER_CI_HOST: "lisa" });
+  assert.equal(grown.status, 0, grown.output);
+  assert.match(grown.output, /Waiting for the check \(cap 5100s, 3600 \+ 1500 for 2 changed browser spec\(s\), poll every/);
+  // Through the dispatcher the host's cap arrives as SONDER_CI_HOST_MAX_WAIT, and grows the same way.
+  const dispatched = f.run(fourth, { SONDER_CI_HOST: "lisa", SONDER_CI_HOST_MAX_WAIT: "2000" });
+  assert.equal(dispatched.status, 0, dispatched.output);
+  assert.match(dispatched.output, /Waiting for the check \(cap 3500s, 2000 \+ 1500 for 2 changed browser spec\(s\), poll every/);
+  // Set by hand, the cap is what was set.
+  const byHand = f.run(fourth, { SONDER_CI_HOST: "lisa", SONDER_CI_MAX_WAIT: "900" });
+  assert.equal(byHand.status, 0, byHand.output);
+  assert.match(byHand.output, /Waiting for the check \(cap 900s, poll every/);
+  assert.ok(third !== fourth);
 });
 
 test("config resolution: custom host config resolves remote base, tmpdir, max wait and parallel cap", (t) => {
