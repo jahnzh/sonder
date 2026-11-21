@@ -94,3 +94,41 @@ The times were taken on the production machine while other work ran on it; singl
 - Keep on this device (ADR 0018, ADR 0021) stores the prepared parts instead of the EPUB file from step 6, and replaces EPUBs kept before.
 - A text PDF becomes a second input that produces the same prepared text and the same kind of sentence ids (step 8); a PDF that fails the quality gate keeps today's behaviour.
 - The measurement reads the page only through the room, the text band, the loading line, `data-current-passage` and the follow highlight, and counts text in the band itself or in a frame inside it. The new view keeps those names so the before and after are measured by the same script.
+
+## Pages mode in the new view (step 4, #803)
+
+Built behind the same hidden switch. The parts in the page are one run of CSS columns and a page is a column (two side by side on a desktop with room for them). Nothing of the whole book is laid out, and no part gets a page of its own:
+
+- **A part read into continues the column the part before ended in.** A part does not start at a column's top, because then each part would end on a short page in the middle of a chapter.
+- **The turn back past the run's first page** puts the part before above a space whose height is found by measuring, so that its text ends exactly where the run began: the page turned to is full and ends where the next begins, with no line shown twice. Before a chapter's heading that page may end up to a heading's height short, as in the book's own flow (a heading does not stand alone at a page's foot).
+- **A part far behind the reader** is taken out and a space as high as its last lines took is left in its place, so no line of the page being read moves.
+- **The page is held by a place in its text**, never by a column's number. One change of the reader's (a window resized, two pages for one) lays the text out several times; the place is kept through them and taken anew only once the layout has held still.
+- **A page's saved place is the first sentence that starts on it**, so opening the place shows a page that holds it.
+
+**The rule for a place opened again (ray, 2026-11-21): the saved sentence is on the page shown.** The page need not begin where the page that was left began. The two ways to make it begin there were turned down: a part that starts at a column's top leaves a short page at each part's end, and a page that opens with the saved sentence at its very top drops the lines that ran on from the sentence before. A check of pages mode asserts "the saved sentence is on the page", not "the same first line".
+
+**Accepted with it:** page breaks are not the same for every way of arriving at a text. A reader who reads from one part into the next, leaves, and opens the book again sees the saved sentence on a page that may begin a few lines earlier or later than the page that was left (measured on The State of the Art: left on a page whose first new sentence was 11:3, opened again on one that begins at 11:1). Today's reader has the same pages every time because epub.js lays out each chapter file whole; that is the cost this plan removes.
+
+**Measured** on a copy of production, the new view, median of 3, pages mode against scroll mode on the same image and night (`--mode pages` and `--mode scroll`), the books of the baseline above:
+
+| Book | Profile | State | First text pages / scroll | Place shown pages / scroll | Following pages / scroll | Bytes pages / scroll |
+| --- | --- | --- | --- | --- | --- | --- |
+| short | desktop | cold | 245 / 428 ms | 391 / 607 ms | 1,202 / 1,391 ms | 180 / 180 KB |
+| short | desktop | warm | 137 / 145 ms | 237 / 287 ms | 387 / 407 ms | 144 / 144 KB |
+| short | phone | cold | 1,022 / 953 ms | 1,086 / 1,085 ms | 1,921 / 1,888 ms | 206 / 206 KB |
+| short | phone | warm | 472 / 370 ms | 717 / 479 ms | 894 / 553 ms | 144 / 144 KB |
+| average | desktop | cold | 224 / 1,185 ms | 360 / 1,185 ms | 1,231 / 1,295 ms | 409 / 409 KB |
+| average | desktop | warm | 101 / 113 ms | 186 / 191 ms | 310 / 319 ms | 170 / 170 KB |
+| average | phone | cold | 898 / 858 ms | 1,010 / 974 ms | 2,056 / 2,067 ms | 409 / 409 KB |
+| average | phone | warm | 378 / 344 ms | 586 / 496 ms | 756 / 610 ms | 170 / 170 KB |
+| long | desktop | cold | 209 / 1,737 ms | 322 / 1,737 ms | – / – ms | 1,662 / 1,662 KB |
+| long | desktop | warm | 119 / 111 ms | 246 / 248 ms | – / – ms | 1,123 / 1,123 KB |
+| long | phone | cold | 852 / 2,751 ms | 967 / 2,751 ms | – / – ms | 1,709 / 1,662 KB |
+| long | phone | warm | 407 / 387 ms | 915 / 860 ms | – / – ms | 375 / 1,123 KB |
+
+Bytes and requests are the same in both modes. Pages mode is no slower to open cold. Warm on the phone profile (the processor slowed four times) it shows its place 60 to 340 ms later than scroll mode: a whole part is laid out in columns before the page is shown. The long book's cold figures favour pages mode because in scroll mode its first screen waits for the cover picture.
+
+**Real books in pages mode** (Chromium with a Pixel 7 profile and Firefox, 2026-11-21): The Picture of Dorian Gray Parts Edition, The State of the Art, the "bionic reading" edition, a book of 52 large pictures, a book with 132 pictures and a three-column table, a book with a 239-row table, 60 to 120 pages each, the last three also as two pages on a desktop: never an empty page, no line cut by a page's edge, no picture or table over an edge, at most five parts in the page, back and forward again the same pages line for line. On a book with a reading sync map, 120 narrated sentences on: the part being narrated was on the page shown every time, also inside each sentence that breaks over two pages. Not checked: a table wider than three columns (the library has none; a table is held to the page's width by the stylesheet, untested on a real wide one) and a real Android phone or emulator (the emulator's host was unreachable).
+
+Not explained: The State of the Art once did not open within 90 seconds on its first preparing in the copy and opened in 7 seconds the next time; and the long book's warm phone median in pages mode (375 KB) lacks the bytes of the reading sync map that every other warm row of that book carries (1,123 KB).
+

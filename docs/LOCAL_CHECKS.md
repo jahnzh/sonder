@@ -280,4 +280,6 @@ SONDER_VERIFY_URL=http://127.0.0.1:3106 node scripts/measure-reader-open.mjs --r
 scripts/reader-open-copy.sh stop
 ```
 
+`--view prepared` measures the new reading view (the hidden switch set, as `?reader-view=prepared` leaves it); `--mode pages` or `--mode scroll` opens the reader in that reading mode whatever the copy has saved, without writing the copy (the page is answered the saved appearance with that mode in it). Leave both out for the reader and the mode a device gets today.
+
 Without `--books` the script takes the shortest, the middle and the longest text among the books that have an EPUB with a reading sync map and were not listened to in the last 48 hours, and prints the choice in the form `--books` takes. A book named with `--books` that was listened to in the last 48 hours is refused unless `SONDER_VERIFY_ALLOW_RECENT=1`. The books of the baseline and its numbers are in ADR 0025; run the same command on them for a before and after. Run it while no check or build is using the machine: the times are medians, and a loaded machine still moves them.
