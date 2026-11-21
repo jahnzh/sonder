@@ -77,7 +77,11 @@ export async function expectHighlightDrawn(room: Locator, options?: { timeout?: 
   if (onPreparedView()) await expect(mark.first()).toBeVisible(options);
   else await expect(mark).toHaveAttribute("data-epubcfi", /^epubcfi\(/, options);
 }
-/** What a spec clicks to tap the book's text at a place: the frame's body, or the prepared text itself. */
+/**
+ * What a spec clicks to tap the book's text at a place: the frame's body, or, on the view of prepared text, the band
+ * that shows it. The prepared text itself is as long as its parts (or as wide as its pages), so a place in its own
+ * box need not be in view.
+ */
 export function bookBody(text: FrameLocator | Locator): Locator {
-  return onPreparedView() ? (text as Locator) : text.locator("body");
+  return onPreparedView() ? (text as Locator).locator("xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' reader-viewport ')][1]") : text.locator("body");
 }
