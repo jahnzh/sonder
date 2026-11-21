@@ -125,12 +125,25 @@ function readJob(row: AlignmentRow, data = row.data): AlignmentJob {
     job.warning = "Timings are estimated. Passages without matching narration remain unsynced.";
   return job;
 }
+/**
+ * The job ids, newest first. Only ids and stamps are sorted here: a statement that reads `data` or `published_map`
+ * must never sort or group, because SQLite then writes the whole rows, megabytes of map each, to a temporary file,
+ * and the server's temporary folder is small (64 MB in production; on 20 Nov 2026 the listings failed with
+ * SQLITE_FULL once the maps had outgrown it, #849). The rows are read one by one by their id instead.
+ */
+const newestJobIds = () => (sqlite.prepare("SELECT id FROM alignment_jobs ORDER BY updated_at DESC").all() as { id: string }[]).map((row) => row.id);
+/** Every job row in the listing's order, read by `select` (a statement by id) inside one read of the database. */
+function listRows<Row>(select: string): Row[] {
+  return sqlite.transaction(() => {
+    const byId = sqlite.prepare(select);
+    return newestJobIds().flatMap((id) => {
+      const row = byId.get(id) as Row | undefined;
+      return row ? [row] : [];
+    });
+  })();
+}
 export function listAlignmentJobs() {
-  return (
-    sqlite
-      .prepare("SELECT data,engine,outcome,stage_timings FROM alignment_jobs ORDER BY updated_at DESC")
-      .all() as AlignmentRow[]
-  ).map((row) => readJob(row));
+  return listRows<AlignmentRow>("SELECT data,engine,outcome,stage_timings FROM alignment_jobs WHERE id=?").map((row) => readJob(row));
 }
 type ServedRow = AlignmentRow & { published_map: string | null };
 /** What the listing and /map serve: the kept map while a rebuild runs in the row, else the job itself. */
@@ -140,11 +153,7 @@ function servedJob(row: ServedRow) {
 }
 /** Listing view that keeps a published_map in front of a failed or in-flight rebuild (#277). */
 export function listServedAlignmentJobs() {
-  return (
-    sqlite
-      .prepare("SELECT data,engine,outcome,stage_timings,published_map FROM alignment_jobs ORDER BY updated_at DESC")
-      .all() as ServedRow[]
-  ).map(servedJob);
+  return listRows<ServedRow>("SELECT data,engine,outcome,stage_timings,published_map FROM alignment_jobs WHERE id=?").map(servedJob);
 }
 /** The summary form of a listed job (`GET /api/alignments?summary=1`): no intervals, their count instead. */
 export const slimAlignmentJob = (job: AlignmentJob, intervalCount = job.intervals.length) => ({
@@ -184,9 +193,11 @@ export function listServedAlignmentSummaries(recordingIds: string[]) {
       .prepare(
         `SELECT id,updated_at AS updatedAt,octet_length(data) AS dataBytes,octet_length(published_map) AS keptBytes,
            engine,outcome,stage_timings AS stageTimings
-         FROM alignment_jobs WHERE recording_id IN (SELECT value FROM json_each(?)) ORDER BY updated_at DESC`,
+         FROM alignment_jobs WHERE recording_id IN (SELECT value FROM json_each(?))`,
       )
       .all(JSON.stringify([...new Set(recordingIds)])) as SummaryVersionRow[];
+    // Newest first, ordered here: the statement reads the two large columns, so it does not sort (`newestJobIds`).
+    versions.sort((a, b) => b.updatedAt - a.updatedAt);
     const readAt = Date.now();
     const changed = versions.filter((row) => summaries.get(row.id)?.version !== summaryVersion(row));
     const fresh = new Map<string, AlignmentSummary>();
