@@ -211,7 +211,14 @@ test("stopProcessesUnder stops every process whose working directory is inside t
   try {
     await new Promise((resolve) => setTimeout(resolve, 200));
     assert.deepEqual(processesUnder(inside).filter((pid) => [server.pid, deeper.pid, stubborn.pid, neighbour.pid].includes(pid)).sort(), [server.pid, deeper.pid, stubborn.pid].sort());
-    const stopped = stopProcessesUnder(inside, { graceMs: 400 });
+    let described = [];
+    const stopped = stopProcessesUnder(inside, { graceMs: 400, found: (processes) => (described = processes) });
+    // What each was, read before it was signalled: its command line and an age.
+    const ours = described.find((entry) => entry.pid === server.pid);
+    // (A shell may run its one command in its own place, so the line is "sh -c sleep 120" or "sleep 120".)
+    assert.match(ours.command, /^(sh -c )?sleep 120$/);
+    assert.deepEqual([typeof ours.ageSeconds, ours.ageSeconds < 30], ["number", true]);
+    assert.deepEqual(described.map((entry) => entry.pid).sort(), [...stopped].sort());
     for (const child of [server, deeper, stubborn]) assert.ok(stopped.includes(child.pid), `${child.pid} was signalled`);
     assert.equal(stopped.includes(neighbour.pid), false, "a folder whose name only starts the same is another folder");
     assert.deepEqual(await Promise.all(ends), ["SIGTERM", "SIGTERM", "SIGKILL"]);

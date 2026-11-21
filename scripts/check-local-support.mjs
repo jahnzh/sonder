@@ -1066,16 +1066,37 @@ export function processesUnder(dir, procRoot = "/proc") {
   return found;
 }
 
+/** A process as a line can name it: its command line and how long it has been running (Linux: /proc). */
+export function describeProcess(pid, procRoot = "/proc") {
+  let command = "";
+  let ageSeconds = null;
+  try {
+    command = fs.readFileSync(path.join(procRoot, String(pid), "cmdline"), "utf8").replace(/\0+$/, "").replace(/\0/g, " ").slice(0, 200);
+  } catch {
+    // gone already
+  }
+  try {
+    // The process's folder in /proc is as old as the process.
+    ageSeconds = Math.max(0, Math.round((Date.now() - fs.statSync(path.join(procRoot, String(pid))).ctimeMs) / 1000));
+  } catch {
+    // gone already
+  }
+  return { pid, command, ageSeconds };
+}
+
 /**
  * Stops every process whose working directory is inside `dir`, a check's own checkout folder: SIGTERM, up to
  * `graceMs` for them to go, then SIGKILL. Stopping a stage kills its process group, and Playwright starts its web
  * server (`node --import tsx tests/browser-server.ts`) in a group of its own; when Playwright is killed before it
  * has stopped that server, the server lives on with its port, as ten of them did on lisa for up to 27 hours.
- * Returns the process ids it signalled. Synchronous, so the check can call it on its way out.
+ * Returns the process ids it signalled, and hands `found` what each of them was (describeProcess). Synchronous, so
+ * the check can call it on its way out.
  */
-export function stopProcessesUnder(dir, { graceMs = 1500, procRoot = "/proc", signal = (pid, name) => process.kill(pid, name) } = {}) {
+export function stopProcessesUnder(dir, { graceMs = 1500, procRoot = "/proc", signal = (pid, name) => process.kill(pid, name), found = () => {} } = {}) {
   if (!dir || !path.isAbsolute(dir)) return [];
   const first = processesUnder(dir, procRoot);
+  // What they are, read before they are signalled: afterwards there is nothing left to ask.
+  found(first.map((pid) => describeProcess(pid, procRoot)));
   const send = (pids, name) => {
     for (const pid of pids) {
       try {

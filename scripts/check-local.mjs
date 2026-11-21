@@ -486,8 +486,13 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     isCleanedUp = true;
     if (disposableDir) {
       // What a stopped stage left running in the checkout: Playwright's web servers are in groups of their own.
-      const left = stopProcessesUnder(disposableDir);
-      if (left.length) console.warn(`[check-local] Stopped ${left.length} process(es) left running in the checkout: ${left.join(", ")}`);
+      let leftProcesses = [];
+      const left = stopProcessesUnder(disposableDir, { found: (processes) => (leftProcesses = processes) });
+      if (left.length) {
+        console.warn(`[check-local] Stopped ${left.length} process(es) left running in the checkout:`);
+        // Each with its command and age, so that what leaves it can be named.
+        for (const { pid, command, ageSeconds } of leftProcesses) console.warn(`[check-local]   ${pid}, running ${ageSeconds ?? "?"} s: ${command || "(command not readable)"}`);
+      }
       cleanupDirectory(disposableDir);
     }
     if (portLease) {
