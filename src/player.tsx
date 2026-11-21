@@ -189,6 +189,11 @@ export function PlayerProvider({
   const objectUrl = useRef<string | null>(null);
   const sleepEnd = useRef<number | null>(null);
   const playRequests = useRef(0);
+  /**
+   * How often the listener paused. Each pause also counts in `playRequests`, so that whatever waits for a request
+   * sees it; a load can tell from the two whether a pause was all that came while it waited.
+   */
+  const pauses = useRef(0);
   // The explicit server or original load now in the element. A switch to the
   // device copy is kept in `recovery`, so a load switches at most once; a failed
   // attempt is forgotten, so a later failure in the same load tries again.
@@ -392,6 +397,12 @@ export function PlayerProvider({
       saveLeaving = true,
     ) => {
       const request = ++playRequests.current;
+      const pausedBefore = pauses.current;
+      // A pause that came while this load waited, and nothing else: no newer load, and every request counted since
+      // this one is a pause. It does not take back a move within the file already loaded (below): it only keeps
+      // this load from starting to play (#419).
+      const onlyPaused = () => pauses.current !== pausedBefore && playRequests.current - request === pauses.current - pausedBefore;
+      const superseded = () => request !== playRequests.current && !onlyPaused();
       const el = audio.current;
       if (!b.tracks.length) {
         setError("No audio is available for this book yet.");
@@ -401,7 +412,7 @@ export function PlayerProvider({
         localDB.progress.get(b.recordingId),
         speedFor(b.recordingId),
       ]);
-      if (request !== playRequests.current) return;
+      if (superseded()) return;
       const progress =
         saved && saved.updatedAt > (b.progress?.updatedAt || 0)
           ? saved
@@ -419,11 +430,11 @@ export function PlayerProvider({
           failures.clear(),
         );
       } catch (error) {
-        if (request !== playRequests.current) return;
+        if (superseded()) return;
         setError((error as Error).message);
         return;
       }
-      if (request !== playRequests.current) return;
+      if (superseded()) return;
       const recordMove = (targetPosition: number) => {
         try {
           if (!jump) return;
@@ -463,7 +474,8 @@ export function PlayerProvider({
         }
         setError(null);
         try {
-          if (autoplay) await el.play();
+          // The move is made; a pause pressed while it waited holds.
+          if (autoplay && !onlyPaused()) await el.play();
           else el.pause();
         } catch {
           if (request === playRequests.current)
@@ -471,6 +483,8 @@ export function PlayerProvider({
         }
         return;
       }
+      // Another file or source has to be loaded: a pause pressed meanwhile stops that, as it always did.
+      if (request !== playRequests.current) return;
       const targetPosition = jump === "source" && current?.id === selected.id
         ? pendingSeek.current ?? elementPlace()
         : t
@@ -849,11 +863,13 @@ export function PlayerProvider({
     if (!el.src) return;
     if (el.paused) resumeFromPause();
     else {
+      ++pauses.current;
       ++playRequests.current;
       el.pause();
     }
   }, [resumeFromPause]);
   const pause = useCallback(() => {
+    ++pauses.current;
     ++playRequests.current;
     audio.current.pause();
     setLoading(false);

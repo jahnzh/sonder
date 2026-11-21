@@ -23,7 +23,8 @@
 #  10. prepare the library's text (#827): scripts/prepare-library.sh starts the server's sweep and waits for it, after
 #      the live checks have passed (or were skipped), so nothing heavy runs under a check. The deploy is live and
 #      checked by then: a book that could not be prepared, or a sweep still running after SONDER_PREPARE_TIMEOUT
-#      seconds (1800 here), is printed and named in the last lines, and the deploy still exits 0.
+#      seconds (1800 here), is printed and named in the last lines, and the deploy still exits 0. A command that could
+#      not ask the server at all (exit 3: a refused sign-in, HTTP 429) is said as that, not as an unprepared library.
 #      SONDER_DEPLOY_PREPARE_LIBRARY= (empty) leaves the step out; the server sweeps by itself 15 minutes after a start.
 # Prints the rollback command (retag the old image as :local, then up -d --no-build) and reminds to
 # record the deploy in artifacts/orca/STATE.md.
@@ -321,7 +322,11 @@ if [ -n "$prepare_library" ]; then
   echo "preparing the library's text: $prepare_library"
   prepare_status=0
   SONDER_ADMIN_URL="http://127.0.0.1:${port}" SONDER_PREPARE_TIMEOUT="${SONDER_PREPARE_TIMEOUT:-1800}" bash "$prepare_library" || prepare_status=$?
-  if [ "$prepare_status" -ne 0 ]; then
+  if [ "$prepare_status" -eq 3 ]; then
+    # The command could not ask the server (a refused sign-in, HTTP 429): that is not a state of the library (#858).
+    prepare_note="THE LIBRARY'S TEXT WAS NOT CHECKED: $prepare_library could not ask the server (exit 3, see its lines above; a 429 is too many sign-ins or requests from this machine). This says nothing about the library: the server's sweep goes on by itself. Run $prepare_library again later to see its state."
+    echo "$prepare_note" >&2
+  elif [ "$prepare_status" -ne 0 ]; then
     prepare_note="THE LIBRARY'S TEXT IS NOT FULLY PREPARED: $prepare_library exited $prepare_status (see its lines above). The deploy itself is live and checked; books not prepared are prepared when first opened. Run $prepare_library again, or read the server's log for 'prepared text:'."
     echo "$prepare_note" >&2
   fi
