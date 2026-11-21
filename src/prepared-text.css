@@ -145,8 +145,18 @@
 /* Pages mode (step 4 of #799): the loaded parts as one run of columns, a page a column wide, or two side by side.
    The view turns the pages itself (prepared-view.ts); nothing here scrolls under the reader's finger. */
 .prepared-scroll[data-mode="pages"] {
+  position: relative;
   overflow: hidden;
   touch-action: none;
+}
+/* Keeps the band's sideways reach as far as the page shown (prepared-view.ts, setColumn); nothing is drawn. */
+.prepared-reach {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  visibility: hidden;
+  pointer-events: none;
 }
 .prepared-scroll[data-mode="pages"] .prepared-text {
   box-sizing: border-box;

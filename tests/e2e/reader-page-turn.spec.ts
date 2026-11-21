@@ -672,14 +672,16 @@ test("finding the break of a narrated sentence takes a few milliseconds, also wi
    const room=await openAt(page,long.book,long.intervals[0],long.intervals[0].start+.05);
    await page.evaluate(()=>{(window as any).__sonderBreakTimings.length=0;(window as any).__sonderBreakLookups.length=0;});
    for(const interval of long.intervals.slice(1,61)){
+    const measured=await page.evaluate(()=>(window as any).__sonderBreakTimings.length as number);
     await narrateAt(page,interval.start+.05);
     await expect(room).toHaveAttribute("data-current-passage",interval.paragraphId,{timeout:READER_WAIT_MS.followHighlight});
+    // The view of prepared text measures once its jump to the sentence has settled, a moment after the sentence is
+    // marked: the next sentence is narrated when this one was measured, so each of the sixty is.
+    if(onPreparedView())await expect.poll(()=>page.evaluate(()=>(window as any).__sonderBreakTimings.length as number),{timeout:READER_WAIT_MS.followHighlight}).toBeGreaterThan(measured);
    }
    const book=await page.evaluate(()=>[...(window as any).__sonderBreakTimings] as number[]);
    const bookCosts=await page.evaluate(()=>[...(window as any).__sonderBreakLookups] as {lookups:number;words:number}[]);
-   // The view of prepared text measures once its jump to the sentence has settled: a jump the next sentence replaced
-   // before that measured nothing, so a few of the sixty may be missing there.
-   expect(book.length).toBeGreaterThanOrEqual(onPreparedView()?50:60);
+   expect(book.length).toBeGreaterThanOrEqual(60);
    // The sentence over three pages, followed from its start through each turn.
    const intervals=turns.chapter(0),at=intervals.findIndex((i:any)=>turns.text(i)===longSentence(45));
    const interval=intervals[at],sentence=turns.text(interval);

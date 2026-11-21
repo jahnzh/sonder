@@ -1899,6 +1899,11 @@ export function ReaderView({
       "--prepared-measure": preferences.width === 720 ? "34em" : `${preferences.width}px`,
     } as CSSProperties;
   }, [prepared, themeKey]);
+  // In pages mode the text's box keeps its size when its look changes, so the view is told: it shows the page that
+  // holds the reader's place in the columns as they are now.
+  useEffect(() => {
+    engine.current?.restyled();
+  }, [preparedStyle]);
   // The message in the foot (#591): a place saved elsewhere, an error, a notice with Undo, an update while paused.
   const update = useReaderUpdate(viewport);
   const message = messageToShow(messages.state, {

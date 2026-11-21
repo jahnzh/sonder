@@ -11,6 +11,7 @@ import { longBookFixture } from "../long-book-fixture";
 import { expectTextUncovered, intersects, type Box } from "./reader-bands";
 import { appearancePanel, closeAppearance, openAppearance, setStepper } from "./reader-appearance";
 import {bookText} from "./reader-view";
+import { onPreparedView } from "./prepared-view";
 import { installReaderFrames } from "./reader-frames";
 
 test.use({ serviceWorkers: "block" });
@@ -222,11 +223,13 @@ test("a narrower window, a larger font and Scroll mode show one page, and switch
   }
   await settled(page);
   // The place is the first sentence shown (where the reader's position is saved from): after each switch it is still
-  // shown. From two pages to one that is the left page's start.
+  // shown. Today's reader takes the place anew from each layout (from two pages to one that is the left page's
+  // start). The new view holds the place the reader turned to through every switch and never takes it anew, so a
+  // window resized again and again does not walk the reader back through the book (#803).
   let place = (await numbers(page))[0]!;
   const kept = async () => {
     expect(await numbers(page)).toContain(place);
-    place = (await numbers(page))[0]!;
+    if (!onPreparedView()) place = (await numbers(page))[0]!;
   };
   // Contents hidden: 1280 − 168 = 1112, two pages.
   await reader.getByRole("button", { name: "Hide contents", exact: true }).click();

@@ -64,8 +64,6 @@ export type PreparedView = ReturnType<typeof createPreparedView>;
 
 /** How the text is laid out: one moving column, or pages (CSS columns), one or two of them side by side. */
 export type PreparedLayout = { mode: "scroll" | "pages"; spread: boolean };
-/** In pages mode, how long a layout must hold still before the page's place in the text is taken anew. */
-const RELAID_SETTLE_MS = 250;
 /** In pages mode a neighbour is loaded when fewer than this many turns are left before the loaded pages end. */
 const TURNS_AHEAD = 3;
 
@@ -80,6 +78,10 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
   if (/^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8}){0,4}$/.test(manifest.language)) text.lang = manifest.language;
   scroller.append(text);
   host.replaceChildren(scroller);
+  /** Pages mode: an empty box that keeps the band's sideways reach as far as the page shown, see `setColumn`. */
+  const reach = doc.createElement("div");
+  reach.className = "prepared-reach";
+  reach.setAttribute("aria-hidden", "true");
 
   const loaded = new Map<number, Loaded>();
   let low = -1;
@@ -103,8 +105,11 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
 
   // ---- Pages mode (step 4 of #799) ------------------------------------------------------------------------------
   // The loaded parts are one run of CSS columns; a page is a column, or two side by side. Nothing of the whole book
-  // is laid out. The page shown is held by the sentence at its top, never by a column's number: columns are counted
-  // anew whenever parts come or go.
+  // is laid out. The page shown is held by a place in its text, never by a column's number: columns are counted
+  // anew whenever parts come or go. The place is where the reader last moved to (the top of a page turned to, a
+  // sentence jumped to, the page the narration turned to) and stays that until the reader moves again: a layout
+  // made anew (a band resized, another size of text, a picture that arrived) shows the page that holds it and
+  // never takes it anew, or each such layout would move the reader by up to a page.
   //
   // - A part after the pages shown is appended as the reader nears the end of the run: columns before it do not move.
   // - A part before them is put in only when the reader turns back past the run's first page (`turnBack`), with a
@@ -121,18 +126,31 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
   let leadHeight = 0;
   /** The first column of the page shown. */
   let startColumn = 0;
-  /** A place in the text at the top of the page shown, to find the page again after columns were counted anew. */
+  /** Where the band was last put sideways by this module. */
+  let shownLeft = 0;
+  /** How often the reader or the narration moved the page: a turn that waits for a part is dropped when another move came first. */
+  let moves = 0;
+  /** The place in the text the reader last moved to, to find its page again after columns were counted anew. */
   let pageMark: Range | null = null;
+  /** With two pages side by side: 1 when that place is on the right page, so the pages keep their sides. */
+  let markSide = 0;
   /** The text's side margin in pages mode, in whole px: a fraction of one adds up over a hundred columns. */
   let sidePad = 0;
+  /**
+   * Every length of a page is a whole number of px. A browser stretches columns to fill their box, so a box whose
+   * width is not exactly a whole number of pages wide (a band of an odd or a fractional width) would give columns a
+   * fraction wider than reckoned, and the fraction adds up with every page turned. So the text's box is given the
+   * width of exactly one page or two (`applyLayout`), at most a px per page narrower than the band, and the step
+   * from one page to the next is that whole number.
+   */
   const geometry = () => {
-    const width = scroller.clientWidth;
+    const width = Math.floor(scroller.getBoundingClientRect().width) || scroller.clientWidth;
     const style = getComputedStyle(text);
     const pad = sidePad;
     const gap = pad * 2;
     const perView = spread ? 2 : 1;
-    const column = Math.max(1, Math.floor((width - perView * gap) / perView));
-    return { width, pad, gap, perView, column, step: column + gap, height: scroller.clientHeight - (parseFloat(style.paddingTop) || 0) - (parseFloat(style.paddingBottom) || 0) };
+    const step = Math.max(gap + 1, Math.floor(width / perView));
+    return { width, pad, gap, perView, column: step - gap, step, height: scroller.clientHeight - (parseFloat(style.paddingTop) || 0) - (parseFloat(style.paddingBottom) || 0) };
   };
   const applyLayout = () => {
     scroller.setAttribute("data-mode", pages ? "pages" : "scroll");
@@ -141,15 +159,19 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
       text.style.removeProperty("column-width");
       text.style.removeProperty("column-gap");
       text.style.removeProperty("padding-inline");
+      text.style.removeProperty("width");
       text.style.removeProperty("--prepared-page-height");
       host.removeAttribute("data-pages");
       lead.remove();
+      reach.remove();
       return;
     }
+    if (!reach.isConnected) scroller.append(reach);
     text.style.removeProperty("padding-inline");
     sidePad = spread ? SPREAD_GAP / 2 : Math.round(parseFloat(getComputedStyle(text).paddingLeft) || 0);
     text.style.setProperty("padding-inline", `${sidePad}px`);
-    const { column, gap, perView, height } = geometry();
+    const { column, gap, perView, step, height } = geometry();
+    text.style.setProperty("width", `${perView * step}px`);
     text.style.setProperty("--prepared-page-height", `${Math.max(0, height)}px`);
     text.style.setProperty("column-width", `${column}px`);
     text.style.setProperty("column-gap", `${gap}px`);
@@ -168,28 +190,27 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
     for (const element of elements ?? []) for (const rect of element.getClientRects()) if (rect.width > 0 || rect.height > 0) return rect;
     return null;
   };
-  let remark = 0;
-  /** Shows the page that begins at `column`. `own`: the reader or the narration moved there, so the page's place in the text is taken anew. */
+  /**
+   * Shows the page that begins at `column`. `own`: the reader or the narration moved there, so the top of the page
+   * becomes the place the page is held by; else the columns were counted anew and the place stays what it was.
+   */
   const setColumn = (column: number, own = true) => {
     const { step } = geometry();
     startColumn = Math.max(0, column);
     const target = startColumn * step;
+    // A band scrolls no further than its content reaches, and the last column's margin is not counted as content:
+    // the last page of the run, and a single column on the left of two pages, would stand a margin off.
+    reach.style.left = `${target + scroller.clientWidth}px`;
+    shownLeft = target;
     if (Math.abs(scroller.scrollLeft - target) >= 0.5) {
       scroller.scrollLeft = target;
       ownTop = -1;
     }
-    if (remark) clearTimeout(remark);
-    remark = 0;
-    if (own) return markPage();
-    // The columns were counted anew and the page was found again by its place. One change of the reader's (a
-    // window resized, two pages for one) lays the text out several times, and a place taken anew in each of them
-    // would move back by up to a page each time: it is taken anew once the layout has held still.
-    remark = window.setTimeout(() => {
-      remark = 0;
-      if (disposed || !pages) return;
+    if (scroller.scrollTop !== 0) scroller.scrollTop = 0;
+    if (own) {
+      moves++;
       markPage();
-      reported = firstOnPage();
-    }, RELAID_SETTLE_MS);
+    }
   };
   /** The column a place in the text is drawn in; null when it has no box. */
   const columnOfRange = (range: Range) => {
@@ -224,8 +245,20 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
         range.setStart(letters ?? element, 0);
       }
     }
-    if (range) pageMark = range;
-    else if (pageMark && !text.contains(pageMark.startContainer)) pageMark = null;
+    if (range) {
+      pageMark = range;
+      markSide = 0;
+    } else if (pageMark && !text.contains(pageMark.startContainer)) pageMark = null;
+  };
+  /** The place the page is held by is a sentence the reader jumped to (it need not be at the page's top). */
+  const markAt = (elements: readonly HTMLElement[]) => {
+    const element = elements.find((value) => firstRect([value]));
+    const rect = element ? firstRect([element]) : null;
+    if (!element || !rect) return;
+    const letters = doc.createTreeWalker(element, NodeFilter.SHOW_TEXT).nextNode();
+    pageMark = doc.createRange();
+    pageMark.setStart(letters ?? element, 0);
+    markSide = spread && columnAt(rect.left) === startColumn + 1 ? 1 : 0;
   };
   /** Where the remembered place is now: its column, and how far below its column's top it starts. */
   const markPlace = () => {
@@ -239,9 +272,9 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
   };
   /** The page shown again after the columns were counted anew (a resize, another size of text, parts that came or went). */
   const keepPage = () => {
-    // The place is the top of the page shown: with two pages side by side, of the left one.
+    if (!spread) markSide = 0;
     const place = markPlace();
-    if (place) setColumn(place.column, false);
+    if (place) setColumn(Math.max(0, place.column - markSide), false);
     else setColumn(Math.min(startColumn, columns() - 1), false);
   };
   /** The sentence the remembered place is in, if it is in one. */
@@ -249,6 +282,14 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
     const node = pageMark && text.contains(pageMark.startContainer) ? pageMark.startContainer : null;
     const element = node ? (node.nodeType === 1 ? (node as Element) : node.parentElement) : null;
     return element?.closest("[data-s]")?.getAttribute("data-s") ?? null;
+  };
+  /** The spaces a turn back left between two parts (`turnBack`) are taken out: the text flows as the book has it. */
+  const clearJoints = () => {
+    for (const joint of text.querySelectorAll(".prepared-lead")) if (joint !== lead) joint.remove();
+  };
+  const jointOf = (part: HTMLElement) => {
+    const before = part.previousElementSibling;
+    return before && before !== lead && before.classList.contains("prepared-lead") ? before : null;
   };
   const setLead = (height: number) => {
     leadHeight = Math.max(0, height);
@@ -310,6 +351,24 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
       events.onRelocated(first);
     }
   };
+  /**
+   * Where a part's first line stands: its column, and how far below the column's top. A part that begins in the
+   * middle of a column is one box in many fragments, whose bounding box begins at the column's top: the first line
+   * is asked for itself.
+   */
+  const lineTop = (element: HTMLElement) => {
+    const top = scroller.getBoundingClientRect().top + (parseFloat(getComputedStyle(text).paddingTop) || 0);
+    const walker = doc.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!(node as Text).data.trim()) continue;
+      const range = doc.createRange();
+      range.selectNodeContents(node);
+      const rect = Array.from(range.getClientRects()).find((value) => value.width > 0 || value.height > 0);
+      if (rect) return { column: columnAt(rect.left), offset: rect.top - top };
+    }
+    const rect = element.getClientRects()[0] ?? element.getBoundingClientRect();
+    return { column: columnAt(rect.left), offset: rect.top - top };
+  };
   /** Puts the part before the run in, so that its text ends exactly where the run began, and shows its last page. */
   async function turnBack() {
     const part = low - 1;
@@ -321,45 +380,38 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
       if (disposed || at !== epoch || part !== low - 1) return;
       const { height, perView } = geometry();
       const first = loaded.get(low)!.element;
-      // Where the run's first line stands in its column, which is where it must stand again.
-      let target = 0;
-      const topOf = () => {
-        const walker = doc.createTreeWalker(first, NodeFilter.SHOW_TEXT);
-        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-          if (!(node as Text).data.trim()) continue;
-          const range = doc.createRange();
-          range.selectNodeContents(node);
-          const rect = range.getClientRects()[0];
-          if (rect) return { column: columnAt(rect.left), offset: rect.top - scroller.getBoundingClientRect().top - (parseFloat(getComputedStyle(text).paddingTop) || 0) };
-        }
-        const rect = first.getBoundingClientRect();
-        return { column: columnAt(rect.left), offset: rect.top - scroller.getBoundingClientRect().top - (parseFloat(getComputedStyle(text).paddingTop) || 0) };
-      };
-      target = topOf().offset;
+      // Where the page being left stands from the place it is held by, and where the run's first line stands in its
+      // column, which is where it must stand again.
+      const before = markPlace();
+      const side = before ? startColumn - before.column : 0;
+      const target = lineTop(first).offset;
+      // The space is found with only the new part and the run's first part in the page: the parts after them do not
+      // move the run's first line, and laying them out at every try is most of what a turn back costs.
+      const held = pageMark ? { node: pageMark.startContainer, offset: pageMark.startOffset } : null;
+      const after: HTMLElement[] = [];
+      for (let later = low + 1; later <= high; later++) after.push(loaded.get(later)!.element);
+      for (const element of after) element.remove();
       loaded.set(part, entry);
       low = part;
       setLead(0);
       text.prepend(entry.element);
-      // The space above the part is tried until the run's first line stands where it stood: a line's height at most
-      // off, never a line shown twice.
+      const missOf = (value: number) => {
+        setLead(value);
+        // How far above the place it stood the run's first line stands now.
+        return (((target - lineTop(first).offset) % height) + height) % height;
+      };
+      // The space above the part is tried until the run's first line stands where it stood. Each try moves the new
+      // part's lines down by what is missing; what is missing can only shrink.
       let space = 0;
       let best = { space: 0, miss: Number.POSITIVE_INFINITY };
       for (let attempt = 0; attempt < 8; attempt++) {
-        setLead(space);
-        const now = topOf();
-        const miss = (((target - now.offset) % height) + height) % height;
-        const off = Math.min(miss, height - miss);
-        if (off < best.miss) best = { space, miss: off };
-        if (off < 1) break;
+        const miss = missOf(space);
+        if (miss < best.miss) best = { space, miss };
+        if (miss < 1) break;
         space = (space + miss) % height;
       }
       // A heading that will not stand alone at a page's foot leaves room there: of the spaces that put the run's
       // first line where it stood, the largest is taken, so the page before it is as full as the book's own flow has it.
-      const missOf = (value: number) => {
-        setLead(value);
-        const miss = (((target - topOf().offset) % height) + height) % height;
-        return Math.min(miss, height - miss);
-      };
       let fits = 0, over = height / 4;
       if (best.miss < 1)
         for (let attempt = 0; attempt < 7; attempt++) {
@@ -367,13 +419,33 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
           if (missOf(best.space + middle) < 1) fits = middle;
           else over = middle;
         }
-      setLead((best.space + fits) % height);
-      publish();
-      const place = topOf();
-      // The page that ends where the run began.
+      let left = missOf((best.space + fits) % height);
+      // Lines are as high as they are: the new part's last line may end up to a line above where the run began,
+      // whatever the space above it. What is left is put between the two parts, where a chapter ends, so the run's
+      // first line stands exactly where it stood and no line of the page being left moves.
+      const joint = doc.createElement("div");
+      joint.className = "prepared-lead";
+      joint.setAttribute("aria-hidden", "true");
+      if (left >= 0.5 && left < height / 2) {
+        first.before(joint);
+        let room = 0;
+        for (let attempt = 0; attempt < 4 && left >= 0.5 && left < height / 2; attempt++) {
+          room += left;
+          joint.style.height = `${room}px`;
+          left = (((target - lineTop(first).offset) % height) + height) % height;
+        }
+      }
+      text.append(...after);
+      // Taking a part out of the page moved the place held to its parent: it is put back where it was.
+      if (held && text.contains(held.node)) {
+        pageMark = doc.createRange();
+        pageMark.setStart(held.node, held.offset);
+      }
       // The page that ends where the page being left begins.
       const mark = markPlace();
-      setColumn(Math.max(0, (mark ? mark.column : place.column) - perView));
+      setColumn(Math.max(0, (mark ? mark.column + side : lineTop(first).column) - perView));
+      dropAhead();
+      publish();
       turned();
     } catch (error) {
       if (!disposed && at === epoch) {
@@ -391,19 +463,34 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
     const { perView } = geometry();
     while (loaded.size > MAX_LOADED_PARTS && low < high) {
       const next = loaded.get(low + 1)!.element;
-      const rect = next.getBoundingClientRect();
-      const column = columnAt(rect.left);
-      if (column > startColumn - 2 * perView) return;
-      const offset = rect.top - scroller.getBoundingClientRect().top - (parseFloat(getComputedStyle(text).paddingTop) || 0);
+      const was = lineTop(next);
+      if (was.column > startColumn - 2 * perView) return;
       loaded.get(low)!.element.remove();
       loaded.delete(low);
       low++;
-      setLead(offset);
-      // The space is set again by what it gave: margins between blocks do not add up as heights do.
-      const now = next.getBoundingClientRect().top - scroller.getBoundingClientRect().top - (parseFloat(getComputedStyle(text).paddingTop) || 0);
-      if (Math.abs(now - offset) > 0.5) setLead(leadHeight + offset - now);
+      jointOf(next)?.remove();
+      // The next part's first line stands as far down its column as it stood. The space is set again by what it
+      // gave: margins between blocks do not add up as heights do.
+      setLead(was.offset);
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const now = lineTop(next);
+        if (now.column !== 0 || Math.abs(now.offset - was.offset) <= 0.5) break;
+        setLead(leadHeight + was.offset - now.offset);
+      }
       keepPage();
       publish();
+    }
+  };
+  /** Takes the run's last part out when it is far beyond the page shown: a reader turning back leaves parts there. */
+  const dropAhead = () => {
+    const { perView } = geometry();
+    while (loaded.size > MAX_LOADED_PARTS && low < high) {
+      const far = loaded.get(high)!.element;
+      if (lineTop(far).column < startColumn + (TURNS_AHEAD + 1) * perView) return;
+      jointOf(far)?.remove();
+      far.remove();
+      loaded.delete(high);
+      high--;
     }
   };
   applyLayout();
@@ -487,8 +574,9 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
   /** The text was laid out anew (another size, a resized band, a picture that loaded): the held sentence stays where it was. */
   const keepPlace = () => {
     if (pages) {
-      // The columns are counted anew: the space kept above the run was measured for the old ones.
+      // The columns are counted anew: the spaces kept above the run and between parts were measured for the old ones.
       setLead(0);
+      clearJoints();
       applyLayout();
       return keepPage();
     }
@@ -547,7 +635,15 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
     return true;
   }
   /** Loads the part after (1) or before (-1) the loaded ones, and takes out the far end when too many are in the page. */
-  async function extend(direction: -1 | 1) {
+  const arriving: Record<number, Promise<void> | null> = { [-1]: null, [1]: null };
+  /** As `load`; while a part is on its way in that direction, answers when that one is there. */
+  const extend = (direction: -1 | 1): Promise<void> => {
+    if (extending[direction] && arriving[direction]) return arriving[direction]!;
+    const coming = load(direction);
+    arriving[direction] = coming;
+    return coming;
+  };
+  async function load(direction: -1 | 1) {
     const part = direction > 0 ? high + 1 : low - 1;
     // In pages mode a part before the run comes in only with the turn back past the run's first page (`turnBack`).
     if (pages && direction < 0) return;
@@ -606,7 +702,7 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
     if (disposed || low < 0) return;
     if (pages) {
       const { perView } = geometry();
-      if (columns() - startColumn - perView < TURNS_AHEAD * perView) void extend(1);
+      if (columns() - startColumn - perView < TURNS_AHEAD * perView && !extending[1]) void extend(1);
       // The part before is fetched ahead, so that the turn back past the run's first page does not wait for it.
       if (startColumn < TURNS_AHEAD * perView && low > 0 && !stopped[-1]) void book.part(low - 1).catch(() => {});
       return;
@@ -621,6 +717,18 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
     // Pages are turned by this module alone: no scroll of a page is the reader's.
     if (pages) {
       ownTop = null;
+      // The browser itself may move the band (a link focused with the keyboard, a word found in the page): the page
+      // that holds what it showed is shown whole.
+      // Not while the band has a size the pages are not yet laid out for: a scroll event comes before the
+      // observer of the band's size, and the position is then the old layout's.
+      if (`${scroller.clientWidth}x${scroller.clientHeight}` !== size) return;
+      const { step } = geometry();
+      if (scroller.scrollTop !== 0) scroller.scrollTop = 0;
+      if (low >= 0 && Math.abs(scroller.scrollLeft - shownLeft) >= 1 && Math.abs(scroller.scrollLeft - startColumn * step) >= 1) {
+        const column = Math.min(columns() - 1, Math.max(0, Math.round(scroller.scrollLeft / step)));
+        setColumn(pageOfColumn(column));
+        turned();
+      }
       return;
     }
     const mine = ownTop !== null && Math.abs(scroller.scrollTop - ownTop) < 1;
@@ -767,6 +875,7 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
   };
   text.addEventListener("load", late, true);
   void doc.fonts?.ready.then(late);
+  doc.fonts?.addEventListener?.("loadingdone", late);
 
   /** After a position of ours: the scroll event it caused has been read, and the neighbours follow. */
   const settle = async (at: number) => {
@@ -861,7 +970,11 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
         const box = boxOf(elements);
         // A sentence the book hides has no box: it is passed over.
         if (!box) return;
-        if (pages) return toColumnOf(firstRect(elements)!.left, how === "follow");
+        if (pages) {
+          toColumnOf(firstRect(elements)!.left, how === "follow");
+          // The page is held by the sentence shown, wherever on the page it stands.
+          return markAt(elements);
+        }
         const band = scroller.getBoundingClientRect();
         if (how === "start" || box.bottom - box.top > band.height * 0.75) toTop(box.top);
         else if (box.top < band.top + TOP_ROOM || box.bottom > band.top + band.height * 0.75) setScroll(scroller.scrollTop + box.top - band.top - band.height * 0.15);
@@ -911,21 +1024,42 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
           setColumn(target);
           return turned();
         }
-        // The next page is in a part still to come: it is shown when the part is there.
-        if (high + 1 >= manifest.parts.length) return;
+        // The next page is in a part still to come: it is shown when the part is there, also when the part was
+        // already on its way at the tap (#445: a tap is never lost in such a window).
         const at = epoch;
-        void extend(1).then(() => {
-          if (disposed || at !== epoch || target >= columns()) return;
-          setColumn(target);
-          turned();
-        });
+        const from = moves;
+        const arrived = (tries: number) => {
+          if (disposed || at !== epoch || moves !== from || stopped[1]) return;
+          // The columns may have been counted anew while the part came (a part taken out behind the reader).
+          const next = startColumn + perView;
+          if (next < columns()) {
+            setColumn(next);
+            return turned();
+          }
+          if (tries > 0 && high + 1 < manifest.parts.length) void extend(1).then(() => arrived(tries - 1));
+        };
+        arrived(3);
         return;
       }
-      // Back past the run's first page, or onto the space left above it: the part before comes in first.
-      if (low > 0 && (target < 0 || (target < perView && leadHeight > 0.5))) return void turnBack();
+      // The book's first page: the space that stood above its part while it was put in has nothing before it to
+      // fill it, so the text is laid out from the top again.
+      if (low === 0 && leadHeight > 0.5 && target <= 0) {
+        setLead(0);
+        setColumn(0);
+        return turned();
+      }
+      // Back past the run's first page, or onto the space left above it: the part before comes in first. While it
+      // cannot be loaded, the run's own first column can still be turned to.
+      if (low > 0 && (target < 0 || (target === 0 && leadHeight > 0.5 && !stopped[-1]))) return void turnBack();
       if (startColumn === 0) return;
       setColumn(Math.max(0, target));
       turned();
+    },
+    /** The reader's Appearance changed what the text looks like (size, line height, font, margin): in pages mode the columns hold other text now, and the page that holds the reader's place is shown. */
+    restyled() {
+      if (disposed || !pages || low < 0 || scroller.clientHeight === 0) return;
+      keepPlace();
+      fill();
     },
     /**
      * The page turn inside the narrated sentence (#508), in pages mode: `pageFor` is given the sentence's words with
@@ -955,6 +1089,7 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
       if (stays) {
         // One page or two: the page shown begins where it began.
         setLead(0);
+        clearJoints();
         applyLayout();
         keepPage();
         reported = firstOnPage();
@@ -962,6 +1097,7 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
         return;
       }
       setLead(0);
+      clearJoints();
       scroller.scrollLeft = 0;
       startColumn = 0;
       pageMark = null;
@@ -999,7 +1135,7 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
     },
     destroy() {
       disposed = true;
-      if (remark) clearTimeout(remark);
+      doc.fonts?.removeEventListener?.("loadingdone", late);
       epoch++;
       release();
       if (frame) cancelAnimationFrame(frame);

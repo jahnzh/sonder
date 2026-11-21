@@ -20,7 +20,11 @@ export const MANIFEST_FRESH_MS = 5 * 60_000;
 export const LOAD_ATTEMPTS = 3;
 /** The waits before the second and the third attempt. */
 export const LOAD_WAITS_MS = [1000, 3000];
-/** The waits in use: a browser test may set shorter ones (`window.__sonderLoadWaits`) so as not to sit through them. */
+/**
+ * The waits in use: a browser test may set shorter ones (`window.__sonderLoadWaits`) so as not to sit through them.
+ * It changes the waits only and must never change how often something is asked (`LOAD_ATTEMPTS`): a page that could
+ * raise that would turn one failed answer into a stream of requests.
+ */
 const loadWaits = (): readonly number[] => {
   const set = (globalThis as { __sonderLoadWaits?: unknown }).__sonderLoadWaits;
   return Array.isArray(set) && set.length && set.every((value) => typeof value === "number" && value >= 0) ? (set as number[]) : LOAD_WAITS_MS;

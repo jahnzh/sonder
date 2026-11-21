@@ -4,10 +4,14 @@ import { randomUUID } from "node:crypto";
 import { longBookFixture } from "../long-book-fixture";
 import { gotoRead } from "./read-face";
 import { choosePreparedView } from "./prepared-view";
+import { closeAppearance, openAppearance, setStepper } from "./reader-appearance";
 // Pages mode in the new reading view (step 4 of the reader plan, #803): the loaded parts as one run of CSS columns.
 // What is new in it is checked here: a turn shows the next page with no line lost or shown twice, parts come and go
 // without moving a line of the page being read, the turn back across a part lands on a full page that ends where the
 // next begins, also with two pages side by side, and a turn saves the sentence at the top as today's reader does.
+// And what a review of it found (2026-11-21): the page is kept when the band is resized again and again and when the
+// text's size changes, the pages stay exact at an odd and a fractional width, a part taken out behind or beyond the
+// reader costs no line, and a tap for a page whose part is still on its way is not lost.
 test.use({ serviceWorkers: "block" });
 const imported: string[] = [];
 let appearance: any = null;
@@ -35,6 +39,7 @@ async function longBook(page: Page) {
   return { ebook, sentences, manifest, ordinal: (id: string) => order.indexOf(id) };
 }
 const band = (page: Page) => page.locator(".reader-room .reader-viewport");
+type Shown = { ids: string[]; starts: string[]; lines: string[]; bottom: number; height: number; pad: number; line: number; parts: string; pages: string | null };
 /** The sentences drawn on the page shown, in order, with where each of their line boxes is: the page as it is read. */
 const pageOf = (page: Page) =>
   band(page).evaluate((host) => {
@@ -70,6 +75,41 @@ const turn = async (page: Page, direction: 1 | -1) => {
   await expect.poll(async () => (await pageOf(page)).lines[0], { timeout: 15000 }).not.toBe(before.lines[0]);
   return pageOf(page);
 };
+/** Two pages follow each other: no sentence between them is left out, and no line of the first comes again. */
+const expectJoined = (before: Shown, now: Shown, ordinal: (id: string) => number, what: string) => {
+  const gap = ordinal(now.ids[0]!) - ordinal(before.ids.at(-1)!);
+  expect(gap === 0 || gap === 1, `${what}: ${before.ids.at(-1)} then ${now.ids[0]}`).toBe(true);
+  expect(now.lines.filter((line) => before.lines.includes(line)), what).toEqual([]);
+};
+/** The page as it stands once the layout holds still: the band's size was taken and two reads apart agree. */
+const settledPage = async (page: Page, resizes?: number) => {
+  if (resizes !== undefined) await expect.poll(async () => Number(await band(page).getAttribute("data-view-resizes")), { timeout: 15000 }).toBeGreaterThan(resizes);
+  let before = "";
+  await expect(async () => {
+    const now = JSON.stringify([(await pageOf(page)).lines, await band(page).getAttribute("data-view-resizes"), await band(page).boundingBox()]);
+    const same = now === before;
+    before = now;
+    expect(same).toBe(true);
+  }).toPass({ timeout: 15000, intervals: [200] });
+  return pageOf(page);
+};
+const resizesOf = async (page: Page) => Number(await band(page).getAttribute("data-view-resizes"));
+/**
+ * Where the page stands in the band, to a hundredth of a px: the left edge of its first line, and how many line
+ * boxes an edge of the band cuts through.
+ */
+const standing = (page: Page) =>
+  band(page).evaluate((host) => {
+    const box = host.getBoundingClientRect();
+    let left: number | null = null, cut = 0;
+    for (const span of host.querySelectorAll<HTMLElement>("[data-s]"))
+      for (const rect of span.getClientRects()) {
+        if (rect.width < 1 || rect.right <= box.left || rect.left >= box.right) continue;
+        if ((rect.left < box.left - 0.5 && rect.right > box.left + 0.5) || (rect.left < box.right - 0.5 && rect.right > box.right + 0.5)) cut++;
+        else if (left === null || rect.left - box.left < left) left = rect.left - box.left;
+      }
+    return { left: left === null ? null : Math.round(left * 100) / 100, cut, width: box.width };
+  });
 const opened = async (page: Page, ebook: string) => {
   await gotoRead(page, ebook);
   await expect(band(page)).toHaveAttribute("data-mode", "pages");
@@ -101,20 +141,20 @@ test("pages are turned by a tap: each begins where the one before ended, back re
     const now = await turn(page, 1);
     expectFull(before, `page ${step}`);
     // No sentence is lost between two pages and none of a page before comes again, save the one that crosses.
-    const gap = ordinal(now.ids[0]!) - ordinal(before.ids.at(-1)!);
-    expect(gap === 0 || gap === 1, `from page ${step} to the next: ${before.ids.at(-1)} then ${now.ids[0]}`).toBe(true);
-    expect(now.lines.filter((line) => before.lines.includes(line))).toEqual([]);
+    expectJoined(before, now, ordinal, `from page ${step} to the next`);
     before = now;
   }
-  // The place saved is the first sentence that starts on the page, with no CFI: opening it shows this page again.
-  await expect.poll(async () => (await (await page.request.get(`/api/reader/${ebook}/state`)).json()).checkpoint?.locator.paragraphId, { timeout: 15000 }).toBe(before.starts[0]);
+  // The place saved is the first sentence that starts on the page, with no CFI. Opened again, the saved sentence is
+  // on the page shown; the page need not begin where the page that was left began (ADR 0025).
+  const saved = before.starts[0]!;
+  await expect.poll(async () => (await (await page.request.get(`/api/reader/${ebook}/state`)).json()).checkpoint?.locator.paragraphId, { timeout: 15000 }).toBe(saved);
   await page.reload();
-  await expect.poll(async () => (await pageOf(page)).lines, { timeout: 15000 }).toEqual(before.lines);
-  // Back, page by page, shows the same pages again, line for line.
-  const forward = [before];
+  await expect.poll(async () => (await pageOf(page)).ids, { timeout: 15000 }).toContain(saved);
+  const reopened = await settledPage(page);
+  // Back and forward again shows the same page, line for line.
   const back = await turn(page, -1);
   const again = await turn(page, 1);
-  expect(again.lines).toEqual(forward[0]!.lines);
+  expect(again.lines).toEqual(reopened.lines);
   expect(ordinal(back.ids.at(-1)!)).toBeLessThanOrEqual(ordinal(again.ids[0]!));
 });
 
@@ -122,28 +162,34 @@ test("reading on through many parts: parts come and go behind the reader and not
   test.setTimeout(240000);
   // Two large pages a turn, so that parts go by quickly.
   await page.setViewportSize({ width: 1920, height: 1080 });
-  const { ebook, sentences, manifest } = await longBook(page);
+  const { ebook, sentences, manifest, ordinal } = await longBook(page);
   expect(manifest.parts.length).toBeGreaterThan(8);
   // From near the end of the third part on, so that parts are soon taken out behind.
   const start = manifest.parts[2].last as string;
   await placeAt(page, ebook, sentences, start);
   await opened(page, ebook);
   const seen = new Set<string>();
-  let moved = 0;
+  let moved = 0, drops = 0;
+  let shown = await settledPage(page);
   for (let step = 0; step < 400; step++) {
+    // The page as it was read right after its turn is the page still standing when the next turn is made: parts
+    // that came or went meanwhile moved no line of it.
+    const still = await pageOf(page);
+    if (still.lines.join("|") !== shown.lines.join("|")) moved++;
     const now = await turn(page, 1);
-    // What the page shows right after the turn is what it shows once the parts around it have come and gone.
-    await page.waitForTimeout(120);
-    const later = await pageOf(page);
-    if (later.lines.join("|") !== now.lines.join("|")) moved++;
-    for (const part of later.parts.split(",")) seen.add(part);
-    expect(later.parts.split(",").length).toBeLessThanOrEqual(5);
-    if (Math.min(...later.parts.split(",").map(Number)) >= 4) break;
+    // And the page turned to begins where that page ended, also across a part taken out behind the reader.
+    expectJoined(still, now, ordinal, `turn ${step}, parts ${still.parts} then ${now.parts}`);
+    if (now.parts.split(",")[0] !== still.parts.split(",")[0]) drops++;
+    for (const part of now.parts.split(",")) seen.add(part);
+    expect(now.parts.split(",").length).toBeLessThanOrEqual(5);
+    shown = now;
+    if (Math.min(...now.parts.split(",").map(Number)) >= 5) break;
   }
   expect(moved, "pages whose lines moved while they were shown").toBe(0);
+  expect(drops, "parts taken out behind the reader").toBeGreaterThanOrEqual(3);
   // Parts were taken out behind the reader on the way: the part the book was opened in is gone, and the one after it.
   const left = ((await band(page).getAttribute("data-parts")) || "").split(",").map(Number);
-  expect(Math.min(...left)).toBeGreaterThanOrEqual(4);
+  expect(Math.min(...left)).toBeGreaterThanOrEqual(5);
   expect(seen.size).toBeGreaterThan(6);
 });
 
@@ -178,9 +224,7 @@ for (const [name, viewport, pages] of [["one page", { width: 390, height: 844 },
     for (let step = 0; step < 4; step++) {
       const earlier = await turn(page, -1);
       expectFull(earlier, `page ${step} further back`);
-      const gap = ordinal(next.ids[0]!) - ordinal(earlier.ids.at(-1)!);
-      expect(gap === 0 || gap === 1, `${earlier.ids.at(-1)} then ${next.ids[0]}`).toBe(true);
-      expect(earlier.lines.filter((line) => next.lines.includes(line))).toEqual([]);
+      expectJoined(earlier, next, ordinal, `page ${step} further back`);
       next = earlier;
     }
   });
@@ -211,10 +255,12 @@ test("a swipe, the arrow keys and the desktop's page arrows turn the page too", 
   await page.keyboard.press("ArrowLeft");
   expect((await changed(second)).lines).toEqual(first.lines);
   // On a desktop the arrows beside the text turn two pages at a time.
+  const resizes = await resizesOf(page);
   await page.setViewportSize({ width: 1920, height: 1080 });
   await expect(band(page)).toHaveAttribute("data-pages", "2");
-  await expect.poll(async () => (await pageOf(page)).ids[0]).toBe(first.ids[0]);
-  const spread = await pageOf(page);
+  // The band has taken its new size and the layout holds still before the page is read to compare against.
+  const spread = await settledPage(page, resizes);
+  expect(spread.ids[0]).toBe(first.ids[0]);
   await page.getByRole("button", { name: "Next page", exact: true }).click();
   const next = await changed(spread);
   expect(next.lines.filter((line) => spread.lines.includes(line))).toEqual([]);
@@ -241,7 +287,143 @@ test("Reading mode switches the view between pages and scroll, and the sentence 
   expect(await band(page).locator(".prepared-scroll").evaluate((scroller) => getComputedStyle(scroller).overflowY)).not.toBe("hidden");
   await mode("paginated");
   await expect(band(page)).toHaveAttribute("data-mode", "pages");
-  await expect.poll(async () => (await pageOf(page)).lines, { timeout: 15000 }).toEqual(shown.lines);
+  // The saved sentence is on the page shown (the rule of ADR 0025; the page need not begin as it began).
+  await expect.poll(async () => (await pageOf(page)).ids, { timeout: 15000 }).toContain(top);
+});
+
+test("a band resized and back, again and again, keeps the page being read; so does opening Appearance and another text size", async ({ page }) => {
+  test.setTimeout(180000);
+  const { ebook } = await longBook(page);
+  await opened(page, ebook);
+  let read = await settledPage(page);
+  for (let step = 0; step < 8; step++) read = await turn(page, 1);
+  // The place the page is held by is its first character: the sentence it is in stays on the page shown.
+  const held = read.ids[0]!;
+  for (let cycle = 0; cycle < 4; cycle++) {
+    let resizes = await resizesOf(page);
+    await page.setViewportSize({ width: 390, height: 520 });
+    expect((await settledPage(page, resizes)).ids, `cycle ${cycle}, the smaller band`).toContain(held);
+    resizes = await resizesOf(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect((await settledPage(page, resizes)).lines, `cycle ${cycle}, the band as it was`).toEqual(read.lines);
+  }
+  // Appearance docked under the text makes the band smaller; a larger Size moves every column. Nothing but the
+  // reader's own turn moves the place.
+  const room = page.locator(".reader-room");
+  let resizes = await resizesOf(page);
+  await openAppearance(page, room);
+  expect((await settledPage(page, resizes)).ids, "Appearance open").toContain(held);
+  await setStepper(room, "Size", 23);
+  expect((await settledPage(page)).ids, "Size 23, Appearance open").toContain(held);
+  resizes = await resizesOf(page);
+  await closeAppearance(room);
+  expect((await settledPage(page, resizes)).ids, "Size 23").toContain(held);
+  resizes = await resizesOf(page);
+  await openAppearance(page, room);
+  await setStepper(room, "Size", appearance.reader.size);
+  await closeAppearance(room);
+  expect((await settledPage(page, resizes)).lines, "the Size it had").toEqual(read.lines);
+});
+
+for (const [name, viewport, width, pages] of [
+  ["two pages in a band of an odd width", { width: 1921, height: 1080 }, null, "2"],
+  ["one page in a band of a fractional width", { width: 390, height: 844 }, 372.6, "1"],
+] as const)
+  test(`the pages stay exact over many turns: ${name}`, async ({ page }) => {
+    test.setTimeout(180000);
+    await page.setViewportSize(viewport);
+    const { ebook, ordinal } = await longBook(page);
+    await opened(page, ebook);
+    if (width) {
+      const resizes = await resizesOf(page);
+      await page.addStyleTag({ content: `.reader-room .reader-viewport { width: ${width}px !important; max-width: ${width}px !important; align-self: flex-start !important; }` });
+      await settledPage(page, resizes);
+      expect((await standing(page)).width).toBeCloseTo(width, 1);
+    }
+    let before = await settledPage(page);
+    expect(before.pages).toBe(pages);
+    const first = await standing(page);
+    expect(first.left).not.toBeNull();
+    // 60 turns, into the third part: a fraction of a px per page would show as a moving left edge and cut lines.
+    for (let step = 0; step < 60; step++) {
+      const now = await turn(page, 1);
+      expectJoined(before, now, ordinal, `turn ${step}`);
+      expect(await standing(page), `turn ${step}`).toEqual(first);
+      before = now;
+    }
+  });
+
+test("two pages opened at a place in the run's last column stand at the margin, and the turn from there leaves nothing out", async ({ page }) => {
+  test.setTimeout(120000);
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  const { ebook, sentences, manifest, ordinal } = await longBook(page);
+  // The first part's last sentence: alone in the page, that part ends in the column the place is in.
+  await placeAt(page, ebook, sentences, manifest.parts[0].last);
+  await opened(page, ebook);
+  const here = await settledPage(page);
+  expect(here.pages).toBe("2");
+  expect(here.ids).toContain(manifest.parts[0].last);
+  const stands = await standing(page);
+  expect(stands.cut).toBe(0);
+  const next = await turn(page, 1);
+  expectJoined(here, next, ordinal, "the first turn");
+  // Every page stands where the next one does: at the margin.
+  expect(await standing(page)).toEqual(stands);
+  const back = await turn(page, -1);
+  expect(back.lines).toEqual(here.lines);
+});
+
+test("reading backwards over many parts: parts beyond the reader are taken out, and each page ends where the next begins", async ({ page }) => {
+  test.setTimeout(240000);
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  const { ebook, sentences, manifest, ordinal } = await longBook(page);
+  await placeAt(page, ebook, sentences, manifest.parts[9].first);
+  await opened(page, ebook);
+  let next = await settledPage(page);
+  let most = 0;
+  for (let step = 0; step < 400; step++) {
+    const earlier = await turn(page, -1);
+    expectJoined(earlier, next, ordinal, `turn ${step} back, parts ${next.parts} then ${earlier.parts}`);
+    most = Math.max(most, earlier.parts.split(",").length);
+    next = earlier;
+    if (Math.min(...earlier.parts.split(",").map(Number)) <= 2) break;
+  }
+  expect(Math.min(...next.parts.split(",").map(Number))).toBeLessThanOrEqual(2);
+  expect(most, "parts in the page at once").toBeLessThanOrEqual(5);
+  // The part the book was opened in is long gone from the page.
+  expect(next.parts.split(",").includes("9")).toBe(false);
+});
+
+test("a tap for the next page while its part is still on its way turns the page when the part is there", async ({ page }) => {
+  test.setTimeout(120000);
+  const { ebook, sentences, manifest, ordinal } = await longBook(page);
+  await placeAt(page, ebook, sentences, manifest.parts[4].last);
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let asked = 0;
+  await page.route(/\/prepared\/[0-9a-f]+\/parts\/5$/, async (route) => {
+    asked++;
+    await held;
+    await route.continue();
+  });
+  await opened(page, ebook);
+  const here = await settledPage(page);
+  // The view asks for the next part ahead of the reader: it is on its way, and held back, when the reader taps.
+  await expect.poll(() => asked).toBeGreaterThan(0);
+  const box = (await band(page).boundingBox())!;
+  await page.mouse.click(box.x + box.width * 0.92, box.y + box.height / 2);
+  await page.waitForTimeout(500);
+  expect((await pageOf(page)).lines, "nothing to turn to yet").toEqual(here.lines);
+  release();
+  // One tap, no second: the page turns when the part arrives.
+  await expect.poll(async () => (await pageOf(page)).ids.some((id) => ordinal(id) > ordinal(manifest.parts[4].last)), { timeout: 15000 }).toBe(true);
+  // The part continues in the column the part before ended in, so the page that was left has gained lines: read
+  // again, it ends where the page turned to begins.
+  const turnedTo = await pageOf(page);
+  const left = await turn(page, -1);
+  expect(left.lines.filter((line) => !here.lines.includes(line)).every((line) => ordinal(line.split("@")[0]!) > ordinal(manifest.parts[4].last))).toBe(true);
+  expectJoined(left, turnedTo, ordinal, "the turn that waited");
+  expect(asked).toBe(1);
 });
 
 for (const direction of [1, -1] as const)
