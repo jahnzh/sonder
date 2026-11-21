@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { DEFAULT_BAR_SECONDS, barSeconds, estimateLines, estimateOnHost } from "../scripts/check-estimate.mjs";
+import { DEFAULT_BAR_SECONDS, barSeconds, compareWithReport, estimateLines, estimateOnHost } from "../scripts/check-estimate.mjs";
 
 const lisa = { fixedSeconds: 308, speed: 1, shards: 6, startSeconds: 80 };
 const wsl = { fixedSeconds: 85, speed: 0.46, shards: 5, startSeconds: 60 };
@@ -55,4 +55,26 @@ test("the bar is 30 minutes, a named setting of the hosts file, and SONDER_CI_BA
   const tracked = JSON.parse(fs.readFileSync(new URL("../scripts/ci-hosts.json", import.meta.url), "utf8"));
   assert.equal(tracked.dispatch.barSeconds, 1800, "the tracked bar");
   for (const id of ["wsl", "lisa"]) assert.ok(tracked[id].estimate.fixedSeconds > 0 && tracked[id].estimate.shards > 0, `${id} has figures`);
+});
+
+test("a finished check says which stage was more than a tenth off its estimate, and what to refresh", () => {
+  const config = { lisa: { estimate: lisa }, wsl: { estimate: wsl }, deck: {} };
+  const commit = { suite, changed: [], scope: "full" };
+  const report = (browserSeconds, unitSeconds = 245, result = "passed") => ({
+    result, sha: "70c08ca5d6befd9797817cf3da38a0757fa45a23",
+    stages: [{ name: "install", status: "passed", durationMs: 10_000 }, { name: "build", status: "passed", durationMs: 53_000 }, { name: "unit", status: "passed", durationMs: unitSeconds * 1000 }, { name: "browser", status: "passed", durationMs: browserSeconds * 1000 }],
+  });
+  // lisa's estimate here: fixed 308, browser 1,280.
+  assert.deepEqual(compareWithReport(commit, "lisa", config, report(1300)), [], "within a tenth: nothing");
+  const [late] = compareWithReport(commit, "lisa", config, report(1603), "artifacts/ci/70c0/run");
+  assert.match(late, /^estimate off on lisa: the browser stage estimated 1280 s, took 1603 s \(\+25 %\)\. Refresh the table of times from this check: node scripts\/spec-seconds\.mjs artifacts\/ci\/70c0\/run\/playwright-results\.json "lisa, 70c08ca, \d{4}-\d\d-\d\d"$/);
+  assert.match(compareWithReport(commit, "lisa", config, report(1000))[0], /took 1000 s \(-22 %\)/, "too high an estimate is said too");
+  // On a host whose seconds are not the table's, the figure to set is its speed.
+  assert.match(compareWithReport(commit, "wsl", config, report(1200, 22))[0], /^estimate off on wsl: the browser stage estimated 888 s, took 1200 s \(\+35 %\)\. Set estimate\.speed for wsl in scripts\/ci-hosts\.json \(it is 0\.46\)/);
+  assert.match(compareWithReport(commit, "lisa", config, report(1300, 420))[0], /^estimate off on lisa: the fixed stages \(install, build, unit\) estimated 308 s, took 483 s \(\+57 %\)\. Set estimate\.fixedSeconds for lisa/);
+  // No measurement: a check that failed, a host without figures, no report.
+  assert.deepEqual(compareWithReport(commit, "lisa", config, report(400, 245, "failed")), []);
+  assert.deepEqual(compareWithReport(commit, "lisa", config, report(1603, 245, "passed_with_flaky")).length, 1);
+  assert.deepEqual(compareWithReport(commit, "deck", config, report(1603)), []);
+  assert.deepEqual(compareWithReport(commit, "lisa", config, null), []);
 });
