@@ -68,6 +68,12 @@ function readStore() {
 
 let loading: Promise<void> | null = null;
 let again = false;
+/** The user whose library the server has answered for, or could not be reached for, at least once since the app opened. */
+let answeredFor = 0;
+/** This device's own places have been read once (`useDevicePlaces`). */
+let placesRead = false;
+/** Tells the pages that one of the two became known; the works themselves are as they were. */
+const known = () => publish({ ...snapshot });
 
 /**
  * Reads `GET /api/library` with the stored entity tag. "Not modified" leaves the store as it is; a new body
@@ -80,6 +86,7 @@ export function refreshLibraryWorks(): Promise<void> {
     return loading;
   }
   loading = (async () => {
+    const owner = userId();
     try {
       do {
         again = false;
@@ -87,6 +94,11 @@ export function refreshLibraryWorks(): Promise<void> {
       } while (again);
     } finally {
       loading = null;
+      // Answered, refused or out of reach: what the device holds now is all there is to decide by.
+      if (owner === userId() && answeredFor !== owner) {
+        answeredFor = owner;
+        known();
+      }
     }
   })();
   return loading;
@@ -200,6 +212,11 @@ const noPlaces: DevicePlaces = { listening: [], reading: [] };
 function useDevicePlaces(): DevicePlaces {
   const [places, setPlaces] = useState(noPlaces);
   useEffect(() => {
+    const seen = () => {
+      if (placesRead) return;
+      placesRead = true;
+      known();
+    };
     const subscription = liveQuery(async (): Promise<DevicePlaces> => {
       const listening = await localDB.progress.toArray();
       const rows = await localDB.preferences.where("key").startsWith(READING_PREFIX).toArray();
@@ -215,7 +232,13 @@ function useDevicePlaces(): DevicePlaces {
         });
       }
       return { listening, reading };
-    }).subscribe({ next: setPlaces, error: () => {} });
+    }).subscribe({
+      next: (value) => {
+        setPlaces(value);
+        seen();
+      },
+      error: seen,
+    });
     return () => subscription.unsubscribe();
   }, []);
   return places;
@@ -280,13 +303,34 @@ export function useWork(workId: string): WorkRead {
   return { work, status: stored ? "ready" : read ? read.status : "loading", reload };
 }
 
+
+/** What `libraryDecided` reads, apart from the works. */
+export type LibraryKnown = { stored: boolean; works: number; placesRead: boolean; answered: boolean };
 /**
- * Whether the signed-in user's stored works have been read from the device database (they may be empty): until
- * then the Library cannot tell an empty library from one not read yet (#577).
+ * Whether the Library knows enough to draw what stands above its chips (the Continue block, #841). The chips must
+ * not move once they are shown, and the Continue block above them comes from the works with this device's places:
+ *
+ * - nothing is decided before the device's stored works and its own places have been read;
+ * - a device that holds works decides by them at once, as it always did: it does not wait for the server;
+ * - a device that holds none (a new device, or an empty library) waits for the server's first answer, or for the
+ *   request to fail, since that answer may bring the book in progress.
  */
-export function useLibraryWorksStored(): boolean {
+export function libraryDecided(known: LibraryKnown): boolean {
+  return known.stored && known.placesRead && (known.works > 0 || known.answered);
+}
+
+/** `libraryDecided` for the signed-in user. While it is undecided for want of the server's answer, the answer is asked for. */
+export function useLibraryDecided(): boolean {
   const store = useSyncExternalStore(subscribe, current);
-  return store.stored && store.owner === userId();
+  const owner = userId();
+  const own = store.stored && store.owner === owner;
+  const decided = libraryDecided({ stored: own, works: own ? store.works.size : 0, placesRead, answered: answeredFor === owner });
+  const waiting = own && placesRead && !decided;
+  useEffect(() => {
+    // Asked for when the app opened; asked again here in case that answer was another account's.
+    if (waiting) void refreshLibraryWorks().catch(() => {});
+  }, [waiting, owner]);
+  return decided;
 }
 
 /**

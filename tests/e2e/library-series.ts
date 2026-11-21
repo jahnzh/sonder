@@ -1,6 +1,6 @@
 // The Library's Series chip (#567): its saved series are rows named by the series' name and its line
 // ("<author> · N of M finished"). Specs that opened a series from the old section above the shelf open it here.
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -14,6 +14,8 @@ export const savedSeriesRow = (page: Page, name: string, author: string) =>
 /** Chooses the Library's Series chip (the Library is shown). */
 export async function showSavedSeries(page: Page) {
   await seriesChip(page).click();
+  // The chip took the click: a list that does not come then means its own state, not a click the page lost (#841).
+  await expect(seriesChip(page)).toHaveAttribute("aria-pressed", "true");
 }
 
 /** From the Library: the Series chip, then the series' row. */

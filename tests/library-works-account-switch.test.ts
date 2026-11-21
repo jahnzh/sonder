@@ -15,7 +15,19 @@ globalThis.sessionStorage = {
 } as any;
 
 const { selectUserStorage, userId, replaceForAccount, AccountChanged } = await import("../src/lib.ts");
-const { refreshLibraryWorks, setAccountStorageForTesting, storeLibraryWorks } = await import("../src/library-works-store.ts");
+const { libraryDecided, refreshLibraryWorks, setAccountStorageForTesting, storeLibraryWorks } = await import("../src/library-works-store.ts");
+
+test("what stands above the Library's chips is decided by the stored works at once, and without any only by the server's answer (#841)", () => {
+  const known = { stored: true, placesRead: true, works: 0, answered: false };
+  // Nothing before the device's works and its own places have been read: an empty list is not an empty library.
+  assert.equal(libraryDecided({ ...known, stored: false, works: 3, answered: true }), false);
+  assert.equal(libraryDecided({ ...known, placesRead: false, works: 3, answered: true }), false);
+  // A device that holds works decides by them and does not wait for the server.
+  assert.equal(libraryDecided({ ...known, works: 3 }), true);
+  // A new device, or an empty library: the server's first answer may bring the book in progress.
+  assert.equal(libraryDecided(known), false);
+  assert.equal(libraryDecided({ ...known, answered: true }), true);
+});
 
 type Row = Record<string, unknown>;
 

@@ -8,6 +8,7 @@ import { listenFace, nowPlaying, openListen, openRead } from "./now-playing";
 import { playFromLibrary } from "./library-play";
 import { installCpuThrottle } from "./cpu-throttle";
 import { revealControls } from "./reader-controls";
+import { withFirstAnswers } from "./first-answers";
 // SONDER_E2E_CPU_THROTTLE=4 runs it on a processor slowed four times (Chromium).
 installCpuThrottle(test);
 
@@ -437,7 +438,8 @@ test("recordings keep separate histories across switches and reload", async ({ p
   await expect.poll(async () => (await history(page, second.recordingId)).length).toBe(1);
   expect((await history(page, first.recordingId)).map((entry: any) => entry.position)).toEqual([80.25, 180]);
   expect((await history(page, second.recordingId)).map((entry: any) => entry.position)).toEqual([50.5]);
-  await page.reload();
+  // The page has its first answers before the first click: a click made while they arrive can be lost (#841).
+  await withFirstAnswers(page, () => page.reload());
   // The address names Now playing (#593), so the reload shows it again: close it to reach the Library.
   await nowPlaying(page).getByRole("button", { name: "Close now playing", exact: true }).click();
   await expect(nowPlaying(page)).toBeHidden();
