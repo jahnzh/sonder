@@ -11,6 +11,19 @@ import { connectAudiobookDb, listCrossingThree, saveSeriesOnPage, unsaveSeries, 
  */
 test("a saved series keeps the provenance of a book added before it and counts its completion", async ({ page }) => {
   await connectAudiobookDb(page);
+  // The test saves The Crossing (701), which adds books of it to the library. At the end it puts the series and the
+  // library back as it found them, as series-discovery does: the next spec or project on the same server (a run of
+  // this spec in Firefox after Chromium) finds Crossing Two not in the library again.
+  const inLibrary = async () =>
+    new Set(
+      ((await (await page.request.get("/api/books")).json()) as { title: string; inLibrary: boolean }[])
+        .filter((book) => book.inLibrary)
+        .map((book) => book.title),
+    );
+  const savedBefore = ((await (await page.request.get("/api/series")).json()) as { id: string }[]).some((series) => String(series.id) === "701");
+  const addedBefore: string[] = savedBefore
+    ? (await (await page.request.get("/api/series/701")).json()).works.filter((work: { added: boolean }) => work.added).map((work: { id: string }) => work.id)
+    : [];
   const initialBooks = await (await page.request.get("/api/books")).json();
   const seededAlice = initialBooks.find(
     (book: { title: string; inLibrary: boolean }) =>
@@ -21,6 +34,7 @@ test("a saved series keeps the provenance of a book added before it and counts i
   // Saved through its page and Save series with the defaults (#564).
   await unsaveSeries(page, "701");
   await listCrossingThree(page, false);
+  const before = await inLibrary();
   await viewSeriesFromDiscover(page, "Crossing", "The Crossing", "Ada North");
   await saveSeriesOnPage(page);
   const books = await (await page.request.get("/api/books")).json();
@@ -65,4 +79,12 @@ test("a saved series keeps the provenance of a book added before it and counts i
   }).toBe("unread");
   await page.reload();
   await expect(intro).toHaveText(/^Ada North · 0 of \d+ finished$/);
+
+  // Back as it was: the series removed with the books this save added, and saved again if it was saved before.
+  const added = (await (await page.request.get("/api/series/701")).json()).works.filter(
+    (work: { id: string; title: string; added: boolean }) => work.added && !addedBefore.includes(work.id) && !before.has(work.title),
+  );
+  expect((await page.request.delete("/api/series/701", { data: { bookIds: added.map((work: { id: string }) => work.id) } })).ok()).toBe(true);
+  if (savedBefore) expect((await page.request.post("/api/series", { data: { id: "701", bookIds: addedBefore } })).ok()).toBe(true);
+  expect(await inLibrary()).toEqual(before);
 });
