@@ -67,6 +67,7 @@ if (logPath) {
       PLAYWRIGHT_JSON_OUTPUT_NAME: process.env.PLAYWRIGHT_JSON_OUTPUT_NAME,
       SONDER_BROWSER_PARTS: process.env.SONDER_BROWSER_PARTS,
       SONDER_BROWSER_SHARDS: process.env.SONDER_BROWSER_SHARDS,
+      SONDER_WORKER_PYTHON: process.env.SONDER_WORKER_PYTHON,
     },
     snapshotFiles: {
       hasUncommitted: fs.existsSync(path.join(process.cwd(), 'uncommitted.txt')),
@@ -515,6 +516,13 @@ test("the number of browser shards a runner sets reaches the browser stage; no o
         assert.deepEqual([browser.argv[1], browser.env.SONDER_BROWSER_SHARDS, browser.env.SONDER_VERIFY_URL], ["test:browser", "8", undefined]);
         // Not the unit stage: it runs the runners' own tests (the check of ca686f6 failed on WSL because one inherited it).
         assert.deepEqual([unit.argv[0], unit.env.SONDER_BROWSER_SHARDS], ["test", undefined]);
+        // The interpreter a check host names for the worker's Python tests goes to the unit stage and nowhere else.
+        fs.rmSync(fixture.npmLogPath);
+        assert.equal((await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, SONDER_WORKER_PYTHON: "/opt/check/bin/python3"}})).ok, true);
+        assert.deepEqual(readNpmLogs(fixture.npmLogPath).map((run) => run.env.SONDER_WORKER_PYTHON), [undefined, undefined, "/opt/check/bin/python3", undefined]);
+        fs.rmSync(fixture.npmLogPath);
+        assert.equal((await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, SONDER_WORKER_PYTHON: "python3; true"}})).ok, true);
+        assert.equal(readNpmLogs(fixture.npmLogPath)[2].env.SONDER_WORKER_PYTHON, undefined, "only an absolute path");
         fs.rmSync(fixture.npmLogPath);
         // A value that is no shard count is not passed on.
         assert.equal((await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, SONDER_BROWSER_SHARDS: "8; rm -rf /"}})).ok, true);

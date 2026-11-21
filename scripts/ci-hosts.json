@@ -29,6 +29,7 @@
     "maxWait": 3600,
     "maxParallel": 1,
     "ceiling": 1,
+    "workerPython": "/usr/bin/python3",
     "estimate": {
       "fixedSeconds": 212,
       "speed": 1.0,
@@ -42,6 +43,7 @@
     "tmpdir": "",
     "maxWait": 1800,
     "maxParallel": 1,
+    "workerPython": "/home/jahn/sonder-ci-python/bin/python3",
     "estimate": {
       "fixedSeconds": 85,
       "speed": 0.49,
@@ -55,6 +57,7 @@
     "tmpdir": "",
     "maxWait": 1800,
     "maxParallel": 1,
+    "workerPython": "/home/jahn/sonder-ci-python/bin/python3",
     "estimate": {
       "fixedSeconds": 85,
       "speed": 0.49,

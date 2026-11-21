@@ -611,6 +611,9 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     // runner sets for its host (ci-ssh.sh, from the host's figures). It goes to the browser stages only: the unit
     // stage runs the runners' own tests, which must not inherit it.
     const shardSetting = /^(?:[1-9]|1[0-6])$/.test(baseEnv.SONDER_BROWSER_SHARDS ?? "") ? { SONDER_BROWSER_SHARDS: baseEnv.SONDER_BROWSER_SHARDS } : {};
+    // And for the unit stage the interpreter a check host names for the worker's Python tests, which then fail
+    // instead of being skipped when it cannot run them (tests/0-worker-python.test.ts).
+    const workerPython = baseEnv.SONDER_WORKER_PYTHON && path.isAbsolute(baseEnv.SONDER_WORKER_PYTHON) ? { SONDER_WORKER_PYTHON: baseEnv.SONDER_WORKER_PYTHON } : {};
     const childEnv = sanitizeEnvironment(baseEnv, {
       PLAYWRIGHT_PORT: String(port),
     });
@@ -698,7 +701,7 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       const stageArgs = jsonReport
         ? [...stageDef.args, "--", "--reporter=list,json", ...(selection.scope === "chromium" ? ["--project=chromium"] : [])]
         : stageDef.args;
-      const stageEnv = {...childEnv, ...(stageDef.name.startsWith("browser") ? shardSetting : {}), ...stageDef.env, NODE_ENV: stageDef.name === "build" ? "production" : "test"};
+      const stageEnv = {...childEnv, ...(stageDef.name.startsWith("browser") ? shardSetting : {}), ...(stageDef.name === "unit" ? workerPython : {}), ...stageDef.env, NODE_ENV: stageDef.name === "build" ? "production" : "test"};
       if (jsonReport) stageEnv.PLAYWRIGHT_JSON_OUTPUT_NAME = playwrightReportPath;
 
       let stageRes;

@@ -13,7 +13,19 @@ import { fileURLToPath } from "node:url";
 // it: 220 s, of which the other 299 files needed 149. Now it starts first, and the classes of the heavy module each
 // run in a process of their own beside one process for all the other modules, in their old order (several of those
 // time things and failed when they were run side by side under load). Every test of every module still runs.
-const available = spawnSync("python3", ["--version"]).status === 0;
+//
+// On a check host the tests must run, not be skipped: WSL's Python had no numpy, so until 21 Nov 2026 it skipped 81 of
+// the 265 tests, the alignment tests among them, and passed. A host's entry in scripts/ci-hosts.json names the
+// interpreter the check runs them with ("workerPython", set up by scripts/setup-check-python.sh); the check hands it
+// on as SONDER_WORKER_PYTHON, and then a missing interpreter, a module it cannot import or a test skipped for want of
+// one FAILS this file. Without the variable (a developer's machine) the tests run with `python3` and skip what they
+// cannot run, as before.
+const required = process.env.SONDER_WORKER_PYTHON || "";
+const interpreter = required || "python3";
+// What scripts/setup-check-python.sh installs (tests/worker/requirements-check.txt), and the skips those end.
+const NEEDED = ["numpy", "fastapi", "uvicorn", "httpx"];
+const NEEDLESS_SKIP = /numpy is not installed|numpy is optional outside the worker environment|fastapi and uvicorn are needed|fastapi is not installed/;
+const available = spawnSync(interpreter, ["--version"]).status === 0;
 const root = fileURLToPath(new URL("..", import.meta.url));
 const workerTests = fileURLToPath(new URL("./worker/", import.meta.url));
 const HEAVY = ["test_book_align"];
@@ -22,7 +34,7 @@ const modules = readdirSync(workerTests).filter((name) => /^test_.*\.py$/.test(n
 function python(args: string[]): Promise<{ status: number | null; output: string }> {
   return new Promise((resolve) => {
     // The modules import the worker's code by their own path handling, as under `unittest discover -s tests/worker`.
-    const child = spawn("python3", ["-B", ...args], { cwd: workerTests, env: { ...process.env, PYTHONPATH: workerTests } });
+    const child = spawn(interpreter, ["-B", ...args], { cwd: workerTests, env: { ...process.env, PYTHONPATH: workerTests } });
     let output = "";
     child.stdout.on("data", (chunk) => (output += chunk));
     child.stderr.on("data", (chunk) => (output += chunk));
@@ -35,7 +47,7 @@ const ran = (output: string) => Number(/^Ran (\d+) tests? in /m.exec(output)?.[1
 /** The test classes of a module, asked of Python itself so that a new class is run without a change here. */
 function classesOf(module: string): string[] {
   const listed = spawnSync(
-    "python3",
+    interpreter,
     ["-B", "-c", `import unittest, ${module} as m\nprint("\\n".join(sorted(n for n, c in vars(m).items() if isinstance(c, type) and issubclass(c, unittest.TestCase))))`],
     { cwd: workerTests, encoding: "utf8", env: { ...process.env, PYTHONPATH: workerTests } },
   );
@@ -43,17 +55,29 @@ function classesOf(module: string): string[] {
   return listed.stdout.trim().split("\n").filter(Boolean);
 }
 
-describe("worker deadline tests pass", { concurrency: true, skip: !available && "python3 is not installed" }, () => {
+const SETUP = "run scripts/setup-check-python.sh on the host and name its interpreter as the host's workerPython in scripts/ci-hosts.json (docs/LOCAL_CHECKS.md, \"A check host's Python\")";
+/** On a check host a test skipped for want of a module the host is to have is a failure. */
+function nothingSkippedNeedlessly(output: string) {
+  if (required) assert.doesNotMatch(output, NEEDLESS_SKIP, `a test was skipped for want of a module this check host must have: ${SETUP}`);
+}
+
+describe("worker deadline tests pass", { concurrency: true, skip: !available && !required && "python3 is not installed" }, () => {
   const light = modules.filter((module) => !HEAVY.includes(module));
+  test("on a check host the interpreter is there and imports what the worker's tests need", { skip: !required && "no check host named its interpreter (SONDER_WORKER_PYTHON)" }, () => {
+    assert.ok(available, `${interpreter} does not run: ${SETUP}`);
+    const imports = spawnSync(interpreter, ["-B", "-c", `import ${NEEDED.join(", ")}`], { encoding: "utf8" });
+    assert.equal(imports.status, 0, `${interpreter} cannot import ${NEEDED.join(", ")}: ${SETUP}\n${imports.stderr}`);
+  });
   test("every Python test module is run: the heavy ones by class, the others together", () => {
     assert.ok(modules.length >= 19, `tests/worker has ${modules.length} test modules`);
     for (const module of HEAVY) assert.ok(modules.includes(module), `${module} is a module of tests/worker`);
     assert.deepEqual([...light, ...HEAVY].sort(), modules);
   });
   test(`the ${light.length} other modules, one after another in one process`, { timeout: 600000 }, async () => {
-    const run = await python(["-m", "unittest", ...light]);
+    const run = await python(["-m", "unittest", "-v", ...light]);
     assert.equal(run.status, 0, run.output);
     assert.ok(ran(run.output) > 0, run.output);
+    nothingSkippedNeedlessly(run.output);
   });
   for (const module of HEAVY) {
     // Counted once in one process (collection only), so the classes' runs can be held to the module's whole count.
@@ -61,9 +85,11 @@ describe("worker deadline tests pass", { concurrency: true, skip: !available && 
     const counts: number[] = [];
     for (const name of classes) {
       test(`${module}.${name}`, { timeout: 600000 }, async () => {
-        const run = await python(["-m", "unittest", `${module}.${name}`]);
-        assert.equal(run.status, 0, run.output);
+        const run = await python(["-m", "unittest", "-v", `${module}.${name}`]);
+        // Counted before any assertion, so the test below that waits for the counts never waits in vain.
         counts.push(ran(run.output));
+        assert.equal(run.status, 0, run.output);
+        nothingSkippedNeedlessly(run.output);
       });
     }
     test(`${module}: its classes together are all of its tests`, { timeout: 600000 }, async () => {
