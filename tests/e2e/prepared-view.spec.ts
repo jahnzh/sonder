@@ -16,6 +16,15 @@ import { choosePreparedView } from "./prepared-view";
 test.use({ serviceWorkers: "block" });
 installReaderWaitBudget(test);
 const imported: string[] = [];
+// Everything here is about the view in scroll mode; pages mode has its own spec (prepared-pages.spec.ts).
+let appearance: any = null;
+test.beforeEach(async ({ page }) => {
+  appearance = await (await page.request.get("/api/appearance")).json();
+  expect((await page.request.put("/api/appearance", { data: { ...appearance, reader: { ...appearance.reader, mode: "scroll" } } })).ok()).toBe(true);
+});
+test.afterEach(async ({ page }) => {
+  if (appearance) await page.request.put("/api/appearance", { data: appearance });
+});
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "wait" });
   for (const id of imported.splice(0)) expect((await page.request.delete(`/api/library/${id}`)).ok()).toBe(true);

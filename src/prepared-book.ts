@@ -20,6 +20,11 @@ export const MANIFEST_FRESH_MS = 5 * 60_000;
 export const LOAD_ATTEMPTS = 3;
 /** The waits before the second and the third attempt. */
 export const LOAD_WAITS_MS = [1000, 3000];
+/** The waits in use: a browser test may set shorter ones (`window.__sonderLoadWaits`) so as not to sit through them. */
+const loadWaits = (): readonly number[] => {
+  const set = (globalThis as { __sonderLoadWaits?: unknown }).__sonderLoadWaits;
+  return Array.isArray(set) && set.length && set.every((value) => typeof value === "number" && value >= 0) ? (set as number[]) : LOAD_WAITS_MS;
+};
 /** A server that asks for a longer wait than this (`Retry-After`) is not asked again by itself. */
 export const LOAD_RETRY_AFTER_LIMIT_MS = 10_000;
 /** The resolved parts whose text is kept in memory; a part read longer ago is asked of the browser's cache again. */
@@ -39,7 +44,8 @@ export async function patiently<T>(ask: () => Promise<T>, wait: (ms: number) => 
       const status = error instanceof ApiError ? error.status : undefined;
       const asked = error instanceof ApiError && error.retryAfter ? error.retryAfter * 1000 : 0;
       if (status === 429 ? !asked || asked > LOAD_RETRY_AFTER_LIMIT_MS : status !== undefined && status < 500 && status !== 408) throw error;
-      await wait(Math.max(asked, LOAD_WAITS_MS[attempt - 1] ?? LOAD_WAITS_MS.at(-1)!));
+      const waits = loadWaits();
+      await wait(Math.max(asked, waits[attempt - 1] ?? waits.at(-1)!));
     }
   }
 }
@@ -226,4 +232,15 @@ export function preparedBook(id: string, now = Date.now()): Promise<PreparedBook
   books.set(id, entry);
   book.catch(() => books.get(id) === entry && books.delete(id));
   return book;
+}
+
+/**
+ * How far into the whole book a sentence is, 0 to 1, from the manifest alone: the characters of the parts before
+ * the sentence's part, plus its share of its own part by its place among that part's sentences.
+ */
+export function positionInBook(manifest: PreparedBook["manifest"], index: PreparedBook["index"], id: string): number {
+  const part = manifest.parts[index.partOf(id)];
+  if (!part || manifest.chars <= 0) return 0;
+  const within = part.sentences > 1 ? (index.ordinalOf(id) - part.ordinal) / part.sentences : 0;
+  return Math.min(1, Math.max(0, (part.charStart + within * part.chars) / manifest.chars));
 }

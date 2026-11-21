@@ -490,8 +490,7 @@ export function ReaderView({
   const [spreadWidth, setSpreadWidth] = useState<number | null>(null);
   useLayoutEffect(() => {
     const area = pageArea.current;
-    // The new view is one column in scroll mode whatever the saved reading mode is (pages mode is step 4 of #799).
-    if (!desktop || !area || prepared) {
+    if (!desktop || !area) {
       setSpreadWidth(null);
       return;
     }
@@ -650,7 +649,7 @@ export function ReaderView({
       // The band changed (Appearance docked or closed): the narrated sentence is brought into it again, as today's
       // reader follows it again after sizing its view.
       onBandResized: () => redrawHighlight(),
-    });
+    }, { mode: preferences.mode === "scroll" ? "scroll" : "pages", spread: !!spreadWidth });
     engine.current = view;
     following.openingDisplay();
     const settled = following.beginOwnDisplay();
@@ -684,6 +683,13 @@ export function ReaderView({
       if (engine.current === view) engine.current = null;
     };
   }, [id, prepared, source, openAttempt]);
+  // The reading mode and the two-page spread reach the new view as its layout; the sentence at the top stays there.
+  useEffect(() => {
+    const view = engine.current;
+    if (!prepared || !view) return;
+    const settled = following.beginOwnDisplay();
+    void view.relayout({ mode: preferences.mode === "scroll" ? "scroll" : "pages", spread: !!spreadWidth }).finally(settled);
+  }, [prepared, preferences.mode, !!spreadWidth, rendered]);
   useEffect(() => {
     if (prepared || !book || !viewport.current) return;
     let disposed = false;
@@ -2010,7 +2016,7 @@ export function ReaderView({
             ref={viewport}
             data-spread={spreadWidth ? "two" : undefined}
             data-view={prepared ? "prepared" : undefined}
-            style={prepared ? preparedStyle : spreadWidth ? ({ "--reader-spread": `${spreadWidth}px` } as CSSProperties) : undefined}
+            style={prepared ? (spreadWidth ? ({ ...preparedStyle, "--reader-spread": `${spreadWidth}px` } as CSSProperties) : preparedStyle) : spreadWidth ? ({ "--reader-spread": `${spreadWidth}px` } as CSSProperties) : undefined}
             aria-label="Ebook pages"
           />
           {desktop && <button className="reader-edge reader-edge-next" aria-label="Next page" onClick={()=>turn(1)}><ArrowRight size={20}/></button>}
