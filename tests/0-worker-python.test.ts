@@ -23,8 +23,14 @@ import { fileURLToPath } from "node:url";
 const required = process.env.SONDER_WORKER_PYTHON || "";
 const interpreter = required || "python3";
 // What scripts/setup-check-python.sh installs (tests/worker/requirements-check.txt), and the skips those end.
-const NEEDED = ["numpy", "fastapi", "uvicorn", "httpx"];
-const NEEDLESS_SKIP = /numpy is not installed|numpy is optional outside the worker environment|fastapi and uvicorn are needed|fastapi is not installed/;
+// A host that declares torch too (SONDER_WORKER_TORCH=1, its "workerTorch" in scripts/ci-hosts.json; --torch of the
+// setup script) must run the 33 tests of the real whole-book stages as well (#878); they also need ffmpeg. A host
+// that declares it has none ("0") skips them, and the check's summary says so.
+const withTorch = required !== "" && process.env.SONDER_WORKER_TORCH === "1";
+const NEEDED = ["numpy", "fastapi", "uvicorn", "httpx", ...(withTorch ? ["torch"] : [])];
+const NEEDLESS_SKIP = withTorch
+  ? /numpy is not installed|numpy is optional outside the worker environment|fastapi and uvicorn are needed|fastapi is not installed|torch and ffmpeg are needed|torch and numpy are optional|TestClient are needed|ffmpeg is not installed/
+  : /numpy is not installed|numpy is optional outside the worker environment|fastapi and uvicorn are needed|fastapi is not installed/;
 const available = spawnSync(interpreter, ["--version"]).status === 0;
 const root = fileURLToPath(new URL("..", import.meta.url));
 const workerTests = fileURLToPath(new URL("./worker/", import.meta.url));
@@ -34,7 +40,8 @@ const modules = readdirSync(workerTests).filter((name) => /^test_.*\.py$/.test(n
 function python(args: string[]): Promise<{ status: number | null; output: string }> {
   return new Promise((resolve) => {
     // The modules import the worker's code by their own path handling, as under `unittest discover -s tests/worker`.
-    const child = spawn(interpreter, ["-B", ...args], { cwd: workerTests, env: { ...process.env, PYTHONPATH: workerTests } });
+    // No GPU for these tests, whatever build of torch the interpreter has: on WSL the card is the alignment worker's.
+    const child = spawn(interpreter, ["-B", ...args], { cwd: workerTests, env: { ...process.env, PYTHONPATH: workerTests, CUDA_VISIBLE_DEVICES: "" } });
     let output = "";
     child.stdout.on("data", (chunk) => (output += chunk));
     child.stderr.on("data", (chunk) => (output += chunk));
@@ -66,7 +73,8 @@ describe("worker deadline tests pass", { concurrency: true, skip: !available && 
   test("on a check host the interpreter is there and imports what the worker's tests need", { skip: !required && "no check host named its interpreter (SONDER_WORKER_PYTHON)" }, () => {
     assert.ok(available, `${interpreter} does not run: ${SETUP}`);
     const imports = spawnSync(interpreter, ["-B", "-c", `import ${NEEDED.join(", ")}`], { encoding: "utf8" });
-    assert.equal(imports.status, 0, `${interpreter} cannot import ${NEEDED.join(", ")}: ${SETUP}\n${imports.stderr}`);
+    assert.equal(imports.status, 0, `${interpreter} cannot import ${NEEDED.join(", ")}: ${SETUP}${withTorch ? " (with --torch)" : ""}\n${imports.stderr}`);
+    if (withTorch) assert.equal(spawnSync("ffmpeg", ["-version"]).status, 0, "ffmpeg is not installed on this check host; the whole-book tests decode with it");
   });
   test("every Python test module is run: the heavy ones by class, the others together", () => {
     assert.ok(modules.length >= 19, `tests/worker has ${modules.length} test modules`);

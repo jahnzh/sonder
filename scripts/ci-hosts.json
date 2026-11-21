@@ -30,6 +30,7 @@
     "maxParallel": 1,
     "ceiling": 1,
     "workerPython": "/usr/bin/python3",
+    "workerTorch": false,
     "estimate": {
       "fixedSeconds": 212,
       "speed": 1.0,
@@ -44,6 +45,7 @@
     "maxWait": 1800,
     "maxParallel": 1,
     "workerPython": "/home/jahn/sonder-ci-python/bin/python3",
+    "workerTorch": true,
     "estimate": {
       "fixedSeconds": 85,
       "speed": 0.49,
@@ -58,6 +60,7 @@
     "maxWait": 1800,
     "maxParallel": 1,
     "workerPython": "/home/jahn/sonder-ci-python/bin/python3",
+    "workerTorch": true,
     "estimate": {
       "fixedSeconds": 85,
       "speed": 0.49,
