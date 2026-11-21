@@ -511,8 +511,10 @@ test("the number of browser shards a runner sets reaches the browser stage; no o
     try {
         const env = {PATH: `${fixture.binDir}:${process.env.PATH}`, STUB_NPM_LOG: fixture.npmLogPath, SONDER_VERIFY_URL: "http://example.invalid"};
         assert.equal((await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, SONDER_BROWSER_SHARDS: "8"}})).ok, true);
-        const browser = readNpmLogs(fixture.npmLogPath)[3];
+        const [, , unit, browser] = readNpmLogs(fixture.npmLogPath);
         assert.deepEqual([browser.argv[1], browser.env.SONDER_BROWSER_SHARDS, browser.env.SONDER_VERIFY_URL], ["test:browser", "8", undefined]);
+        // Not the unit stage: it runs the runners' own tests (the check of ca686f6 failed on WSL because one inherited it).
+        assert.deepEqual([unit.argv[0], unit.env.SONDER_BROWSER_SHARDS], ["test", undefined]);
         fs.rmSync(fixture.npmLogPath);
         // A value that is no shard count is not passed on.
         assert.equal((await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, SONDER_BROWSER_SHARDS: "8; rm -rf /"}})).ok, true);

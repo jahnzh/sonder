@@ -82,7 +82,8 @@ done
 // A developer's own SONDER_CI_* settings must not change what the tests see.
 function cleanEnv() {
   const env = { ...process.env };
-  for (const key of Object.keys(env)) if (key.startsWith("SONDER_CI_") || key === "REPORT_JSON") delete env[key];
+  // Also the caller's shard count, which the runner would pass on as "set by the caller".
+  for (const key of Object.keys(env)) if (key.startsWith("SONDER_CI_") || key === "REPORT_JSON" || key === "SONDER_BROWSER_SHARDS") delete env[key];
   return env;
 }
 
