@@ -160,7 +160,7 @@ test("without a map the administrator's Back to narration locates the passage, s
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   await expect(page.locator(".inline-reader .reader-viewport .sonder-follow").first()).toBeVisible();
   // And it is the located sentence's page that is shown.
-  await expect(page.frameLocator(".inline-reader .reader-viewport iframe").getByText(target.text.slice(0, 24))).toBeVisible();
+  await expect(bookText(page,".inline-reader").getByText(target.text.slice(0, 24))).toBeVisible();
 });
 
 test("a failed locating is the foot's error, with Retry; F does the same as the button", async ({ page }, testInfo) => {
