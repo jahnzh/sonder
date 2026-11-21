@@ -607,8 +607,12 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       ...process.env,
       ...overrides.env,
     };
+    // The stages get no SONDER_ setting of the caller's, with one exception: the number of browser shards, which a
+    // runner sets for its host (ci-ssh.sh, from the host's figures) and the browser stage must run at.
+    const shardSetting = /^(?:[1-9]|1[0-6])$/.test(baseEnv.SONDER_BROWSER_SHARDS ?? "") ? { SONDER_BROWSER_SHARDS: baseEnv.SONDER_BROWSER_SHARDS } : {};
     const childEnv = sanitizeEnvironment(baseEnv, {
       PLAYWRIGHT_PORT: String(port),
+      ...shardSetting,
     });
 
     if (!options.silent) {
