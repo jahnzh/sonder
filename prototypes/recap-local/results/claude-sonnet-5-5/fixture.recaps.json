@@ -1,0 +1,596 @@
+{
+  "label": "claude-sonnet-5-5",
+  "book": "The Salt Ledger",
+  "rows": [
+    {
+      "mode": "written",
+      "cutoff": "2:22",
+      "cutoffOrd": 60,
+      "gapDays": 7,
+      "band": "under 3 days",
+      "bandLimitedByText": true,
+      "wordsRead": 662,
+      "target": [
+        60,
+        100
+      ],
+      "text": "Ines Okafor was the newcomer appointed by the council as keeper of the Salt Ledger on the island port of Harrow Quay. Mara Venn, the harbourmaster, wanted the audit finished before the equinox market so the island could refuse the Crane Company's offer for its fishing rights.\n\nTobiah Wren gave Ines Okafor a small brass key from Aldous Brandt and told her he had not carried Brandt off the island.\n\nMara Venn left Ines Okafor alone in the archive with the lamp and went down the tower stairs without another word. What happened to Aldous Brandt, who Tobiah Wren says never left by ferry, and who tore the spring pages from the ledger?",
+      "words": 113,
+      "claims": [
+        {
+          "group": "who_where",
+          "text": "Ines Okafor was the newcomer appointed by the council as keeper of the Salt Ledger on the island port of Harrow Quay.",
+          "id": "1:8",
+          "quote": "Keeper of the Salt Ledger,\" Ines said.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "goals",
+          "text": "Mara Venn, the harbourmaster, wanted the audit finished before the equinox market so the island could refuse the Crane Company's offer for its fishing rights.",
+          "id": "2:10",
+          "quote": "The council needs the audit finished before the equinox market",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "events",
+          "text": "Tobiah Wren gave Ines Okafor a small brass key from Aldous Brandt and told her he had not carried Brandt off the island.",
+          "id": "1:22",
+          "quote": "It was a small brass key, no longer than her finger",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "last_scene",
+          "text": "Mara Venn left Ines Okafor alone in the archive with the lamp and went down the tower stairs without another word.",
+          "id": "2:22",
+          "quote": "She left Ines with the lamp and went down the stairs",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "open_question",
+          "text": "What happened to Aldous Brandt, who Tobiah Wren says never left by ferry, and who tore the spring pages from the ledger?",
+          "id": "1:16",
+          "quote": "A man like that does not walk away from his desk.",
+          "ok": true,
+          "exact": true
+        }
+      ],
+      "offered": 5,
+      "fromStoredNotes": 0,
+      "kept": 5,
+      "dropped": 0,
+      "duplicates": 0,
+      "exact": 5,
+      "repaired": 0,
+      "reasons": {},
+      "foreshadowing": [],
+      "schemaViolations": [],
+      "input": {
+        "notes": 10,
+        "rawSentences": 23,
+        "rawFrom": "2:0",
+        "stateOfUnit": 0,
+        "insideChapterState": false
+      },
+      "timing": {
+        "ms": 4671.577649,
+        "promptTokens": 3598,
+        "cachedTokens": 0,
+        "outputTokens": 440,
+        "thinkingTokens": 0,
+        "promptMs": 1011,
+        "outputMs": 2335,
+        "retries": 0,
+        "serverErrors": 0,
+        "schemaViolations": 0,
+        "costUsd": 0.011596
+      },
+      "position": "P1 early",
+      "note": "Middle of chapter 2: Ines has met Tobiah Wren and Mara Venn and seen the torn pages. Dr Pike, Mara Lisle and the Cormorant have not appeared.",
+      "leaks": [],
+      "injection": [],
+      "bareMara": []
+    },
+    {
+      "mode": "written",
+      "cutoff": "2:22",
+      "cutoffOrd": 60,
+      "gapDays": 70,
+      "band": "under 3 days",
+      "bandLimitedByText": true,
+      "wordsRead": 662,
+      "target": [
+        60,
+        100
+      ],
+      "text": "Ines Okafor was the newcomer appointed by the council as the new keeper of the Salt Ledger on the island, arriving at Harrow Quay by ferry. Tobiah Wren told Ines Okafor to keep the brass key off the ledger and hidden from the council.\n\nTobiah Wren told Ines Okafor that Aldous Brandt had not left on his ferry, contradicting the claim that Brandt had gone to the mainland.\n\nMara Venn, the harbourmaster, left Ines alone in the archive with the lamp and went down the tower stairs without another word. What happened to Aldous Brandt, who Tobiah Wren says did not leave by ferry, and who tore out the spring pages?",
+      "words": 111,
+      "claims": [
+        {
+          "group": "who_where",
+          "text": "Ines Okafor was the newcomer appointed by the council as the new keeper of the Salt Ledger on the island, arriving at Harrow Quay by ferry.",
+          "id": "1:8",
+          "quote": "Keeper of the Salt Ledger,\" Ines said.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "goals",
+          "text": "Tobiah Wren told Ines Okafor to keep the brass key off the ledger and hidden from the council.",
+          "id": "1:26",
+          "quote": "Do not show it to the council.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "events",
+          "text": "Tobiah Wren told Ines Okafor that Aldous Brandt had not left on his ferry, contradicting the claim that Brandt had gone to the mainland.",
+          "id": "1:20",
+          "quote": "I carry everyone who leaves this island, and I did not carry him.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "last_scene",
+          "text": "Mara Venn, the harbourmaster, left Ines alone in the archive with the lamp and went down the tower stairs without another word.",
+          "id": "2:22",
+          "quote": "went down the stairs without another word",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "open_question",
+          "text": "What happened to Aldous Brandt, who Tobiah Wren says did not leave by ferry, and who tore out the spring pages?",
+          "id": "1:16",
+          "quote": "A man like that does not walk away from his desk.",
+          "ok": true,
+          "exact": true
+        }
+      ],
+      "offered": 5,
+      "fromStoredNotes": 0,
+      "kept": 5,
+      "dropped": 0,
+      "duplicates": 0,
+      "exact": 5,
+      "repaired": 0,
+      "reasons": {},
+      "foreshadowing": [],
+      "schemaViolations": [],
+      "input": {
+        "notes": 10,
+        "rawSentences": 23,
+        "rawFrom": "2:0",
+        "stateOfUnit": 0,
+        "insideChapterState": false
+      },
+      "timing": {
+        "ms": 4386.986934999999,
+        "promptTokens": 3598,
+        "cachedTokens": 706,
+        "outputTokens": 433,
+        "thinkingTokens": 0,
+        "promptMs": 891,
+        "outputMs": 2181,
+        "retries": 0,
+        "serverErrors": 0,
+        "schemaViolations": 0,
+        "costUsd": 0.011526
+      },
+      "position": "P1 early",
+      "note": "Middle of chapter 2: Ines has met Tobiah Wren and Mara Venn and seen the torn pages. Dr Pike, Mara Lisle and the Cormorant have not appeared.",
+      "leaks": [],
+      "injection": [],
+      "bareMara": []
+    },
+    {
+      "mode": "written",
+      "cutoff": "4:15",
+      "cutoffOrd": 116,
+      "gapDays": 70,
+      "band": "3 to 14 days",
+      "bandLimitedByText": true,
+      "wordsRead": 1310,
+      "target": [
+        150,
+        250
+      ],
+      "text": "Ines Okafor was the newly appointed keeper of the Salt Ledger at Harrow Quay, an island port, succeeding Aldous Brandt, who had kept it for thirty years. Ines Okafor was to finish the audit of the Salt Ledger before the equinox market, so the island could refuse the Crane Company's offer.\n\nTobiah Wren told Ines Okafor that Aldous Brandt had not left on his ferry, contradicting the printed claim that Brandt had gone to the mainland.\n\nInes Okafor peeled the handbill away, took it for a prank by the dock boys, dropped it in the stove and went on working. Who was moving the twenty-four unrecorded barrels of salt a month onto the island, and to whom were they selling the cured fish?",
+      "words": 123,
+      "claims": [
+        {
+          "group": "who_where",
+          "text": "Ines Okafor was the newly appointed keeper of the Salt Ledger at Harrow Quay, an island port, succeeding Aldous Brandt, who had kept it for thirty years.",
+          "id": "1:8",
+          "quote": "Keeper of the Salt Ledger,\" Ines said.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "goals",
+          "text": "Ines Okafor was to finish the audit of the Salt Ledger before the equinox market, so the island could refuse the Crane Company's offer.",
+          "id": "2:10",
+          "quote": "The council needs the audit finished before the equinox market,",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "events",
+          "text": "Tobiah Wren told Ines Okafor that Aldous Brandt had not left on his ferry, contradicting the printed claim that Brandt had gone to the mainland.",
+          "id": "1:20",
+          "quote": "I carry everyone who leaves this island, and I did not carry him.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "last_scene",
+          "text": "Ines Okafor peeled the handbill away, took it for a prank by the dock boys, dropped it in the stove and went on working.",
+          "id": "4:15",
+          "quote": "She dropped it in the stove and went on working.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "open_question",
+          "text": "Who was moving the twenty-four unrecorded barrels of salt a month onto the island, and to whom were they selling the cured fish?",
+          "id": "4:8",
+          "quote": "Whoever was moving it unseen was curing fish that no one had recorded",
+          "ok": true,
+          "exact": true
+        }
+      ],
+      "offered": 5,
+      "fromStoredNotes": 0,
+      "kept": 5,
+      "dropped": 0,
+      "duplicates": 0,
+      "exact": 5,
+      "repaired": 0,
+      "reasons": {},
+      "foreshadowing": [],
+      "schemaViolations": [
+        "reply.events: 1 items, at least 3"
+      ],
+      "input": {
+        "notes": 23,
+        "rawSentences": 16,
+        "rawFrom": "4:0",
+        "stateOfUnit": 2,
+        "insideChapterState": false
+      },
+      "timing": {
+        "ms": 7209.140310999999,
+        "promptTokens": 4647,
+        "cachedTokens": 706,
+        "outputTokens": 476,
+        "thinkingTokens": 0,
+        "promptMs": 2205,
+        "outputMs": 3662,
+        "retries": 0,
+        "serverErrors": 0,
+        "schemaViolations": 1,
+        "costUsd": 0.014054
+      },
+      "position": "P2 middle",
+      "note": "Chapter 4, just after the handbill: both Maras are known, one Cormorant note has come, the salt does not add up. The night visitor, the false tide and every answer are later.",
+      "leaks": [],
+      "injection": [],
+      "bareMara": []
+    },
+    {
+      "mode": "written",
+      "cutoff": "6:15",
+      "cutoffOrd": 167,
+      "gapDays": 7,
+      "band": "3 to 14 days",
+      "bandLimitedByText": false,
+      "wordsRead": 1840,
+      "target": [
+        150,
+        250
+      ],
+      "text": "Ines Okafor arrived at the island port of Harrow Quay as the new keeper of the Salt Ledger, appointed by the council after Aldous Brandt vanished. Ines Okafor was to finish the audit of the Salt Ledger before the equinox market so the island could refuse the Crane Company's offer.\n\nInes Okafor found that the Salt Ledger's pages between February and June had been torn out, leaving only stubs. Ines Okafor counted the salt over four days and found that twenty-four barrels a month had reached the island without reaching the book. A second note from the Cormorant told Ines Okafor that the harbourmaster signs what she is given and to ask who writes the tide tables. Near midnight an intruder entered the archive in the dark and took Ines Okafor's salt tally, leaving the ledger and receipts.\n\nOn the tower steps at first light, Dr Anselm Pike offered to keep Ines Okafor's receipts in his dispensary strongbox, saying nobody searches a doctor. Will Ines Okafor trust Dr Anselm Pike with the receipts, given that the press printing the tide tables stands in his dispensary?",
+      "words": 185,
+      "claims": [
+        {
+          "group": "who_where",
+          "text": "Ines Okafor arrived at the island port of Harrow Quay as the new keeper of the Salt Ledger, appointed by the council after Aldous Brandt vanished.",
+          "id": "1:8",
+          "quote": "Keeper of the Salt Ledger,\" Ines said.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "goals",
+          "text": "Ines Okafor was to finish the audit of the Salt Ledger before the equinox market so the island could refuse the Crane Company's offer.",
+          "id": "2:10",
+          "quote": "The council needs the audit finished before the equinox market,",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor found that the Salt Ledger's pages between February and June had been torn out, leaving only stubs.",
+          "id": "2:15",
+          "quote": "Between February and June there was nothing but a row of torn stubs.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor counted the salt over four days and found that twenty-four barrels a month had reached the island without reaching the book.",
+          "id": "4:6",
+          "quote": "Twenty-four barrels a month had come onto the island and never reached the book.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "events",
+          "text": "A second note from the Cormorant told Ines Okafor that the harbourmaster signs what she is given and to ask who writes the tide tables.",
+          "id": "4:25",
+          "quote": "The harbourmaster signs what she is given.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "events",
+          "text": "Near midnight an intruder entered the archive in the dark and took Ines Okafor's salt tally, leaving the ledger and receipts.",
+          "id": "5:19",
+          "quote": "The tally was gone from the desk.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "last_scene",
+          "text": "On the tower steps at first light, Dr Anselm Pike offered to keep Ines Okafor's receipts in his dispensary strongbox, saying nobody searches a doctor.",
+          "id": "6:14",
+          "quote": "I have a strongbox in the dispensary, and nobody searches a doctor.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "open_question",
+          "text": "Will Ines Okafor trust Dr Anselm Pike with the receipts, given that the press printing the tide tables stands in his dispensary?",
+          "id": "5:2",
+          "quote": "the press stood in the back room of Dr Pike's dispensary",
+          "ok": true,
+          "exact": true
+        }
+      ],
+      "offered": 8,
+      "fromStoredNotes": 0,
+      "kept": 8,
+      "dropped": 0,
+      "duplicates": 0,
+      "exact": 8,
+      "repaired": 0,
+      "reasons": {},
+      "foreshadowing": [],
+      "schemaViolations": [],
+      "input": {
+        "notes": 29,
+        "rawSentences": 16,
+        "rawFrom": "6:0",
+        "stateOfUnit": 4,
+        "insideChapterState": false
+      },
+      "timing": {
+        "ms": 6165.8246309999995,
+        "promptTokens": 5052,
+        "cachedTokens": 706,
+        "outputTokens": 711,
+        "thinkingTokens": 0,
+        "promptMs": 1292,
+        "outputMs": 3516,
+        "retries": 0,
+        "serverErrors": 0,
+        "schemaViolations": 0,
+        "costUsd": 0.017214
+      },
+      "position": "P3 late",
+      "note": "Middle of chapter 6, the morning after the unresolved scene: the tally is gone, Pike points at Mara Venn and asks for the receipts. Who the visitor was, who the Cormorant is, what the key opens and where Brandt is are all still open.",
+      "leaks": [
+        {
+          "name": "the spring pages are found",
+          "certain": false,
+          "line": "Ines Okafor found that the Salt Ledger's pages between February and June had been torn out, leaving only stubs."
+        }
+      ],
+      "injection": [],
+      "bareMara": []
+    },
+    {
+      "mode": "written",
+      "cutoff": "6:15",
+      "cutoffOrd": 167,
+      "gapDays": 70,
+      "band": "2 to 8 weeks",
+      "bandLimitedByText": true,
+      "wordsRead": 1840,
+      "target": [
+        300,
+        400
+      ],
+      "text": "Ines Okafor was the newcomer appointed by the council as the new keeper of the Salt Ledger at Harrow Quay, an island port reached by ferry. Mara Venn was the grey-haired harbourmaster of Harrow Quay who wore the town seal, and Anselm Pike was the cheerful physician and printer there. Ines Okafor was to finish the audit of the Salt Ledger before the equinox market, so the island could refuse the Crane Company's offer.\n\nTobiah Wren gave Ines Okafor a small brass key with a fish-shaped bow that Aldous Brandt had left for whoever kept the book next. Ines Okafor found that the Salt Ledger's pages between February and June had been torn out, leaving only stubs. Mara Lisle told Ines Okafor that in his last month Aldous Brandt went to the salt warehouse at night, counting barrels and returning with chalk on his sleeves. Ines Okafor found an unsigned note from the Cormorant saying the spring pages were not burned, and she locked it in her trunk and told no one. Ines Okafor counted the salt and found that twenty-four barrels a month had come onto the island and never reached the book. Mara Venn refused to open the salt warehouse without a council order, and Ines began to wonder whether the seal-holder was the one she sought. A second note from the Cormorant told Ines Okafor that the harbourmaster signs what she is given and to ask who writes the tide tables. Ines Okafor learned that the tide tables were printed on the press in the back room of Dr Pike's dispensary, and she did not go to Pike. Near midnight an unseen intruder climbed the tower, the archive lamp went out, and Ines's salt tally was taken from the desk.\n\nAnselm Pike found Ines Okafor on the tower steps at first light and listened to her whole story about the stolen tally. Pike suggested that Mara Venn was behind it and asked Ines to give him the receipts that night, offering to keep them in his dispensary strongbox. Will Ines Okafor trust Anselm Pike with the receipts, or is the Cormorant's hint about who writes the tide tables a reason to doubt him?",
+      "words": 366,
+      "claims": [
+        {
+          "group": "who_where",
+          "text": "Ines Okafor was the newcomer appointed by the council as the new keeper of the Salt Ledger at Harrow Quay, an island port reached by ferry.",
+          "id": "1:8",
+          "quote": "Keeper of the Salt Ledger,\" Ines said.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "who_where",
+          "text": "Mara Venn was the grey-haired harbourmaster of Harrow Quay who wore the town seal, and Anselm Pike was the cheerful physician and printer there.",
+          "id": "2:4",
+          "quote": "Mara Venn,\" she said.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "goals",
+          "text": "Ines Okafor was to finish the audit of the Salt Ledger before the equinox market, so the island could refuse the Crane Company's offer.",
+          "id": "2:10",
+          "quote": "The council needs the audit finished before the equinox market,",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "events",
+          "text": "Tobiah Wren gave Ines Okafor a small brass key with a fish-shaped bow that Aldous Brandt had left for whoever kept the book next.",
+          "id": "1:22",
+          "quote": "It was a small brass key, no longer than her finger",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor found that the Salt Ledger's pages between February and June had been torn out, leaving only stubs.",
+          "id": "2:15",
+          "quote": "Between February and June there was nothing but a row of torn stubs.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "events",
+          "text": "Mara Lisle told Ines Okafor that in his last month Aldous Brandt went to the salt warehouse at night, counting barrels and returning with chalk on his sleeves.",
+          "id": "3:11",
+          "quote": "He went down to the salt warehouse at night with a lantern and came back with chalk on his sleeves.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor found an unsigned note from the Cormorant saying the spring pages were not burned, and she locked it in her trunk and told no one.",
+          "id": "3:23",
+          "quote": "\"The spring pages are not burned,\" the note said.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor counted the salt and found that twenty-four barrels a month had come onto the island and never reached the book.",
+          "id": "4:6",
+          "quote": "Twenty-four barrels a month had come onto the island and never reached the book.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "events",
+          "text": "Mara Venn refused to open the salt warehouse without a council order, and Ines began to wonder whether the seal-holder was the one she sought.",
+          "id": "4:17",
+          "quote": "\"Not without an order from the council,\" Mara Venn said.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "events",
+          "text": "A second note from the Cormorant told Ines Okafor that the harbourmaster signs what she is given and to ask who writes the tide tables.",
+          "id": "4:25",
+          "quote": "The harbourmaster signs what she is given.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor learned that the tide tables were printed on the press in the back room of Dr Pike's dispensary, and she did not go to Pike.",
+          "id": "5:2",
+          "quote": "the press stood in the back room of Dr Pike's dispensary",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "events",
+          "text": "Near midnight an unseen intruder climbed the tower, the archive lamp went out, and Ines's salt tally was taken from the desk.",
+          "id": "5:19",
+          "quote": "The tally was gone from the desk.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "last_scene",
+          "text": "Anselm Pike found Ines Okafor on the tower steps at first light and listened to her whole story about the stolen tally.",
+          "id": "6:6",
+          "quote": "listened to the whole story with his hands folded.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "last_scene",
+          "text": "Pike suggested that Mara Venn was behind it and asked Ines to give him the receipts that night, offering to keep them in his dispensary strongbox.",
+          "id": "6:14",
+          "quote": "I have a strongbox in the dispensary, and nobody searches a doctor.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "open_question",
+          "text": "Will Ines Okafor trust Anselm Pike with the receipts, or is the Cormorant's hint about who writes the tide tables a reason to doubt him?",
+          "id": "6:12",
+          "quote": "Give me the receipts, Ines.",
+          "ok": true,
+          "exact": true
+        }
+      ],
+      "offered": 15,
+      "fromStoredNotes": 0,
+      "kept": 15,
+      "dropped": 0,
+      "duplicates": 0,
+      "exact": 15,
+      "repaired": 0,
+      "reasons": {},
+      "foreshadowing": [],
+      "schemaViolations": [],
+      "input": {
+        "notes": 29,
+        "rawSentences": 16,
+        "rawFrom": "6:0",
+        "stateOfUnit": 4,
+        "insideChapterState": false
+      },
+      "timing": {
+        "ms": 9102.655028000001,
+        "promptTokens": 5052,
+        "cachedTokens": 706,
+        "outputTokens": 1304,
+        "thinkingTokens": 0,
+        "promptMs": 1682,
+        "outputMs": 6241,
+        "retries": 0,
+        "serverErrors": 0,
+        "schemaViolations": 0,
+        "costUsd": 0.023144
+      },
+      "position": "P3 late",
+      "note": "Middle of chapter 6, the morning after the unresolved scene: the tally is gone, Pike points at Mara Venn and asks for the receipts. Who the visitor was, who the Cormorant is, what the key opens and where Brandt is are all still open.",
+      "leaks": [
+        {
+          "name": "the spring pages are found",
+          "certain": false,
+          "line": "Ines Okafor found that the Salt Ledger's pages between February and June had been torn out, leaving only stubs."
+        },
+        {
+          "name": "the spring pages are found",
+          "certain": false,
+          "line": "Ines Okafor found an unsigned note from the Cormorant saying the spring pages were not burned, and she locked it in her trunk and told no one."
+        }
+      ],
+      "injection": [],
+      "bareMara": []
+    }
+  ],
+  "failed": [
+    {
+      "position": "P2 middle",
+      "gapDays": 7,
+      "error": "The model's reply is not JSON of the schema's shape. It starts: {\"who_where\":[{\"text\":\"Ines Okafor was the newcomer appointed by the council as the new keeper of the Salt Ledger at Harrow Quay, the island port reached by ferry.\",\"id\":\"1:8\",\"quote\":\"Keeper of the S"
+    }
+  ]
+}
