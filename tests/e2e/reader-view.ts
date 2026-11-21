@@ -1,4 +1,5 @@
-import type { Locator } from "@playwright/test";
+import { expect, type FrameLocator, type Locator, type Page } from "@playwright/test";
+import { onPreparedView } from "./prepared-view";
 import { narratedOnPage } from "../../scripts/live-reader-controls.mjs";
 // Whether something is on the page the reader shows, not merely rendered: the EPUB's frame is as wide as its
 // chapter's columns and the reader's viewport clips it to one page, so Playwright's toBeVisible() holds for text
@@ -49,4 +50,38 @@ export function textShown(room: Locator, text: string) {
     }
     return false;
   }, text.trim().slice(0, 40));
+}
+
+// The reader's specs run on both reading views (playwright.config.ts, project "prepared-view", #802). Today's reader
+// has the book's text in the EPUB's frame; the view of prepared text has it in the band itself. A spec reaches the
+// text through these, so the same steps and the same expectations hold for both.
+
+/** The element that holds the book's text in a reader's room: the EPUB's frame, or the prepared text. */
+export function textFrame(room: Locator): Locator {
+  return room.locator(onPreparedView() ? ".reader-viewport .prepared-text" : ".reader-viewport iframe");
+}
+/** The book's text in a reader's room, to look for its paragraphs and words in. */
+export function bookTextIn(room: Locator): FrameLocator | Locator {
+  return onPreparedView() ? room.locator(".reader-viewport .prepared-text") : room.frameLocator(".reader-viewport iframe");
+}
+/** The book's text of the reader under `room` (a selector). */
+export function bookText(page: Page, room = ".reader-room"): FrameLocator | Locator {
+  return bookTextIn(page.locator(room));
+}
+/**
+ * Waits until the narrated sentence's highlight is drawn in a reader's room: epub.js's annotation with its CFI, or
+ * the marked sentence itself in the view of prepared text.
+ */
+export async function expectHighlightDrawn(room: Locator, options?: { timeout?: number }) {
+  const mark = room.locator(".reader-viewport .sonder-follow");
+  if (onPreparedView()) await expect(mark.first()).toBeVisible(options);
+  else await expect(mark).toHaveAttribute("data-epubcfi", /^epubcfi\(/, options);
+}
+/**
+ * What a spec clicks to tap the book's text at a place: the frame's body, or, on the view of prepared text, the band
+ * that shows it. The prepared text itself is as long as its parts (or as wide as its pages), so a place in its own
+ * box need not be in view.
+ */
+export function bookBody(text: FrameLocator | Locator): Locator {
+  return onPreparedView() ? (text as Locator).locator("xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' reader-viewport ')][1]") : text.locator("body");
 }

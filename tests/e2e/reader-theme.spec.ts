@@ -1,4 +1,4 @@
-// @projects firefox, mobile-chrome, mobile-firefox, mobile-safari, mobile-iphone-slice13-sw, webkit-iphone-now-playing, mobile-iphone-slice14
+// @projects firefox, mobile-chrome, mobile-firefox, mobile-safari, mobile-iphone-slice13-sw, webkit-iphone-now-playing, mobile-iphone-slice14, prepared-view
 import { test, expect, type Page } from "@playwright/test";
 import { readerFixture } from "../reader-fixture";
 import { readFileSync } from "node:fs";
@@ -8,6 +8,8 @@ import { NO_BLOB_STORE, skipOnMobile } from "./mobile";
 import { closeAppearance, openAppearance, setStepper } from "./reader-appearance";
 import { playFromLibrary } from "./library-play";
 import { gotoRead } from "./read-face";
+import { bookText, bookTextIn, textFrame, bookBody } from "./reader-view";
+import { notOnPreparedView } from "./prepared-view";
 // Tapping the middle of the page shows the reader's top bar and slider.
 async function showControls(page: Page) {
   const room = page.locator(".reader-room");
@@ -84,6 +86,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   page,
   context,
 }) => {
+  notOnPreparedView("one long walk through today's reader that ends by reopening the book offline from the EPUB kept on the device, and that clicks inside the frame's body on the way; the new view keeps nothing on the device yet (step 6). Its places, bookmarks and sync run on the new view in prepared-view.spec.ts, reader-messages.spec.ts and reader-pages.spec.ts");
   test.skip(test.info().project.name === "mobile-firefox", "plays audio, which the suite's Firefox cannot (#656)");
   const audio = await page.request.post("/api/import", {
     multipart: {
@@ -118,7 +121,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await expect(
     page.getByRole("dialog", { name: "Now playing", exact: true }),
   ).toBeVisible();
-  const frame = page.frameLocator(".reader-room .reader-viewport iframe");
+  const frame = bookText(page);
   await expect(
     frame.getByText("Alice was beginning to get very tired", { exact: false }),
   ).toBeVisible();
@@ -126,7 +129,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
     await page.evaluate(() => (window as any).__epubScriptExecuted),
   ).toBeUndefined();
   // reader-frame.spec.ts checks the frame's sandbox and that EPUB scripts stay blocked in every engine.
-  await page.frameLocator(".reader-room .reader-viewport iframe").locator("body").click({ position: { x: 340, y: 100 } });
+  await bookText(page).locator("body").click({ position: { x: 340, y: 100 } });
   await expect
     .poll(
       async () =>
@@ -155,7 +158,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await expect(page.getByRole("heading", { level: 1, name: "Bookmarks", exact: true })).toBeVisible();
   await expect(page.getByRole("list", { name: "Bookmarks", exact: true }).getByRole("listitem")).toHaveCount(1);
   await page.getByRole("button", { name: "Back to the book", exact: true }).click();
-  await expect(page.locator(".reader-room .reader-viewport iframe")).toBeVisible();
+  await expect(textFrame(page.locator(".reader-room"))).toBeVisible();
   await expect
     .poll(
       async () =>
@@ -164,7 +167,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
     )
     .toBe(checkpoint.locator.cfi);
   await page.setViewportSize({ width: 430, height: 844 });
-  await expect(page.locator(".reader-room .reader-viewport iframe")).toBeVisible();
+  await expect(textFrame(page.locator(".reader-room"))).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   // Appearance docked under the text (#588). The reader's own Theme went with the reader on its own (#613 part 2):
   // the Read face takes the app's look, and the panel has no Theme row.
@@ -231,7 +234,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await expect(sync).toHaveAttribute("data-state", /^(ready|partial)$/, { timeout: 15000 });
   await expect(page.getByRole("button", { name: "Mark alignment reviewed", exact: true })).toHaveCount(0);
   await gotoRead(page, id);
-  await expect(page.locator(".reader-room .reader-viewport iframe")).toBeVisible();
+  await expect(textFrame(page.locator(".reader-room"))).toBeVisible();
   await showControls(page);
   await page.getByRole("button", { name: "Chapters", exact: true }).click();
   // In Now playing's Read face the narrated book's Chapters rows also name where the narration is (#590).
@@ -239,7 +242,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
     .getByRole("list", { name: "Chapters", exact: true })
     .getByRole("button", { name: /Down the Rabbit-Hole/ })
     .click();
-  const sentence = page.frameLocator(".reader-room .reader-viewport iframe").locator("p").first();
+  const sentence = bookText(page).locator("p").first();
   const box = (await sentence.boundingBox())!;
   await page.mouse.move(box.x + 30, box.y + 10);
   await page.mouse.down(); await page.waitForTimeout(650); await page.mouse.up();
@@ -278,7 +281,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
     ),
   ).toBe(false);
   await gotoRead(page, id);
-  await expect(page.frameLocator(".reader-room .reader-viewport iframe").locator("body")).toBeVisible();
+  await expect(bookText(page).locator("body")).toBeVisible();
   await page.evaluate(() => navigator.serviceWorker.ready);
   await expect
     .poll(() => page.evaluate(() => !!navigator.serviceWorker.controller))
@@ -287,7 +290,7 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await context.setOffline(true);
   await page.reload();
   await expect(
-    page.frameLocator(".reader-room .reader-viewport iframe").locator("body"),
+    bookText(page).locator("body"),
   ).toBeVisible();
   await showControls(page);
   await expect(page.getByRole("button", { name: "Save ebook offline", exact: true })).toHaveCount(0);
@@ -300,9 +303,9 @@ test("EPUB reader supports safe content, persistent positions, bookmarks, local 
   await page.goBack();
   await page.goBack();
   await expect(
-    page.frameLocator(".reader-room .reader-viewport iframe").locator("body"),
+    bookText(page).locator("body"),
   ).toBeVisible();
-  await page.frameLocator(".reader-room .reader-viewport iframe").locator("body").click({ position: { x: 340, y: 100 } });
+  await bookText(page).locator("body").click({ position: { x: 340, y: 100 } });
   await showControls(page);
   await page
     .getByRole("button", { name: "Bookmark current sentence", exact: true })
@@ -344,8 +347,7 @@ test("an image-only cover opens at the first readable EPUB section on a narrow p
   await page.setViewportSize({ width: 320, height: 740 });
   await gotoRead(page, id);
   await expect(
-    page
-      .frameLocator(".reader-room .reader-viewport iframe")
+    bookText(page)
       .getByText("Alice was beginning to get very tired", { exact: false }),
   ).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
@@ -403,7 +405,7 @@ test("a bookmark the server rejects is dropped with a notice and later bookmarks
   });
   await gotoRead(page, id);
   const reader = page.getByRole("dialog", { name: "Now playing", exact: true });
-  await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
+  await expect(textFrame(reader)).toBeVisible();
   await showControls(page);
   // A book with only this ebook reads in Now playing's Read face with no narration (#594): the head bookmarks the
   // page's first sentence.
@@ -474,7 +476,7 @@ test("a reader setting does not save an appearance preview", async ({
       location.hash = `reader/${id}`;
     }, id);
     const reader = page.getByRole("dialog", { name: "Now playing", exact: true });
-    await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
+    await expect(textFrame(reader)).toBeVisible();
     await showControls(page);
     // From Appearance docked under the text (#588).
     const room = reader.locator(".reader-room");
@@ -550,7 +552,7 @@ test("Keep my place while offline keeps the conflict until reconnected and then 
   const { id } = await upload.json();
   await gotoRead(page, id);
   const reader = page.getByRole("dialog", { name: "Now playing", exact: true });
-  const frame = reader.frameLocator(".reader-viewport iframe");
+  const frame = bookTextIn(reader);
   await expect(
     frame.getByText("Alice was beginning to get very tired", { exact: false }),
   ).toBeVisible();
@@ -572,7 +574,7 @@ test("Keep my place while offline keeps the conflict until reconnected and then 
     },
   });
   expect(remote.ok()).toBe(true);
-  await frame.locator("body").click({ position: { x: 340, y: 100 } });
+  await bookBody(frame).click({ position: { x: 340, y: 100 } });
   // The conflict is the foot's message (#591); Stay is today's Keep my place.
   const conflict = reader.locator('.reader-message[data-kind="conflict"]');
   await expect(conflict).toBeVisible();
@@ -636,11 +638,11 @@ test("a 409 with no server checkpoint rebases to revision 0 and saves instead of
   }, id);
   await gotoRead(page, id);
   const reader = page.getByRole("dialog", { name: "Now playing", exact: true });
-  const frame = reader.frameLocator(".reader-viewport iframe");
+  const frame = bookTextIn(reader);
   await expect(
     frame.getByText("Alice was beginning to get very tired", { exact: false }),
   ).toBeVisible();
-  await frame.locator("body").click({ position: { x: 340, y: 100 } });
+  await bookBody(frame).click({ position: { x: 340, y: 100 } });
   await expect
     .poll(
       async () =>

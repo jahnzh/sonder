@@ -1,14 +1,15 @@
-// @projects firefox, webkit-iphone-now-playing, mobile-iphone-slice14
+// @projects firefox, webkit-iphone-now-playing, mobile-iphone-slice14, prepared-view
 import {test,expect,type Page} from "@playwright/test";
 import {showControls} from "./reader-bands";
 import {readFileSync} from "node:fs";
 import {randomUUID} from "node:crypto";
 import {readerFixture} from "../reader-fixture";
 import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
-import {highlightShown,textShown} from "./reader-view";
+import {highlightShown,textShown,bookText,textFrame} from "./reader-view";
 import {appearancePanel,openAppearance} from "./reader-appearance";
 import {openRead} from "./now-playing";
 import { gotoRead } from "./read-face";
+import {onPreparedView} from "./prepared-view";
 // `F` returns to the narration only when the reader has the keyboard (#501 review): not behind a sheet or a dialog
 // above the reader, not while typing in a field (also one inside the book's pages), not with a modifier and not
 // without the book's narration in the player. A focused button does not take it.
@@ -109,27 +110,31 @@ test("F typed into a field goes into the field, in the book's pages and in the r
  const {book,map,manifest}=await fixture(page,`Keys fields ${test.info().repeatEachIndex}`);
  const interval=firstInterval(map);
  const room=await openFollowing(page,book,interval);
- const frame=page.frameLocator(".inline-reader .reader-viewport iframe");
+ const frame=bookText(page,".inline-reader");
  // Contents → chapter two, which holds the fields: the reader pages away from the narration in chapter one.
  await showControls(page,room);
  await room.getByRole("button",{name:"Chapters",exact:true}).click();
  // Chapters is a page of its own (#590): its row opens the reader there.
  await page.locator(".reader-pages-chapter",{hasText:"The Pool of Tears"}).click();
  await expect(room).not.toHaveAttribute("data-current-passage",/.+/);
- const note=frame.locator("#note");
- await expect(note).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
  const playing=room.getByRole("button",{name:"Pause narration",exact:true});
- // Every key typed into a field of the book stays there: F, Space and the arrows are not shortcuts there.
- await note.focus();
- await page.keyboard.type("f F");
- await page.keyboard.press("ArrowLeft");
- await page.keyboard.type("x");
- await expect(note).toHaveValue("f xF");
- // In a list, F picks the option that starts with it.
- const choice=frame.locator("#choice");
- await choice.focus();
- await page.keyboard.press("f");
- await expect(choice).toHaveValue("fig");
+ // Not on the new reading view (#802): prepared text holds no form fields (they are not on its allow-list), so the
+ // book has nothing to type into there. The Search half below applies to both views.
+ if(!onPreparedView()){
+  const note=frame.locator("#note");
+  await expect(note).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
+  // Every key typed into a field of the book stays there: F, Space and the arrows are not shortcuts there.
+  await note.focus();
+  await page.keyboard.type("f F");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.type("x");
+  await expect(note).toHaveValue("f xF");
+  // In a list, F picks the option that starts with it.
+  const choice=frame.locator("#choice");
+  await choice.focus();
+  await page.keyboard.press("f");
+  await expect(choice).toHaveValue("fig");
+ }
  await stillAway(page);
  await expect(playing).toHaveCount(0);
  // The Search page's field takes F as a letter too (#590).
@@ -180,7 +185,7 @@ test("F does nothing in the reader without the book's narration in the player",a
  await gotoRead(page, ebook);
  const reader=page.getByRole("dialog", { name: "Now playing", exact: true });
  const room=reader.locator(".reader-room");
- await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
+ await expect(textFrame(reader)).toBeVisible();
  await pageAway(page,room);
  await page.keyboard.press("f");
  await page.waitForTimeout(600);

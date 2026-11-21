@@ -1,4 +1,4 @@
-// @projects firefox, webkit-iphone-now-playing
+// @projects firefox, webkit-iphone-now-playing, prepared-view
 import { test, expect, type Page, type Route } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -7,6 +7,7 @@ import { expectTextUncovered } from "./reader-bands";
 import { revealControls as showControls } from "./reader-controls";
 import { openRead } from "./now-playing";
 import { installCpuThrottle } from "./cpu-throttle";
+import {bookText} from "./reader-view";
 // SONDER_E2E_CPU_THROTTLE=4 runs it on a processor slowed four times (Chromium).
 installCpuThrottle(test);
 // The reader's More sheet goes (#592, spec #586 "The More sheet goes"): no More button in the head and nothing added
@@ -64,7 +65,7 @@ async function openAt(page: Page, book: any, position: number) {
   // Now playing on its Read face (#593: the dock's "Open ebook reader" went).
   await openRead(page);
   const room = page.locator(".inline-reader");
-  await expect(page.frameLocator(".inline-reader .reader-viewport iframe").locator("p").first()).toBeAttached({ timeout: 20000 });
+  await expect(bookText(page,".inline-reader").locator("p").first()).toBeAttached({ timeout: 20000 });
   return room;
 }
 async function asMember(page: Page) {
@@ -159,7 +160,7 @@ test("without a map the administrator's Back to narration locates the passage, s
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   await expect(page.locator(".inline-reader .reader-viewport .sonder-follow").first()).toBeVisible();
   // And it is the located sentence's page that is shown.
-  await expect(page.frameLocator(".inline-reader .reader-viewport iframe").getByText(target.text.slice(0, 24))).toBeVisible();
+  await expect(bookText(page,".inline-reader").getByText(target.text.slice(0, 24))).toBeVisible();
 });
 
 test("a failed locating is the foot's error, with Retry; F does the same as the button", async ({ page }, testInfo) => {
@@ -236,7 +237,7 @@ test("a control tapped while Listening from here shows ends that notice, not the
     }
   const room = await openAt(page, book, 5);
   await expect(room).toHaveAttribute("data-current-passage", /.+/, { timeout: 20000 });
-  const paragraphs = page.frameLocator(".inline-reader .reader-viewport iframe").locator("p");
+  const paragraphs = bookText(page,".inline-reader").locator("p");
   const view = (await room.locator(".reader-viewport").boundingBox())!;
   let target: { x: number; y: number; width: number; height: number } | null = null;
   await expect.poll(async () => {

@@ -1,10 +1,10 @@
-// @projects firefox, mobile-chrome, mobile-firefox, mobile-safari, mobile-iphone-slice13, webkit-iphone-now-playing, mobile-iphone-slice14
+// @projects firefox, mobile-chrome, mobile-firefox, mobile-safari, mobile-iphone-slice13, webkit-iphone-now-playing, mobile-iphone-slice14, prepared-view
 import {test,expect,type Page} from "@playwright/test";
 import {readFileSync} from "node:fs";
 import {randomUUID} from "node:crypto";
 import {readerFixture} from "../reader-fixture";
 import {skipOnMobile} from "./mobile";
-import {highlightShown} from "./reader-view";
+import {highlightShown,bookText,textFrame} from "./reader-view";
 import {openRead,nowPlaying} from "./now-playing";
 import { playFromLibrary } from "./library-play";
 import { gotoRead } from "./read-face";
@@ -39,7 +39,7 @@ async function start(page:Page,title:string){
  await page.locator(".player-dock").getByRole("button",{name:"Pause",exact:true}).click();
  // Now playing on its Read face (#593).
  await openRead(page);
- await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
+ await expect(textFrame(page.locator(".inline-reader"))).toBeVisible();
 }
 async function showControls(page:Page,scope:string){
  const topbar=page.locator(`${scope} .reader-topbar`);
@@ -59,7 +59,7 @@ async function openReader(page:Page){
  // Now playing on its Read face (#593: the dock's "Open ebook reader" went).
  await openRead(page);
  const room=page.locator(".inline-reader");
- await expect(room.locator(".reader-viewport iframe")).toBeVisible();
+ await expect(textFrame(room)).toBeVisible();
  return room;
 }
 /** No map shown: the recording is in the player (its seek bar is in the foot), yet the reader follows no sentence. */
@@ -102,7 +102,7 @@ test("page gestures show controls and long-press listens from that sentence",asy
  await showControls(page,".inline-reader");
  await expect(room.getByRole("slider",{name:/^Seek in /})).toBeVisible();
  await checkHeading(page);
- const text=page.frameLocator(".inline-reader .reader-viewport iframe").locator("p").nth(1);
+ const text=bookText(page,".inline-reader").locator("p").nth(1);
  await text.waitFor();
  const box=(await text.boundingBox())!;
  await page.mouse.move(box.x+Math.min(box.width/2,80),box.y+Math.min(box.height/2,10));
@@ -176,7 +176,7 @@ test("page controls follow the prepared narration",async({page})=>{
  await page.setViewportSize({width:1440,height:900});
  await expect.poll(()=>highlightShown(room)).toBe(true);
  await page.setViewportSize({width:390,height:844});
- await expect(room.locator(".reader-viewport iframe")).toBeVisible();
+ await expect(textFrame(room)).toBeVisible();
  await expect.poll(()=>highlightShown(room)).toBe(true);
  await page.setViewportSize({width:1440,height:900});
  await expect.poll(()=>highlightShown(room)).toBe(true);
@@ -205,8 +205,8 @@ test("an ebook without a map remains readable and offers sync setup", async ({pa
  await gotoRead(page, id);
  // The closed Now Playing reader stays mounted, so scope to the standalone reader.
  const reader=page.getByRole("dialog", { name: "Now playing", exact: true });
- await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
- await expect(page.frameLocator(".now-playing-screen .reader-viewport iframe").locator("p").first()).toBeVisible();
+ await expect(textFrame(reader)).toBeVisible();
+ await expect(bookText(page,".now-playing-screen").locator("p").first()).toBeVisible();
  // No map shown, and no narration to go back to: a book with only this ebook reads in Now playing's Read face with no
  // narration in its foot (#594, #613 part 2).
  await showControls(page,".now-playing-screen");
@@ -226,11 +226,14 @@ test("reader keys in a gap and with modifiers leave playback and the page alone"
  await page.setViewportSize({width:1440,height:900});
  await gotoRead(page, ebook);
  const reader=page.getByRole("dialog", { name: "Now playing", exact: true });
- const pages=reader.locator(".reader-viewport iframe");
+ const pages=textFrame(reader);
  await expect(pages).toBeVisible();
  // The Read face makes the book ready at 97 s without playing it (#593); the sentence before the gap stays narrated.
  const room=reader.locator(".reader-room");
  await expect(reader.getByRole("button",{name:"Play narration"}).first()).toBeAttached();
+ // The narrated sentence is there before it is read: the new view (#802) shows the text before the map has arrived,
+ // so "the text is visible" no longer means "the reader follows already" (seen on the check host).
+ await expect(room).toHaveAttribute("data-current-passage",/.+/,{timeout:45000});
  const passage=await room.getAttribute("data-current-passage");
  const writes:string[]=[];
  page.on("request",request=>{if(request.method()==="PUT"&&request.url().endsWith("/api/appearance"))writes.push(request.url());});
@@ -318,6 +321,13 @@ async function sampleFrames(page:Page){
   const tick=()=>{
    const vp=document.querySelector(".inline-reader .reader-viewport")?.getBoundingClientRect();
    const shown:string[]=[];
+   // The view of prepared text (#802) has the paragraphs in the band itself, each chapter file in its section.
+   const prepared=document.querySelector(".inline-reader .reader-viewport[data-view='prepared'] .prepared-text");
+   if(vp&&prepared)for(const p of Array.from(prepared.querySelectorAll<HTMLElement>("p[data-id]"))){
+    const r=p.getBoundingClientRect(),section=p.closest("section[data-section]")?.getAttribute("data-section");
+    const chapter=prepared.querySelector(`section[data-section="${section}"] h1`)?.textContent||"";
+    if(r.right>vp.left+4&&r.left<vp.right-4&&r.bottom>vp.top&&r.top<vp.bottom)shown.push(`${chapter}/${p.dataset.id}`);
+   }
    if(vp)for(const frame of Array.from(document.querySelectorAll<HTMLIFrameElement>(".inline-reader .reader-viewport iframe"))){
     const doc=frame.contentDocument,box=frame.getBoundingClientRect();
     let hidden=getComputedStyle(frame).visibility!=="visible";

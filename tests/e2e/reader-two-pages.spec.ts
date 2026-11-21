@@ -1,4 +1,4 @@
-// @projects firefox
+// @projects firefox, prepared-view
 // Read on a desktop shows two pages side by side when the text area is wide enough (#762): in Page mode, when the text
 // area beside the contents and between the page arrows has room for two pages of the text's measure, the host spans
 // both and epub.js lays out a spread; narrower, a larger font or Scroll mode give one page, and switching keeps the
@@ -10,6 +10,8 @@ import { randomUUID } from "node:crypto";
 import { longBookFixture } from "../long-book-fixture";
 import { expectTextUncovered, intersects, type Box } from "./reader-bands";
 import { appearancePanel, closeAppearance, openAppearance, setStepper } from "./reader-appearance";
+import {bookText} from "./reader-view";
+import { notOnPreparedView } from "./prepared-view";
 
 test.use({ serviceWorkers: "block" });
 const imported: string[] = [];
@@ -143,9 +145,11 @@ async function expectNothingOverText(page: Page) {
 async function openRead(page: Page, workId: string) {
   await page.goto(`/#read/${workId}`);
   await expect(page.getByRole("dialog", { name: "Now playing", exact: true })).toBeVisible();
-  await expect(page.frameLocator(".now-playing-screen .reader-viewport iframe").getByText("Chapter 1 sentence 1 walks", { exact: false })).toBeVisible();
+  await expect(bookText(page,".now-playing-screen").getByText("Chapter 1 sentence 1 walks", { exact: false })).toBeVisible();
   await settled(page);
 }
+
+test.beforeEach(() => notOnPreparedView("it is about pages mode: two pages side by side on a desktop. The new view is scroll mode only; pages mode is step 4 of the reader plan"));
 
 test("at 1920 by 1080 Read shows two pages with the contents open and hidden; arrows, bookmarks and search work across them", async ({ page }, testInfo) => {
   test.setTimeout(120000);

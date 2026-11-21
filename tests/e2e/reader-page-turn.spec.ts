@@ -1,4 +1,4 @@
-// @projects firefox, webkit-iphone-page-turn, webkit-iphone-now-playing
+// @projects firefox, webkit-iphone-page-turn, webkit-iphone-now-playing, prepared-view
 import {test,expect,type Page,type Locator} from "@playwright/test";
 import {mkdirSync,readFileSync} from "node:fs";
 import {randomUUID} from "node:crypto";
@@ -10,11 +10,14 @@ import {showControls} from "./reader-bands";
 import {longSentence,pageTurnFixture,PACED_CHARACTERS_PER_SECOND} from "../page-turn-fixture";
 import {closeAppearance,openAppearance,setStepper} from "./reader-appearance";
 import {openRead} from "./now-playing";
+import { installReaderFrames } from "./reader-frames";
+import { notOnPreparedView } from "./prepared-view";
 // The page turns inside a sentence that crosses a page (#508, spec #503): in Page mode, when the narration's
 // reported position reaches the first word on the next page. The narration's position is set on the player's
 // audio element without playing it (headless Firefox plays no audio in this suite).
 test.use({serviceWorkers:"block"});
 installReaderWaitBudget(test);
+installReaderFrames(test);
 const imported:string[]=[];
 test.beforeEach(async({page})=>{
  await page.addInitScript(()=>{
@@ -27,7 +30,7 @@ test.beforeEach(async({page})=>{
   // frame at no width, no font faces, status "loaded"), so a wait on it hung the poll that asked until its timeout.
   // The wait follows the frame to the document it shows instead.
   (window as any).__sectionFontsReady=async(host:Element)=>{
-   for(const frame of host.querySelectorAll("iframe")){
+   for(const frame of (window as any).__readerFrames(host)){
     for(let doc=frame.contentDocument;doc;){
      let timer=0;
      const replaced=new Promise<void>(resolve=>{const check=()=>frame.contentDocument!==doc?resolve():void(timer=window.setTimeout(check,50));check();});
@@ -111,7 +114,7 @@ async function wordState(room:Locator,sentence:string,word:number){
   // The section's fonts first: a layout measured with a fallback font breaks elsewhere (WebKit loads them late).
   await (window as any).__sectionFontsReady(host);
   const bounds=host.getBoundingClientRect();
-  for(const frame of host.querySelectorAll("iframe")){
+  for(const frame of (window as any).__readerFrames(host)){
    const doc=frame.contentDocument,box=frame.getBoundingClientRect();
    if(!doc?.body)continue;
    const walker=doc.createTreeWalker(doc.body,NodeFilter.SHOW_TEXT);
@@ -160,6 +163,8 @@ const expectStays=async(page:Page,check:()=>Promise<boolean>)=>{
  // Nothing should change: sampled for a second and a half.
  for(let i=0;i<6;i++){expect(await check()).toBe(true);await page.waitForTimeout(250);}
 };
+
+test.beforeEach(() => notOnPreparedView("it is about pages mode: the page turn inside a sentence that crosses two pages. The new view is scroll mode only; pages mode with CSS columns is step 4 of the reader plan"));
 
 test("in Page mode the page turns inside a crossing sentence when the narration reaches its first word on the next page",async({page},testInfo)=>{
  test.setTimeout(180000);
@@ -253,7 +258,7 @@ test("in Scroll mode a crossing sentence moves nothing inside it, as before",asy
   const {interval,sentence,breakTime}=crossing!;
   const room=await openAt(page,book,interval,interval.start+.05);
   const view=()=>room.locator(".reader-viewport").evaluate(host=>{
-   const container=host.querySelector(".epub-container") as HTMLElement|null,frame=host.querySelector("iframe") as HTMLIFrameElement|null;
+   const container=host.querySelector(":is(.epub-container,.prepared-scroll)") as HTMLElement|null,frame=host.querySelector("iframe") as HTMLIFrameElement|null;
    return `${container?.scrollLeft}:${container?.scrollTop}:${frame?.contentWindow?.scrollX}:${frame?.contentWindow?.scrollY}`;
   });
   const before=await view();
@@ -310,7 +315,7 @@ async function layoutOf(room:Locator,sentence:string){
   const bounds=host.getBoundingClientRect(),step=host.clientWidth;
   const overlap=(r:Box,b:Box)=>Math.min(r.right,b.right)-Math.max(r.left,b.left)>0.5&&Math.min(r.bottom,b.bottom)-Math.max(r.top,b.top)>0.5;
   const marks=[...host.querySelectorAll(".sonder-follow rect")].map(r=>r.getBoundingClientRect());
-  for(const frame of host.querySelectorAll("iframe")){
+  for(const frame of (window as any).__readerFrames(host)){
    const doc=frame.contentDocument,box=frame.getBoundingClientRect();
    if(!doc?.body)continue;
    const scroll=doc.defaultView?.scrollX??0;
@@ -711,7 +716,7 @@ test("after each turn the break is measured again: a picture that grows on the p
   // words on the second page, which pushes the end of that page onto the third. The first page does not change.
   const grown=Math.floor((before[0]!.word+before[1]!.word)/2);
   await room.locator(".reader-viewport").evaluate((host,{sentence,word})=>{
-   for(const frame of host.querySelectorAll("iframe")){
+   for(const frame of (window as any).__readerFrames(host)){
     const doc=frame.contentDocument;if(!doc?.body)continue;
     const walker=doc.createTreeWalker(doc.body,NodeFilter.SHOW_TEXT);
     for(let node=walker.nextNode() as Text|null;node;node=walker.nextNode() as Text|null){

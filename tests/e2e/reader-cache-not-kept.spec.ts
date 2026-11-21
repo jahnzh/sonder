@@ -1,9 +1,10 @@
-// @projects firefox, mobile-iphone-slice13
+// @projects firefox, mobile-iphone-slice13, prepared-view
 import { test, expect, type Page } from "./device-store";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { readerFixture } from "../reader-fixture";
 import { playFromLibrary } from "./library-play";
+import { notOnPreparedView } from "./prepared-view";
 
 // #671 (spec #548, "Activity's entries"): the reader copies an EPUB it opens to the device as a reading cache, and
 // Now playing's hidden reader does so for the book in the mini player. That copy is not kept: This device lists
@@ -64,6 +65,10 @@ async function play(page: Page, title: string) {
   await playFromLibrary(page, title);
   await expect(page.locator(".player-dock .dock-book")).toContainText(title);
 }
+
+// The reader's own copy of the EPUB on the device is today's reader's: the new view never fetches the EPUB, and what
+// it keeps on the device (the prepared parts) is step 6 of the reader plan.
+test.beforeEach(() => notOnPreparedView("it is about the EPUB file the reader of the frame caches on the device; the new view fetches no EPUB, and keeping prepared parts is step 6"));
 
 test("a book with an ebook only listened to is not kept on this device", async ({ page }) => {
   const title = `Listened only ${randomUUID()}`;

@@ -1,19 +1,21 @@
-// @projects firefox, webkit-iphone-now-playing, mobile-iphone-slice14
+// @projects firefox, webkit-iphone-now-playing, mobile-iphone-slice14, prepared-view
 import {test,expect,type Page} from "@playwright/test";
 import {readFileSync} from "node:fs";
 import {randomUUID} from "node:crypto";
 import {longBookFixture,longBookSentence} from "../long-book-fixture";
 import {readerFixture} from "../reader-fixture";
 import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
-import {highlightShown,textShown} from "./reader-view";
+import {highlightShown,textShown,bookText} from "./reader-view";
 import {setTextSize} from "./reader-appearance";
 import {openRead} from "./now-playing";
 import { gotoRead } from "./read-face";
+import { installReaderFrames } from "./reader-frames";
 // What the deleted Lyrics long-book test guarded that also holds for the book's text (#501 review): a search
 // result and a bookmark far away in a long book show their sentence on the page, and the text size setting
 // changes the size of the book's text that is drawn.
 test.use({serviceWorkers:"block"});
 installReaderWaitBudget(test);
+installReaderFrames(test);
 const imported:string[]=[];
 test.afterEach(async({page})=>{
  await page.unrouteAll({behavior:"wait"});
@@ -73,7 +75,7 @@ test("a search result and a bookmark far away in a long book show their sentence
  const markedText=longBookSentence(19,449);
  const marked=section.paragraphs.find((paragraph:any)=>paragraph.text.trim().startsWith("Chapter 20 sentence 450 "));
  expect(marked).toBeTruthy();
- expect((await page.request.post(`/api/reader/${ebook}/bookmarks`,{data:{id:`${ebook}-${run}-long`,label:"Long bookmark",locator:{section:section.index,paragraphId:marked.id,progression:0}}})).ok()).toBe(true);
+ expect((await page.request.post(`/api/reader/${ebook}/bookmarks`,{data:{id:`${ebook}-${run}-long`,label:"Long bookmark",locator:{section:section.index,paragraphId:marked.id,quote:marked.text,progression:0}}})).ok()).toBe(true);
  const first=map.intervals.filter((interval:any)=>interval.section===manifest.sections[0].index).sort((a:any,b:any)=>a.start-b.start);
  const room=await openFollowing(page,book,first[20]);
  // Search → sentence 333 of chapter 25, which is not on the page yet.
@@ -91,7 +93,8 @@ test("a search result and a bookmark far away in a long book show their sentence
  await showTopbar(page,room);
  await room.locator(".reader-player").getByRole("button",{name:"Chapters",exact:true}).click();
  await page.getByRole("radio",{name:"Bookmarks",exact:true}).click();
- // The Bookmarks page lists the saved sentence in full.
+ // The Bookmarks page lists the saved sentence in full: from the book's sentences, or, in the new view (#802), which
+ // holds none, from the sentence saved with the bookmark, as the reader's own bookmark button saves it.
  await page.locator(".reader-pages-bookmark-open",{hasText:markedText.trim().slice(0,40)}).click();
  await expect.poll(()=>textShown(room,markedText),{timeout:READER_WAIT_MS.followHighlight}).toBe(true);
  expect(await textShown(room,foundText)).toBe(false);
@@ -101,7 +104,7 @@ test("a search result and a bookmark far away in a long book show their sentence
 // width of the book's frame; paragraphs inherit it.
 async function drawnSize(page:Page){
  return page.locator(".reader-room .reader-viewport").evaluate(host=>{
-  for(const frame of host.querySelectorAll("iframe")){
+  for(const frame of (window as any).__readerFrames(host)){
    const doc=frame.contentDocument,paragraph=doc?.querySelector("p");
    if(paragraph)return {px:parseFloat(getComputedStyle(paragraph).fontSize),frameWidth:doc!.defaultView!.innerWidth};
   }
@@ -122,7 +125,7 @@ test("the text size setting changes the size of the book's text that is drawn, a
   const ebook=(await uploaded.json()).id;
   await gotoRead(page, ebook);
   const room=page.locator(".reader-room");
-  await expect(page.frameLocator(".reader-room .reader-viewport iframe").locator("p").first()).toBeVisible();
+  await expect(bookText(page).locator("p").first()).toBeVisible();
   const sizes:number[]=[];
   for(const size of [16,26]){
    // From Appearance docked under the text (#588).
@@ -141,7 +144,7 @@ test("the text size setting changes the size of the book's text that is drawn, a
   await expect.poll(async()=>(await(await page.request.get("/api/appearance")).json()).reader.size).toBe(26);
   // The saved size is what the reader draws when it opens again.
   await page.reload();
-  await expect(page.frameLocator(".reader-room .reader-viewport iframe").locator("p").first()).toBeVisible();
+  await expect(bookText(page).locator("p").first()).toBeVisible();
   await expect.poll(async()=>{
    const drawn=await drawnSize(page);
    return drawn && Math.abs(drawn.px-expectedSize(26,drawn.frameWidth))<0.5;

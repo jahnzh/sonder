@@ -1,4 +1,4 @@
-// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing
+// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing, prepared-view
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -8,6 +8,7 @@ import { listenFace, nowPlaying, openListen, openRead } from "./now-playing";
 import { playFromLibrary } from "./library-play";
 import { installCpuThrottle } from "./cpu-throttle";
 import { revealControls } from "./reader-controls";
+import {bookText,textFrame} from "./reader-view";
 import { withFirstAnswers } from "./first-answers";
 // SONDER_E2E_CPU_THROTTLE=4 runs it on a processor slowed four times (Chromium).
 installCpuThrottle(test);
@@ -110,7 +111,7 @@ async function openReaderPlayer(page: Page) {
   const dialog = nowPlaying(page);
   if (await dialog.isVisible()) await switchFace(page, "read");
   else await openRead(page);
-  await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible({ timeout: 20000 });
+  await expect(textFrame(page.locator(".inline-reader"))).toBeVisible({ timeout: 20000 });
   return dialog;
 }
 
@@ -128,7 +129,7 @@ async function switchFace(page: Page, face: "listen" | "read") {
     await expect(listenFace(page)).toBeVisible();
   } else {
     await listenFace(page).getByRole("radio", { name: "Read", exact: true }).click();
-    await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible({ timeout: 20000 });
+    await expect(textFrame(page.locator(".inline-reader"))).toBeVisible({ timeout: 20000 });
   }
 }
 
@@ -531,7 +532,7 @@ test("source reloads only record a jump when the new source moves the position",
 // Listen from here is the long-press on a sentence (#592). Long-press a sentence that is on the page. The reader may
 // still be moving to the new position's passage, so look again until one is on the page.
 async function listenFromHere(page: Page, room: Locator) {
-  const paragraphs = page.frameLocator(".inline-reader .reader-viewport iframe").locator("p");
+  const paragraphs = bookText(page,".inline-reader").locator("p");
   await paragraphs.first().waitFor();
   const view = (await room.locator(".reader-viewport").boundingBox())!;
   let box: { x: number; y: number; width: number; height: number } | null = null;

@@ -1,4 +1,4 @@
-// @projects firefox, webkit-iphone-now-playing
+// @projects firefox, webkit-iphone-now-playing, prepared-view
 // A paused seek moves the reader's highlight (#730, a regression from #593's seek fix). The player holds a load's
 // seek target as the place until that seek is seen to land (src/seek-landing.ts). A seek made while the hold was
 // still waiting (on the live check's TorBox stream the load's own seek was still being read) kept the reader on the
@@ -12,6 +12,7 @@ import {readerFixture} from "../reader-fixture";
 import {installReaderWaitBudget,READER_WAIT_MS} from "./timing";
 import {openRead,openListen,listenFace,showReadControls} from "./now-playing";
 import {expectPlaysDeviceCopy} from "./device-copy";
+import {textFrame} from "./reader-view";
 
 test.use({viewport:{width:390,height:844}});
 installReaderWaitBudget(test);
@@ -61,9 +62,11 @@ async function instrument(page:Page){
   window.Audio=class extends NativeAudio{constructor(src?:string){super(src);elements.push(this);}};
  });
 }
-const audio=(page:Page)=>page.evaluate(()=>{const a=((window as any).__audio as HTMLAudioElement[]).find(a=>!!a.src)!;return {position:a.currentTime,paused:a.paused,src:a.src};});
+// The page has no audio element with a source for a moment after it opens; taking one at once fails the test for nothing.
+const audioThere=(page:Page)=>page.waitForFunction(()=>((window as any).__audio as HTMLAudioElement[]|undefined)?.some(a=>!!a.src));
+const audio=async(page:Page)=>{await audioThere(page);return page.evaluate(()=>{const a=((window as any).__audio as HTMLAudioElement[]).find(a=>!!a.src)!;return {position:a.currentTime,paused:a.paused,src:a.src};});};
 /** Seeks the element itself, as the live check does (scripts/verify-integrated-reader.mjs), and as a seek from outside the player would. */
-const seekElement=(page:Page,position:number)=>page.evaluate(position=>{((window as any).__audio as HTMLAudioElement[]).find(a=>!!a.src)!.currentTime=position;},position);
+const seekElement=async(page:Page,position:number)=>{await audioThere(page);await page.evaluate(position=>{((window as any).__audio as HTMLAudioElement[]).find(a=>!!a.src)!.currentTime=position;},position);};
 const room=(page:Page)=>page.locator(".inline-reader");
 async function savePlace(page:Page,book:any,position:number){
  const books=await(await page.request.get("/api/books")).json();
@@ -164,7 +167,7 @@ test.describe("on a stream",()=>{
   await savePlace(page,book,middle(saved));
   await page.goto("/");
   await openRead(page);
-  await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
+  await expect(textFrame(page.locator(".inline-reader"))).toBeVisible();
   await expect.poll(async()=>(await audio(page)).src).toContain("/api/media/");
   // One element plays: the check's find(a=>a.src) is the player's element, not a stale one.
   expect(await page.evaluate(()=>((window as any).__audio as HTMLAudioElement[]).filter(a=>!!a.src).length)).toBe(1);
