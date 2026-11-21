@@ -140,6 +140,9 @@ fi
 
 if [[ -v SONDER_CI_MAX_WAIT ]]; then
   MAX_WAIT=$SONDER_CI_MAX_WAIT
+elif [[ -n "${SONDER_CI_HOST_MAX_WAIT:-}" ]]; then
+  # The dispatcher's reading of the host's cap (scripts/ci-run.sh).
+  MAX_WAIT=$SONDER_CI_HOST_MAX_WAIT
 elif [[ -n "${CONFIG_MAX_WAIT:-}" ]]; then
   MAX_WAIT=$CONFIG_MAX_WAIT
 else
@@ -165,6 +168,22 @@ fi
 if ! FULL_SHA=$(git rev-parse --verify "${REQUESTED_REF}^{commit}" 2>/dev/null); then
   echo "[ci-ssh] Invalid commit ref: ${REQUESTED_REF}" >&2
   exit 1
+fi
+
+# The cap is set for a check without changed browser specs. The two stages that run a change's own specs grow with
+# it (#845: 26 changed reader specs are half an hour more even in parts), so the cap grows by what they may take,
+# unless it was set by hand for this run. Nothing is added when no spec changed or the estimate cannot be made.
+CAP_NOTE=""
+if [[ ! -v SONDER_CI_MAX_WAIT ]]; then
+  if allowance=$(node --input-type=module -e '
+      const { changedSpecsAllowance } = await import(process.argv[1]);
+      const { seconds, specs } = changedSpecsAllowance(process.argv[2], process.argv[3]);
+      console.log(`${seconds} ${specs}`);
+    ' "$ROOT/scripts/check-local-support.mjs" "$ROOT" "$FULL_SHA" 2>/dev/null) \
+    && [[ $allowance =~ ^([0-9]+)\ ([0-9]+)$ ]] && [[ ${BASH_REMATCH[1]} -gt 0 ]]; then
+    CAP_NOTE=", $MAX_WAIT + ${BASH_REMATCH[1]} for ${BASH_REMATCH[2]} changed browser spec(s)"
+    MAX_WAIT=$((MAX_WAIT + BASH_REMATCH[1]))
+  fi
 fi
 
 # This runner executes the checkout's own scripts, not the target commit's. When
@@ -236,6 +255,7 @@ exit_code=${exit_code}
 result=${result}
 recorded_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
+  [[ -z ${CUT_OFF:-} ]] || echo "cut_off=${CUT_OFF}" >>"$LOCAL_REPORT_DIR/ci-ssh-result.txt"
 }
 
 host_reachable() {
@@ -658,7 +678,7 @@ REMOTE
     return 4
   fi
 
-  log "Waiting for the check (cap ${MAX_WAIT}s, poll every ${POLL_INTERVAL}s)"
+  log "Waiting for the check (cap ${MAX_WAIT}s${CAP_NOTE}, poll every ${POLL_INTERVAL}s)"
   wait_for_remote
 
   case "$WAIT_RESULT" in
@@ -683,6 +703,13 @@ REMOTE
       exit_code=124
       result=timeout
       retrieve_report
+      # Which stage was running and how far it had come, from the log just fetched (#845).
+      CUT_OFF=$(node --input-type=module -e '
+          const { cutOffSummary } = await import(process.argv[1]);
+          const { readFileSync } = await import("node:fs");
+          console.log(cutOffSummary(readFileSync(process.argv[2], "utf8")));
+        ' "$ROOT/scripts/check-local-support.mjs" "$LOCAL_REPORT_DIR/remote-check.log" 2>/dev/null) || CUT_OFF=""
+      [[ -z $CUT_OFF ]] || log "The check was ${CUT_OFF}"
       ;;
   esac
 
@@ -715,7 +742,7 @@ if host_reachable; then
         disk_full) DESCRIPTION="CI refused: disk full on the checkout's filesystem" ;;
         remote_run_died | remote_setup_failed | host_bundle_failed) DESCRIPTION="CI host failure: ${RESULT//_/ }" ;;
         host_connectivity_lost) DESCRIPTION="CI host failure: SSH connectivity lost" ;;
-        timeout) DESCRIPTION="CI host failure: timed out after ${MAX_WAIT}s" ;;
+        timeout) DESCRIPTION="CI host failure: timed out after ${MAX_WAIT}s${CUT_OFF:+, ${CUT_OFF}}"; DESCRIPTION=${DESCRIPTION:0:140} ;;
         *) DESCRIPTION="CI failed on ${SONDER_CI_HOST}" ;;
       esac
     fi

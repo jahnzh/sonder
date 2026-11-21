@@ -49,7 +49,7 @@ exec bash -c "$*"
 function runnerStubFor(name) {
   return `#!/usr/bin/env bash
 echo "stub-runner ${name} host=\${SONDER_CI_HOST:-} sha=$1"
-echo "invoked runner=${name} host=\${SONDER_CI_HOST:-} sha=$1 dispatch=\${SONDER_CI_DISPATCH:-} loopback=\${SONDER_CI_LOOPBACK_PORT:-} remoteBase=\${SONDER_CI_REMOTE_BASE:-} tmpdir=\${SONDER_CI_TMPDIR:-} maxWait=\${SONDER_CI_MAX_WAIT:-}" >>"$STUB_RUNNER_LOG"
+echo "invoked runner=${name} host=\${SONDER_CI_HOST:-} sha=$1 dispatch=\${SONDER_CI_DISPATCH:-} loopback=\${SONDER_CI_LOOPBACK_PORT:-} remoteBase=\${SONDER_CI_REMOTE_BASE:-} tmpdir=\${SONDER_CI_TMPDIR:-} maxWait=\${SONDER_CI_MAX_WAIT:-} hostMaxWait=\${SONDER_CI_HOST_MAX_WAIT:-}" >>"$STUB_RUNNER_LOG"
 secs=\${STUB_RUNNER_SLEEP:-}
 [[ -f "\${STUB_SLEEP_DIR:-/nonexistent}/\${SONDER_CI_HOST:-}" ]] && secs=$(cat "$STUB_SLEEP_DIR/$SONDER_CI_HOST")
 [[ -n $secs ]] && sleep "$secs"
@@ -592,7 +592,9 @@ test("SONDER_CI_<ID>_HOST overrides the ssh target of a host", () => {
     const actual = f.onHost("lisa.example")[0];
     assert.equal(actual.remoteBase, f.remote); // explicit caller override
     assert.equal(actual.tmpdir, "/home/jahn/sonder-ci-tmp");
-    assert.equal(actual.maxWait, "3600");
+    // The host's cap goes on as the host's (the runner may add to it for changed specs, #845), not as one set by hand.
+    assert.equal(actual.hostMaxWait, "3600");
+    assert.equal(actual.maxWait, "");
     const configured = f.run([], f.commits[2], { SONDER_CI_HOSTS: "lisa", SONDER_CI_LISA_HOST: "lisa.example", SONDER_CI_REMOTE_BASE: undefined });
     assert.equal(configured.status, 0, configured.output);
     assert.equal(f.onHost("lisa.example")[1].remoteBase, "/home/jahn/sonder-ci-tmp");
