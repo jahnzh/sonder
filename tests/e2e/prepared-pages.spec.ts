@@ -27,9 +27,9 @@ test.afterEach(async ({ page }) => {
 });
 
 /** An ebook on its own (no recording): 30 chapters of 600 sentences, a dozen parts and more. */
-async function longBook(page: Page) {
+async function longBook(page: Page, chapters = 30, each = 600) {
   const title = `Pages ${randomUUID()}`;
-  const uploaded = await page.request.post("/api/ebooks/import", { multipart: { file: { name: "Long.epub", mimeType: "application/epub+zip", buffer: await longBookFixture({ chapters: 30, sentences: 600, title }) } } });
+  const uploaded = await page.request.post("/api/ebooks/import", { multipart: { file: { name: "Long.epub", mimeType: "application/epub+zip", buffer: await longBookFixture({ chapters, sentences: each, title }) } } });
   expect(uploaded.ok()).toBe(true);
   const ebook = (await uploaded.json()).id as string;
   const sentences = await (await page.request.get(`/api/reader/${ebook}`)).json();
@@ -158,11 +158,20 @@ test("pages are turned by a tap: each begins where the one before ended, back re
   expect(ordinal(back.ids.at(-1)!)).toBeLessThanOrEqual(ordinal(again.ids[0]!));
 });
 
-test("reading on through many parts: parts come and go behind the reader and not a line of the page being read moves", async ({ page }) => {
-  test.setTimeout(240000);
-  // Two large pages a turn, so that parts go by quickly.
-  await page.setViewportSize({ width: 1920, height: 1080 });
-  const { ebook, sentences, manifest, ordinal } = await longBook(page);
+// One page too: there nothing but a part taken out behind the reader can move a line (two pages opened in a run's
+// last column had a fault of their own, which the same test met first). And a book whose parts begin inside a
+// chapter: a chapter begins on a new page, which takes up whatever a part taken out long before it left wrong, so
+// only text that runs on from that part to the page being read shows a space left at the wrong height.
+for (const [layout, viewport, pages, chapters, each] of [
+  ["two pages", { width: 1920, height: 1080 }, "2", 30, 600],
+  ["one page", { width: 700, height: 1000 }, "1", 30, 600],
+  ["one page of a book whose parts begin inside a chapter", { width: 700, height: 1000 }, "1", 4, 4000],
+] as const)
+test(`reading on through many parts, ${layout}: parts come and go behind the reader and not a line of the page being read moves`, async ({ page }) => {
+  test.setTimeout(300000);
+  // Large pages, so that parts go by quickly.
+  await page.setViewportSize(viewport);
+  const { ebook, sentences, manifest, ordinal } = await longBook(page, chapters, each);
   expect(manifest.parts.length).toBeGreaterThan(8);
   // From near the end of the third part on, so that parts are soon taken out behind.
   const start = manifest.parts[2].last as string;
@@ -171,7 +180,8 @@ test("reading on through many parts: parts come and go behind the reader and not
   const seen = new Set<string>();
   let moved = 0, drops = 0;
   let shown = await settledPage(page);
-  for (let step = 0; step < 400; step++) {
+  expect(shown.pages).toBe(pages);
+  for (let step = 0; step < 700; step++) {
     // The page as it was read right after its turn is the page still standing when the next turn is made: parts
     // that came or went meanwhile moved no line of it.
     const still = await pageOf(page);
@@ -468,4 +478,37 @@ for (const direction of [1, -1] as const)
     }).toPass({ timeout: 20000, intervals: [400] });
     expect(asked).toBe(4);
     expect(here.ids.length).toBeGreaterThan(0);
+  });
+
+// A part is cut by size, so a chapter longer than a part is cut inside: here 12 of 13 parts begin inside a chapter,
+// between two paragraphs. Read backwards across every such joint, the page turned to ends where the page left
+// begins, with no sentence hidden or shown twice, and forward again is the page that was left, line for line. What a
+// space above the part cannot make up is an empty stretch at the joint, never text carried onto the page left.
+for (const [layout, viewport, pages] of [["one page", { width: 700, height: 1000 }, "1"], ["two pages", { width: 1920, height: 1080 }, "2"]] as const)
+  test(`reading backwards through a book whose parts begin inside a chapter, ${layout}: every page ends where the next begins, and forward again is the page that was left`, async ({ page }) => {
+    test.setTimeout(600000);
+    await page.setViewportSize(viewport);
+    const { ebook, sentences, manifest, ordinal } = await longBook(page, 4, 4000);
+    expect(manifest.parts.length).toBeGreaterThan(8);
+    const last = manifest.parts.length - 1;
+    await placeAt(page, ebook, sentences, manifest.parts[last].first);
+    await opened(page, ebook);
+    let next = await settledPage(page);
+    expect(next.pages).toBe(pages);
+    let joints = 0, most = 0;
+    for (let step = 0; step < 1500; step++) {
+      const earlier = await turn(page, -1);
+      expectJoined(earlier, next, ordinal, `turn ${step} back, parts ${next.parts} then ${earlier.parts}`);
+      most = Math.max(most, earlier.parts.split(",").length);
+      if (earlier.parts.split(",")[0] !== next.parts.split(",")[0]) {
+        // The turn that put a part in: forward again is the page that was left, and back again the page turned to.
+        joints++;
+        expect((await turn(page, 1)).lines, `forward again after the turn into part ${earlier.parts.split(",")[0]}`).toEqual(next.lines);
+        expect((await turn(page, -1)).lines, `and back into part ${earlier.parts.split(",")[0]}`).toEqual(earlier.lines);
+      }
+      next = earlier;
+      if (earlier.parts.split(",")[0] === "0" && earlier.ids.some((id) => ordinal(id) < ordinal(manifest.parts[0].last) - 200)) break;
+    }
+    expect(joints, "joints between parts crossed backwards").toBe(last);
+    expect(most, "parts in the page at once").toBeLessThanOrEqual(5);
   });

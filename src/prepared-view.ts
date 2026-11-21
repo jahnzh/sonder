@@ -285,11 +285,11 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
   };
   /** The spaces a turn back left between two parts (`turnBack`) are taken out: the text flows as the book has it. */
   const clearJoints = () => {
-    for (const joint of text.querySelectorAll(".prepared-lead")) if (joint !== lead) joint.remove();
+    for (const joint of text.querySelectorAll(".prepared-joint")) joint.remove();
   };
   const jointOf = (part: HTMLElement) => {
     const before = part.previousElementSibling;
-    return before && before !== lead && before.classList.contains("prepared-lead") ? before : null;
+    return before?.classList.contains("prepared-joint") ? before : null;
   };
   const setLead = (height: number) => {
     leadHeight = Math.max(0, height);
@@ -401,14 +401,26 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
         return (((target - lineTop(first).offset) % height) + height) % height;
       };
       // The space above the part is tried until the run's first line stands where it stood. Each try moves the new
-      // part's lines down by what is missing; what is missing can only shrink.
-      let space = 0;
-      let best = { space: 0, miss: Number.POSITIVE_INFINITY };
-      for (let attempt = 0; attempt < 8; attempt++) {
-        const miss = missOf(space);
-        if (miss < best.miss) best = { space, miss };
-        if (miss < 1) break;
-        space = (space + miss) % height;
+      // part's lines down by what is missing. Lines are as high as they are and keep together in twos, so a try
+      // may carry the line past its place: then the largest space that does not is looked for between the two.
+      let best = { space: 0, miss: missOf(0) };
+      for (let attempt = 0; attempt < 8 && best.miss >= 1; attempt++) {
+        const next = best.space + best.miss;
+        const miss = missOf(next % height);
+        if (miss < best.miss) {
+          best = { space: next, miss };
+          continue;
+        }
+        let under = best.space, past = next;
+        for (let step = 0; step < 5 && best.miss >= 1; step++) {
+          const middle = (under + past) / 2;
+          const found = missOf(middle % height);
+          if (found < best.miss) {
+            best = { space: middle, miss: found };
+            under = middle;
+          } else past = middle;
+        }
+        break;
       }
       // A heading that will not stand alone at a page's foot leaves room there: of the spaces that put the run's
       // first line where it stood, the largest is taken, so the page before it is as full as the book's own flow has it.
@@ -416,21 +428,23 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
       if (best.miss < 1)
         for (let attempt = 0; attempt < 7; attempt++) {
           const middle = (fits + over) / 2;
-          if (missOf(best.space + middle) < 1) fits = middle;
+          if (missOf((best.space + middle) % height) < 1) fits = middle;
           else over = middle;
         }
       let left = missOf((best.space + fits) % height);
-      // Lines are as high as they are: the new part's last line may end up to a line above where the run began,
-      // whatever the space above it. What is left is put between the two parts, where a chapter ends, so the run's
-      // first line stands exactly where it stood and no line of the page being left moves.
+      // What no space above the part can make up is put between the two parts, as an empty stretch that runs on
+      // over a page's foot like text: the run's first line then stands exactly where it stood, whatever was
+      // missing, so no line of the page being left moves and no sentence of the new part is carried onto it. The
+      // stretch is less than a page, lies between two paragraphs (a part is cut between them) and is there only
+      // for a reader who came backwards onto a part that was not in the page.
       const joint = doc.createElement("div");
-      joint.className = "prepared-lead";
+      joint.className = "prepared-joint";
       joint.setAttribute("aria-hidden", "true");
-      if (left >= 0.5 && left < height / 2) {
+      if (left >= 0.5) {
         first.before(joint);
         let room = 0;
-        for (let attempt = 0; attempt < 4 && left >= 0.5 && left < height / 2; attempt++) {
-          room += left;
+        for (let attempt = 0; attempt < 6 && left >= 0.5; attempt++) {
+          room = (room + left) % height;
           joint.style.height = `${room}px`;
           left = (((target - lineTop(first).offset) % height) + height) % height;
         }

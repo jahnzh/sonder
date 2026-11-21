@@ -179,3 +179,8 @@
 .prepared-lead {
   break-inside: avoid;
 }
+/* What a turn back could not make up above the part it put in: an empty stretch between two parts that runs on over a
+   page's foot as text does (prepared-view.ts, turnBack). */
+.prepared-joint {
+  break-inside: auto;
+}
