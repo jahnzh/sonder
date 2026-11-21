@@ -54,7 +54,9 @@ async function instrument(page:Page){
  });
 }
 const audio=(page:Page)=>page.evaluate(()=>{const a=((window as any).__audio as HTMLAudioElement[]).find(a=>!!a.src);return a&&{position:a.currentTime,paused:a.paused,src:a.src,ready:a.readyState};});
-const seekElement=(page:Page,position:number)=>page.evaluate(position=>{((window as any).__audio as HTMLAudioElement[]).find(a=>!!a.src)!.currentTime=position;},position);
+// The page has no audio element with a source for a moment after it opens; taking one at once fails the test for nothing.
+const audioThere=(page:Page)=>page.waitForFunction(()=>((window as any).__audio as HTMLAudioElement[]|undefined)?.some(a=>!!a.src));
+const seekElement=async(page:Page,position:number)=>{await audioThere(page);await page.evaluate(position=>{((window as any).__audio as HTMLAudioElement[]).find(a=>!!a.src)!.currentTime=position;},position);};
 const room=(page:Page)=>page.locator(".inline-reader");
 async function savePlace(page:Page,book:any,track:number,position:number){
  const books=await(await page.request.get("/api/books")).json();

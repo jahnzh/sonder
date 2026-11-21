@@ -58,17 +58,23 @@ async function instrument(page: Page) {
     };
   });
 }
-const audio = (page: Page) =>
-  page.evaluate(() => {
+// The page has no audio element with a source for a moment after it opens; taking one at once fails the test for nothing.
+const audioThere = (page: Page) => page.waitForFunction(() => (window as unknown as { __audio?: HTMLAudioElement[] }).__audio?.some((a) => !!a.src));
+const audio = async (page: Page) => {
+  await audioThere(page);
+  return page.evaluate(() => {
     const element = (window as unknown as { __audio: HTMLAudioElement[] }).__audio.find((a) => !!a.src)!;
     return { position: element.currentTime, paused: element.paused, src: element.src };
   });
-const seekAudio = (page: Page, value: number) =>
-  page.evaluate((value) => {
+};
+const seekAudio = async (page: Page, value: number) => {
+  await audioThere(page);
+  await page.evaluate((value) => {
     const element = (window as unknown as { __audio: HTMLAudioElement[] }).__audio.find((a) => !!a.src)!;
     element.currentTime = value;
     element.dispatchEvent(new Event("timeupdate"));
   }, value);
+};
 
 /**
  * Plays the book from the Library's Continue card and pauses it in the mini player. The Continue card plays without
