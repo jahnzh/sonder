@@ -490,9 +490,12 @@ class Jobs(unittest.TestCase):
                          lambda: restarted.cancel("job-1"), lambda: restarted.result("job-1")):
                 with self.assertRaises(book_job.Resuming):
                     self.answers_at_once(call)
-            self.assertEqual({p.name: p.read_bytes() for p in (self.root / "job-1").iterdir() if p.is_file()
-                              if p.name != "state.json"},
-                             {k: v for k, v in files.items() if k != "state.json"}, "the retained job is untouched")
+            # Not the state file, nor the temporary it is written through: the first worker may still be writing
+            # its last state when the folder is listed above (a check on WSL listed a `state.json.tmp` that was
+            # gone a moment later, 21 Nov 2026).
+            kept = lambda name: name not in ("state.json", "state.json.tmp")
+            self.assertEqual({p.name: p.read_bytes() for p in (self.root / "job-1").iterdir() if p.is_file() and kept(p.name)},
+                             {k: v for k, v in files.items() if kept(k)}, "the retained job is untouched")
             release.set()
             thread.join(5)
         self.assertFalse(restarted.resuming)

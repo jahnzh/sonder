@@ -7,8 +7,11 @@
 import { test, expect, type Page, type Route } from "@playwright/test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { onlyThisDevicesWork } from "./device-attention";
 
 test.use({ serviceWorkers: "block" });
+// The dot this spec looks at is the one this device's saves light, not what another spec left on the shared server.
+test.beforeEach(async ({ context }) => onlyThisDevicesWork(context));
 
 const OUT = "OUT";
 mkdirSync(OUT, { recursive: true });
