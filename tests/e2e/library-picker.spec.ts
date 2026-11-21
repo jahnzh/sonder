@@ -190,6 +190,10 @@ test("the Shelf group without Hardcover, and an earlier build's Hardcover Want t
   await wantToRead(page, kindred.workId);
   // A shelf chosen on this device by an earlier build, while Hardcover was connected: its Want to read.
   await page.goto("/#library");
+  // The device's storage is changed only once the Library is drawn. The app writes the shelf's key when it starts;
+  // a change made while it starts can land before that write, which then leaves "all shelves" on the device and
+  // the earlier build's choice unread (seen once in the check of #865, and in 29 of 150 tries of these steps).
+  await expect(runTiles(page, run)).toHaveCount(2);
   await page.evaluate(() => {
     localStorage.removeItem("sonder-library-shelf");
     localStorage.setItem("sonder-library-hardcover", JSON.stringify({ shelf: "1", list: "all" }));
