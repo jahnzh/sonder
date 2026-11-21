@@ -20,6 +20,11 @@ export function installReaderFrames(testApi: TestApi) {
           // The width the text's size follows: the band's, as the frame's was.
           innerWidth: scroller.clientWidth,
           innerHeight: scroller.clientHeight,
+          // How far the text has moved under the band, as a frame's window tells it: a rectangle's left edge plus
+          // this is its place in the run of pages (pages mode turns by moving the columns to the left).
+          get scrollX() {
+            return scroller.scrollLeft - scroller.getBoundingClientRect().left;
+          },
           getComputedStyle: (element: Element) => getComputedStyle(element),
         };
         const doc = {
@@ -29,6 +34,7 @@ export function installReaderFrames(testApi: TestApi) {
           fonts: document.fonts,
           createTreeWalker: (node: Node, what?: number, filter?: NodeFilter | null) => document.createTreeWalker(node, what, filter),
           createRange: () => document.createRange(),
+          createElement: (name: string) => document.createElement(name),
           querySelector: (selector: string) => root.querySelector(selector),
           querySelectorAll: (selector: string) => root.querySelectorAll(selector),
           elementFromPoint: (x: number, y: number) => document.elementFromPoint(x, y),

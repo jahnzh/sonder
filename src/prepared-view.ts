@@ -11,6 +11,7 @@
 import { buildPart } from "./prepared-html";
 import { PreparedStaleError, positionInBook, type PreparedBook } from "./prepared-book";
 import { SPREAD_GAP } from "./reader-spread";
+import { pagedWords, type PagedWord } from "./reader-page-turn";
 import { BLOCKS_IN_LINK } from "./reader-links";
 import { readerBlockSelector } from "./reading-types";
 
@@ -735,6 +736,52 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
     // Two pages keep their pairing: a page stays on the side it was on.
     setColumn(spread && (column - startColumn) % 2 !== 0 ? column - 1 : column);
   };
+  /** The page a column is on: itself, or with two pages side by side the left one of its pair as the pairs are now. */
+  const pageOfColumn = (column: number) => (spread && (column - startColumn) % 2 !== 0 ? column - 1 : column);
+  /**
+   * The words of a loaded sentence and the page each starts on (#508, as today's reader measures them: word boxes,
+   * the breaks found by binary search, a word hyphenated across the page searched for its first character on the
+   * later page). A page is named by its first column in the run as it is now.
+   */
+  const wordsOf = (id: string): PagedWord[] | null => {
+    const elements = elementsOf(id);
+    if (!elements) return null;
+    const began = performance.now();
+    const nodes: { node: Text; start: number }[] = [];
+    let whole = "";
+    for (const element of elements) {
+      const walker = doc.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        nodes.push({ node: node as Text, start: whole.length });
+        whole += (node as Text).data;
+      }
+    }
+    const words = Array.from(whole.matchAll(/\S+/gu), (match) => ({ text: match[0], offset: match.index! }));
+    let lookups = 0;
+    const range = doc.createRange();
+    const paged = pagedWords(words.map((word) => word.text), (word, character) => {
+      lookups++;
+      const offset = words[word]!.offset + character;
+      let low = 0, high = nodes.length - 1;
+      while (low < high) {
+        const middle = (low + high + 1) >>> 1;
+        if (nodes[middle]!.start <= offset) low = middle;
+        else high = middle - 1;
+      }
+      const found = nodes[low];
+      if (!found || offset - found.start >= found.node.length) return null;
+      range.setStart(found.node, offset - found.start);
+      range.setEnd(found.node, offset - found.start + 1);
+      const box = Array.from(range.getClientRects()).find((rect) => rect.width > 0 || rect.height > 0);
+      return box ? pageOfColumn(columnAt(box.left)) : null;
+    });
+    // What a measurement took and cost, kept only where a browser test asks for it (#509, #664).
+    const timings = (window as { __sonderBreakTimings?: number[] }).__sonderBreakTimings;
+    if (Array.isArray(timings)) timings.push(performance.now() - began);
+    const costs = (window as { __sonderBreakLookups?: { lookups: number; words: number }[] }).__sonderBreakLookups;
+    if (Array.isArray(costs)) costs.push({ lookups, words: words.length });
+    return paged;
+  };
   /** Puts `top` (a place in the window) at the top of the band. */
   const toTop = (top: number) => setScroll(scroller.scrollTop + top - bandTop() - TOP_ROOM);
   const present = async (part: number, at: number) => {
@@ -829,6 +876,22 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
       if (startColumn === 0) return;
       setColumn(Math.max(0, target));
       turned();
+    },
+    /**
+     * The page turn inside the narrated sentence (#508), in pages mode: `pageFor` is given the sentence's words with
+     * the page each starts on and answers the page to show at the narration's position (`pageToShow` of
+     * reader-page-turn.ts). The sentence is measured as the pages are drawn now, each time. It is the reader's own
+     * jump: nothing is told as the reader's move. True when the page shown changed.
+     */
+    showNarratedPage(id: string, pageFor: (words: readonly PagedWord[]) => number | null): boolean {
+      if (!pages || disposed || scroller.clientHeight === 0) return false;
+      const words = wordsOf(id);
+      const page = words ? pageFor(words) : null;
+      if (page === null || page === startColumn || page < 0 || page >= columns()) return false;
+      setColumn(page);
+      reported = firstOnPage();
+      fill();
+      return true;
     },
     /** Another layout: scroll or pages, one page or two. The sentence at the top stays at the top. */
     async relayout(next: PreparedLayout): Promise<void> {

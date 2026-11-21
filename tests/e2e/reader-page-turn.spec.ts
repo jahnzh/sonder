@@ -11,7 +11,8 @@ import {longSentence,pageTurnFixture,PACED_CHARACTERS_PER_SECOND} from "../page-
 import {closeAppearance,openAppearance,setStepper} from "./reader-appearance";
 import {openRead} from "./now-playing";
 import { installReaderFrames } from "./reader-frames";
-import { notOnPreparedView } from "./prepared-view";
+import { onPreparedView } from "./prepared-view";
+const picturesSize=()=>onPreparedView()?{size:26}:{};
 // The page turns inside a sentence that crosses a page (#508, spec #503): in Page mode, when the narration's
 // reported position reaches the first word on the next page. The narration's position is set on the player's
 // audio element without playing it (headless Firefox plays no audio in this suite).
@@ -127,7 +128,8 @@ async function wordState(room:Locator,sentence:string,word:number){
     const screen={left:box.left+rect.left,right:box.left+rect.right,top:box.top+rect.top,bottom:box.top+rect.bottom};
     const overlap=(r:{left:number;right:number;top:number;bottom:number},b:{left:number;right:number;top:number;bottom:number})=>
      Math.min(r.right,b.right)-Math.max(r.left,b.left)>0.5&&Math.min(r.bottom,b.bottom)-Math.max(r.top,b.top)>0.5;
-    const marks=[...host.querySelectorAll(".sonder-follow rect")].map(r=>r.getBoundingClientRect());
+    // The highlight: epub.js draws rectangles over the frame; the view of prepared text marks the sentence's own spans.
+    const marks=frame.prepared?[...host.querySelectorAll(".sonder-follow")].flatMap(span=>[...span.getClientRects()]):[...host.querySelectorAll(".sonder-follow rect")].map(r=>r.getBoundingClientRect());
     return {
      page:Math.floor((rect.left+(doc.defaultView?.scrollX??0))/host.clientWidth),
      shown:overlap(screen,bounds),
@@ -164,7 +166,6 @@ const expectStays=async(page:Page,check:()=>Promise<boolean>)=>{
  for(let i=0;i<6;i++){expect(await check()).toBe(true);await page.waitForTimeout(250);}
 };
 
-test.beforeEach(() => notOnPreparedView("it is about pages mode: the page turn inside a sentence that crosses two pages. The new view is scroll mode only; pages mode with CSS columns is step 4 of the reader plan"));
 
 test("in Page mode the page turns inside a crossing sentence when the narration reaches its first word on the next page",async({page},testInfo)=>{
  test.setTimeout(180000);
@@ -314,7 +315,8 @@ async function layoutOf(room:Locator,sentence:string){
   await (window as any).__sectionFontsReady(host);
   const bounds=host.getBoundingClientRect(),step=host.clientWidth;
   const overlap=(r:Box,b:Box)=>Math.min(r.right,b.right)-Math.max(r.left,b.left)>0.5&&Math.min(r.bottom,b.bottom)-Math.max(r.top,b.top)>0.5;
-  const marks=[...host.querySelectorAll(".sonder-follow rect")].map(r=>r.getBoundingClientRect());
+  // The highlight: epub.js draws rectangles over the frame; the view of prepared text marks the sentence's own spans.
+  const marks=host.getAttribute("data-view")==="prepared"?[...host.querySelectorAll(".sonder-follow")].flatMap(span=>[...span.getClientRects()]):[...host.querySelectorAll(".sonder-follow rect")].map(r=>r.getBoundingClientRect());
   for(const frame of (window as any).__readerFrames(host)){
    const doc=frame.contentDocument,box=frame.getBoundingClientRect();
    if(!doc?.body)continue;
@@ -463,7 +465,7 @@ test("a sentence with a picture in it turns at the word the picture pushed to th
  test.setTimeout(180000);
  const {book,chapter,text}=await turnBook(page,`Picture turn ${testInfo.repeatEachIndex} ${randomUUID()}`);
  const intervals=chapter(2);
- await withReader(page,{mode:"paginated",font:"serif"},async()=>{
+ await withReader(page,{mode:"paginated",font:"serif",...picturesSize()},async()=>{
   let room=await openAt(page,book,intervals[0],intervals[0].start+.01);
   // The first sentence whose picture did not fit on its page: the picture and the words after it are on the next.
   let found:{interval:any;next:any;sentence:string;pushed:number}|null=null;
@@ -527,7 +529,8 @@ test("a word hyphenated across the page turns inside the word's time, at its fir
 // follows the frame's width: a measurement read between two of them breaks the sentence elsewhere than it is drawn.
 async function recordMeasuredFrames(page:Page){
  await page.evaluate(()=>{
-  const widths=()=>[...document.querySelectorAll(".inline-reader .reader-viewport iframe")].map(frame=>frame.getBoundingClientRect().width).join(",");
+  // On the view of prepared text the layout is the band's width and the width of a column in it.
+  const widths=()=>[...document.querySelectorAll<HTMLElement>(".inline-reader .reader-viewport :is(iframe,.prepared-text)")].map(frame=>`${frame.getBoundingClientRect().width}${frame.style.columnWidth}`).join(",");
   const measured:string[]=[];
   (window as any).__frameWidths=widths;
   (window as any).__measuredFrames=measured;
@@ -590,27 +593,37 @@ test("at desktop width with two pages side by side the turn comes when the narra
  await page.setViewportSize({width:1920,height:1080});
  // The chapter with pictures: its tall pictures spread it over many pairs of pages.
  const {book,chapter,text}=await turnBook(page,`Two pages ${testInfo.repeatEachIndex} ${randomUUID()}`);
- const intervals=chapter(2);
- await withReader(page,{mode:"paginated",font:"serif"},async()=>{
+ // The view of prepared text keeps these short paragraphs whole on a page (a picture stands in its line there, and
+ // no paragraph is left with one line at a page's foot or head), so there the sentences of every chapter are searched.
+ // Where that leaves no sentence that leaves a pair inside it, the next text size is tried: another size, other breaks.
+ const intervals=onPreparedView()?[...chapter(0),...chapter(1),...chapter(2)]:chapter(2);
+ const sizes=onPreparedView()?[19,21,17,23,25]:[undefined];
+ let done=false;
+ for(const size of sizes)if(!done)await withReader(page,{mode:"paginated",font:"serif",...(size?{size}:{})},async()=>{
   let room=await openAt(page,book,intervals[0],intervals[0].start+.01);
   // Wide enough for epub.js to lay out two pages side by side: one turn moves both (the page step is the pair).
   expect(await room.locator(".reader-viewport").evaluate(host=>host.clientWidth)).toBeGreaterThanOrEqual(800);
   await expect(room.locator(".reader-viewport")).toHaveAttribute("data-pages","2");
   // and it does: each of epub.js's columns (a page) is at most half the viewport.
   expect(await room.locator(".reader-viewport").evaluate(host=>{
-   const body=host.querySelector("iframe")?.contentDocument?.body;
+   const body=host.querySelector("iframe")?.contentDocument?.body??host.querySelector(".prepared-text");
    return body?parseFloat(getComputedStyle(body).columnWidth)/host.clientWidth:1;
   })).toBeLessThanOrEqual(.5);
   // A sentence that runs from the first page of a pair onto the second, and one that leaves the second page of a pair.
   let inside:{interval:any;sentence:string}|null=null,leaving:{interval:any;next:any;sentence:string}|null=null;
   for(const [at,interval] of intervals.entries()){
    if(at<1||at>=intervals.length-1||(inside&&leaving))continue;
-   const sentence=text(interval),layout=(await layoutOf(room,sentence))!,words=layout.words,half=layout.step/2;
+   const sentence=text(interval),layout=await layoutOf(room,sentence);
+   // A sentence outside a paragraph (a chapter's heading) is none of those looked for.
+   if(!layout)continue;
+   const words=layout.words,half=layout.step/2;
    const column=(word:LaidWord)=>Math.floor(word.x/half);
    const breaks=breaksOf(words,interval);
    if(!inside&&!breaks.length&&column(words[0]!)%2===0&&column(words.at(-1)!)===column(words[0]!)+1)inside={interval,sentence};
    if(!leaving&&breaks.length===1&&breaks[0]!.character===0&&column(words[breaks[0]!.word-1]!)%2===1)leaving={interval,next:intervals[at+1],sentence};
   }
+  if((!inside||!leaving)&&size!==sizes.at(-1))return;
+  done=true;
   expect(inside,"a sentence across the two pages of a pair").not.toBeNull();
   expect(leaving,"a sentence that leaves the second page of a pair").not.toBeNull();
   // Across the two pages of a pair both parts are on the screen at once, and nothing turns while the narration reads its second part.
@@ -642,7 +655,7 @@ test("at desktop width with two pages side by side the turn comes when the narra
 // such samples do not move, and the search itself is held by its lookups, which no load changes.
 test("finding the break of a narrated sentence takes a few milliseconds, also with the processor slowed six times",{tag:"@own-throttle"},async({page},testInfo)=>{
  test.setTimeout(300000);
- test.skip(testInfo.project.name!=="chromium","CPU throttling is a Chromium DevTools feature");
+ test.skip(testInfo.project.name!=="chromium"&&!onPreparedView(testInfo),"CPU throttling is a Chromium DevTools feature");
  await page.addInitScript(()=>{(window as any).__sonderBreakTimings=[];(window as any).__sonderBreakLookups=[];});
  const long=await longBook(page,`Break cost ${testInfo.repeatEachIndex} ${randomUUID()}`);
  const turns=await turnBook(page,`Break cost turns ${testInfo.repeatEachIndex} ${randomUUID()}`);
@@ -664,7 +677,9 @@ test("finding the break of a narrated sentence takes a few milliseconds, also wi
    }
    const book=await page.evaluate(()=>[...(window as any).__sonderBreakTimings] as number[]);
    const bookCosts=await page.evaluate(()=>[...(window as any).__sonderBreakLookups] as {lookups:number;words:number}[]);
-   expect(book.length).toBeGreaterThanOrEqual(60);
+   // The view of prepared text measures once its jump to the sentence has settled: a jump the next sentence replaced
+   // before that measured nothing, so a few of the sixty may be missing there.
+   expect(book.length).toBeGreaterThanOrEqual(onPreparedView()?50:60);
    // The sentence over three pages, followed from its start through each turn.
    const intervals=turns.chapter(0),at=intervals.findIndex((i:any)=>turns.text(i)===longSentence(45));
    const interval=intervals[at],sentence=turns.text(interval);

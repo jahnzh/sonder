@@ -1295,6 +1295,12 @@ export function ReaderView({
         if (pagedSentence.current === paged && jump.current()) setFollowRevision((value) => value + 1);
       });
   };
+  // The new view's page turn inside the narrated sentence (#803): the same rule (`pageToShow`) on the words as the
+  // view measures them in its columns. The view measures anew each time, so there is nothing to keep or renew.
+  const turnInsidePrepared = (interval: AlignmentInterval) => {
+    const player = playerRef.current;
+    engine.current?.showNarratedPage(interval.paragraphId, (words) => pageToShow(words, interval.start, interval.end, positionIn(interval, player.track?.id, player.position))?.page ?? null);
+  };
   // The new view's jump to a sentence (#802): the same steps as today's below, on the prepared text. The narrated
   // sentence stays where it is while it is in view; any other place is shown at the top of the band.
   const showPrepared = async (paragraphId: string, persist: boolean, recordingId: string | undefined) => {
@@ -1319,6 +1325,10 @@ export function ReaderView({
     if (persist) await saveReading(id, place, "listening", recordingId);
     view.highlight(paragraphId);
     highlight.current = paragraphId;
+    // A narrated sentence that crosses a page is shown on the page of the word being narrated.
+    const now = playerRef.current;
+    const interval = narrated ? following.highlightedSentence(mapRef.current, placeOf(now.book, now.track?.id, now.position)) : null;
+    if (interval?.paragraphId === paragraphId) turnInsidePrepared(interval);
     return true;
   };
   const clearHighlight = () => {
@@ -1534,7 +1544,8 @@ export function ReaderView({
       });
     } else if (interval) {
       // The same narrated sentence: in pages mode the page turns inside it once the narration reaches a word on the next page.
-      turnInside(key);
+      if (prepared) turnInsidePrepared(interval);
+      else turnInside(key);
     } else if (!interval && highlight.current && (rendition.current || engine.current)) {
       // Before the map's first sentence there is no narrated sentence (a jump back before it).
       clearHighlight();
