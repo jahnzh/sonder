@@ -992,3 +992,40 @@ export function writeReportFiles(outputDir, report) {
   fs.writeFileSync(path.join(outputDir, "report.json"), reportJson, "utf8");
   fs.writeFileSync(path.join(outputDir, "check-report.json"), reportJson, "utf8");
 }
+
+/**
+ * What a check's log says of a run that was cut off (#845): the stage that was running and how far it had come,
+ * as one line, or "" when the log names no stage. The stage is the last `=== [Stage n/m] command ===` line; under
+ * it every Playwright run announces its tests ("Running 87 tests") and prints one line a finished test.
+ */
+export function cutOffSummary(log) {
+  const lines = String(log ?? "").split("\n");
+  let start = -1;
+  let header = null;
+  for (const [index, line] of lines.entries()) {
+    const match = /^=== \[Stage (\d+)\/(\d+)\] (.*?)(?:: skipped .*)? ===\s*$/.exec(line);
+    if (match) [start, header] = [index, match];
+  }
+  if (!header) return "";
+  const command = header[3];
+  const name = /--repeat-each=/.test(command) ? "browser-changed-repeat"
+    : /test-results-changed-ordered/.test(command) ? "browser-changed-ordered"
+    : /test:browser/.test(command) ? "browser"
+    : /^npm ci\b/.test(command) ? "install"
+    : /run "?build/.test(command) ? "build"
+    : /^npm test\b/.test(command) ? "unit"
+    : command.slice(0, 60);
+  let announced = 0;
+  let passed = 0;
+  let failed = 0;
+  let skipped = 0;
+  for (const line of lines.slice(start + 1)) {
+    const running = /Running (\d+) tests? using/.exec(line);
+    if (running) announced += Number(running[1]);
+    const done = /^(?:\[[^\]]+\])?\s*([✓✘-])\s+\d+ \[/.exec(line);
+    if (done) done[1] === "✓" ? passed++ : done[1] === "✘" ? failed++ : skipped++;
+  }
+  const stage = `cut off in stage ${header[1]} of ${header[2]}, ${name}`;
+  if (!announced) return stage;
+  return `${stage}: ${passed + failed + skipped} of ${announced} test runs done (${passed} passed, ${failed} failed, ${skipped} skipped)`;
+}

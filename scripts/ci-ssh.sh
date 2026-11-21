@@ -255,6 +255,7 @@ exit_code=${exit_code}
 result=${result}
 recorded_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
+  [[ -z ${CUT_OFF:-} ]] || echo "cut_off=${CUT_OFF}" >>"$LOCAL_REPORT_DIR/ci-ssh-result.txt"
 }
 
 host_reachable() {
@@ -702,6 +703,13 @@ REMOTE
       exit_code=124
       result=timeout
       retrieve_report
+      # Which stage was running and how far it had come, from the log just fetched (#845).
+      CUT_OFF=$(node --input-type=module -e '
+          const { cutOffSummary } = await import(process.argv[1]);
+          const { readFileSync } = await import("node:fs");
+          console.log(cutOffSummary(readFileSync(process.argv[2], "utf8")));
+        ' "$ROOT/scripts/check-local-support.mjs" "$LOCAL_REPORT_DIR/remote-check.log" 2>/dev/null) || CUT_OFF=""
+      [[ -z $CUT_OFF ]] || log "The check was ${CUT_OFF}"
       ;;
   esac
 
@@ -734,7 +742,7 @@ if host_reachable; then
         disk_full) DESCRIPTION="CI refused: disk full on the checkout's filesystem" ;;
         remote_run_died | remote_setup_failed | host_bundle_failed) DESCRIPTION="CI host failure: ${RESULT//_/ }" ;;
         host_connectivity_lost) DESCRIPTION="CI host failure: SSH connectivity lost" ;;
-        timeout) DESCRIPTION="CI host failure: timed out after ${MAX_WAIT}s" ;;
+        timeout) DESCRIPTION="CI host failure: timed out after ${MAX_WAIT}s${CUT_OFF:+, ${CUT_OFF}}"; DESCRIPTION=${DESCRIPTION:0:140} ;;
         *) DESCRIPTION="CI failed on ${SONDER_CI_HOST}" ;;
       esac
     fi

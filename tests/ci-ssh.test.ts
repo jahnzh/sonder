@@ -49,6 +49,9 @@ if [[ $1 == run && $2 == check ]]; then
     die) kill -KILL "$PPID"; sleep 5 ;;
     vanish) rm -rf "$(dirname "$PWD")"; sleep 5 ;;
     hang) sleep 60 ;;
+    hang-in-stage)
+      printf '%s\\n' '=== [Stage 4/6] npm run test:browser ===' '  3 passed' '=== [Stage 5/6] npm "run" "test:browser" "--" "--workers=1" "--repeat-each=2" "a.spec.ts" (in 2 parts) ===' '[part 1/2] Running 40 tests using 1 worker' '[part 2/2] Running 30 tests using 1 worker' '[part 1/2]   ✓  1 [chromium] › a.spec.ts:1:1 › one (1.0s)' '[part 2/2]   ✓  1 [firefox] › b.spec.ts:1:1 › two (1.0s)' '[part 2/2]   -  2 [firefox] › b.spec.ts:2:1 › three'
+      sleep 60 ;;
   esac
 fi
 exit 0
@@ -468,6 +471,17 @@ test("the wait stops at the configured cap", (t) => {
   const out = f.run(f.second, { STUB_NPM_MODE: "hang", SONDER_CI_MAX_WAIT: "1" });
   assert.equal(out.status, 124, out.output);
   assert.deepEqual(fs.readdirSync(f.remote), []);
+});
+
+test("a check cut off by the cap says which stage was running and how far it had come (#845)", (t) => {
+  const f = fixture(t);
+  fs.copyFileSync(path.resolve("scripts/check-local-support.mjs"), path.join(f.repo, "scripts", "check-local-support.mjs"));
+  const out = f.run(f.second, { STUB_NPM_MODE: "hang-in-stage", SONDER_CI_MAX_WAIT: "2" });
+  assert.equal(out.status, 124, out.output);
+  const said = "cut off in stage 5 of 6, browser-changed-repeat: 3 of 70 test runs done (2 passed, 0 failed, 1 skipped)";
+  assert.ok(out.output.includes(`The check was ${said}`), out.output);
+  assert.equal(f.result(f.second).result, "timeout");
+  assert.equal(f.result(f.second).cut_off, said);
 });
 
 test("a host whose closed port does not refuse fails fast without running tests", (t) => {

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { changedStageShardCount, parseCliArgs, partitionSpecs, selectBrowserScope, specWeight } from "../scripts/check-local-support.mjs";
+import { changedStageShardCount, cutOffSummary, parseCliArgs, partitionSpecs, selectBrowserScope, specWeight } from "../scripts/check-local-support.mjs";
 import { changedBrowserStages } from "../scripts/check-local.mjs";
 import { formatSummary } from "../scripts/ci-summary.mjs";
 
@@ -128,4 +128,24 @@ test("both changed-spec stages keep one worker and every changed file, and carry
   assert.equal(ordered.env.SONDER_BROWSER_PARTS, repeat.env.SONDER_BROWSER_PARTS);
   assert.match(repeat.fullCommand, / \(in 2 parts\)$/);
   assert.deepEqual(changedBrowserStages([]), []);
+});
+
+test("a cut-off check's log gives the stage that was running and how far it had come (#845)", () => {
+  const log = [
+    "=== [Stage 4/6] npm run test:browser ===",
+    "[shard 1/6] Running 300 tests using 1 worker, shard 1 of 6",
+    "[shard 1/6]   ✓  1 [chromium] › a.spec.ts:1:1 › one (1.0s)",
+    '=== [Stage 5/6] npm "run" "test:browser" "--" "--workers=1" "--repeat-each=2" "--output=test-results-changed-repeat" "a\\.spec\\.ts$" (in 2 parts) ===',
+    "[part 1/2] Running 40 tests using 1 worker",
+    "[part 2/2] Running 30 tests using 1 worker",
+    "[part 1/2]   ✓  1 [chromium] › a.spec.ts:1:1 › one (1.0s)",
+    "[part 1/2]   ✘  2 [chromium] › a.spec.ts:2:1 › two (1.0s)",
+    "[part 2/2]   -  1 [firefox] › b.spec.ts:1:1 › three",
+    "  ✓  9 [chromium] › c.spec.ts:1:1 › a run without parts (2ms)",
+  ].join("\n");
+  assert.equal(cutOffSummary(log), "cut off in stage 5 of 6, browser-changed-repeat: 4 of 70 test runs done (2 passed, 1 failed, 1 skipped)");
+  assert.equal(cutOffSummary(log.split("\n").slice(0, 3).join("\n")), "cut off in stage 4 of 6, browser: 1 of 300 test runs done (1 passed, 0 failed, 0 skipped)");
+  assert.equal(cutOffSummary("=== [Stage 3/6] npm test ===\nok 1 - a unit test"), "cut off in stage 3 of 6, unit");
+  assert.equal(cutOffSummary('=== [Stage 6/6] npm "run" "test:browser" "--" "--workers=1" "--output=test-results-changed-ordered" "a" ==='), "cut off in stage 6 of 6, browser-changed-ordered");
+  assert.equal(cutOffSummary("no stage began"), "");
 });
