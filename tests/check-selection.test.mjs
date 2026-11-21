@@ -1,6 +1,10 @@
 import { test } from "node:test";
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import assert from "node:assert/strict";
-import { changedStageShardCount, cutOffSummary, dealChangedSpecs, gainedProjects, parseCliArgs, partitionSpecs, selectBrowserScope, specWeight } from "../scripts/check-local-support.mjs";
+import { changedStageShardCount, cutOffSummary, dealChangedSpecs, gainedProjects, parseCliArgs, partitionSpecs, processesUnder, selectBrowserScope, specWeight, stopProcessesUnder } from "../scripts/check-local-support.mjs";
 import { changedBrowserStages } from "../scripts/check-local.mjs";
 import { formatSummary } from "../scripts/ci-summary.mjs";
 
@@ -182,4 +186,46 @@ test("a cut-off check's log gives the stage that was running and how far it had 
   assert.equal(cutOffSummary(log.split("\n").slice(0, 3).join("\n")), "cut off in stage 4 of 6, browser: 1 of 300 test runs done (1 passed, 0 failed, 0 skipped)");
   assert.equal(cutOffSummary("=== [Stage 3/6] npm test ===\nok 1 - a unit test"), "cut off in stage 3 of 6, unit");
     assert.equal(cutOffSummary("no stage began"), "");
+});
+
+test("stopProcessesUnder stops every process whose working directory is inside the folder, and no other", async () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-stop-under-"));
+  const inside = path.join(base, "checkout");
+  const beside = path.join(base, "checkout-2");
+  fs.mkdirSync(path.join(inside, "tests"), { recursive: true });
+  fs.mkdirSync(beside);
+  const start = (cwd, command = "sleep 120") => {
+    // As Playwright starts its web server: `sh -c`, in a process group and session of its own.
+    const child = spawn("sh", ["-c", command], { cwd, detached: true, stdio: "ignore" });
+    child.unref();
+    return child;
+  };
+  const closed = (child) => new Promise((resolve) => child.once("close", (code, signal) => resolve(signal ?? code)));
+  const server = start(inside);
+  const deeper = start(path.join(inside, "tests"));
+  // One that does not go when asked: it is killed after the grace.
+  const stubborn = start(inside, "trap '' TERM; sleep 120 & wait");
+  const neighbour = start(beside);
+  const ends = [closed(server), closed(deeper), closed(stubborn)];
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.deepEqual(processesUnder(inside).filter((pid) => [server.pid, deeper.pid, stubborn.pid, neighbour.pid].includes(pid)).sort(), [server.pid, deeper.pid, stubborn.pid].sort());
+    const stopped = stopProcessesUnder(inside, { graceMs: 400 });
+    for (const child of [server, deeper, stubborn]) assert.ok(stopped.includes(child.pid), `${child.pid} was signalled`);
+    assert.equal(stopped.includes(neighbour.pid), false, "a folder whose name only starts the same is another folder");
+    assert.deepEqual(await Promise.all(ends), ["SIGTERM", "SIGTERM", "SIGKILL"]);
+    assert.deepEqual(processesUnder(inside), []);
+    assert.equal(neighbour.exitCode ?? neighbour.signalCode, null, "the neighbour runs on");
+    assert.deepEqual(stopProcessesUnder("relative/folder"), [], "only an absolute folder");
+    assert.deepEqual(stopProcessesUnder(""), []);
+  } finally {
+    for (const child of [server, deeper, stubborn, neighbour]) {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        // already gone
+      }
+    }
+    fs.rmSync(base, { recursive: true, force: true });
+  }
 });
