@@ -238,6 +238,18 @@ test("the sweep removes only the folders of editions that left the library", asy
   assert.deepEqual(folders(), afterwards.filter((name) => !name.startsWith(prefixes.get("s-drive")!)));
 });
 
+/**
+ * Waits until the thread line is `expected`, at most five seconds, then asserts it. The calls that fill the queue
+ * read the database and the file first, so on a loaded host they arrive later than a fixed pause allows (a check on
+ * lisa read the line 50 ms after the calls and found two of six books not yet in it); a line that never comes still
+ * fails, with what it was.
+ */
+async function threadLineReaches(expected: ReturnType<typeof threadLine>, message: string) {
+  const until = Date.now() + 5000;
+  while (Date.now() < until && JSON.stringify(threadLine()) !== JSON.stringify(expected)) await new Promise((resolve) => setTimeout(resolve, 2));
+  assert.deepEqual(threadLine(), expected, message);
+}
+
 test("at most two threads at once, one of them kept for readers; a reader's book is taken ahead of the waiting ones", async () => {
   const long = (words: string) => book(`${words} It goes on for a while, sentence after sentence, to keep a thread busy.`, 7000);
   for (const id of ["q-ahead-1", "q-ahead-2", "q-ahead-3"]) await edition(id, long(`Prepared ahead: ${id}.`));
@@ -255,12 +267,10 @@ test("at most two threads at once, one of them kept for readers; a reader's book
   try {
     // Three books are handed over to be prepared ahead (as an ebook search that saves three editions does).
     const ahead = ["q-ahead-1", "q-ahead-2", "q-ahead-3"].map((id) => ensurePrepared(id, log, { ahead: true }).then(done(id)));
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    assert.deepEqual(threadLine(), { running: 1, ahead: 1, waiting: 2 }, "one thread works ahead, the other is kept for a reader");
+    await threadLineReaches({ running: 1, ahead: 1, waiting: 2 }, "one thread works ahead, the other is kept for a reader");
     // Three readers open three other books; then one opens the last of the waiting books.
     const readers = ["q-read-1", "q-read-2", "q-read-3"].map((id) => ensurePrepared(id, log).then(done(id)));
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    assert.deepEqual(threadLine(), { running: 2, ahead: 1, waiting: 4 });
+    await threadLineReaches({ running: 2, ahead: 1, waiting: 4 }, "a reader's book has the second thread; two readers' books and two books ahead wait");
     const jumped = ensurePrepared("q-ahead-3", log).then(done("q-ahead-3 for its reader"));
     await Promise.all([...ahead, ...readers, jumped]);
   } finally {
