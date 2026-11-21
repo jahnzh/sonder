@@ -1039,6 +1039,64 @@ export function preserveArtifacts(disposableDir, outputDir) {
 /**
  * Safely remove a directory recursively.
  */
+/** The file in a check's output folder that names its checkout folder, for a runner that must stop what is left. */
+export const CHECKOUT_DIR_FILE = "checkout-dir";
+
+/** The processes whose working directory is `dir` or inside it (Linux: /proc), this process left out. */
+export function processesUnder(dir, procRoot = "/proc") {
+  const found = [];
+  let entries = [];
+  try {
+    entries = fs.readdirSync(procRoot);
+  } catch {
+    return found;
+  }
+  for (const name of entries) {
+    if (!/^\d+$/.test(name) || Number(name) === process.pid) continue;
+    let cwd;
+    try {
+      cwd = fs.readlinkSync(path.join(procRoot, name, "cwd"));
+    } catch {
+      continue; // gone, or another user's
+    }
+    // The kernel marks a removed directory.
+    cwd = cwd.replace(/ \(deleted\)$/, "");
+    if (cwd === dir || cwd.startsWith(`${dir}${path.sep}`)) found.push(Number(name));
+  }
+  return found;
+}
+
+/**
+ * Stops every process whose working directory is inside `dir`, a check's own checkout folder: SIGTERM, up to
+ * `graceMs` for them to go, then SIGKILL. Stopping a stage kills its process group, and Playwright starts its web
+ * server (`node --import tsx tests/browser-server.ts`) in a group of its own; when Playwright is killed before it
+ * has stopped that server, the server lives on with its port, as ten of them did on lisa for up to 27 hours.
+ * Returns the process ids it signalled. Synchronous, so the check can call it on its way out.
+ */
+export function stopProcessesUnder(dir, { graceMs = 1500, procRoot = "/proc", signal = (pid, name) => process.kill(pid, name) } = {}) {
+  if (!dir || !path.isAbsolute(dir)) return [];
+  const first = processesUnder(dir, procRoot);
+  const send = (pids, name) => {
+    for (const pid of pids) {
+      try {
+        signal(pid, name);
+      } catch {
+        // already gone
+      }
+    }
+  };
+  send(first, "SIGTERM");
+  const until = Date.now() + graceMs;
+  while (first.length && Date.now() < until && processesUnder(dir, procRoot).length) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  const stubborn = processesUnder(dir, procRoot);
+  send(stubborn, "SIGKILL");
+  // A killed process is gone a moment after the signal, not with it: wait for that moment, so the folder can be
+  // removed and a caller that looks again finds nothing.
+  const gone = Date.now() + 1000;
+  while (stubborn.length && Date.now() < gone && processesUnder(dir, procRoot).length) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  return first;
+}
+
 export function cleanupDirectory(dir) {
   if (dir && fs.existsSync(dir)) {
     try {

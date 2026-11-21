@@ -431,6 +431,20 @@ if [ -s "$run_dir/check.pid" ]; then
     fi
   fi
 fi
+# What the check left running in its own checkout folder: Playwright starts its web server in a process group of
+# its own, so the kill above does not reach it when the check was killed before it could stop it itself (ten such
+# servers stood on lisa for up to 27 hours, each holding its port). The check wrote the folder's name.
+checkout=$(cat "$run_dir/report/checkout-dir" 2>/dev/null)
+case "$checkout" in
+  /*/sonder-local-check-*)
+    for proc in /proc/[0-9]*; do
+      cwd=$(readlink "$proc/cwd" 2>/dev/null) || continue
+      cwd=${cwd% (deleted)}
+      case "$cwd" in "$checkout" | "$checkout"/*) kill -KILL "${proc#/proc/}" 2>/dev/null ;; esac
+    done
+    rm -rf "$checkout"
+    ;;
+esac
 rm -rf "$run_dir"
 exit 0
 REMOTE

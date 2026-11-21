@@ -49,6 +49,14 @@ if [[ $1 == run && $2 == check ]]; then
     die) kill -KILL "$PPID"; sleep 5 ;;
     vanish) rm -rf "$(dirname "$PWD")"; sleep 5 ;;
     hang) sleep 60 ;;
+    leave-server)
+      # A check that is killed with a web server of its own still running: the server is in a session of its own,
+      # its working directory the check's checkout folder, whose name the check wrote into its report folder.
+      out=""; prev=""; for arg in "$@"; do [[ $prev == --output-dir ]] && out=$arg; prev=$arg; done
+      checkout=$(mktemp -d "\${TMPDIR:-/tmp}/sonder-local-check-XXXXXX")
+      mkdir -p "$out"; echo "$checkout" >"$out/checkout-dir"
+      (cd "$checkout" && setsid sleep 120 >/dev/null 2>&1 & echo "$! $checkout" >"$STUB_LEFT_SERVER")
+      sleep 60 ;;
     hang-in-stage)
       printf '%s\\n' '=== [Stage 4/6] npm run test:browser ===' '  3 passed' '=== [Stage 5/6] npm "run" "test:browser" "--" "--workers=1" "--repeat-each=2" "a.spec.ts" (in 2 parts) ===' '[part 1/2] Running 40 tests using 1 worker' '[part 2/2] Running 30 tests using 1 worker' '[part 1/2]   ✓  1 [chromium] › a.spec.ts:1:1 › one (1.0s)' '[part 2/2]   ✓  1 [firefox] › b.spec.ts:1:1 › two (1.0s)' '[part 2/2]   -  2 [firefox] › b.spec.ts:2:1 › three'
       sleep 60 ;;
@@ -500,6 +508,25 @@ test("the check runs at the host's shard count from its figures, unless the call
   // The interpreter for the worker's Python tests travels the same way: the host's, and none for a host that names none.
   const pythonOf = () => fs.readFileSync(f.logs.npm, "utf8").trim().split("\n").filter((line) => line.includes("args=run check")).map((line) => /python=(\S*) torch=(\S*)$/.exec(line)?.slice(1, 3).join(" torch="));
   assert.deepEqual(pythonOf(), ["/opt/check/bin/python3 torch=1", "/opt/check/bin/python3 torch=1", " torch="], "with what the host declares about torch");
+});
+
+test("a server the check left running in its checkout folder is stopped with the run, and the folder removed", (t) => {
+  const f = fixture(t);
+  const leftFile = path.join(f.base, "left-server");
+  const out = f.run(f.second, { STUB_NPM_MODE: "leave-server", STUB_LEFT_SERVER: leftFile, SONDER_CI_MAX_WAIT: "2" });
+  assert.equal(out.status, 124, out.output);
+  const [pid, checkout] = fs.readFileSync(leftFile, "utf8").trim().split(" ");
+  assert.match(checkout, /\/sonder-local-check-/);
+  const alive = () => {
+    try {
+      return !/^\d+ \(.*\) Z /.test(fs.readFileSync(`/proc/${pid}/stat`, "utf8"));
+    } catch {
+      return false;
+    }
+  };
+  assert.equal(alive(), false, `the left server ${pid} is stopped`);
+  assert.equal(fs.existsSync(checkout), false, "its checkout folder is removed");
+  assert.deepEqual(fs.readdirSync(f.remote), []);
 });
 
 test("a host whose closed port does not refuse fails fast without running tests", (t) => {

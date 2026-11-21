@@ -47,6 +47,13 @@ const failStages = (process.env.STUB_NPM_FAIL_STAGE || '').split(',');
 const failCodes = (process.env.STUB_NPM_FAIL_CODE || '42').split(',');
 const createTraces = process.env.STUB_NPM_CREATE_TRACES === '1';
 const sleepMs = parseInt(process.env.STUB_NPM_SLEEP_MS || '0', 10);
+// A web server Playwright would leave behind: its own process group and session, its working directory the checkout.
+if (process.env.STUB_NPM_LEAVE_SERVER && argv[0] === 'run' && argv[1] === 'test:browser') {
+  const { spawn } = require('node:child_process');
+  const left = spawn('sleep', ['120'], { cwd: process.cwd(), detached: true, stdio: 'ignore' });
+  left.unref();
+  fs.appendFileSync(process.env.STUB_NPM_LEAVE_SERVER, left.pid + ' ' + process.cwd() + '\\n');
+}
 
 if (logPath) {
   const entry = {
@@ -577,6 +584,33 @@ for (const title of ['first', 'second']) test(title, ({}, info) => fs.appendFile
         const pass = (project) => ["a first", "a second", "b first", "b second"].map((line) => `${project} ${line} worker 0`);
         // The stub clears the state file at the start of each stage, so this is the repeat stage alone.
         assert.deepEqual(fs.readFileSync(stateFile, "utf8").trim().split("\n"), [...pass("one"), ...pass("one"), ...pass("two"), ...pass("two")]);
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+test("a server a stage left running in the checkout is stopped when the check ends, and the checkout's name is in the report folder", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const leftFile = path.join(fixture.tempBase, "left-servers");
+        const result = await runCheckLocal(["--silent"], {
+            cwd: fixture.repoDir,
+            env: {PATH: `${fixture.binDir}:${process.env.PATH}`, STUB_NPM_LOG: fixture.npmLogPath, STUB_NPM_LEAVE_SERVER: leftFile},
+        });
+        assert.equal(result.ok, true);
+        const [pid, checkout] = fs.readFileSync(leftFile, "utf8").trim().split("\n")[0].split(" ");
+        assert.match(checkout, /\/sonder-local-check-/);
+        assert.equal(fs.readFileSync(path.join(result.outputDir, "checkout-dir"), "utf8").trim(), checkout, "for a runner that must stop what is left");
+        const alive = () => {
+            try {
+                // A stopped child of nobody may stay a moment as a zombie of this test's own stub; its state says so.
+                return !/^\d+ \(.*\) Z /.test(fs.readFileSync(`/proc/${pid}/stat`, "utf8"));
+            } catch {
+                return false;
+            }
+        };
+        assert.equal(alive(), false, `the left server ${pid} is stopped`);
+        assert.equal(fs.existsSync(checkout), false);
     } finally {
         fixture.cleanup();
     }

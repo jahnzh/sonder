@@ -25,6 +25,8 @@ import {
   sanitizeEnvironment,
   runStageProcess,
   terminateProcessTree,
+  stopProcessesUnder,
+  CHECKOUT_DIR_FILE,
   preserveArtifacts,
   cleanupDirectory,
   writeReportFiles,
@@ -426,6 +428,12 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
   let disposableDir = null;
   try {
     disposableDir = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-local-check-"));
+    // For a runner that has to stop what this check left running after it was killed itself (ci-ssh.sh).
+    try {
+      fs.writeFileSync(path.join(outputDir, CHECKOUT_DIR_FILE), `${disposableDir}\n`);
+    } catch {
+      // the check's own cleanup still stops them
+    }
   } catch (err) {
     if (portLease) releasePortLease(portLease);
     const setupCompletedAt = new Date().toISOString();
@@ -477,6 +485,9 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     if (isCleanedUp) return;
     isCleanedUp = true;
     if (disposableDir) {
+      // What a stopped stage left running in the checkout: Playwright's web servers are in groups of their own.
+      const left = stopProcessesUnder(disposableDir);
+      if (left.length) console.warn(`[check-local] Stopped ${left.length} process(es) left running in the checkout: ${left.join(", ")}`);
       cleanupDirectory(disposableDir);
     }
     if (portLease) {
