@@ -158,11 +158,22 @@
   visibility: hidden;
   pointer-events: none;
 }
+/* The parts stand side by side, each a run of columns of its own in a box as wide as the whole pages it fills
+   (prepared-view.ts, `fit`): every part begins on a new page, and its pages are its own whatever parts are in the
+   page around it. */
 .prepared-scroll[data-mode="pages"] .prepared-text {
   box-sizing: border-box;
+  display: flex;
   height: 100%;
   max-width: none;
   margin: 0;
+}
+.prepared-scroll[data-mode="pages"] .prepared-text .prepared-part {
+  box-sizing: border-box;
+  flex: none;
+  width: calc(var(--prepared-pages, 1) * var(--prepared-step, 100%));
+  height: var(--prepared-page-height, 100%);
+  column-width: var(--prepared-column, auto);
   column-fill: auto;
 }
 /* A picture never runs over a page's foot, and a heading is not left alone at one. */
@@ -175,12 +186,7 @@
   break-after: avoid;
   break-inside: avoid;
 }
-/* The space kept where a part that was taken out ended, or above a part put in before the pages shown. */
-.prepared-lead {
-  break-inside: avoid;
-}
-/* What a turn back could not make up above the part it put in: an empty stretch between two parts that runs on over a
-   page's foot as text does (prepared-view.ts, turnBack). */
-.prepared-joint {
-  break-inside: auto;
+/* The room a chapter file has above it is for the scroll: a part begins at a page's top. */
+.prepared-scroll[data-mode="pages"] .prepared-text .prepared-part > section:first-child[data-section] {
+  margin-top: 0;
 }

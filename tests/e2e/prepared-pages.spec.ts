@@ -7,11 +7,13 @@ import { choosePreparedView } from "./prepared-view";
 import { closeAppearance, openAppearance, setStepper } from "./reader-appearance";
 // Pages mode in the new reading view (step 4 of the reader plan, #803): the loaded parts as one run of CSS columns.
 // What is new in it is checked here: a turn shows the next page with no line lost or shown twice, parts come and go
-// without moving a line of the page being read, the turn back across a part lands on a full page that ends where the
-// next begins, also with two pages side by side, and a turn saves the sentence at the top as today's reader does.
+// without moving a line of the page being read, every part begins on a new page (a left page with two side by
+// side) so that a part's pages are the same whatever parts are in the page around it, and a turn saves the sentence
+// at the top as today's reader does.
 // And what a review of it found (2026-11-21): the page is kept when the band is resized again and again and when the
 // text's size changes, the pages stay exact at an odd and a fractional width, a part taken out behind or beyond the
 // reader costs no line, and a tap for a page whose part is still on its way is not lost.
+// prepared-pages-walk.spec.ts walks the pages at random and holds every page to the same rules.
 test.use({ serviceWorkers: "block" });
 const imported: string[] = [];
 let appearance: any = null;
@@ -125,7 +127,10 @@ const expectFull = (shown: Awaited<ReturnType<typeof pageOf>>, what: string, hea
 const placeAt = async (page: Page, ebook: string, sentences: any, id: string) => {
   const section = sentences.sections.find((entry: any) => entry.paragraphs.some((paragraph: any) => paragraph.id === id));
   const paragraph = section.paragraphs.find((entry: any) => entry.id === id);
-  expect((await page.request.put(`/api/reader/${ebook}/progress`, { data: { locator: { section: section.index, paragraphId: id, quote: paragraph.text, progression: 0.5 }, baseRevision: 0, eventId: `place-${randomUUID()}`, deviceId: "another-device", updatedAt: Date.now(), origin: "reading" } })).ok()).toBe(true);
+  // A place saved after the book was read in this test builds on the place the reading saved.
+  const state = await (await page.request.get(`/api/reader/${ebook}/state`)).json();
+  const revision = state.checkpoint?.revision ?? state.revision ?? 0;
+  expect((await page.request.put(`/api/reader/${ebook}/progress`, { data: { locator: { section: section.index, paragraphId: id, quote: paragraph.text, progression: 0.5 }, baseRevision: revision, eventId: `place-${randomUUID()}`, deviceId: "another-device", updatedAt: Date.now(), origin: "reading" } })).ok()).toBe(true);
 };
 
 test("pages are turned by a tap: each begins where the one before ended, back returns to the same page, and a turn saves the sentence at the top", async ({ page }) => {
@@ -144,13 +149,14 @@ test("pages are turned by a tap: each begins where the one before ended, back re
     expectJoined(before, now, ordinal, `from page ${step} to the next`);
     before = now;
   }
-  // The place saved is the first sentence that starts on the page, with no CFI. Opened again, the saved sentence is
-  // on the page shown; the page need not begin where the page that was left began (ADR 0025).
+  // The place saved is the first sentence that starts on the page, with no CFI. Opened again, the page shown is
+  // exactly the page that was left (ADR 0025: a part's pages are the same however the reader came to them).
   const saved = before.starts[0]!;
   await expect.poll(async () => (await (await page.request.get(`/api/reader/${ebook}/state`)).json()).checkpoint?.locator.paragraphId, { timeout: 15000 }).toBe(saved);
   await page.reload();
   await expect.poll(async () => (await pageOf(page)).ids, { timeout: 15000 }).toContain(saved);
   const reopened = await settledPage(page);
+  expect(reopened.lines).toEqual(before.lines);
   // Back and forward again shows the same page, line for line.
   const back = await turn(page, -1);
   const again = await turn(page, 1);
@@ -158,10 +164,8 @@ test("pages are turned by a tap: each begins where the one before ended, back re
   expect(ordinal(back.ids.at(-1)!)).toBeLessThanOrEqual(ordinal(again.ids[0]!));
 });
 
-// One page too: there nothing but a part taken out behind the reader can move a line (two pages opened in a run's
-// last column had a fault of their own, which the same test met first). And a book whose parts begin inside a
-// chapter: a chapter begins on a new page, which takes up whatever a part taken out long before it left wrong, so
-// only text that runs on from that part to the page being read shows a space left at the wrong height.
+// One page too, and a book whose parts begin inside a chapter: there the text runs on from part to part with
+// nothing of the book's own between them, so a part taken out that moved the text after it would show at once.
 for (const [layout, viewport, pages, chapters, each] of [
   ["two pages", { width: 1920, height: 1080 }, "2", 30, 600],
   ["one page", { width: 700, height: 1000 }, "1", 30, 600],
@@ -204,25 +208,21 @@ test(`reading on through many parts, ${layout}: parts come and go behind the rea
 });
 
 for (const [name, viewport, pages] of [["one page", { width: 390, height: 844 }, "1"], ["two pages side by side", { width: 1920, height: 1080 }, "2"]] as const)
-  test(`the turn back across a part lands on a full page that ends where the next begins, ${name}`, async ({ page }) => {
+  test(`the turn back across a part shows the last page of the part before, which ends where the next begins, ${name}`, async ({ page }) => {
     test.setTimeout(180000);
     await page.setViewportSize(viewport);
     const { ebook, sentences, manifest, ordinal } = await longBook(page);
-    // The place is the first sentence of the fifth part: the page opens with that part alone, at its first line.
+    // The place is the first sentence of the fifth part: a part begins on a page of its own, at its first line.
     const first = manifest.parts[4].first as string;
     await placeAt(page, ebook, sentences, first);
     await opened(page, ebook);
-    const here = await pageOf(page);
+    const here = await settledPage(page);
     expect(here.pages).toBe(pages);
     expect(here.ids[0]).toBe(first);
-    expect(here.parts.split(",")[0]).toBe("4");
-    // Back: the part before comes in, and its last page is shown.
+    // Back: the last page of the part before. It ends with that part's last sentence and holds nothing of this one.
     const back = await turn(page, -1);
-    expect(back.parts.split(",")[0]).toBe("3");
-    // The part begins with its chapter's heading: its first line, and the text's first line under it.
-    const heading = Number(here.lines.find((line) => !line.startsWith(`${first}@`))!.split(",")[1]) - Number(here.lines[0]!.split(",")[1]);
-    expect(heading).toBeLessThan(3 * here.line);
-    expectFull(back, "the page turned back to", heading);
+    expect(back.parts.split(",").includes("3")).toBe(true);
+    expect(back.ids.at(-1)).toBe(manifest.parts[3].last);
     expect(ordinal(back.ids.at(-1)!), `${back.ids.at(-1)} then ${first}`).toBe(ordinal(first) - 1);
     expect(back.lines.filter((line) => here.lines.includes(line))).toEqual([]);
     expect(back.ids.includes(first)).toBe(false);
@@ -231,6 +231,7 @@ for (const [name, viewport, pages] of [["one page", { width: 390, height: 844 },
     expect(again.lines).toEqual(here.lines);
     // And further back the pages go on full, each ending where the next begins.
     let next = await turn(page, -1);
+    expect(next.lines).toEqual(back.lines);
     for (let step = 0; step < 4; step++) {
       const earlier = await turn(page, -1);
       expectFull(earlier, `page ${step} further back`);
@@ -297,7 +298,7 @@ test("Reading mode switches the view between pages and scroll, and the sentence 
   expect(await band(page).locator(".prepared-scroll").evaluate((scroller) => getComputedStyle(scroller).overflowY)).not.toBe("hidden");
   await mode("paginated");
   await expect(band(page)).toHaveAttribute("data-mode", "pages");
-  // The saved sentence is on the page shown (the rule of ADR 0025; the page need not begin as it began).
+  // The sentence that was at the top in scroll mode is on the page shown.
   await expect.poll(async () => (await pageOf(page)).ids, { timeout: 15000 }).toContain(top);
 });
 
@@ -482,8 +483,7 @@ for (const direction of [1, -1] as const)
 
 // A part is cut by size, so a chapter longer than a part is cut inside: here 12 of 13 parts begin inside a chapter,
 // between two paragraphs. Read backwards across every such joint, the page turned to ends where the page left
-// begins, with no sentence hidden or shown twice, and forward again is the page that was left, line for line. What a
-// space above the part cannot make up is an empty stretch at the joint, never text carried onto the page left.
+// begins, with no sentence hidden or shown twice, and forward again is the page that was left, line for line.
 for (const [layout, viewport, pages] of [["one page", { width: 700, height: 1000 }, "1"], ["two pages", { width: 1920, height: 1080 }, "2"]] as const)
   test(`reading backwards through a book whose parts begin inside a chapter, ${layout}: every page ends where the next begins, and forward again is the page that was left`, async ({ page }) => {
     test.setTimeout(600000);
@@ -500,11 +500,12 @@ for (const [layout, viewport, pages] of [["one page", { width: 700, height: 1000
       const earlier = await turn(page, -1);
       expectJoined(earlier, next, ordinal, `turn ${step} back, parts ${next.parts} then ${earlier.parts}`);
       most = Math.max(most, earlier.parts.split(",").length);
-      if (earlier.parts.split(",")[0] !== next.parts.split(",")[0]) {
-        // The turn that put a part in: forward again is the page that was left, and back again the page turned to.
+      const ended = manifest.parts.findIndex((part: any) => part.last === earlier.ids.at(-1));
+      if (ended >= 0 && next.ids[0] === manifest.parts[ended + 1]?.first) {
+        // The turn across a joint: forward again is the page that was left, and back again the page turned to.
         joints++;
-        expect((await turn(page, 1)).lines, `forward again after the turn into part ${earlier.parts.split(",")[0]}`).toEqual(next.lines);
-        expect((await turn(page, -1)).lines, `and back into part ${earlier.parts.split(",")[0]}`).toEqual(earlier.lines);
+        expect((await turn(page, 1)).lines, `forward again after the turn into part ${ended}`).toEqual(next.lines);
+        expect((await turn(page, -1)).lines, `and back into part ${ended}`).toEqual(earlier.lines);
       }
       next = earlier;
       if (earlier.parts.split(",")[0] === "0" && earlier.ids.some((id) => ordinal(id) < ordinal(manifest.parts[0].last) - 200)) break;
@@ -512,3 +513,65 @@ for (const [layout, viewport, pages] of [["one page", { width: 700, height: 1000
     expect(joints, "joints between parts crossed backwards").toBe(last);
     expect(most, "parts in the page at once").toBeLessThanOrEqual(5);
   });
+
+
+// The rule of pages mode: a part's pages depend on that part, the band and the style alone. So the pages of a part
+// are the same, line for line, whether the book was opened in that part, the reader came into it reading on from the
+// part before, or came back into it from the part after; and with two pages side by side a part begins on a left page.
+for (const [layout, viewport, pages] of [["one page", { width: 700, height: 1000 }, "1"], ["two pages", { width: 1920, height: 1080 }, "2"]] as const)
+  for (const [kind, chapters, each] of [["begin inside a chapter", 4, 4000], ["begin at chapters", 30, 600]] as const)
+    test(`a part's pages are the same whatever parts are around it, ${layout}, parts that ${kind}`, async ({ page: first, browser }) => {
+      test.setTimeout(600000);
+      await first.setViewportSize(viewport);
+      let page = first;
+      // Each reading is a device of its own: a place the reading before it had still to send does not stand over
+      // the place set for this one.
+      const another = async () => {
+        await page.goto("about:blank");
+        const context = await browser.newContext({ viewport, serviceWorkers: "block" });
+        page = await context.newPage();
+        await page.addInitScript(() => localStorage.setItem("sonder-follow-narration", "off"));
+        await choosePreparedView(page);
+      };
+      const { ebook, sentences, manifest, ordinal } = await longBook(page, chapters, each);
+      const part = 4;
+      const from = ordinal(manifest.parts[part].first), to = ordinal(manifest.parts[part].last);
+      const inPart = (shown: Shown) => shown.ids.some((id) => ordinal(id) >= from && ordinal(id) <= to);
+      /** The part's pages read in one direction from the page shown, in reading order. */
+      const read = async (direction: 1 | -1) => {
+        const seen: Shown[] = [];
+        let shown = await settledPage(page);
+        for (let step = 0; step < 400 && !inPart(shown); step++) shown = await turn(page, direction);
+        for (let step = 0; step < 400 && inPart(shown); step++) {
+          seen.push(shown);
+          shown = await turn(page, direction);
+        }
+        return direction > 0 ? seen : seen.reverse();
+      };
+      // Opened in the part: it is alone in the page at first.
+      await placeAt(page, ebook, sentences, manifest.parts[part].first);
+      await opened(page, ebook);
+      const alone = await read(1);
+      expect(alone.length).toBeGreaterThan(5);
+      expect(alone[0]!.pages).toBe(pages);
+      // A part begins at the top of a page, the left one of two: its first line is the page's first, at the margin.
+      expect(alone[0]!.ids[0]).toBe(manifest.parts[part].first);
+      const corner = (shown: Shown) => shown.lines[0]!.split("@")[1]!.split(",").map(Number);
+      expect(corner(alone[0]!)[0]).toBe(corner(alone[2]!)[0]);
+      expect(corner(alone[0]!)[1]).toBeLessThanOrEqual(corner(alone[2]!)[1]!);
+      expect(alone.at(-1)!.ids.at(-1)).toBe(manifest.parts[part].last);
+      // Read into from the part before, with parts before it in the page.
+      await another();
+      await placeAt(page, ebook, sentences, manifest.parts[part - 2].last);
+      await opened(page, ebook);
+      const onward = await read(1);
+      // Read back into from two parts after it, with parts after it in the page.
+      await another();
+      await placeAt(page, ebook, sentences, manifest.parts[part + 2].first);
+      await opened(page, ebook);
+      const backward = await read(-1);
+      expect(onward.length, "pages of the part read into from before").toBe(alone.length);
+      expect(backward.length, "pages of the part read back into").toBe(alone.length);
+      expect(onward.map((shown) => shown.lines), "read into from before").toEqual(alone.map((shown) => shown.lines));
+      expect(backward.map((shown) => shown.lines), "read back into from after").toEqual(alone.map((shown) => shown.lines));
+    });
