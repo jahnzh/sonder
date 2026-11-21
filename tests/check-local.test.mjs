@@ -66,6 +66,7 @@ if (logPath) {
       NODE_ENV: process.env.NODE_ENV,
       PLAYWRIGHT_JSON_OUTPUT_NAME: process.env.PLAYWRIGHT_JSON_OUTPUT_NAME,
       SONDER_BROWSER_PARTS: process.env.SONDER_BROWSER_PARTS,
+      SONDER_BROWSER_SHARDS: process.env.SONDER_BROWSER_SHARDS,
     },
     snapshotFiles: {
       hasUncommitted: fs.existsSync(path.join(process.cwd(), 'uncommitted.txt')),
@@ -500,6 +501,24 @@ test("a spec whose only change is its @projects line is repeated in the projects
             {filters: [filter("gains")], projects: ["prepared-view"]},
         ]);
         assert.match(result.report.stages[4].command, /\(in 2 parts; 1 spec\(s\) only in the projects they gained\)$/);
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+test("the number of browser shards a runner sets reaches the browser stage; no other SONDER_ setting does", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const env = {PATH: `${fixture.binDir}:${process.env.PATH}`, STUB_NPM_LOG: fixture.npmLogPath, SONDER_VERIFY_URL: "http://example.invalid"};
+        assert.equal((await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, SONDER_BROWSER_SHARDS: "8"}})).ok, true);
+        const [, , unit, browser] = readNpmLogs(fixture.npmLogPath);
+        assert.deepEqual([browser.argv[1], browser.env.SONDER_BROWSER_SHARDS, browser.env.SONDER_VERIFY_URL], ["test:browser", "8", undefined]);
+        // Not the unit stage: it runs the runners' own tests (the check of ca686f6 failed on WSL because one inherited it).
+        assert.deepEqual([unit.argv[0], unit.env.SONDER_BROWSER_SHARDS], ["test", undefined]);
+        fs.rmSync(fixture.npmLogPath);
+        // A value that is no shard count is not passed on.
+        assert.equal((await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, SONDER_BROWSER_SHARDS: "8; rm -rf /"}})).ok, true);
+        assert.equal(readNpmLogs(fixture.npmLogPath)[3].env.SONDER_BROWSER_SHARDS, undefined);
     } finally {
         fixture.cleanup();
     }

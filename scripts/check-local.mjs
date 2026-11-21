@@ -607,6 +607,10 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       ...process.env,
       ...overrides.env,
     };
+    // The stages get no SONDER_ setting of the caller's, with one exception: the number of browser shards, which a
+    // runner sets for its host (ci-ssh.sh, from the host's figures). It goes to the browser stages only: the unit
+    // stage runs the runners' own tests, which must not inherit it.
+    const shardSetting = /^(?:[1-9]|1[0-6])$/.test(baseEnv.SONDER_BROWSER_SHARDS ?? "") ? { SONDER_BROWSER_SHARDS: baseEnv.SONDER_BROWSER_SHARDS } : {};
     const childEnv = sanitizeEnvironment(baseEnv, {
       PLAYWRIGHT_PORT: String(port),
     });
@@ -694,7 +698,7 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       const stageArgs = jsonReport
         ? [...stageDef.args, "--", "--reporter=list,json", ...(selection.scope === "chromium" ? ["--project=chromium"] : [])]
         : stageDef.args;
-      const stageEnv = {...childEnv, ...stageDef.env, NODE_ENV: stageDef.name === "build" ? "production" : "test"};
+      const stageEnv = {...childEnv, ...(stageDef.name.startsWith("browser") ? shardSetting : {}), ...stageDef.env, NODE_ENV: stageDef.name === "build" ? "production" : "test"};
       if (jsonReport) stageEnv.PLAYWRIGHT_JSON_OUTPUT_NAME = playwrightReportPath;
 
       let stageRes;

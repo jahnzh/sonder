@@ -148,8 +148,51 @@ export function estimateLines(commit, ids, config, env = process.env) {
   return { lines, fits, judged, over, bar };
 }
 
+/**
+ * A finished check against its estimate, stage by stage: a line for each of the fixed stages, the browser stage and
+ * the repeat stage whose measured time is more than a tenth (and more than half a minute) off the figure the bar
+ * was judged with, each naming what to refresh. Nothing for a check that did not pass (a stage cut short is no
+ * measurement) or a host without figures. `where` names the report's folder for the refresh command.
+ */
+export function compareWithReport(commit, id, config, report, where = "<the check's report folder>") {
+  const host = config[id]?.estimate;
+  if (!host || commit.error || !report || !String(report.result ?? "").startsWith("passed")) return [];
+  const estimate = estimateOnHost(commit, host);
+  const took = (names) => Math.round((report.stages ?? []).filter((stage) => names.includes(stage.name) && stage.status !== "skipped").reduce((sum, stage) => sum + (stage.durationMs ?? 0), 0) / 1000);
+  const sha = String(report.sha ?? "").slice(0, 7);
+  const table = `node scripts/spec-seconds.mjs ${where}/playwright-results.json "${id}, ${sha}, ${new Date().toISOString().slice(0, 10)}"`;
+  // The table holds the seconds of the host whose speed is 1; another host's own figure is its speed.
+  const browserFix = host.speed === 1
+    ? `Refresh the table of times from this check: ${table}`
+    : `Set estimate.speed for ${id} in scripts/ci-hosts.json (it is ${host.speed}), or, when the suite changed, refresh the table from a check on the host whose speed is 1`;
+  const lines = [];
+  const judge = (name, estimated, measured, fix) => {
+    if (!estimated || !measured) return;
+    const off = measured - estimated;
+    if (Math.abs(off) <= 30 || Math.abs(off) / estimated <= 0.1) return;
+    lines.push(`estimate off on ${id}: ${name} estimated ${estimated} s, took ${measured} s (${off > 0 ? "+" : "-"}${Math.round((Math.abs(off) / estimated) * 100)} %). ${fix}`);
+  };
+  judge("the fixed stages (install, build, unit)", estimate.fixed, took(["install", "build", "unit"]), `Set estimate.fixedSeconds for ${id} in scripts/ci-hosts.json`);
+  judge("the browser stage", estimate.browser, took(["browser"]), browserFix);
+  judge("the repeat stage", estimate.repeat, took(["browser-changed-repeat"]), browserFix);
+  return lines;
+}
+
 const isDirectCli = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
 if (isDirectCli) {
+  if (process.argv[2] === "--compare") {
+    // node scripts/check-estimate.mjs --compare <sha> <host id> <check-report.json>
+    const [sha, id, reportFile] = process.argv.slice(3);
+    const config = JSON.parse(fs.readFileSync(process.env.SONDER_CI_HOST_CONFIG || path.join(HERE, "ci-hosts.json"), "utf8"));
+    let report = null;
+    try {
+      report = JSON.parse(fs.readFileSync(reportFile, "utf8"));
+    } catch {
+      // no report: nothing to compare
+    }
+    for (const line of compareWithReport(readCommit(process.cwd(), sha), id, config, report, path.dirname(reportFile ?? ""))) console.log(line);
+    process.exit(0);
+  }
   const [sha, list] = process.argv.slice(2);
   if (!sha) {
     console.error("Usage: node scripts/check-estimate.mjs <sha> [host ids]");

@@ -335,5 +335,11 @@ else
     bash "$ROOT/scripts/$DISPATCH_RUNNER" "$FULL_SHA" >>"$LOG_FILE" 2>&1 || rc=$?
 fi
 release_slot
+# The bar was judged with an estimate: say when this check's stages took more than a tenth more or less, and what
+# to refresh, so the figures do not go stale unseen.
+REPORT_FILE=$(ls -t "$ARTIFACT_ROOT"/*/check-report.json 2>/dev/null | head -n 1)
+if [[ -n $REPORT_FILE ]]; then
+  (cd "$ROOT" && node "$ROOT/scripts/check-estimate.mjs" --compare "$FULL_SHA" "$ADMITTED" "$REPORT_FILE" 2>/dev/null) | sed "s|$ROOT/||g" || true
+fi
 echo "finished ${ADMITTED} ${FULL_SHA} exit=${rc} log=${LOG_FILE}"
 exit "$rc"

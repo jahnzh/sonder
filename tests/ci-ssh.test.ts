@@ -42,7 +42,7 @@ cp -r "$(strip "\${args[0]}")" "$(strip "\${args[1]}")"
 `;
 
 const npmStub = `#!/usr/bin/env bash
-echo "cwd=$PWD args=$* base=$(git rev-parse --verify refs/remotes/origin/main 2>/dev/null)" >>"$STUB_NPM_LOG"
+echo "cwd=$PWD args=$* base=$(git rev-parse --verify refs/remotes/origin/main 2>/dev/null) shards=\${SONDER_BROWSER_SHARDS:-}" >>"$STUB_NPM_LOG"
 if [[ $1 == run && $2 == check ]]; then
   case "\${STUB_NPM_MODE:-pass}" in
     fail) exit "\${STUB_NPM_EXIT:-7}" ;;
@@ -82,7 +82,8 @@ done
 // A developer's own SONDER_CI_* settings must not change what the tests see.
 function cleanEnv() {
   const env = { ...process.env };
-  for (const key of Object.keys(env)) if (key.startsWith("SONDER_CI_") || key === "REPORT_JSON") delete env[key];
+  // Also the caller's shard count, which the runner would pass on as "set by the caller".
+  for (const key of Object.keys(env)) if (key.startsWith("SONDER_CI_") || key === "REPORT_JSON" || key === "SONDER_BROWSER_SHARDS") delete env[key];
   return env;
 }
 
@@ -482,6 +483,20 @@ test("a check cut off by the cap says which stage was running and how far it had
   assert.ok(out.output.includes(`The check was ${said}`), out.output);
   assert.equal(f.result(f.second).result, "timeout");
   assert.equal(f.result(f.second).cut_off, said);
+});
+
+test("the check runs at the host's shard count from its figures, unless the caller sets one", (t) => {
+  const f = fixture(t);
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: f.repo, encoding: "utf8" }).trim();
+  fs.writeFileSync(path.join(f.repo, "scripts", "ci-hosts.json"), JSON.stringify({ lisa: { host: "lisa", estimate: { fixedSeconds: 308, speed: 1, shards: 8, startSeconds: 80 } }, plain: { host: "plain" } }) + "\n");
+  git("add", ".");
+  git("commit", "-qm", "hosts");
+  const sha = git("rev-parse", "HEAD");
+  const shardsOf = () => fs.readFileSync(f.logs.npm, "utf8").trim().split("\n").filter((line) => line.includes("args=run check")).map((line) => /shards=(\S*)$/.exec(line)?.[1]);
+  assert.equal(f.run(sha, { SONDER_CI_HOST: "lisa" }).status, 0);
+  assert.equal(f.run(sha, { SONDER_CI_HOST: "lisa", SONDER_BROWSER_SHARDS: "3" }).status, 0);
+  assert.equal(f.run(sha, { SONDER_CI_HOST: "plain" }).status, 0);
+  assert.deepEqual(shardsOf(), ["8", "3", ""], "from the figures; the caller's; the host's own count when it has no figures");
 });
 
 test("a host whose closed port does not refuse fails fast without running tests", (t) => {

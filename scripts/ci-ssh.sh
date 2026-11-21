@@ -108,6 +108,10 @@ const maxWait = entry.maxWait ?? entry.max_wait;
 if (maxWait !== undefined) console.log(`CONFIG_MAX_WAIT=${esc(maxWait)}`);
 const maxParallel = entry.maxParallel ?? entry.max_parallel;
 if (maxParallel !== undefined) console.log(`CONFIG_MAX_PARALLEL=${esc(maxParallel)}`);
+// The browser stage's shards on this host: the figure the estimate at dispatch reckons with (check-estimate.mjs),
+// so the check runs at the width it was judged at.
+const shards = entry.estimate?.shards;
+if (Number.isInteger(shards) && shards >= 1 && shards <= 16) console.log(`CONFIG_SHARDS=${esc(shards)}`);
 NODE_EOF
 }
 
@@ -117,6 +121,7 @@ CONFIG_REMOTE_BASE=""
 CONFIG_TMPDIR=""
 CONFIG_MAX_WAIT=""
 CONFIG_MAX_PARALLEL=""
+CONFIG_SHARDS=""
 
 if [[ -f "$HOST_CONFIG_FILE" ]]; then
   eval "$(resolve_host_config "$HOST_CONFIG_FILE" "$SONDER_CI_HOST")"
@@ -657,16 +662,18 @@ REMOTE
   log "Starting the check on ${SONDER_CI_HOST}"
   # The wrapper must not run under `set -e`: a failing check still has to write
   # check.exit, or the wait loop can only conclude that the run died.
-  remote_bash start "$REMOTE_RUN_DIR" "$FULL_SHA" "$KNOWN_FAILURES" "${REMOTE_TMPDIR:-}" <<'REMOTE'
-run_dir=$2 sha=$3 known_failures=$4 remote_tmpdir=${5:-}
+  # The host's shard count (its `estimate.shards`), unless the caller set one for this run.
+  remote_bash start "$REMOTE_RUN_DIR" "$FULL_SHA" "$KNOWN_FAILURES" "${REMOTE_TMPDIR:-}" "${SONDER_BROWSER_SHARDS:-$CONFIG_SHARDS}" <<'REMOTE'
+run_dir=$2 sha=$3 known_failures=$4 remote_tmpdir=${5:-} shards=${6:-}
 cd "$run_dir/checkout" || exit 1
 rm -f "$run_dir/check.exit" "$run_dir/check.pid"
 setsid nohup bash -c '
   if [ -n "$5" ]; then export TMPDIR="$5"; fi
+  if [ -n "$6" ]; then export SONDER_BROWSER_SHARDS="$6"; fi
   nice -n 10 npm run check -- --ref "$1" --known-failures "$4" --output-dir "$2"
   rc=$?
   echo "$rc" >"$3.tmp" && mv "$3.tmp" "$3"
-' _ "$sha" "$run_dir/report" "$run_dir/check.exit" "$known_failures" "$remote_tmpdir" >"$run_dir/check.log" 2>&1 </dev/null &
+' _ "$sha" "$run_dir/report" "$run_dir/check.exit" "$known_failures" "$remote_tmpdir" "$shards" >"$run_dir/check.log" 2>&1 </dev/null &
 echo $! >"$run_dir/check.pid"
 REMOTE
   rc=$?
