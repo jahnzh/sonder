@@ -1088,7 +1088,12 @@ export function stopProcessesUnder(dir, { graceMs = 1500, procRoot = "/proc", si
   send(first, "SIGTERM");
   const until = Date.now() + graceMs;
   while (first.length && Date.now() < until && processesUnder(dir, procRoot).length) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
-  send(processesUnder(dir, procRoot), "SIGKILL");
+  const stubborn = processesUnder(dir, procRoot);
+  send(stubborn, "SIGKILL");
+  // A killed process is gone a moment after the signal, not with it: wait for that moment, so the folder can be
+  // removed and a caller that looks again finds nothing.
+  const gone = Date.now() + 1000;
+  while (stubborn.length && Date.now() < gone && processesUnder(dir, procRoot).length) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
   return first;
 }
 

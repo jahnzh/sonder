@@ -204,6 +204,7 @@ test("stopProcessesUnder stops every process whose working directory is inside t
   const server = start(inside);
   const deeper = start(path.join(inside, "tests"));
   // One that does not go when asked: it is killed after the grace.
+  // (Its `sleep` inherits the ignored signal and is a process in the folder too: four in all, two of them killed.)
   const stubborn = start(inside, "trap '' TERM; sleep 120 & wait");
   const neighbour = start(beside);
   const ends = [closed(server), closed(deeper), closed(stubborn)];
