@@ -6,7 +6,7 @@ import os from "node:os";
 import net from "node:net";
 import { createRequire } from "node:module";
 import { spawn, execFileSync } from "node:child_process";
-import { runCheckLocal } from "../scripts/check-local.mjs";
+import { runCheckLocal, workerTestsSummary } from "../scripts/check-local.mjs";
 import {
   acquirePortLease,
   contenderPrecedes,
@@ -68,6 +68,7 @@ if (logPath) {
       SONDER_BROWSER_PARTS: process.env.SONDER_BROWSER_PARTS,
       SONDER_BROWSER_SHARDS: process.env.SONDER_BROWSER_SHARDS,
       SONDER_WORKER_PYTHON: process.env.SONDER_WORKER_PYTHON,
+      SONDER_WORKER_TORCH: process.env.SONDER_WORKER_TORCH,
     },
     snapshotFiles: {
       hasUncommitted: fs.existsSync(path.join(process.cwd(), 'uncommitted.txt')),
@@ -523,6 +524,16 @@ test("the number of browser shards a runner sets reaches the browser stage; no o
         fs.rmSync(fixture.npmLogPath);
         assert.equal((await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, SONDER_WORKER_PYTHON: "python3; true"}})).ok, true);
         assert.equal(readNpmLogs(fixture.npmLogPath)[2].env.SONDER_WORKER_PYTHON, undefined, "only an absolute path");
+        // What the host declares about torch goes with the interpreter, and never without one.
+        for (const [torch, python, expected] of [["1", "/opt/check/bin/python3", "1"], ["0", "/opt/check/bin/python3", "0"], ["yes", "/opt/check/bin/python3", undefined], ["1", "", undefined]]) {
+            fs.rmSync(fixture.npmLogPath);
+            assert.equal((await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, SONDER_WORKER_PYTHON: python, SONDER_WORKER_TORCH: torch}})).ok, true);
+            assert.deepEqual(readNpmLogs(fixture.npmLogPath).map((run) => run.env.SONDER_WORKER_TORCH), [undefined, undefined, expected, undefined], `${torch} with ${python || "no interpreter"}`);
+        }
+        assert.equal(workerTestsSummary({}), "", "a machine that names no interpreter says nothing");
+        assert.match(workerTestsSummary({SONDER_WORKER_PYTHON: "/usr/bin/python3", SONDER_WORKER_TORCH: "0"}), /^Worker tests: run with \/usr\/bin\/python3 WITHOUT torch: the 33 tests of the whole-book stages that need it were skipped on this host/);
+        assert.match(workerTestsSummary({SONDER_WORKER_PYTHON: "/usr/bin/python3"}), /WITHOUT torch/, "a host that says nothing about torch has none");
+        assert.match(workerTestsSummary({SONDER_WORKER_PYTHON: "/opt/check/bin/python3", SONDER_WORKER_TORCH: "1"}), /torch included/);
         fs.rmSync(fixture.npmLogPath);
         // A value that is no shard count is not passed on.
         assert.equal((await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, SONDER_BROWSER_SHARDS: "8; rm -rf /"}})).ok, true);

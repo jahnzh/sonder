@@ -42,7 +42,7 @@ cp -r "$(strip "\${args[0]}")" "$(strip "\${args[1]}")"
 `;
 
 const npmStub = `#!/usr/bin/env bash
-echo "cwd=$PWD args=$* base=$(git rev-parse --verify refs/remotes/origin/main 2>/dev/null) shards=\${SONDER_BROWSER_SHARDS:-} python=\${SONDER_WORKER_PYTHON:-}" >>"$STUB_NPM_LOG"
+echo "cwd=$PWD args=$* base=$(git rev-parse --verify refs/remotes/origin/main 2>/dev/null) shards=\${SONDER_BROWSER_SHARDS:-} python=\${SONDER_WORKER_PYTHON:-} torch=\${SONDER_WORKER_TORCH:-}" >>"$STUB_NPM_LOG"
 if [[ $1 == run && $2 == check ]]; then
   case "\${STUB_NPM_MODE:-pass}" in
     fail) exit "\${STUB_NPM_EXIT:-7}" ;;
@@ -83,7 +83,7 @@ done
 function cleanEnv() {
   const env = { ...process.env };
   // Also the caller's shard count, which the runner would pass on as "set by the caller".
-  for (const key of Object.keys(env)) if (key.startsWith("SONDER_CI_") || key === "REPORT_JSON" || key === "SONDER_BROWSER_SHARDS" || key === "SONDER_WORKER_PYTHON") delete env[key];
+  for (const key of Object.keys(env)) if (key.startsWith("SONDER_CI_") || key === "REPORT_JSON" || key === "SONDER_BROWSER_SHARDS" || key === "SONDER_WORKER_PYTHON" || key === "SONDER_WORKER_TORCH") delete env[key];
   return env;
 }
 
@@ -488,7 +488,7 @@ test("a check cut off by the cap says which stage was running and how far it had
 test("the check runs at the host's shard count from its figures, unless the caller sets one", (t) => {
   const f = fixture(t);
   const git = (...args: string[]) => execFileSync("git", args, { cwd: f.repo, encoding: "utf8" }).trim();
-  fs.writeFileSync(path.join(f.repo, "scripts", "ci-hosts.json"), JSON.stringify({ lisa: { host: "lisa", workerPython: "/opt/check/bin/python3", estimate: { fixedSeconds: 308, speed: 1, shards: 8, startSeconds: 80 } }, plain: { host: "plain" } }) + "\n");
+  fs.writeFileSync(path.join(f.repo, "scripts", "ci-hosts.json"), JSON.stringify({ lisa: { host: "lisa", workerPython: "/opt/check/bin/python3", workerTorch: true, estimate: { fixedSeconds: 308, speed: 1, shards: 8, startSeconds: 80 } }, plain: { host: "plain" } }) + "\n");
   git("add", ".");
   git("commit", "-qm", "hosts");
   const sha = git("rev-parse", "HEAD");
@@ -498,8 +498,8 @@ test("the check runs at the host's shard count from its figures, unless the call
   assert.equal(f.run(sha, { SONDER_CI_HOST: "plain" }).status, 0);
   assert.deepEqual(shardsOf(), ["8", "3", ""], "from the figures; the caller's; the host's own count when it has no figures");
   // The interpreter for the worker's Python tests travels the same way: the host's, and none for a host that names none.
-  const pythonOf = () => fs.readFileSync(f.logs.npm, "utf8").trim().split("\n").filter((line) => line.includes("args=run check")).map((line) => /python=(\S*)$/.exec(line)?.[1]);
-  assert.deepEqual(pythonOf(), ["/opt/check/bin/python3", "/opt/check/bin/python3", ""]);
+  const pythonOf = () => fs.readFileSync(f.logs.npm, "utf8").trim().split("\n").filter((line) => line.includes("args=run check")).map((line) => /python=(\S*) torch=(\S*)$/.exec(line)?.slice(1, 3).join(" torch="));
+  assert.deepEqual(pythonOf(), ["/opt/check/bin/python3 torch=1", "/opt/check/bin/python3 torch=1", " torch="], "with what the host declares about torch");
 });
 
 test("a host whose closed port does not refuse fails fast without running tests", (t) => {

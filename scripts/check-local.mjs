@@ -72,6 +72,16 @@ export function changedBrowserStages(files, parts = [{ files, projects: null }])
   return [{ name: "browser-changed-repeat", command: "npm", args, env, fullCommand: `npm ${args.map((arg) => JSON.stringify(arg)).join(" ")}${note}` }];
 }
 
+/**
+ * One line for the summary on what the unit stage's worker tests ran with on this host, or "" on a machine that
+ * names no interpreter. A host without torch says so here, so its 33 skipped tests are never a silent gap (#878).
+ */
+export function workerTestsSummary(env) {
+  if (!env.SONDER_WORKER_PYTHON) return "";
+  if (env.SONDER_WORKER_TORCH === "1") return `Worker tests: run with ${env.SONDER_WORKER_PYTHON}, torch included; a test skipped for want of numpy, fastapi or torch fails.`;
+  return `Worker tests: run with ${env.SONDER_WORKER_PYTHON} WITHOUT torch: the 33 tests of the whole-book stages that need it were skipped on this host (its workerTorch in scripts/ci-hosts.json, #878).`;
+}
+
 // --- Local free-disk warning (issue #89) ---------------------------------------------------
 // When the LOCAL disk is below a threshold at startup, print a non-fatal warning to stderr that
 // names the stale directory families and their combined size. It never changes the exit code.
@@ -614,6 +624,10 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     // And for the unit stage the interpreter a check host names for the worker's Python tests, which then fail
     // instead of being skipped when it cannot run them (tests/0-worker-python.test.ts).
     const workerPython = baseEnv.SONDER_WORKER_PYTHON && path.isAbsolute(baseEnv.SONDER_WORKER_PYTHON) ? { SONDER_WORKER_PYTHON: baseEnv.SONDER_WORKER_PYTHON } : {};
+    // And whether that interpreter has torch: "1" makes the tests that need it fail instead of skip, "0" is a
+    // host's stated gap, which the summary below says in one line (#878).
+    if (workerPython.SONDER_WORKER_PYTHON && /^[01]$/.test(baseEnv.SONDER_WORKER_TORCH ?? "")) workerPython.SONDER_WORKER_TORCH = baseEnv.SONDER_WORKER_TORCH;
+    const workerTestsLine = workerTestsSummary(workerPython);
     const childEnv = sanitizeEnvironment(baseEnv, {
       PLAYWRIGHT_PORT: String(port),
     });
@@ -924,6 +938,7 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
         console.error(`\n[check-local] Checks failed: ${interruptedSignal || artifactError || blockingStage?.name}.`);
       }
       if (gate) for (const line of browserSummaryLines(gate)) console.log(`[check-local] ${line}`);
+      if (workerTestsLine) console.log(`[check-local] ${workerTestsLine}`);
       if (browserReruns?.skipped) console.log(`[check-local] No reruns: ${browserReruns.skipped}`);
       if (browserSlowestTests.length) {
         console.log(`[check-local] Slowest browser tests:`);

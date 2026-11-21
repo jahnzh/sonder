@@ -115,6 +115,9 @@ if (Number.isInteger(shards) && shards >= 1 && shards <= 16) console.log(`CONFIG
 // The interpreter the check runs the worker's Python tests with on this host (scripts/setup-check-python.sh): with it
 // named, those tests fail instead of being skipped when it cannot run them.
 if (typeof entry.workerPython === "string" && entry.workerPython) console.log(`CONFIG_WORKER_PYTHON=${esc(entry.workerPython)}`);
+// Whether that interpreter has torch, so that the 33 tests needing it run and fail instead of skip (#878). A host
+// says so either way; "0" is a stated gap that the check's summary names.
+if (typeof entry.workerTorch === "boolean") console.log(`CONFIG_WORKER_TORCH=${entry.workerTorch ? 1 : 0}`);
 NODE_EOF
 }
 
@@ -126,6 +129,7 @@ CONFIG_MAX_WAIT=""
 CONFIG_MAX_PARALLEL=""
 CONFIG_SHARDS=""
 CONFIG_WORKER_PYTHON=""
+CONFIG_WORKER_TORCH=""
 
 if [[ -f "$HOST_CONFIG_FILE" ]]; then
   eval "$(resolve_host_config "$HOST_CONFIG_FILE" "$SONDER_CI_HOST")"
@@ -667,18 +671,19 @@ REMOTE
   # The wrapper must not run under `set -e`: a failing check still has to write
   # check.exit, or the wait loop can only conclude that the run died.
   # The host's shard count (its `estimate.shards`), unless the caller set one for this run.
-  remote_bash start "$REMOTE_RUN_DIR" "$FULL_SHA" "$KNOWN_FAILURES" "${REMOTE_TMPDIR:-}" "${SONDER_BROWSER_SHARDS:-$CONFIG_SHARDS}" "${SONDER_WORKER_PYTHON:-$CONFIG_WORKER_PYTHON}" <<'REMOTE'
-run_dir=$2 sha=$3 known_failures=$4 remote_tmpdir=${5:-} shards=${6:-} worker_python=${7:-}
+  remote_bash start "$REMOTE_RUN_DIR" "$FULL_SHA" "$KNOWN_FAILURES" "${REMOTE_TMPDIR:-}" "${SONDER_BROWSER_SHARDS:-$CONFIG_SHARDS}" "${SONDER_WORKER_PYTHON:-$CONFIG_WORKER_PYTHON}" "${SONDER_WORKER_TORCH:-$CONFIG_WORKER_TORCH}" <<'REMOTE'
+run_dir=$2 sha=$3 known_failures=$4 remote_tmpdir=${5:-} shards=${6:-} worker_python=${7:-} worker_torch=${8:-}
 cd "$run_dir/checkout" || exit 1
 rm -f "$run_dir/check.exit" "$run_dir/check.pid"
 setsid nohup bash -c '
   if [ -n "$5" ]; then export TMPDIR="$5"; fi
   if [ -n "$6" ]; then export SONDER_BROWSER_SHARDS="$6"; fi
   if [ -n "$7" ]; then export SONDER_WORKER_PYTHON="$7"; fi
+  if [ -n "$8" ]; then export SONDER_WORKER_TORCH="$8"; fi
   nice -n 10 npm run check -- --ref "$1" --known-failures "$4" --output-dir "$2"
   rc=$?
   echo "$rc" >"$3.tmp" && mv "$3.tmp" "$3"
-' _ "$sha" "$run_dir/report" "$run_dir/check.exit" "$known_failures" "$remote_tmpdir" "$shards" "$worker_python" >"$run_dir/check.log" 2>&1 </dev/null &
+' _ "$sha" "$run_dir/report" "$run_dir/check.exit" "$known_failures" "$remote_tmpdir" "$shards" "$worker_python" "$worker_torch" >"$run_dir/check.log" 2>&1 </dev/null &
 echo $! >"$run_dir/check.pid"
 REMOTE
   rc=$?

@@ -1,6 +1,6 @@
 # What a check host's Python needs so that the worker's tests under tests/worker run instead of being skipped
-# (scripts/setup-check-python.sh installs it into the host's own virtual environment). No torch: the tests that
-# need it (test_book_pipeline.py and three more) run on no check host; the worker's own environment has it.
+# (scripts/setup-check-python.sh installs it into the host's own virtual environment). torch is not in this list:
+# `--torch` of that script adds the CPU build of the pin in worker/requirements-ctc.txt, on a host that declares it.
 numpy
 fastapi
 uvicorn
