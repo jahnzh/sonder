@@ -177,7 +177,8 @@ test.describe("with no service worker",()=>{
       await page.screenshot({path:"artifacts/playback-chapter-mobile.png",fullPage:true});
       await page.setViewportSize({width:1440,height:1000});
       // Listen keeps its rows in one column of at most 560 on a wide window (#593): the bar fills it.
-      await expect.poll(async()=>(await slider.boundingBox())!.width).toBeGreaterThan(mobileWidth*1.5);
+      // No box for a moment right after the resize is "not yet", not an error: the poll must try again (#873).
+      await expect.poll(async()=>(await slider.boundingBox())?.width??0).toBeGreaterThan(mobileWidth*1.5);
       expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(1440);
       await page.screenshot({path:"artifacts/playback-chapter-desktop.png",fullPage:true});
       await listenFace(page).getByRole("button",{name:"Close now playing",exact:true}).click();
