@@ -1,13 +1,26 @@
 {
   "dispatch": {
-    "order": ["wsl", "lisa"],
-    "fallback": ["deck"],
+    "order": [
+      "wsl",
+      "lisa"
+    ],
+    "fallback": [
+      "deck"
+    ],
     "factor": 1.0,
     "ceiling": 2,
-    "cost": { "load": 8, "memGB": 8, "diskGB": 3 },
-    "reserve": { "memGB": 2, "diskGB": 10 },
+    "cost": {
+      "load": 8,
+      "memGB": 8,
+      "diskGB": 3
+    },
+    "reserve": {
+      "memGB": 2,
+      "diskGB": 10
+    },
     "recentSeconds": 240,
-    "probeTtlSeconds": 10
+    "probeTtlSeconds": 10,
+    "barSeconds": 1800
   },
   "lisa": {
     "host": "lisa",
@@ -15,21 +28,39 @@
     "tmpdir": "/home/jahn/sonder-ci-tmp",
     "maxWait": 3600,
     "maxParallel": 1,
-    "ceiling": 1
+    "ceiling": 1,
+    "estimate": {
+      "fixedSeconds": 308,
+      "speed": 1.0,
+      "shards": 6,
+      "startSeconds": 80
+    }
   },
   "192.168.1.119": {
     "host": "192.168.1.119",
     "remoteBase": "",
     "tmpdir": "",
     "maxWait": 1800,
-    "maxParallel": 1
+    "maxParallel": 1,
+    "estimate": {
+      "fixedSeconds": 85,
+      "speed": 0.46,
+      "shards": 5,
+      "startSeconds": 60
+    }
   },
   "wsl": {
     "host": "192.168.1.119",
     "remoteBase": "",
     "tmpdir": "",
     "maxWait": 1800,
-    "maxParallel": 1
+    "maxParallel": 1,
+    "estimate": {
+      "fixedSeconds": 85,
+      "speed": 0.46,
+      "shards": 5,
+      "startSeconds": 60
+    }
   },
   "deck": {
     "host": "deck@steamdeck",

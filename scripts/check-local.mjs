@@ -13,6 +13,9 @@ import {
   findChangedFiles,
   selectBrowserScope,
   specWeight,
+  gainedProjects,
+  dealChangedSpecs,
+  splitProjectCount,
   partitionSpecs,
   changedStageShardCount,
   checkCallerDirty,
@@ -49,20 +52,24 @@ const STAGE_DEFINITIONS = [
 const PLAYWRIGHT_REPORT_NAME = "playwright-results.json";
 
 // Playwright treats positional file filters as regular expressions, not literal paths.
-// With more than one part (`parts`, the files dealt out by partitionSpecs), the stages run their parts at the same
-// time, each on its own server with one worker (#845, scripts/test-browser.mjs): SONDER_BROWSER_PARTS carries them.
-export function changedBrowserStages(files, parts = [files]) {
+// The one stage over a change's own spec files: every changed spec twice on one worker. With `--repeat-each=2` and
+// one worker Playwright runs, project by project, all the files in order and then all of them in order again, so
+// the first pass is the files once, in order, on one worker and a fresh server (what a separate
+// `browser-changed-ordered` stage ran until #845's follow-up; tests/check-local.test.mjs holds Playwright to it).
+// `parts` (dealChangedSpecs) are `{ files, projects }`: with more than one, or one that names projects, the stage
+// runs them through SONDER_BROWSER_PARTS, each on its own server with one worker (scripts/test-browser.mjs).
+export function changedBrowserStages(files, parts = [{ files, projects: null }]) {
   if (files.length === 0) return [];
   const filter = (file) => `${file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`;
   const filters = files.map(filter);
-  const env = parts.length > 1 ? { SONDER_BROWSER_PARTS: JSON.stringify(parts.map((part) => part.map(filter))) } : {};
-  return [
-    { name: "browser-changed-repeat", options: ["--workers=1", "--repeat-each=2", "--output=test-results-changed-repeat"] },
-    { name: "browser-changed-ordered", options: ["--workers=1", "--output=test-results-changed-ordered"] },
-  ].map(({ name, options }) => {
-    const args = ["run", "test:browser", "--", ...options, ...filters];
-    return { name, command: "npm", args, env, fullCommand: `npm ${args.map((arg) => JSON.stringify(arg)).join(" ")}${parts.length > 1 ? ` (in ${parts.length} parts)` : ""}` };
-  });
+  const split = parts.length > 1 || parts.some((part) => part.projects);
+  const env = split
+    ? { SONDER_BROWSER_PARTS: JSON.stringify(parts.map((part) => (part.projects ? { filters: part.files.map(filter), projects: part.projects } : part.files.map(filter)))) }
+    : {};
+  const args = ["run", "test:browser", "--", "--workers=1", "--repeat-each=2", "--output=test-results-changed-repeat", ...filters];
+  const gained = parts.filter((part) => part.projects).reduce((sum, part) => sum + part.files.length, 0);
+  const note = split ? ` (in ${parts.length} part${parts.length === 1 ? "" : "s"}${gained ? `; ${gained} spec(s) only in the projects they gained` : ""})` : "";
+  return [{ name: "browser-changed-repeat", command: "npm", args, env, fullCommand: `npm ${args.map((arg) => JSON.stringify(arg)).join(" ")}${note}` }];
 }
 
 // --- Local free-disk warning (issue #89) ---------------------------------------------------
@@ -550,18 +557,39 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     // 5. Execute stages sequentially
     const playwrightReportPath = path.join(outputDir, PLAYWRIGHT_REPORT_NAME);
     const stageResults = [];
-    // The changed specs dealt into parts of about equal work, for the two stages that run them (#845).
-    const specWeights = new Map(
-      changedBrowserSpecs.files.map((file) => {
-        try {
-          return [file, specWeight(fs.readFileSync(path.join(disposableDir, file), "utf8"))];
-        } catch {
-          return [file, 1];
-        }
-      }),
-    );
+    // The changed specs dealt into parts of about equal work for the stage that repeats them (#845). A spec whose
+    // only change is its `// @projects` line is repeated in the projects it gained, nowhere else.
+    const specWeights = new Map();
+    const specGained = new Map();
+    // The changed files are those since the merge base with origin/main, so that is what a spec is compared with.
+    let mergeBase = changedBrowserSpecs.base;
+    try {
+      mergeBase = execFileSync("git", ["merge-base", changedBrowserSpecs.base, resolvedSha], { cwd: callerDir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || mergeBase;
+    } catch {
+      // setup already proved a common ancestor; without one every spec is repeated in every project
+    }
+    for (const file of changedBrowserSpecs.files) {
+      let head = null;
+      try {
+        head = fs.readFileSync(path.join(disposableDir, file), "utf8");
+      } catch {
+        // weighs 1, repeated in every project
+      }
+      let base = null;
+      try {
+        base = execFileSync("git", ["show", `${mergeBase}:${file}`], { cwd: callerDir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024 });
+      } catch {
+        // new at this commit
+      }
+      const gained = gainedProjects(base, head);
+      specGained.set(file, gained);
+      const all = head === null ? 1 : specWeight(head);
+      // Of its projects (chromium and those named), only the gained ones run.
+      specWeights.set(file, gained ? Math.max(1, Math.round((all * gained.length) / (1 + splitProjectCount(head)))) : all);
+    }
     const changedShards = changedStageShardCount({...process.env, ...overrides.env});
-    const changedParts = partitionSpecs(changedBrowserSpecs.files, changedShards, (file) => specWeights.get(file) ?? 1);
+    const dealBy = (weightOf) => dealChangedSpecs(changedBrowserSpecs.files, changedShards, weightOf, (file) => specGained.get(file));
+    const changedParts = dealBy((file) => specWeights.get(file) ?? 1);
     const stageDefinitions = [...STAGE_DEFINITIONS, ...changedBrowserStages(changedBrowserSpecs.files, changedParts)];
     let changedPartsBy = "the count of tests";
     // The browser stage scope follows the changed files (#34); --full or SONDER_CHECK_FULL=1 runs everything.
@@ -643,7 +671,9 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       if (stageDef.name === "browser-changed-repeat" && changedParts.length > 1) {
         const measured = readSpecSeconds(playwrightReportPath);
         if (measured && changedBrowserSpecs.files.every((file) => measured.get(file) > 0)) {
-          const byTime = changedBrowserStages(changedBrowserSpecs.files, partitionSpecs(changedBrowserSpecs.files, changedShards, (file) => measured.get(file)));
+          // A spec repeated only in its gained projects costs that share of what the file took in all of them.
+          const share = (file) => (specGained.get(file) ? specWeights.get(file) / specWeight(fs.readFileSync(path.join(disposableDir, file), "utf8")) : 1);
+          const byTime = changedBrowserStages(changedBrowserSpecs.files, dealBy((file) => measured.get(file) * share(file)));
           for (const definition of byTime) stageDefinitions[stageDefinitions.findIndex((entry) => entry.name === definition.name)] = definition;
           changedPartsBy = "the browser stage's times";
         }

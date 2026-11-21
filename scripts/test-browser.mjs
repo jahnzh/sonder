@@ -420,9 +420,10 @@ function runShardedBrowser({ cwd, args, shards, spawnCommand, createBrowserTemp,
 }
 
 /**
- * The parts SONDER_BROWSER_PARTS asks for, or null when the run is one piece: the variable must be a JSON array of
- * two or more arrays of filters that together are exactly the run's positional filters, so a part can neither add
- * a file to the run nor drop one from it.
+ * The parts SONDER_BROWSER_PARTS asks for, as `{ filters, projects }`, or null when the run is one piece. The
+ * variable must be a JSON array of parts, each an array of filters or `{ filters, projects }` (a part that runs only
+ * in those projects), whose filters together are exactly the run's positional filters: a part can neither add a file
+ * to the run nor drop one from it. One part is a run in parts only when it names projects.
  */
 export function browserParts(env, args) {
   const raw = env.SONDER_BROWSER_PARTS;
@@ -433,10 +434,18 @@ export function browserParts(env, args) {
   } catch {
     return null;
   }
-  if (!Array.isArray(parts) || parts.length < 2 || !parts.every((part) => Array.isArray(part) && part.length && part.every((filter) => typeof filter === "string"))) return null;
+  if (!Array.isArray(parts) || !parts.length) return null;
+  const strings = (list) => Array.isArray(list) && list.length > 0 && list.every((item) => typeof item === "string" && item);
+  const read = [];
+  for (const part of parts) {
+    if (strings(part)) read.push({ filters: part, projects: null });
+    else if (part && typeof part === "object" && !Array.isArray(part) && strings(part.filters) && strings(part.projects)) read.push({ filters: part.filters, projects: part.projects });
+    else return null;
+  }
+  if (read.length < 2 && !read[0].projects) return null;
   const named = args.filter((arg) => !arg.startsWith("-")).sort();
-  const dealt = parts.flat().sort();
-  return named.length === dealt.length && named.every((filter, index) => filter === dealt[index]) ? parts : null;
+  const dealt = read.flatMap((part) => part.filters).sort();
+  return named.length === dealt.length && named.every((filter, index) => filter === dealt[index]) ? read : null;
 }
 
 // One `playwright test` child per part, at the same time: the run's flags, the part's own files. Each part has
@@ -450,14 +459,15 @@ function runBrowserParts({ cwd, args, parts, spawnCommand, createBrowserTemp, en
   const temps = [];
   const outputs = [];
   const runs = [];
-  console.log(`[test-browser] ${parts.length} parts, each on its own server with its own files: ${parts.map((part) => part.length).join(", ")} files`);
-  for (const [at, filters] of parts.entries()) {
+  console.log(`[test-browser] ${parts.length} part(s), each on its own server with its own files: ${parts.map((part) => `${part.filters.length}${part.projects ? ` (only ${part.projects.join(", ")})` : ""}`).join(", ")} files`);
+  for (const [at, { filters, projects }] of parts.entries()) {
     const index = at + 1;
     const temp = createBrowserTemp();
     const output = `${target}-part-${index}`;
     temps.push(temp);
     outputs.push(output);
-    const child = spawnCommand("npx", ["playwright", "test", ...flags, `--output=${output}`, ...filters], {
+    const only = (projects ?? []).map((name) => `--project=${name}`);
+    const child = spawnCommand("npx", ["playwright", "test", ...flags, ...only, `--output=${output}`, ...filters], {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...partBase, PLAYWRIGHT_PORT: String(basePort + index - 1), [BROWSER_TEMP_ENV]: temp },

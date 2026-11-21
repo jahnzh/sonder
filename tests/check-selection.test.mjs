@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { changedStageShardCount, cutOffSummary, parseCliArgs, partitionSpecs, selectBrowserScope, specWeight } from "../scripts/check-local-support.mjs";
+import { changedStageShardCount, cutOffSummary, dealChangedSpecs, gainedProjects, parseCliArgs, partitionSpecs, selectBrowserScope, specWeight } from "../scripts/check-local-support.mjs";
 import { changedBrowserStages } from "../scripts/check-local.mjs";
 import { formatSummary } from "../scripts/ci-summary.mjs";
 
@@ -116,19 +116,53 @@ test("the number of parts follows the host's processors, or the setting", () => 
   for (const bad of ["0", "17", "two", "2.5"]) assert.equal(changedStageShardCount({ SONDER_BROWSER_CHANGED_SHARDS: bad }, 20), 1, bad);
 });
 
-test("both changed-spec stages keep one worker and every changed file, and carry the same parts", () => {
+test("the changed-spec stage keeps one worker, two passes and every changed file, in parts", () => {
   const files = ["tests/e2e/a.spec.ts", "tests/e2e/b (1).spec.ts", "tests/e2e/c.spec.ts"];
   const one = changedBrowserStages(files);
-  assert.deepEqual(one.map((stage) => [stage.name, stage.env]), [["browser-changed-repeat", {}], ["browser-changed-ordered", {}]]);
-  const parts = [[files[0], files[2]], [files[1]]];
-  const [repeat, ordered] = changedBrowserStages(files, parts);
+  assert.deepEqual(one.map((stage) => [stage.name, stage.env]), [["browser-changed-repeat", {}]], "one stage; no ordered stage after it");
   const filters = ["tests/e2e/a\\.spec\\.ts$", "tests/e2e/b \\(1\\)\\.spec\\.ts$", "tests/e2e/c\\.spec\\.ts$"];
+  const [repeat] = changedBrowserStages(files, [{ files: [files[0], files[2]], projects: null }, { files: [files[1]], projects: null }]);
   assert.deepEqual(repeat.args, ["run", "test:browser", "--", "--workers=1", "--repeat-each=2", "--output=test-results-changed-repeat", ...filters]);
-  assert.deepEqual(ordered.args, ["run", "test:browser", "--", "--workers=1", "--output=test-results-changed-ordered", ...filters]);
   assert.deepEqual(JSON.parse(repeat.env.SONDER_BROWSER_PARTS), [[filters[0], filters[2]], [filters[1]]]);
-  assert.equal(ordered.env.SONDER_BROWSER_PARTS, repeat.env.SONDER_BROWSER_PARTS);
   assert.match(repeat.fullCommand, / \(in 2 parts\)$/);
+  // A spec that only gained projects is a part that names them, also when it is the only part.
+  const [gained] = changedBrowserStages([files[0]], [{ files: [files[0]], projects: ["firefox"] }]);
+  assert.deepEqual(JSON.parse(gained.env.SONDER_BROWSER_PARTS), [{ filters: [filters[0]], projects: ["firefox"] }]);
+  assert.match(gained.fullCommand, / \(in 1 part; 1 spec\(s\) only in the projects they gained\)$/);
   assert.deepEqual(changedBrowserStages([]), []);
+});
+
+test("a spec whose only change is its @projects line is repeated in the projects it gained; anything else in every project", () => {
+  const body = 'import { test } from "@playwright/test";\ntest("a", async () => {});\n';
+  assert.deepEqual(gainedProjects(`// @projects firefox\n${body}`, `// @projects firefox, prepared-view\n${body}`), ["prepared-view"]);
+  assert.deepEqual(gainedProjects(body, `// @projects firefox, webkit\n${body}`), ["firefox", "webkit"], "the line is new");
+  assert.deepEqual(gainedProjects(`// @projects webkit, firefox\n${body}`, `// @projects prepared-view, firefox\n${body}`), ["prepared-view"], "one gained, one lost");
+  // The fallbacks: every one is the full repeat.
+  assert.equal(gainedProjects(`// @projects firefox\n${body}`, `// @projects firefox, prepared-view\n${body} `), null, "one more byte at the end");
+  assert.equal(gainedProjects(`// @projects firefox\n${body}`, `// @projects firefox, prepared-view\n${body.replace('"a"', '"b"')}`), null, "a test changed too");
+  assert.equal(gainedProjects(`// @projects firefox\n${body}`, `// @projects firefox, prepared-view\r\n${body}`), null, "another line ending");
+  assert.equal(gainedProjects(null, `// @projects firefox\n${body}`), null, "a new file");
+  assert.equal(gainedProjects(`// @projects firefox, webkit\n${body}`, `// @projects firefox\n${body}`), null, "it only lost a project: no guess");
+  assert.equal(gainedProjects(`// @projects firefox\n${body}`, `// @projects firefox\n${body}`), null, "nothing changed");
+  assert.equal(gainedProjects(`// @projects firefox\n${body}`, `${body}// @projects firefox, webkit\n`), null, "the line is not the first");
+});
+
+test("changed specs are dealt by what they are repeated in: gained projects apart from every project", () => {
+  const files = ["a", "b", "c", "d", "e"].map((name) => `tests/e2e/${name}.spec.ts`);
+  const gained = { [files[1]]: ["prepared-view"], [files[3]]: ["prepared-view"], [files[4]]: ["firefox", "webkit"] };
+  const weights = { [files[0]]: 50, [files[1]]: 10, [files[2]]: 40, [files[3]]: 10, [files[4]]: 5 };
+  const parts = dealChangedSpecs(files, 4, (file) => weights[file], (file) => gained[file] ?? null);
+  assert.deepEqual(parts, [
+    { files: [files[0]], projects: null },
+    { files: [files[2]], projects: null },
+    { files: [files[1], files[3]], projects: ["prepared-view"] },
+    { files: [files[4]], projects: ["firefox", "webkit"] },
+  ]);
+  assert.deepEqual(parts.flatMap((part) => part.files).sort(), files, "every changed spec in exactly one part");
+  // More kinds than parts asked for: each kind still has its own part, because a part is one set of projects.
+  assert.equal(dealChangedSpecs(files, 1, (file) => weights[file], (file) => gained[file] ?? null).length, 3);
+  assert.deepEqual(dealChangedSpecs(files, 3), partitionSpecs(files, 3).map((part) => ({ files: part, projects: null })));
+  assert.deepEqual(dealChangedSpecs([], 4), []);
 });
 
 test("a cut-off check's log gives the stage that was running and how far it had come (#845)", () => {
@@ -147,6 +181,5 @@ test("a cut-off check's log gives the stage that was running and how far it had 
   assert.equal(cutOffSummary(log), "cut off in stage 5 of 6, browser-changed-repeat: 4 of 70 test runs done (2 passed, 1 failed, 1 skipped)");
   assert.equal(cutOffSummary(log.split("\n").slice(0, 3).join("\n")), "cut off in stage 4 of 6, browser: 1 of 300 test runs done (1 passed, 0 failed, 0 skipped)");
   assert.equal(cutOffSummary("=== [Stage 3/6] npm test ===\nok 1 - a unit test"), "cut off in stage 3 of 6, unit");
-  assert.equal(cutOffSummary('=== [Stage 6/6] npm "run" "test:browser" "--" "--workers=1" "--output=test-results-changed-ordered" "a" ==='), "cut off in stage 6 of 6, browser-changed-ordered");
-  assert.equal(cutOffSummary("no stage began"), "");
+    assert.equal(cutOffSummary("no stage began"), "");
 });
