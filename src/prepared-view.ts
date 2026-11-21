@@ -64,6 +64,8 @@ export type PreparedView = ReturnType<typeof createPreparedView>;
 
 /** How the text is laid out: one moving column, or pages (CSS columns), one or two of them side by side. */
 export type PreparedLayout = { mode: "scroll" | "pages"; spread: boolean };
+/** In pages mode, how long a layout must hold still before the page's place in the text is taken anew. */
+const RELAID_SETTLE_MS = 250;
 /** In pages mode a neighbour is loaded when fewer than this many turns are left before the loaded pages end. */
 const TURNS_AHEAD = 3;
 
@@ -166,7 +168,9 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
     for (const element of elements ?? []) for (const rect of element.getClientRects()) if (rect.width > 0 || rect.height > 0) return rect;
     return null;
   };
-  const setColumn = (column: number) => {
+  let remark = 0;
+  /** Shows the page that begins at `column`. `own`: the reader or the narration moved there, so the page's place in the text is taken anew. */
+  const setColumn = (column: number, own = true) => {
     const { step } = geometry();
     startColumn = Math.max(0, column);
     const target = startColumn * step;
@@ -174,18 +178,54 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
       scroller.scrollLeft = target;
       ownTop = -1;
     }
-    markPage();
+    if (remark) clearTimeout(remark);
+    remark = 0;
+    if (own) return markPage();
+    // The columns were counted anew and the page was found again by its place. One change of the reader's (a
+    // window resized, two pages for one) lays the text out several times, and a place taken anew in each of them
+    // would move back by up to a page each time: it is taken anew once the layout has held still.
+    remark = window.setTimeout(() => {
+      remark = 0;
+      if (disposed || !pages) return;
+      markPage();
+      reported = firstOnPage();
+    }, RELAID_SETTLE_MS);
   };
-  /** Remembers the first character drawn on the page shown. */
+  /** The column a place in the text is drawn in; null when it has no box. */
+  const columnOfRange = (range: Range) => {
+    const probe = range.cloneRange();
+    const node = probe.startContainer;
+    if (node.nodeType === 3 && probe.startOffset < (node as Text).length) probe.setEnd(node, probe.startOffset + 1);
+    const rect = Array.from(probe.getClientRects()).find((value) => value.width > 0 || value.height > 0);
+    return rect ? columnAt(rect.left) : null;
+  };
+  /**
+   * Remembers the first character drawn on the page shown. The browser is asked what is at the page's top corner;
+   * its answer counts only when that place is drawn on this page (asked over a margin or a picture it may name a
+   * place elsewhere). Else the place is the first sentence that starts on the page; else the place kept before.
+   */
   const markPage = () => {
+    if (scroller.clientHeight === 0 || low < 0) return;
     const band = scroller.getBoundingClientRect();
     const { pad } = geometry();
     const x = band.left + pad + 2, y = band.top + (parseFloat(getComputedStyle(text).paddingTop) || 0) + 2;
     const caret =
       (doc as Document & { caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null }).caretPositionFromPoint?.(x, y) ?? null;
-    const range = caret ? doc.createRange() : ((doc as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null }).caretRangeFromPoint?.(x, y) ?? null);
+    let range = caret ? doc.createRange() : ((doc as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null }).caretRangeFromPoint?.(x, y) ?? null);
     if (caret && range) range.setStart(caret.offsetNode, caret.offset);
-    pageMark = range && text.contains(range.startContainer) && !lead.contains(range.startContainer) ? range : pageMark && text.contains(pageMark.startContainer) ? pageMark : null;
+    if (range && (!text.contains(range.startContainer) || lead.contains(range.startContainer) || columnOfRange(range) !== startColumn)) range = null;
+    if (!range) {
+      const first = firstOnPage();
+      const element = first ? elementsOf(first)?.[0] : null;
+      const rect = element ? firstRect([element]) : null;
+      if (element && rect && columnAt(rect.left) === startColumn) {
+        const letters = doc.createTreeWalker(element, NodeFilter.SHOW_TEXT).nextNode();
+        range = doc.createRange();
+        range.setStart(letters ?? element, 0);
+      }
+    }
+    if (range) pageMark = range;
+    else if (pageMark && !text.contains(pageMark.startContainer)) pageMark = null;
   };
   /** Where the remembered place is now: its column, and how far below its column's top it starts. */
   const markPlace = () => {
@@ -199,9 +239,16 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
   };
   /** The page shown again after the columns were counted anew (a resize, another size of text, parts that came or went). */
   const keepPage = () => {
+    // The place is the top of the page shown: with two pages side by side, of the left one.
     const place = markPlace();
-    if (place) setColumn(spread ? place.column - ((place.column - startColumn) % 2 !== 0 ? 1 : 0) : place.column);
-    else setColumn(Math.min(startColumn, columns() - 1));
+    if (place) setColumn(place.column, false);
+    else setColumn(Math.min(startColumn, columns() - 1), false);
+  };
+  /** The sentence the remembered place is in, if it is in one. */
+  const markSentence = () => {
+    const node = pageMark && text.contains(pageMark.startContainer) ? pageMark.startContainer : null;
+    const element = node ? (node.nodeType === 1 ? (node as Element) : node.parentElement) : null;
+    return element?.closest("[data-s]")?.getAttribute("data-s") ?? null;
   };
   const setLead = (height: number) => {
     leadHeight = Math.max(0, height);
@@ -274,8 +321,8 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
       if (disposed || at !== epoch || part !== low - 1) return;
       const { height, perView } = geometry();
       const first = loaded.get(low)!.element;
-      // Where the run's first line stood in its column, which is where it must stand again.
-      const target = leadHeight;
+      // Where the run's first line stands in its column, which is where it must stand again.
+      let target = 0;
       const topOf = () => {
         const walker = doc.createTreeWalker(first, NodeFilter.SHOW_TEXT);
         for (let node = walker.nextNode(); node; node = walker.nextNode()) {
@@ -288,6 +335,7 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
         const rect = first.getBoundingClientRect();
         return { column: columnAt(rect.left), offset: rect.top - scroller.getBoundingClientRect().top - (parseFloat(getComputedStyle(text).paddingTop) || 0) };
       };
+      target = topOf().offset;
       loaded.set(part, entry);
       low = part;
       setLead(0);
@@ -439,6 +487,8 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
   /** The text was laid out anew (another size, a resized band, a picture that loaded): the held sentence stays where it was. */
   const keepPlace = () => {
     if (pages) {
+      // The columns are counted anew: the space kept above the run was measured for the old ones.
+      setLead(0);
       applyLayout();
       return keepPage();
     }
@@ -896,10 +946,21 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
     /** Another layout: scroll or pages, one page or two. The sentence at the top stays at the top. */
     async relayout(next: PreparedLayout): Promise<void> {
       if (next.mode === layout.mode && next.spread === layout.spread) return;
-      const first = firstInView();
+      // The band may already have its new width: the page is known by its place in the text, not by the columns.
+      const first = pages ? (markSentence() ?? firstOnPage()) : (anchor?.id ?? firstInView());
+      const stays = pages && next.mode === "pages";
       layout = next;
       pages = next.mode === "pages";
       spread = next.spread && pages;
+      if (stays) {
+        // One page or two: the page shown begins where it began.
+        setLead(0);
+        applyLayout();
+        keepPage();
+        reported = firstOnPage();
+        fill();
+        return;
+      }
       setLead(0);
       scroller.scrollLeft = 0;
       startColumn = 0;
@@ -938,6 +999,7 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
     },
     destroy() {
       disposed = true;
+      if (remark) clearTimeout(remark);
       epoch++;
       release();
       if (frame) cancelAnimationFrame(frame);

@@ -131,7 +131,8 @@ async function sentenceTops(room: Locator, manifest: any) {
       if ((frame as any).prepared) {
         for (const block of blocks) {
           const rect = doc.querySelector(`[data-s="${block.id}"]`)?.getClientRects()[0];
-          if (rect && rect.top >= band.top && rect.top < band.bottom) found.push({ id: block.id, top: rect.top, bottom: rect.bottom });
+          // In the band, and in pages mode on the page shown and not in a column beside it.
+          if (rect && rect.top >= band.top && rect.top < band.bottom && rect.left >= band.left && rect.left < band.right) found.push({ id: block.id, top: rect.top, bottom: rect.bottom });
         }
         continue;
       }
@@ -283,7 +284,6 @@ test("the panel as on ReaderAppearance.dc.html at 390 by 844: the rows, their na
 });
 
 test("switching Reading mode in the panel keeps the place and the highlight; Follow the narration off and on", async ({ page }) => {
-  notOnPreparedView("it switches between pages mode and scroll mode; the new view is scroll mode whatever the saved reading mode is (pages mode is step 4)");
   await page.addInitScript(() => {
     const audio: HTMLAudioElement[] = [];
     (window as any).__appearanceAudio = audio;
