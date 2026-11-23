@@ -220,7 +220,6 @@ export function createTextRail(seam: RailSeam, options: RailOptions) {
       return;
     }
     event.preventDefault();
-    rail.focus({ preventScroll: true });
     take(event.pointerId, event);
   };
   const move = (event: PointerEvent) => {

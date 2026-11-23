@@ -168,6 +168,8 @@ test("a mouse drag moves the text and the saved reading place, never the audio, 
   await expectRailBesideText(room(page));
   await page.mouse.up();
   await expect(rail(page)).not.toHaveAttribute("data-held", "");
+  // The rail lays nothing out again: the band was sized once, when the book opened.
+  await expect(band(page)).toHaveAttribute("data-view-resizes", "1");
   // The text moved under the thumb, and following paused as for a scroll by hand.
   await expect.poll(() => firstInView(page)).not.toBe(before);
   await expect(rail(page).locator(".text-rail-mark")).toBeVisible();
@@ -266,6 +268,52 @@ test("a drag across unloaded parts asks for no more parts than it rests", async 
   await expect.poll(async () => Math.abs((await railPlace(page)) - 0.25)).toBeLessThan(0.03);
 });
 
+test("the rail is a slider named Reading position: its keys and the wheel move the text as a move by hand", async ({ page }) => {
+  test.setTimeout(150000);
+  const { manifest } = await openFollowing(page, `Rail keys ${randomUUID()}`);
+  const slider = page.getByRole("slider", { name: "Reading position" });
+  await expect(slider).toHaveAttribute("aria-valuetext", /^.+, \d+%\. Following the narration\.$/);
+  const scroller = band(page).locator(".prepared-scroll");
+  const top = () => scroller.evaluate((element) => element.scrollTop);
+  // The wheel over the rail scrolls the text.
+  const { x, y } = await thumbAt(page);
+  await page.mouse.move(x, y + 200);
+  let before = await top();
+  await page.mouse.wheel(0, 400);
+  await expect.poll(top).toBeGreaterThan(before + 100);
+  await expect(rail(page).locator(".text-rail-thumb")).toHaveAttribute("data-tone", "text");
+  await slider.focus();
+  // Down: a band further.
+  before = await top();
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(top).toBeGreaterThan(before + 100);
+  // Page Down: the next chapter's first sentence at the top of the band.
+  const place = await railPlace(page);
+  await page.keyboard.press("PageDown");
+  await expect.poll(async () => (await firstInView(page)) ?? "").toMatch(/^\d+:0$/);
+  expect(await railPlace(page)).toBeGreaterThan(place);
+  // End and Home: the book's ends.
+  await page.keyboard.press("End");
+  await expect.poll(() => railPlace(page)).toBeGreaterThan(0.99);
+  await page.keyboard.press("Home");
+  await expect.poll(async () => placeOf(manifest, (await firstInView(page)) ?? "29:0")).toBe(0);
+  await expect.poll(() => railPlace(page)).toBe(0);
+});
+
+test("with Appearance's Margin at 8 the text's right margin is still the rail's column and the left stays 8", async ({ page }) => {
+  test.setTimeout(150000);
+  const appearance = await (await page.request.get("/api/appearance")).json();
+  await page.request.put("/api/appearance", { data: { ...appearance, reader: { ...appearance.reader, margin: 8 } } });
+  try {
+    await openFollowing(page, `Rail margin ${randomUUID()}`);
+    const padding = await band(page).locator(".prepared-text").evaluate((text) => [getComputedStyle(text).paddingLeft, getComputedStyle(text).paddingRight]);
+    expect(padding).toEqual(["8px", "24px"]);
+    await expectRailBesideText(room(page));
+  } finally {
+    await page.request.put("/api/appearance", { data: appearance });
+  }
+});
+
 test("a touch tap on the rail is the text's tap; a touch that moves up or down takes the rail", async ({ page, browserName }) => {
   test.setTimeout(150000);
   test.skip(!test.info().project.use.hasTouch, "a project without touch");
@@ -303,33 +351,37 @@ async function manifestOfPage(page: Page): Promise<Manifest> {
 }
 
 // Pictures for the owner's check (#804): saved to artifacts/rail-804 when SONDER_RAIL_PICTURES is set.
-test("pictures of the rail at rest, away, held and zoomed, on a phone and a desktop, in Forest and Light", async ({ page }) => {
+test("pictures of the rail at rest, away, held and zoomed, on a phone and a desktop, in Forest and Light", async ({ page, browser }) => {
   test.skip(!process.env.SONDER_RAIL_PICTURES, "pictures only when asked for");
-  test.setTimeout(300000);
+  test.setTimeout(400000);
   const appearance = await (await page.request.get("/api/appearance")).json();
   mkdirSync("artifacts/rail-804", { recursive: true });
   try {
-    for (const preset of ["forest", "light"]) {
+    for (const preset of ["forest", "light", "contrast"]) {
       await page.request.put("/api/appearance", { data: { ...appearance, preset } });
       for (const [device, size] of [["phone", { width: 390, height: 844 }], ["desktop", { width: 1280, height: 800 }]] as const) {
-        await page.setViewportSize(size);
-        await openFollowing(page, `Rail pictures ${preset} ${device} ${randomUUID()}`);
-        await page.waitForTimeout(800);
-        const shot = (name: string) => page.screenshot({ path: `artifacts/rail-804/${device}-${preset}-${name}.png` });
-        await shot("following");
-        const { x, y, column } = await thumbAt(page);
-        await page.mouse.move(x, y);
-        await page.mouse.down();
-        await page.mouse.move(x, column.y + column.height * 0.45, { steps: 6 });
-        await page.waitForTimeout(500);
-        await shot("held");
-        await page.mouse.move(x - 100, column.y + column.height * 0.45, { steps: 6 });
-        await page.waitForTimeout(300);
-        await shot("held-zoomed");
-        await page.mouse.up();
-        await page.waitForTimeout(1200);
-        await shot("away");
-        await expectTextUncovered(room(page));
+        const context = await browser.newContext({ viewport: size, serviceWorkers: "block" });
+        const shown = await context.newPage();
+        try {
+          await openFollowing(shown, `Rail pictures ${preset} ${device} ${randomUUID()}`);
+          const shot = (name: string) => shown.screenshot({ path: `artifacts/rail-804/${device}-${preset}-${name}.png` });
+          await shot("following");
+          const { x, y, column } = await thumbAt(shown);
+          await shown.mouse.move(x, y);
+          await shown.mouse.down();
+          await shown.mouse.move(x, column.y + column.height * 0.45, { steps: 6 });
+          await shown.waitForTimeout(500);
+          await shot("held");
+          await shown.mouse.move(x - 100, column.y + column.height * 0.45, { steps: 6 });
+          await shown.waitForTimeout(300);
+          await shot("held-zoomed");
+          await shown.mouse.up();
+          await shown.waitForTimeout(1200);
+          await shot("away");
+          await expectTextUncovered(room(shown));
+        } finally {
+          await context.close();
+        }
       }
     }
   } finally {
