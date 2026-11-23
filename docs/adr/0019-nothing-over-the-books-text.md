@@ -18,3 +18,11 @@ The rule is about the book's text. Elsewhere in the app tooltips, sheets and dia
 
 - The epub.js view is sized once to the text band and not again on a tap.
 - A browser test asserts the rule itself: in every state the boxes of the head, the foot and any docked panel do not intersect the box of the text.
+
+## Amendment, 2026-11-23: the text position rail (#804)
+
+The new reading view (ADR 0025) has a text position rail: the book's chapters as a thin column, a thumb for the place in view and a narration mark for the narrated sentence's place. It stands in the text band's right margin over the band's whole height, and unlike the controls it is always there, shown or not.
+
+- **The rule is about what is drawn.** Every box the rail draws, with its ring or halo, lies in the band's right margin and over no line of the book. The box a finger can take around the thumb (44 by 44) reaches over the line ends beside it; it draws nothing, and on touch it takes only a drag up or down: a tap there is the text's tap.
+- **The margin rule.** The text's right margin in the new view is never narrower than the rail's column, 24 px, whatever Appearance's Margin is; the left margin stays as set. The rail is in place from the moment the book opens, so showing it lays nothing out again. The band shows no scrollbar of the browser's, which would show the place among the loaded parts rather than in the book.
+- The browser test of the rule includes the rail: at rest, away from the narration, held and zoomed, its drawn boxes lie inside the text band and intersect no box of the text.

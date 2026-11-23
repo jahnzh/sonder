@@ -206,6 +206,18 @@ _Avoid_: Synced, live, linked
 The state where the reader shows something other than the narrated sentence because the reader navigated.
 _Avoid_: Off narration, unlinked
 
+**Text position rail**:
+The thin column of the book's chapters in the text band's right margin of the new reading view, always shown. A place on it is a sentence's place among the book's sentences; dragging it moves the text as a move by hand does and never touches the audio.
+_Avoid_: Scrollbar, position bar, scrubber (the foot's slider)
+
+**Thumb**:
+The mark on the text position rail at the place of the first sentence in view, in the accent colour while following; held, it is the place the finger has taken the text to.
+_Avoid_: Handle, knob, cursor
+
+**Narration mark**:
+The mark on the text position rail at the narrated sentence's place, shown while paged away. It is not the narration highlight, which marks the narrated sentence in the text.
+_Avoid_: Narration highlight, audio marker
+
 **Back to narration**:
 The action that returns a paged-away reader to the narrated sentence and resumes following. With no narrated sentence at the position, the administrator's Back to narration locates the passage from the audio instead (#592).
 _Avoid_: Relink, resync, Read from audio
