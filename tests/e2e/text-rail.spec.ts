@@ -319,7 +319,7 @@ test("Reading position shows the chapter: its sentences are the cuts, a drag sta
     // The reader's own menu: Appearance, Reading position.
     await openAppearance(page, room(page));
     const choice = appearancePanel(room(page)).getByRole("radiogroup", { name: "Reading position shows" });
-    await expect(choice.getByRole("radio", { checked: true })).toHaveText("Whole book");
+    await expect(choice.getByRole("radio", { checked: true })).toHaveText("Book");
     await choice.getByRole("radio", { name: "Chapter" }).click();
     await expect(rail(page)).toHaveAttribute("data-scope", "chapter");
     await closeAppearance(room(page));

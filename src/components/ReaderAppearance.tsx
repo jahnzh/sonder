@@ -85,11 +85,11 @@ export function ReaderAppearance({ preferences, onChange, follow, onFollow, rail
           <Row
             label="Reading position"
             control={
-              <span className="reader-appearance-position">
+              <span className="reader-appearance-mode">
                 <Segmented
                   label="Reading position shows"
                   options={[
-                    { value: "book", label: "Whole book" },
+                    { value: "book", label: "Book" },
                     { value: "chapter", label: "Chapter" },
                   ]}
                   value={preferences.positionScope}
