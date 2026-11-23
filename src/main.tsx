@@ -8,6 +8,7 @@ import "./styles.css";
 import "./appearance.css";
 import "./reader.css";
 import "./prepared-text.css";
+import "./text-rail.css";
 import "./player.css";
 import "./parts/tokens.css";
 import {handleSearchKey} from "./keyboard";

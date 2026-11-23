@@ -67,6 +67,8 @@ import { SPREAD_GAP, SPREAD_MIN_HOST, spreadHostWidth } from "../reader-spread";
 import { preparedView } from "../reader-view-switch";
 import { createPreparedView, type PreparedTarget, type PreparedView } from "../prepared-view";
 import { PREPARED_CHANGED_EVENT, reportRefused, type PreparedBook } from "../prepared-book";
+import { createTextRail, type TextRail } from "../text-rail";
+import { railSegments } from "../text-rail-model";
 import { sentencePlaces } from "../reader-places";
 import {
   countedBlocks,
@@ -328,6 +330,9 @@ export function ReaderView({
   const [prepared] = useState(preparedView);
   const [source, setSource] = useState<PreparedBook | null>(null);
   const engine = useRef<PreparedView | null>(null);
+  // The text position rail of the new view (#804), and the readout of its thumb while it is held (the foot shows it).
+  const rail = useRef<TextRail | null>(null);
+  const [railHeld, setRailHeld] = useState<{ chapter: string; percent: number } | null>(null);
   // Appearance docked under the text in place of the foot (#588); not in the address.
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   // Sizes the view to the text band when the band changed (the ResizeObserver's work, #587); set once the book opens.
@@ -510,6 +515,13 @@ export function ReaderView({
   // The narrated sentence, decided by the following module: it stays through a gap until the next one begins.
   const narrationBack = useRef<() => void>(() => {});
   const currentInterval = following.narratedSentence(map, placeOf(p.book, p.track?.id, p.position)) ?? undefined;
+  // The rail's narration: the narrated sentence's place in the book, and following or paged away (ADR 0014).
+  const narratedPlace = source && currentInterval && source.index.ordinalOf(currentInterval.paragraphId) >= 0 ? source.index.progression(currentInterval.paragraphId) : null;
+  const railNarration = useRef({ place: narratedPlace, follow });
+  railNarration.current = { place: narratedPlace, follow };
+  useEffect(() => {
+    rail.current?.narration(narratedPlace, follow);
+  }, [narratedPlace, follow]);
   // `keepPlace`: the same book loaded again (its prepared text changed on the server) stays where it is read.
   const refresh = async (keepPlace = false) => {
     try {
@@ -652,6 +664,9 @@ export function ReaderView({
       onBandResized: () => redrawHighlight(),
     });
     engine.current = view;
+    const textRail = createTextRail(view.railSeam(), { segments: railSegments(source.manifest, source.index), onHeld: setRailHeld });
+    rail.current = textRail;
+    textRail.narration(railNarration.current.place, railNarration.current.follow);
     following.openingDisplay();
     const settled = following.beginOwnDisplay();
     const place = latest.current?.paragraphId ?? null;
@@ -680,6 +695,9 @@ export function ReaderView({
     return () => {
       disposed = true;
       setRendered(false);
+      textRail.destroy();
+      if (rail.current === textRail) rail.current = null;
+      setRailHeld(null);
       view.destroy();
       if (engine.current === view) engine.current = null;
     };
@@ -2042,7 +2060,7 @@ export function ReaderView({
         <div className="reader-foot-rest">
           <span className="reader-foot-line" aria-hidden="true"><i style={{ width: `${restProgress * 100}%` }} /></span>
           <div className="reader-foot-row">
-            <span className="reader-foot-place">{restLine}</span>
+            <span className="reader-foot-place">{railHeld ? `${railHeld.chapter} · ${railHeld.percent}%` : restLine}</span>
             {p.book && atRest.has("pause") && (
               <Button
                 kind="quiet"
@@ -2056,7 +2074,12 @@ export function ReaderView({
         </div>
         <div className="reader-foot-controls">
         <div className="reader-player-info">
-          {ebookLine ? (
+          {railHeld ? (
+            <>
+              <strong>{railHeld.chapter}</strong>
+              <span>{railHeld.percent}%</span>
+            </>
+          ) : ebookLine ? (
             <>
               <strong>{ebookLine.chapter}</strong>
               <span>{ebookLine.place}</span>
