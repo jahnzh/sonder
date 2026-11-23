@@ -207,7 +207,7 @@ The state where the reader shows something other than the narrated sentence beca
 _Avoid_: Off narration, unlinked
 
 **Text position rail**:
-The thin column of the book's chapters in the text band's right margin of the new reading view, always shown. A place on it is a sentence's place among the book's sentences; dragging it moves the text as a move by hand does and never touches the audio.
+The thin column in the text band's right margin of the new reading view, always shown: the whole book cut at its chapters, or the chapter of the place in view cut at its sentences (Reading position shows). A place on it is a sentence's place among the book's sentences; dragging it moves the text as a move by hand does and never touches the audio.
 _Avoid_: Scrollbar, position bar, scrubber (the foot's slider)
 
 **Thumb**:

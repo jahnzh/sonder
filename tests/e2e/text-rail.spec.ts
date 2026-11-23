@@ -7,6 +7,8 @@ import { installReaderWaitBudget, READER_WAIT_MS } from "./timing";
 import { gotoRead } from "./read-face";
 import { choosePreparedView } from "./prepared-view";
 import { expectRailBesideText, expectTextUncovered } from "./reader-bands";
+import { appearancePanel, closeAppearance, openAppearance } from "./reader-appearance";
+import { REST_MS } from "../../src/text-rail-model";
 // The text position rail of the new view's scroll mode (#804; boards RailB, RailBDrag, RailBZoom, RailTry): the thumb
 // follows the place in view, a drag moves the text as a move by hand does and never the audio, a touch takes the rail
 // only once it moves up or down, the zoom by pulling away, parts asked for only at rests, and nothing over the text.
@@ -250,22 +252,114 @@ test("a drag across unloaded parts asks for no more parts than it rests", async 
   test.setTimeout(150000);
   await openFollowing(page, `Rail parts ${randomUUID()}`);
   await page.waitForTimeout(1500);
-  const parts: string[] = [];
-  page.on("request", (request) => { if (/\/prepared\/[0-9a-f]+\/parts\/\d+$/.test(new URL(request.url()).pathname)) parts.push(request.url()); });
+  // What the page itself saw, on its own clock: every move of the held thumb, every part asked for, and the release.
+  // A host under load delivers a move late, and a move that comes REST_MS after the one before is a rest to the rail,
+  // as it is under a slow hand. So the rule is counted where it happens and not timed from here: by the time a part
+  // is asked for, the thumb has rested at least once for every part asked for so far.
+  type RailLog = { held: boolean; moves: number[]; parts: { at: number; url: string }[]; up: number };
+  await page.evaluate(() => {
+    const log: { held: boolean; moves: number[]; parts: { at: number; url: string }[]; up: number } = { held: false, moves: [], parts: [], up: 0 };
+    (window as unknown as { __railLog: typeof log }).__railLog = log;
+    const rail = document.querySelector(".text-rail")!;
+    const onRail = (event: Event) => event.target instanceof Node && rail.contains(event.target);
+    // On the window, before any handler of the rail's own.
+    window.addEventListener("pointerdown", (event) => { if (onRail(event)) log.held = true; }, true);
+    window.addEventListener("pointermove", () => { if (log.held) log.moves.push(performance.now()); }, true);
+    window.addEventListener("pointerup", () => { if (log.held) { log.held = false; log.up = performance.now(); } }, true);
+    const ask = window.fetch;
+    window.fetch = function (this: unknown, input: RequestInfo | URL, init?: RequestInit) {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (/\/prepared\/[0-9a-f]+\/parts\/\d+$/.test(new URL(url, location.href).pathname)) log.parts.push({ at: performance.now(), url });
+      return ask.call(this, input, init);
+    } as typeof window.fetch;
+  });
+  const seen = () => page.evaluate(() => (window as unknown as { __railLog: RailLog }).__railLog);
   const { x, y, column } = await thumbAt(page);
   await page.mouse.move(x, y);
   await page.mouse.down();
-  // Across the book without a rest: the thumb moves, nothing is asked for.
+  // Across the book, then one rest: the part of that place is asked for.
   for (const share of [0.2, 0.35, 0.5, 0.65, 0.8]) await page.mouse.move(x, column.y + column.height * share);
-  expect(parts).toEqual([]);
-  // One rest: the part of that place, once.
   await page.waitForTimeout(600);
-  await expect.poll(() => parts.length).toBe(1);
+  await expect.poll(async () => (await seen()).parts.length).toBeGreaterThanOrEqual(1);
   for (const share of [0.6, 0.4, 0.25]) await page.mouse.move(x, column.y + column.height * share);
-  expect(parts.length, "rests: 1").toBe(1);
   await page.mouse.up();
   // The release shows the place let go at, its part asked for then.
   await expect.poll(async () => Math.abs((await railPlace(page)) - 0.25)).toBeLessThan(0.03);
+  const log = await seen();
+  expect(log.up, "the release was seen").toBeGreaterThan(0);
+  // A little under REST_MS, so a rest is never missed: the count is the most the rail may have asked for.
+  const floor = REST_MS - 30;
+  const whileHeld = log.parts.filter((part) => part.at < log.up);
+  expect(whileHeld.length, "the rest asked for its part").toBeGreaterThanOrEqual(1);
+  expect(new Set(whileHeld.map((part) => part.url)).size, "no part twice").toBe(whileHeld.length);
+  whileHeld.forEach((part, at) => {
+    const before = log.moves.filter((move) => move <= part.at);
+    let rests = before.length && part.at - before.at(-1)! >= floor ? 1 : 0;
+    for (let move = 1; move < before.length; move++) if (before[move]! - before[move - 1]! >= floor) rests++;
+    expect(rests, `rests of the thumb by the time part ${at + 1} of ${whileHeld.length} was asked for`).toBeGreaterThanOrEqual(at + 1);
+  });
+});
+
+test("Reading position shows the chapter: its sentences are the cuts, a drag stays in it, and the choice is in both menus", async ({ page }) => {
+  test.setTimeout(180000);
+  await openFollowing(page, `Rail chapter ${randomUUID()}`);
+  const share = async () => {
+    const { y, column } = await thumbAt(page);
+    return (y - column.y - 10) / (column.height - 20);
+  };
+  const words = () => rail(page).getAttribute("aria-valuetext");
+  const chapterOf = async () => (await words())!.split(",")[0]!;
+  const saved = async () => (await (await page.request.get("/api/appearance")).json()).reader.positionScope;
+  // The whole book first: 30 chapters, the narration 20 sentences into the first, so the thumb is at the very top.
+  await expect(rail(page)).toHaveAttribute("data-scope", "book");
+  const inBook = await share();
+  expect(inBook).toBeLessThan(0.01);
+  const chapter = await chapterOf();
+  try {
+    // The reader's own menu: Appearance, Reading position.
+    await openAppearance(page, room(page));
+    const choice = appearancePanel(room(page)).getByRole("radiogroup", { name: "Reading position shows" });
+    await expect(choice.getByRole("radio", { checked: true })).toHaveText("Whole book");
+    await choice.getByRole("radio", { name: "Chapter" }).click();
+    await expect(rail(page)).toHaveAttribute("data-scope", "chapter");
+    await closeAppearance(room(page));
+    await expect.poll(saved).toBe("chapter");
+    // The same sentence, now a place in its chapter of 600: further down the rail, and said so.
+    await expect(rail(page)).toHaveAttribute("aria-valuetext", /^.+, \d+% of the chapter\. Following the narration\.$/);
+    expect(await chapterOf()).toBe(chapter);
+    await expect.poll(share).toBeGreaterThan(0.015);
+    expect(await share()).toBeLessThan(0.08);
+    // One column, cut at the chapter's sentences: at this height every cut stands for a few of them.
+    await expect(rail(page).locator(".text-rail-segment:visible")).toHaveCount(1);
+    await expect(rail(page)).toHaveAttribute("data-step", /^(2|5|10)$/);
+    expect(await rail(page).locator(".text-rail-segment:visible").evaluate((element) => getComputedStyle(element).backgroundImage)).toContain("linear-gradient");
+    await expectRailBesideText(room(page));
+    // A drag to the rail's foot is the chapter's last sentence, not the next chapter; the foot says the share of the chapter.
+    const { x, y, column } = await thumbAt(page);
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x, column.y + column.height * 0.5, { steps: 4 });
+    await expect(room(page).locator(".reader-foot-place")).toHaveText(new RegExp(`^${chapter} · \\d+% of the chapter$`));
+    await page.mouse.move(x, column.y + column.height - 2, { steps: 4 });
+    await page.mouse.up();
+    await expect(rail(page)).toHaveAttribute("aria-valuetext", new RegExp(`^${chapter}, 100% of the chapter\\.`));
+    // Away from the narration, which is in this chapter: its mark is on the chapter's rail, near the top.
+    await expect(rail(page).locator(".text-rail-mark")).toBeVisible();
+    // Home is the chapter's first sentence.
+    await rail(page).focus();
+    await page.keyboard.press("Home");
+    await expect(rail(page)).toHaveAttribute("aria-valuetext", new RegExp(`^${chapter}, 0% of the chapter\\.`));
+    // Settings › Playback lists the same choice on a device with the new view, and Whole book puts the chapters back.
+    await page.goto("/#settings/playback");
+    const setting = page.getByRole("radiogroup", { name: "Reading position shows" });
+    await expect(setting.getByRole("radio", { checked: true })).toHaveText("Current chapter");
+    await setting.getByRole("radio", { name: "Whole book" }).click();
+    await expect.poll(saved).toBe("book");
+  } finally {
+    // The appearance is the server's: later tests get the whole book again whatever happened here.
+    const appearance = await (await page.request.get("/api/appearance")).json();
+    if (appearance.reader.positionScope !== "book") await page.request.put("/api/appearance", { data: { ...appearance, reader: { ...appearance.reader, positionScope: "book" } } });
+  }
 });
 
 test("the rail is a slider named Reading position: its keys and the wheel move the text as a move by hand", async ({ page }) => {
@@ -351,20 +445,20 @@ async function manifestOfPage(page: Page): Promise<Manifest> {
 }
 
 // Pictures for the owner's check (#804): saved to artifacts/rail-804 when SONDER_RAIL_PICTURES is set.
-test("pictures of the rail at rest, away, held and zoomed, on a phone and a desktop, in Forest and Light", async ({ page, browser }) => {
+test("pictures of the rail at rest, away, held and zoomed, on a phone and a desktop, in Forest and Light, of the whole book and of the chapter", async ({ page, browser }) => {
   test.skip(!process.env.SONDER_RAIL_PICTURES, "pictures only when asked for");
   test.setTimeout(400000);
   const appearance = await (await page.request.get("/api/appearance")).json();
   mkdirSync("artifacts/rail-804", { recursive: true });
   try {
-    for (const preset of ["forest", "light", "contrast"]) {
-      await page.request.put("/api/appearance", { data: { ...appearance, preset } });
+    for (const [preset, positionScope] of [["forest", "book"], ["light", "book"], ["contrast", "book"], ["forest", "chapter"], ["light", "chapter"]] as const) {
+      await page.request.put("/api/appearance", { data: { ...appearance, preset, reader: { ...appearance.reader, positionScope } } });
       for (const [device, size] of [["phone", { width: 390, height: 844 }], ["desktop", { width: 1280, height: 800 }]] as const) {
         const context = await browser.newContext({ viewport: size, serviceWorkers: "block" });
         const shown = await context.newPage();
         try {
           await openFollowing(shown, `Rail pictures ${preset} ${device} ${randomUUID()}`);
-          const shot = (name: string) => shown.screenshot({ path: `artifacts/rail-804/${device}-${preset}-${name}.png` });
+          const shot = (name: string) => shown.screenshot({ path: `artifacts/rail-804/${device}-${preset}-${positionScope === "chapter" ? "chapter-" : ""}${name}.png` });
           await shot("following");
           const { x, y, column } = await thumbAt(shown);
           await shown.mouse.move(x, y);

@@ -16,8 +16,14 @@ import {
   railPicture,
   railReadout,
   railSegments,
+  railSpan,
   railValueText,
+  readoutLine,
   segmentAt,
+  spanPlace,
+  spanSegments,
+  spanShare,
+  tickStep,
   touchIntent,
   yToPlace,
   zoomOf,
@@ -176,7 +182,8 @@ test("the words: the readout and the slider's value text as the boards' labels r
     { label: "Chapter 5", start: 0, end: 0.3 },
     { label: "Chapter 9", start: 0.3, end: 1 },
   ];
-  assert.deepEqual(railReadout(segments, 0.35), { chapter: "Chapter 9", percent: 35 });
+  assert.deepEqual(railReadout(segments, 0.35), { chapter: "Chapter 9", percent: 35, of: "book" });
+  assert.equal(readoutLine(railReadout(segments, 0.35)), "Chapter 9 · 35%");
   assert.equal(railValueText(segments, 0.19, 0.19, true), "Chapter 5, 19%. Following the narration.");
   assert.equal(railValueText(segments, 0.35, 0.2, false), "Chapter 9, 35%. The narration is in Chapter 5.");
   assert.equal(railValueText(segments, 0.35, null, false), "Chapter 9, 35%.");
@@ -225,4 +232,99 @@ test("held: a bar of 4, the chapter under it lit, no partial fill; zoomed: magni
   assert.deepEqual(zoomed.overview!.tick, { top: 39, height: 3 });
   // The mark of the narration (at 40 at rest) is magnified off the rail.
   assert.equal(zoomed.mark, null);
+});
+
+// A book of 101 sentences (places in hundredths): A is sentences 0 to 19, B 20 to 69, C 70 to 100.
+const hundred = [
+  { label: "A", start: 0, end: 0.2 },
+  { label: "B", start: 0.2, end: 0.7 },
+  { label: "C", start: 0.7, end: 1 },
+];
+const near = (actual: number, expected: number, what?: string) => assert.ok(Math.abs(actual - expected) < 1e-9, `${what ?? ""} ${actual} is not ${expected}`);
+
+test("what the rail shows: the whole book, or the chapter of the place in view with a slot for each of its sentences", () => {
+  assert.deepEqual(railSpan(hundred, 101, "book", 0.3), { scope: "book", chapter: 1, from: 0, to: 1, last: 1, sentences: 101 });
+  const chapter = railSpan(hundred, 101, "chapter", 0.3);
+  assert.equal(chapter.scope, "chapter");
+  assert.equal(chapter.chapter, 1);
+  assert.equal(chapter.from, 0.2);
+  assert.equal(chapter.to, 0.7);
+  near(chapter.last, 0.69, "the chapter's last sentence");
+  assert.equal(chapter.sentences, 50);
+  // A place where the next chapter starts is that chapter's.
+  assert.equal(railSpan(hundred, 101, "chapter", 0.7).chapter, 2);
+  // The book's last chapter has a slot for the last sentence too.
+  const final = railSpan(hundred, 101, "chapter", 1);
+  assert.equal(final.sentences, 31);
+  assert.equal(final.last, 1);
+  near(final.to, 1.01);
+  // The shares of a span and back: its first sentence at 0, never past its last.
+  near(spanShare(chapter, 0.2), 0);
+  near(spanShare(chapter, 0.45), 0.5);
+  assert.ok(spanShare(chapter, 0.1) < 0 && spanShare(chapter, 0.9) > 1, "a place outside the chapter is off its rail");
+  near(spanPlace(chapter, 0.5), 0.45);
+  near(spanPlace(chapter, 1), 0.69, "the foot of the chapter's rail is its last sentence, not the next chapter");
+  near(spanPlace(chapter, -1), 0.2);
+  assert.equal(spanPlace(railSpan(hundred, 101, "book", 0.3), 0.42), 0.42);
+  assert.deepEqual(spanSegments(hundred, chapter), [{ label: "B", start: 0, end: 1 }]);
+  assert.equal(spanSegments(hundred, railSpan(hundred, 101, "book", 0.3)), hundred);
+});
+
+test("the chapter's rail is cut at its sentences; where they are under 4 px a cut stands for 2, 5, 10 … of them", () => {
+  assert.equal(tickStep(12), 1);
+  assert.equal(tickStep(4), 1);
+  assert.equal(tickStep(3.9), 2);
+  assert.equal(tickStep(1.75), 5);
+  assert.equal(tickStep(0.5), 10);
+  assert.equal(tickStep(0.25), 20);
+  assert.equal(tickStep(0.05), 100);
+  assert.equal(tickStep(0), 1);
+  // 50 sentences on 400 px are 8 px each: a cut at every sentence, 2 px high.
+  const rest = railPicture([{ label: "B", start: 0, end: 1 }], { place: 0.5, narrated: 0.5, following: true, drag: null, scope: "chapter", sentences: 50 }, 400);
+  assert.deepEqual(rest.ticks, { origin: 0, pitch: 8, gap: 2, step: 1 });
+  assert.deepEqual(rest.segments.map((segment) => [segment.top, segment.height, segment.tone]), [[0, 398, "line"]]);
+  assert.deepEqual(rest.read, { top: 0, height: 200 });
+  assert.deepEqual(rest.thumb, { top: 192, height: 16, held: false, tone: "accent" });
+  // 400 sentences on 400 px are 1 px each: a cut every 5 sentences, 1 px high.
+  const long = railPicture([{ label: "B", start: 0, end: 1 }], { place: 0.5, narrated: null, following: false, drag: null, scope: "chapter", sentences: 400 }, 400);
+  assert.deepEqual(long.ticks, { origin: 0, pitch: 5, gap: 1, step: 5 });
+  // Zoomed 8 times about the thumb at 200 they are 8 px each: every sentence, from where the chapter begins.
+  const zoomed = railPicture([{ label: "B", start: 0, end: 1 }], { place: 0.5, narrated: null, following: false, drag: { u: 200, zoom: ZOOM }, scope: "chapter", sentences: 400 }, 400);
+  assert.deepEqual(zoomed.ticks, { origin: 200 - 200 * ZOOM, pitch: 8, gap: 2, step: 1 });
+  // The whole book's rail has no such cuts.
+  assert.equal(railPicture(book, { place: 0.375, narrated: 0.375, following: true, drag: null }, 400).ticks, null);
+});
+
+test("the chapter's rail: held it keeps what is read above the thumb, and the narration outside the chapter has no mark", () => {
+  const one = [{ label: "B", start: 0, end: 1 }];
+  const held = railPicture(one, { place: 0.2, narrated: 0.2, following: false, drag: { u: 100, zoom: 1 }, scope: "chapter", sentences: 50 }, 400);
+  assert.deepEqual(held.segments.map((segment) => segment.tone), ["line"]);
+  assert.deepEqual(held.read, { top: 0, height: 100 });
+  assert.deepEqual(held.thumb, { top: 98, height: 4, held: true, tone: "text" });
+  const before = railPicture(one, { place: 0.5, narrated: -0.4, following: false, drag: null, scope: "chapter", sentences: 50 }, 400);
+  assert.equal(before.mark, null);
+  const after = railPicture(one, { place: 0.5, narrated: 1.3, following: false, drag: null, scope: "chapter", sentences: 50 }, 400);
+  assert.equal(after.mark, null);
+  const inside = railPicture(one, { place: 0.5, narrated: 0.25, following: false, drag: null, scope: "chapter", sentences: 50 }, 400);
+  assert.deepEqual(inside.mark, { top: 98.5, height: 3 });
+  // Following across a chapter's end, the narrated sentence is in the next chapter: the thumb keeps the accent.
+  assert.equal(railPicture(one, { place: 0.98, narrated: 1.02, following: true, drag: null, scope: "chapter", sentences: 50 }, 400).thumb.tone, "accent");
+});
+
+test("the chapter's rail: Home and End are the chapter's ends, and the words give the percentage of the chapter", () => {
+  const chapter = railSpan(hundred, 101, "chapter", 0.3);
+  assert.deepEqual(railKey("Home", hundred, 0.3, chapter), { kind: "place", place: 0.2 });
+  near((railKey("End", hundred, 0.3, chapter) as { place: number }).place, 0.69);
+  assert.deepEqual(railKey("PageDown", hundred, 0.3, chapter), { kind: "place", place: 0.7 });
+  const book = railSpan(hundred, 101, "book", 0.3);
+  assert.deepEqual(railKey("Home", hundred, 0.3, book), { kind: "place", place: 0 });
+  assert.deepEqual(railKey("End", hundred, 0.3, book), { kind: "place", place: 1 });
+  // Sentence 45 of 20 to 69: 25 of 49 steps.
+  assert.deepEqual(railReadout(hundred, 0.45, chapter), { chapter: "B", percent: 51, of: "chapter" });
+  assert.equal(railReadout(hundred, 0.2, chapter).percent, 0);
+  assert.equal(railReadout(hundred, chapter.last, chapter).percent, 100);
+  assert.equal(readoutLine(railReadout(hundred, 0.45, chapter)), "B · 51% of the chapter");
+  assert.deepEqual(railReadout(hundred, 0.45, book), { chapter: "B", percent: 45, of: "book" });
+  assert.equal(railValueText(hundred, 0.45, 0.1, false, chapter), "B, 51% of the chapter. The narration is in A.");
+  assert.equal(railValueText(hundred, 0.45, 0.45, true, chapter), "B, 51% of the chapter. Following the narration.");
 });

@@ -2,6 +2,9 @@
 // column of the book's chapters in the text band's right margin, with a thumb for the place in view and a narration
 // mark for where the narration is. Plain DOM, no React. Its rules are text-rail-model.ts.
 //
+// It shows the whole book, cut at its chapters, or the chapter of the place in view, cut at its sentences (the
+// reader's "Reading position shows", as the listening bar shows the whole audiobook or the current chapter).
+//
 // It knows the reading view through `RailSeam` alone, in places of the book (0 to 1 by sentence): the place in view,
 // "show this place", and the text's own tap rule for a touch it did not take. The new view's scroll mode gives the
 // seam (prepared-view.ts `railSeam`); pages mode gives the same seam and the rail is unchanged.
@@ -19,11 +22,17 @@ import {
   railKey,
   railPicture,
   railReadout,
+  railSpan,
   railValueText,
+  spanPlace,
+  spanSegments,
+  spanShare,
   touchIntent,
   type RailDrag,
   type RailPointer,
+  type RailScope,
   type RailSegment,
+  type RailSpan,
 } from "./text-rail-model";
 
 export type RailSeam = {
@@ -50,8 +59,12 @@ export type RailSeam = {
 
 export type RailOptions = {
   segments: RailSegment[];
+  /** The book's sentences: the chapter's rail is cut at them. */
+  sentences: number;
+  /** What the rail shows: the whole book in its chapters, or the chapter of the place in view in its sentences. */
+  scope: RailScope;
   /** The thumb is held (the readout of its place for the foot) or let go (null). */
-  onHeld(readout: { chapter: string; percent: number } | null): void;
+  onHeld(readout: { chapter: string; percent: number; of: RailScope } | null): void;
 };
 
 export type TextRail = ReturnType<typeof createTextRail>;
@@ -95,7 +108,9 @@ export function createTextRail(seam: RailSeam, options: RailOptions) {
   /** The place the rail let go at, shown until the view has shown it. */
   let released: number | null = null;
   let releases = 0;
-  let held: { pointer: number; drag: RailDrag } | null = null;
+  /** The thumb held, with what the rail showed when it was taken: a drag stays in that chapter. */
+  let held: { pointer: number; drag: RailDrag; span: RailSpan } | null = null;
+  let scope = options.scope;
   let touch: { pointer: number; x: number; y: number } | null = null;
   let rest: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
@@ -105,23 +120,46 @@ export function createTextRail(seam: RailSeam, options: RailOptions) {
     const box = rail.getBoundingClientRect();
     return { y: event.clientY - box.top - END_ROOM, dx: event.clientX - (box.right - CENTRE) };
   };
-  const shown = () => (held ? dragPlace(held.drag, height()) : released ?? place);
+  /** What the rail shows: the whole book, or the chapter of the place in view (the one it was taken in, while held). */
+  const spanNow = () => held?.span ?? railSpan(segments, options.sentences, scope, released ?? place);
+  /** The thumb's place in the book. */
+  const shown = () => (held ? spanPlace(held.span, dragPlace(held.drag, height())) : released ?? place);
+  const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 
   const render = () => {
     if (disposed) return;
     const size = height();
-    const picture = railPicture(segments, { place: shown(), narrated, following, drag: held?.drag ?? null }, size);
-    picture.segments.forEach((box, at) => {
-      const element = drawn[at]!;
+    const showing = spanNow();
+    const now = shown();
+    const picture = railPicture(
+      spanSegments(segments, showing),
+      { place: clamp01(spanShare(showing, now)), narrated: narrated === null ? null : spanShare(showing, narrated), following, drag: held?.drag ?? null, scope: showing.scope, sentences: showing.sentences },
+      size,
+    );
+    rail.dataset.scope = showing.scope;
+    // The chapter's rail is one column cut at its sentences: the cuts are drawn from where the chapter begins.
+    const cut = (element: HTMLElement, top: number) => {
+      if (!picture.ticks) return;
+      element.style.setProperty("--rail-origin", px(picture.ticks.origin - top));
+      element.style.setProperty("--rail-pitch", px(picture.ticks.pitch));
+      element.style.setProperty("--rail-gap", px(picture.ticks.gap));
+    };
+    if (picture.ticks) rail.dataset.step = String(picture.ticks.step);
+    else delete rail.dataset.step;
+    drawn.forEach((element, at) => {
+      const box = picture.segments[at];
+      element.hidden = !box || box.height <= 0;
+      if (!box) return;
       element.style.top = px(END_ROOM + box.top);
       element.style.height = px(box.height);
       element.dataset.tone = box.tone;
-      element.hidden = box.height <= 0;
+      cut(element, box.top);
     });
     read.hidden = !picture.read;
     if (picture.read) {
       read.style.top = px(END_ROOM + picture.read.top);
       read.style.height = px(picture.read.height);
+      cut(read, picture.read.top);
     }
     thumb.style.top = px(END_ROOM + picture.thumb.top);
     thumb.toggleAttribute("data-held", picture.thumb.held);
@@ -141,9 +179,8 @@ export function createTextRail(seam: RailSeam, options: RailOptions) {
     }
     rail.toggleAttribute("data-held", !!held);
     rail.toggleAttribute("data-zoomed", !!picture.overview);
-    const now = shown();
-    rail.setAttribute("aria-valuenow", String(Math.round(now * 100)));
-    rail.setAttribute("aria-valuetext", railValueText(segments, now, narrated, following));
+    rail.setAttribute("aria-valuenow", String(railReadout(segments, now, showing).percent));
+    rail.setAttribute("aria-valuetext", railValueText(segments, now, narrated, following, showing));
     // The thumb's place, for the browser tests.
     rail.setAttribute("data-place", now.toFixed(6));
   };
@@ -155,20 +192,21 @@ export function createTextRail(seam: RailSeam, options: RailOptions) {
   /** The held thumb moved: the text follows where it is loaded; elsewhere its part is asked for once the thumb rests. */
   const follow = () => {
     if (!held) return;
-    const target = dragPlace(held.drag, height());
+    const target = shown();
     stopRest();
     void seam.showPlace(target, false).then((there) => {
       if (there || !held || disposed) return;
       stopRest();
       rest = setTimeout(() => {
         rest = null;
-        if (held && dragPlace(held.drag, height()) === target) void seam.showPlace(target, true);
+        if (held && shown() === target) void seam.showPlace(target, true);
       }, REST_MS);
     });
   };
 
   const take = (pointer: number, from: { clientX: number; clientY: number }) => {
-    held = { pointer, drag: pressRail(pointerOf(from), shown(), height()) };
+    const showing = spanNow();
+    held = { pointer, drag: pressRail(pointerOf(from), clamp01(spanShare(showing, shown())), height()), span: showing };
     released = null;
     try {
       rail.setPointerCapture(pointer);
@@ -176,21 +214,22 @@ export function createTextRail(seam: RailSeam, options: RailOptions) {
       // A pointer that is gone already: the release follows.
     }
     seam.hold();
-    options.onHeld(railReadout(segments, shown()));
+    options.onHeld(railReadout(segments, shown(), showing));
     render();
     if (!held.drag.grabbed) follow();
   };
   const drag = (event: PointerEvent) => {
     if (!held) return;
+    const taken = held.span;
     held = { ...held, drag: dragRail(held.drag, pointerOf(event), height()) };
-    options.onHeld(railReadout(segments, shown()));
+    options.onHeld(railReadout(segments, shown(), taken));
     render();
     follow();
   };
   /** The release, a cancel or a lost capture: the place the thumb is let go at is shown and is the last one saved. */
   const letGo = () => {
     if (!held) return;
-    const target = dragPlace(held.drag, height());
+    const target = shown();
     const pointer = held.pointer;
     held = null;
     stopRest();
@@ -251,7 +290,7 @@ export function createTextRail(seam: RailSeam, options: RailOptions) {
   };
   const key = (event: KeyboardEvent) => {
     if (event.altKey || event.ctrlKey || event.metaKey) return;
-    const asked = railKey(event.key, segments, shown());
+    const asked = railKey(event.key, segments, shown(), spanNow());
     if (!asked) return;
     event.preventDefault();
     if (asked.kind === "band") seam.turn(asked.direction);
@@ -292,6 +331,12 @@ export function createTextRail(seam: RailSeam, options: RailOptions) {
       if (next === narrated && follows === following) return;
       narrated = next;
       following = follows;
+      render();
+    },
+    /** What the rail shows from now on; a thumb that is held keeps its chapter until it is let go. */
+    scope(next: RailScope) {
+      if (next === scope) return;
+      scope = next;
       render();
     },
     destroy() {

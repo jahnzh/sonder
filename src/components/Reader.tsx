@@ -68,7 +68,7 @@ import { preparedView } from "../reader-view-switch";
 import { createPreparedView, type PreparedTarget, type PreparedView } from "../prepared-view";
 import { PREPARED_CHANGED_EVENT, reportRefused, type PreparedBook } from "../prepared-book";
 import { createTextRail, type TextRail } from "../text-rail";
-import { railSegments } from "../text-rail-model";
+import { railSegments, readoutLine, type RailScope } from "../text-rail-model";
 import { sentencePlaces } from "../reader-places";
 import {
   countedBlocks,
@@ -332,7 +332,7 @@ export function ReaderView({
   const engine = useRef<PreparedView | null>(null);
   // The text position rail of the new view (#804), and the readout of its thumb while it is held (the foot shows it).
   const rail = useRef<TextRail | null>(null);
-  const [railHeld, setRailHeld] = useState<{ chapter: string; percent: number } | null>(null);
+  const [railHeld, setRailHeld] = useState<{ chapter: string; percent: number; of: RailScope } | null>(null);
   // Appearance docked under the text in place of the foot (#588); not in the address.
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   // Sizes the view to the text band when the band changed (the ResizeObserver's work, #587); set once the book opens.
@@ -522,6 +522,12 @@ export function ReaderView({
   useEffect(() => {
     rail.current?.narration(narratedPlace, follow);
   }, [narratedPlace, follow]);
+  // What the rail shows: the whole book or the chapter in view (Appearance, "Reading position").
+  const railScope = useRef(preferences.positionScope);
+  railScope.current = preferences.positionScope;
+  useEffect(() => {
+    rail.current?.scope(preferences.positionScope);
+  }, [preferences.positionScope]);
   // `keepPlace`: the same book loaded again (its prepared text changed on the server) stays where it is read.
   const refresh = async (keepPlace = false) => {
     try {
@@ -664,7 +670,7 @@ export function ReaderView({
       onBandResized: () => redrawHighlight(),
     });
     engine.current = view;
-    const textRail = createTextRail(view.railSeam(), { segments: railSegments(source.manifest, source.index), onHeld: setRailHeld });
+    const textRail = createTextRail(view.railSeam(), { segments: railSegments(source.manifest, source.index), sentences: source.index.total, scope: railScope.current, onHeld: setRailHeld });
     rail.current = textRail;
     textRail.narration(railNarration.current.place, railNarration.current.follow);
     following.openingDisplay();
@@ -2047,6 +2053,7 @@ export function ReaderView({
             onChange={editReader}
             follow={follow}
             onFollow={(on) => { if (on) following.backToNarration(); else following.pageAway(); }}
+            rail={prepared}
             onClose={() => setAppearanceOpen(false)}
           />
         )}
@@ -2060,7 +2067,7 @@ export function ReaderView({
         <div className="reader-foot-rest">
           <span className="reader-foot-line" aria-hidden="true"><i style={{ width: `${restProgress * 100}%` }} /></span>
           <div className="reader-foot-row">
-            <span className="reader-foot-place">{railHeld ? `${railHeld.chapter} · ${railHeld.percent}%` : restLine}</span>
+            <span className="reader-foot-place">{railHeld ? readoutLine(railHeld) : restLine}</span>
             {p.book && atRest.has("pause") && (
               <Button
                 kind="quiet"
@@ -2077,7 +2084,7 @@ export function ReaderView({
           {railHeld ? (
             <>
               <strong>{railHeld.chapter}</strong>
-              <span>{railHeld.percent}%</span>
+              <span>{railHeld.percent}%{railHeld.of === "chapter" ? " of the chapter" : ""}</span>
             </>
           ) : ebookLine ? (
             <>

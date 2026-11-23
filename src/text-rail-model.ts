@@ -27,6 +27,11 @@ export const REST_MS = 150;
 export const CENTRE = 12;
 /** The room at the rail's ends, so the thumb with its ring stays inside the band at the book's ends. */
 export const END_ROOM = 10;
+/** A subdivision of the chapter's rail is at least this high; where a sentence is lower, one stands for several. */
+export const TICK_MIN = 4;
+
+/** What the rail shows (the reader's "Reading position shows"): the whole book, or the chapter of the place in view. */
+export type RailScope = "book" | "chapter";
 
 /**
  * The chapters drawn: the book's own contents (`manifest.chapters`), at the shallowest depth, or one level deeper
@@ -59,6 +64,38 @@ const clamp01 = (value: number) => clamp(value, 0, 1);
 export function segmentAt(segments: readonly RailSegment[], place: number): number {
   for (let at = 0; at < segments.length; at++) if (place < segments[at]!.end) return at;
   return Math.max(0, segments.length - 1);
+}
+
+/**
+ * The stretch of the book the rail shows, in places: all of it, or one chapter. `to` is where the next chapter starts
+ * (one sentence past the book's last, for the last chapter), so each of its `sentences` has a slot of its own on the
+ * rail; `last` is the place of the stretch's last sentence, the furthest a thumb goes.
+ */
+export type RailSpan = { scope: RailScope; chapter: number; from: number; to: number; last: number; sentences: number };
+
+/** The span for a scope: the whole book, or the chapter that holds `place`. `sentences` is the book's count. */
+export function railSpan(segments: readonly RailSegment[], sentences: number, scope: RailScope, place: number): RailSpan {
+  const chapter = segmentAt(segments, place);
+  const segment = segments[chapter];
+  if (scope === "book" || !segment) return { scope: "book", chapter, from: 0, to: 1, last: 1, sentences };
+  const step = 1 / Math.max(1, sentences - 1);
+  const to = chapter === segments.length - 1 ? 1 + step : segment.end;
+  return { scope: "chapter", chapter, from: segment.start, to, last: Math.max(segment.start, to - step), sentences: Math.max(1, Math.round((to - segment.start) / step)) };
+}
+/** A place of the book as a share of the span: 0 to 1 inside it, below 0 before it and above 1 after it. */
+export const spanShare = (span: RailSpan, place: number) => (place - span.from) / (span.to - span.from);
+/** A share of the span as a place of the book, never past the span's last sentence. */
+export const spanPlace = (span: RailSpan, share: number) => Math.min(span.last, span.from + clamp01(share) * (span.to - span.from));
+/** What the span is cut into, in shares of it: the book's chapters, or the one chapter (cut at its sentences when drawn). */
+export const spanSegments = (segments: readonly RailSegment[], span: RailSpan): readonly RailSegment[] =>
+  span.scope === "book" ? segments : [{ label: segments[span.chapter]?.label ?? "", start: 0, end: 1 }];
+/**
+ * How many sentences one subdivision of the chapter's rail stands for: the fewest of 1, 2, 5, 10, 20, 50, … whose
+ * height is TICK_MIN or more, for sentences `slot` px high. A short chapter, or a zoomed one, is cut at every sentence.
+ */
+export function tickStep(slot: number): number {
+  if (!(slot > 0)) return 1;
+  for (let scale = 1; ; scale *= 10) for (const count of [1, 2, 5]) if (slot * count * scale >= TICK_MIN) return count * scale;
 }
 
 /** A place to its y on the rail at rest: the chapters are drawn to scale, so the book's places are too. */
@@ -144,13 +181,14 @@ export function inRailArea(x: number, y: number, band: { left: number; top: numb
   return Math.abs(x - centre) <= 22 && Math.abs(y - thumbY) <= 22;
 }
 
-/** What the keys ask for: Down and Up one band's height, Page Down and Page Up a chapter, Home and End the ends. */
+/** What the keys ask for: Down and Up one band's height, Page Down and Page Up a chapter, Home and End the ends of what the rail shows. */
 export type RailKey = { kind: "band"; direction: -1 | 1 } | { kind: "place"; place: number };
-export function railKey(key: string, segments: readonly RailSegment[], place: number): RailKey | null {
+export function railKey(key: string, segments: readonly RailSegment[], place: number, span?: RailSpan): RailKey | null {
   if (key === "ArrowDown" || key === "ArrowRight") return { kind: "band", direction: 1 };
   if (key === "ArrowUp" || key === "ArrowLeft") return { kind: "band", direction: -1 };
-  if (key === "Home") return { kind: "place", place: 0 };
-  if (key === "End") return { kind: "place", place: 1 };
+  // The ends of what the rail shows: the book's, or the chapter's.
+  if (key === "Home") return { kind: "place", place: span?.from ?? 0 };
+  if (key === "End") return { kind: "place", place: span?.last ?? 1 };
   const at = segmentAt(segments, place);
   if (key === "PageDown") return { kind: "place", place: at + 1 < segments.length ? segments[at + 1]!.start : 1 };
   if (key === "PageUp") {
@@ -161,15 +199,22 @@ export function railKey(key: string, segments: readonly RailSegment[], place: nu
   return null;
 }
 
-/** The readout of a place, as the foot shows it while the thumb is held: `<Chapter> · <N>%`. */
-export function railReadout(segments: readonly RailSegment[], place: number): { chapter: string; percent: number } {
-  return { chapter: segments[segmentAt(segments, place)]?.label ?? "", percent: Math.round(clamp01(place) * 100) };
+/**
+ * The readout of a place, as the foot shows it while the thumb is held: `<Chapter> · <N>%`, the percentage of what the
+ * rail shows (`of`): the book, or the chapter from its first sentence to its last.
+ */
+export function railReadout(segments: readonly RailSegment[], place: number, span?: RailSpan): { chapter: string; percent: number; of: RailScope } {
+  const share = span && span.scope === "chapter" ? (span.last > span.from ? (place - span.from) / (span.last - span.from) : 0) : place;
+  return { chapter: segments[segmentAt(segments, place)]?.label ?? "", percent: Math.round(clamp01(share) * 100), of: span?.scope ?? "book" };
 }
+/** The foot's words for a readout: "Chapter 9 · 35%", and "Chapter 9 · 35% of the chapter" where the rail shows the chapter. */
+export const readoutLine = (readout: { chapter: string; percent: number; of: RailScope }) =>
+  `${readout.chapter} · ${readout.percent}%${readout.of === "chapter" ? " of the chapter" : ""}`;
 
 /** The slider's value text: the place, and where the narration is. */
-export function railValueText(segments: readonly RailSegment[], place: number, narrated: number | null, following: boolean): string {
-  const { chapter, percent } = railReadout(segments, place);
-  const here = `${chapter}, ${percent}%.`;
+export function railValueText(segments: readonly RailSegment[], place: number, narrated: number | null, following: boolean, span?: RailSpan): string {
+  const { chapter, percent, of } = railReadout(segments, place, span);
+  const here = `${chapter}, ${percent}%${of === "chapter" ? " of the chapter" : ""}.`;
   if (narrated === null) return here;
   if (following) return `${here} Following the narration.`;
   return `${here} The narration is in ${segments[segmentAt(segments, narrated)]?.label ?? ""}.`;
@@ -178,9 +223,13 @@ export function railValueText(segments: readonly RailSegment[], place: number, n
 /** The rail's state for drawing: the thumb's place, the narrated place, following or away, and a drag. */
 export type RailState = {
   place: number;
+  /** The narrated place as a share of what the rail shows: below 0 or above 1 when it is outside the chapter shown. */
   narrated: number | null;
   following: boolean;
   drag: Pick<RailDrag, "u" | "zoom"> | null;
+  /** The chapter's rail: one column for the chapter (`segments` is that one), cut at its `sentences`. */
+  scope?: RailScope;
+  sentences?: number;
 };
 export type RailBox = { top: number; height: number };
 export type RailPicture = {
@@ -192,11 +241,18 @@ export type RailPicture = {
   mark: RailBox | null;
   /** The overview at the band's outer edge while zoomed. */
   overview: { opacity: number; lit: RailBox; tick: RailBox | null } | null;
+  /**
+   * The chapter's rail only: where its subdivisions are cut. `origin` is the y of the chapter's first sentence, `pitch`
+   * the height of one subdivision (`step` sentences) and `gap` the cut at its foot.
+   */
+  ticks: { origin: number; pitch: number; gap: number; step: number } | null;
 };
 
 /** What is drawn (RailTry's `renderVals` for "Zoom by distance from the bar"), y from the rail's top. */
 export function railPicture(segments: readonly RailSegment[], state: RailState, height: number): RailPicture {
   const held = !!state.drag;
+  // The chapter's rail is one column: held, it keeps the part read above the thumb instead of lighting the chapter.
+  const chapter = state.scope === "chapter";
   const zoomed = held && state.drag!.zoom > 1.001;
   const anchor = zoomed ? state.drag!.u : null;
   const zoom = zoomed ? state.drag!.zoom : 1;
@@ -210,12 +266,12 @@ export function railPicture(segments: readonly RailSegment[], state: RailState, 
     const a = toY(segment.start), b = toY(segment.end);
     const top = clamp(a, 0, height), bottom = clamp(b, 0, height);
     const size = b <= 0 || a >= height ? 0 : Math.max(1, bottom - top - 2);
-    const tone: "read" | "line" | "lit" = at < current ? "read" : at === current && held ? "lit" : "line";
+    const tone: "read" | "line" | "lit" = at < current ? "read" : at === current && held && !chapter ? "lit" : "line";
     return { top, height: size, tone };
   });
   const y = clamp(toY(place), 0, height);
   let read: RailBox | null = null;
-  if (!held && segments[current]) {
+  if ((!held || chapter) && segments[current]) {
     const top = clamp(toY(segments[current]!.start), 0, height);
     const size = Math.max(0, Math.min(y, toY(segments[current]!.end) - 2) - top);
     if (size >= 1) read = { top, height: size };
@@ -226,15 +282,22 @@ export function railPicture(segments: readonly RailSegment[], state: RailState, 
   let mark: RailBox | null = null;
   if (!state.following && state.narrated !== null) {
     const at = toY(state.narrated);
-    if (at >= 0 && at <= height) mark = { top: at - 1.5, height: 3 };
+    if (state.narrated >= 0 && state.narrated <= 1 && at >= 0 && at <= height) mark = { top: at - 1.5, height: 3 };
   }
   let overview: RailPicture["overview"] = null;
   if (zoom > 1.02 && anchor !== null) {
     overview = {
       opacity: Math.round(Math.min(1, (zoom - 1) / 1.5) * 100) / 100,
       lit: { top: anchor - anchor / zoom, height: height / zoom },
-      tick: state.narrated === null ? null : { top: placeToY(state.narrated, height) - 1, height: 3 },
+      tick: state.narrated === null || state.narrated < 0 || state.narrated > 1 ? null : { top: placeToY(state.narrated, height) - 1, height: 3 },
     };
   }
-  return { segments: drawn, read, thumb, mark, overview };
+  let ticks: RailPicture["ticks"] = null;
+  if (chapter && state.sentences) {
+    const slot = (height * zoom) / state.sentences;
+    const step = tickStep(slot);
+    const pitch = slot * step;
+    ticks = { origin: toY(0), pitch, gap: pitch >= 2 * TICK_MIN ? 2 : 1, step };
+  }
+  return { segments: drawn, read, thumb, mark, overview, ticks };
 }

@@ -35,6 +35,9 @@ export const appearanceSchema = z.object({
       margin: z.number().min(8).max(80).default(20),
       width: z.number().min(350).max(1100).default(720),
       mode: z.enum(["paginated", "scroll"]).default("paginated"),
+      // What the text position rail shows (#804): the whole book, or the chapter of the place in view. A client
+      // from before it sends none, and the default is stored.
+      positionScope: z.enum(["book", "chapter"]).default("book"),
       // The view choice, words per line and words per minute of the removed Lyrics and Word views
       // (ADR 0017). Accepted and kept because an older open client still sends them; the reader
       // ignores them and always shows the book's text.
@@ -50,6 +53,7 @@ export const appearanceSchema = z.object({
       margin: 20,
       width: 720,
       mode: "paginated",
+      positionScope: "book",
       display: "book",
       segmentWords: 30,
       wordWpm: 300,
