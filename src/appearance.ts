@@ -67,6 +67,16 @@ export function keepPlaybackSpeed(input: Appearance, stored: Appearance): Appear
     ? { ...input, playback: { ...input.playback, speed: stored.playback.speed } }
     : input;
 }
+/**
+ * A client from before the text position rail's choice sends `reader` without `positionScope` (or no `reader`) when it
+ * saves; that must not put the rail back to the whole book. `body` is the save as sent, before the schema filled it in.
+ */
+export function keepPositionScope(input: Appearance, body: unknown, stored: Appearance): Appearance {
+  const sent = (body as { reader?: { positionScope?: unknown } } | null)?.reader?.positionScope;
+  return sent === undefined && input.reader.positionScope !== stored.reader.positionScope
+    ? { ...input, reader: { ...input.reader, positionScope: stored.reader.positionScope } }
+    : input;
+}
 /** What this client sends: an unset default speed goes out as null, so the server clears it too. */
 export function appearanceToSave(value: Appearance): Appearance {
   return {

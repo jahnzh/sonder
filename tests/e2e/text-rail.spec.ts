@@ -86,8 +86,11 @@ function progressWrites(page: Page) {
   return writes;
 }
 const audioState = (page: Page) => page.evaluate(() => [...document.querySelectorAll("audio")].map((audio) => ({ time: Math.round(audio.currentTime * 10) / 10, paused: audio.paused, src: audio.currentSrc })));
-/** Opens the book following the narration at its 20th mapped sentence, with the rail drawn. */
-async function openFollowing(page: Page, title: string) {
+/**
+ * Opens the book following the narration at its 20th mapped sentence, with the rail drawn. `settle` false returns
+ * at once, inside the moment after the opening's own displays.
+ */
+async function openFollowing(page: Page, title: string, settle = true) {
   const opened = await longBook(page, title);
   const first = opened.map.intervals.slice().sort((a: any, b: any) => a.start - b.start);
   await narrateAt(page, opened.book, first[20].start + 0.5);
@@ -97,7 +100,7 @@ async function openFollowing(page: Page, title: string) {
   await expect(rail(page)).toBeVisible();
   await expect(rail(page).locator(".text-rail-thumb")).toHaveAttribute("data-tone", "accent");
   // The opening's own displays settle first: a move by hand inside them is not the reader's (the following module).
-  await page.waitForTimeout(1500);
+  if (settle) await page.waitForTimeout(1500);
   return { ...opened, narrated: first[20].paragraphId as string };
 }
 /** A touch moved through points on the page: real touch input through CDP in Chromium, pointer events in Firefox. */
@@ -212,6 +215,61 @@ test("a click on the rail moves the page there; away shows the narration mark; B
   await expect(rail(page).locator(".text-rail-thumb")).toHaveAttribute("data-tone", "accent");
   await expect(mark).toBeHidden();
   await expect(rail(page)).toHaveAttribute("aria-valuetext", /Following the narration\.$/);
+});
+
+test("a place chosen on the rail in the moment after a jump of ours is the reader's: following pauses and the place is saved", async ({ page }) => {
+  test.setTimeout(150000);
+  // Opened and at once: the opening's displays have not settled, and a move the view reports by itself would count
+  // as theirs. A place chosen on the rail is a navigation, as a page turn by hand is. (On a slow host the key may
+  // come after that moment; the rule it then checks is the plain one.)
+  const { ebook, manifest } = await openFollowing(page, `Rail in a jump ${randomUUID()}`, false);
+  const before = await firstInView(page);
+  await rail(page).focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(rail(page).locator(".text-rail-thumb")).toHaveAttribute("data-tone", "text");
+  await expect(rail(page).locator(".text-rail-mark")).toBeVisible();
+  await expect(rail(page)).toHaveAttribute("aria-valuetext", /^.+, \d+%\. The narration is in .+\.$/);
+  await expect.poll(() => firstInView(page)).not.toBe(before);
+  // Saved as the reader's place.
+  const saved = async () => (await (await page.request.get(`/api/reader/${ebook}/state`)).json()).checkpoint;
+  await expect.poll(async () => (await saved())?.origin, { timeout: 15000 }).toBe("reading");
+  await expect.poll(async () => (await saved()).locator.paragraphId, { timeout: 15000 }).toBe(await firstInView(page));
+});
+
+test("a press and release on the thumb moves nothing: the text, the following and the place stay as they are", async ({ page }) => {
+  test.setTimeout(150000);
+  await openFollowing(page, `Rail still ${randomUUID()}`);
+  const top = () => band(page).locator(".prepared-scroll").evaluate((element) => element.scrollTop);
+  const press = async () => {
+    const { x, y } = await thumbAt(page);
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await expect(rail(page)).toHaveAttribute("data-held", "");
+    await page.mouse.up();
+    await expect(rail(page)).not.toHaveAttribute("data-held", "");
+    await page.waitForTimeout(400);
+  };
+  // Following: the text stays where it is, and so does the following.
+  let before = await top();
+  await press();
+  expect(await top()).toBe(before);
+  await expect(rail(page).locator(".text-rail-thumb")).toHaveAttribute("data-tone", "accent");
+  await expect(rail(page).locator(".text-rail-mark")).toBeHidden();
+  // Scrolled by hand into the middle of a line: the first sentence in view began above the band. A press on the
+  // thumb does not bring its first line back to the band's top, however often.
+  const text = (await band(page).boundingBox())!;
+  await page.mouse.move(text.x + text.width / 2, text.y + text.height / 2);
+  await page.mouse.wheel(0, 137);
+  await expect.poll(top).toBeGreaterThan(before + 100);
+  await page.waitForTimeout(800);
+  before = await top();
+  const place = await railPlace(page);
+  const first = await firstInView(page);
+  await press();
+  await press();
+  expect(await top()).toBe(before);
+  expect(await railPlace(page)).toBe(place);
+  expect(await firstInView(page)).toBe(first);
 });
 
 test("pulled 100 px away from the rail the same travel moves the place by an eighth; the overview shows while zoomed", async ({ page }) => {

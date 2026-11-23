@@ -15,13 +15,15 @@
 import {
   CENTRE,
   END_ROOM,
-  REST_MS,
+  STILL,
+  clamp01,
   dragPlace,
   dragRail,
   pressRail,
   railKey,
   railPicture,
   railReadout,
+  railRest,
   railSpan,
   railValueText,
   spanPlace,
@@ -30,6 +32,7 @@ import {
   touchIntent,
   type RailDrag,
   type RailPointer,
+  type RailReadout,
   type RailScope,
   type RailSegment,
   type RailSpan,
@@ -64,7 +67,7 @@ export type RailOptions = {
   /** What the rail shows: the whole book in its chapters, or the chapter of the place in view in its sentences. */
   scope: RailScope;
   /** The thumb is held (the readout of its place for the foot) or let go (null). */
-  onHeld(readout: { chapter: string; percent: number; of: RailScope } | null): void;
+  onHeld(readout: RailReadout | null): void;
 };
 
 export type TextRail = ReturnType<typeof createTextRail>;
@@ -108,11 +111,14 @@ export function createTextRail(seam: RailSeam, options: RailOptions) {
   /** The place the rail let go at, shown until the view has shown it. */
   let released: number | null = null;
   let releases = 0;
-  /** The thumb held, with what the rail showed when it was taken: a drag stays in that chapter. */
-  let held: { pointer: number; drag: RailDrag; span: RailSpan } | null = null;
+  /**
+   * The thumb held, with what the rail showed when it was taken (a drag stays in that chapter). `picked` is its y
+   * while it is still where it was picked up (null once it has moved, or when the press put it elsewhere): until it
+   * moves, the text stays as it is.
+   */
+  let held: { pointer: number; drag: RailDrag; span: RailSpan; picked: number | null } | null = null;
   let scope = options.scope;
   let touch: { pointer: number; x: number; y: number } | null = null;
-  let rest: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
 
   const height = () => Math.max(1, rail.clientHeight - 2 * END_ROOM);
@@ -124,7 +130,6 @@ export function createTextRail(seam: RailSeam, options: RailOptions) {
   const spanNow = () => held?.span ?? railSpan(segments, options.sentences, scope, released ?? place);
   /** The thumb's place in the book. */
   const shown = () => (held ? spanPlace(held.span, dragPlace(held.drag, height())) : released ?? place);
-  const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 
   const render = () => {
     if (disposed) return;
@@ -185,28 +190,16 @@ export function createTextRail(seam: RailSeam, options: RailOptions) {
     rail.setAttribute("data-place", now.toFixed(6));
   };
 
-  const stopRest = () => {
-    if (rest) clearTimeout(rest);
-    rest = null;
-  };
   /** The held thumb moved: the text follows where it is loaded; elsewhere its part is asked for once the thumb rests. */
+  const rest = railRest((at, load) => seam.showPlace(at, load));
   const follow = () => {
-    if (!held) return;
-    const target = shown();
-    stopRest();
-    void seam.showPlace(target, false).then((there) => {
-      if (there || !held || disposed) return;
-      stopRest();
-      rest = setTimeout(() => {
-        rest = null;
-        if (held && shown() === target) void seam.showPlace(target, true);
-      }, REST_MS);
-    });
+    if (held) rest.moved(shown());
   };
 
   const take = (pointer: number, from: { clientX: number; clientY: number }) => {
     const showing = spanNow();
-    held = { pointer, drag: pressRail(pointerOf(from), clamp01(spanShare(showing, shown())), height()), span: showing };
+    const pressed = pressRail(pointerOf(from), clamp01(spanShare(showing, shown())), height());
+    held = { pointer, drag: pressed, span: showing, picked: pressed.grabbed ? pressed.u : null };
     released = null;
     try {
       rail.setPointerCapture(pointer);
@@ -221,30 +214,37 @@ export function createTextRail(seam: RailSeam, options: RailOptions) {
   const drag = (event: PointerEvent) => {
     if (!held) return;
     const taken = held.span;
-    held = { ...held, drag: dragRail(held.drag, pointerOf(event), height()) };
+    const next = dragRail(held.drag, pointerOf(event), height());
+    held = { ...held, drag: next, picked: held.picked !== null && Math.abs(next.u - held.picked) < STILL ? held.picked : null };
     options.onHeld(railReadout(segments, shown(), taken));
     render();
-    follow();
+    if (held.picked === null) follow();
   };
-  /** The release, a cancel or a lost capture: the place the thumb is let go at is shown and is the last one saved. */
+  /**
+   * The release, a cancel or a lost capture: the place the thumb is let go at is shown and is the last one saved. A
+   * thumb let go where it was picked up shows nothing: the text is there already, and showing its place again would
+   * put the first sentence's first line at the band's top.
+   */
   const letGo = () => {
     if (!held) return;
     const target = shown();
-    const pointer = held.pointer;
+    const { pointer, picked } = held;
     held = null;
-    stopRest();
-    released = target;
-    const release = ++releases;
+    rest.stop();
     try {
       if (rail.hasPointerCapture(pointer)) rail.releasePointerCapture(pointer);
     } catch {
       // Released already.
     }
-    void seam.showPlace(target, true).finally(() => {
-      if (release !== releases || disposed) return;
-      released = null;
-      render();
-    });
+    if (picked === null) {
+      released = target;
+      const release = ++releases;
+      void seam.showPlace(target, true).finally(() => {
+        if (release !== releases || disposed) return;
+        released = null;
+        render();
+      });
+    }
     seam.letGo();
     options.onHeld(null);
     render();
@@ -341,7 +341,7 @@ export function createTextRail(seam: RailSeam, options: RailOptions) {
     },
     destroy() {
       disposed = true;
-      stopRest();
+      rest.stop();
       unwatch();
       observer.disconnect();
       if (held) seam.letGo();

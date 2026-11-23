@@ -29,6 +29,8 @@ export const CENTRE = 12;
 export const END_ROOM = 10;
 /** A subdivision of the chapter's rail is at least this high; where a sentence is lower, one stands for several. */
 export const TICK_MIN = 4;
+/** A thumb picked up where it is has moved once its y is this far from there (the least a pointer moves it is far more). */
+export const STILL = 0.01;
 
 /** What the rail shows (the reader's "Reading position shows"): the whole book, or the chapter of the place in view. */
 export type RailScope = "book" | "chapter";
@@ -58,7 +60,7 @@ export function railSegments(manifest: Pick<PreparedManifest, "chapters" | "sect
 }
 
 const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
-const clamp01 = (value: number) => clamp(value, 0, 1);
+export const clamp01 = (value: number) => clamp(value, 0, 1);
 
 /** The segment that holds a place: the last that starts at or before it. */
 export function segmentAt(segments: readonly RailSegment[], place: number): number {
@@ -166,26 +168,55 @@ export function dragRail(drag: RailDrag, pointer: RailPointer, height: number): 
 /** The place a drag shows. */
 export const dragPlace = (drag: RailDrag, height: number) => yToPlace(drag.u, height);
 
-/** What a touch in the rail's area is so far: not decided, the rail's drag, or the text's (a tap, a swipe). */
+/**
+ * The text under a held thumb: each move shows its place where the text is loaded, and a place whose part is not
+ * loaded is asked for once the thumb has rested on it REST_MS. `show` is the seam's `showPlace`. An answer for a place
+ * the thumb has left since starts no rest and ends none: the newer move has its own.
+ */
+export function railRest(show: (place: number, load: boolean) => Promise<boolean>) {
+  let at: number | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const clear = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+  };
+  return {
+    /** The held thumb moved to `place`. */
+    moved(place: number) {
+      at = place;
+      clear();
+      void show(place, false).then((there) => {
+        if (there || at !== place) return;
+        clear();
+        timer = setTimeout(() => {
+          timer = null;
+          if (at === place) void show(place, true);
+        }, REST_MS);
+      });
+    },
+    /** The thumb was let go: nothing more is asked for. */
+    stop() {
+      at = null;
+      clear();
+    },
+  };
+}
+
+/** What a touch in the rail's area is so far: not decided (the text's, if it ends so: a tap, a swipe), or the rail's drag. */
 export type TouchIntent = "pending" | "rail";
 /** A touch takes the rail once it has moved TOUCH_SLOP and more up or down than sideways. */
 export function touchIntent(dx: number, dy: number): TouchIntent {
   return Math.hypot(dx, dy) >= TOUCH_SLOP && Math.abs(dy) > Math.abs(dx) ? "rail" : "pending";
 }
 
-/** Whether a point is in the rail's touch area: the band's right margin over its height, or the box around the thumb. */
-export function inRailArea(x: number, y: number, band: { left: number; top: number; right: number; bottom: number }, margin: number, thumbY: number): boolean {
-  if (y < band.top || y > band.bottom || x > band.right || x < band.left) return false;
-  if (x >= band.right - margin) return true;
-  const centre = band.right - CENTRE;
-  return Math.abs(x - centre) <= 22 && Math.abs(y - thumbY) <= 22;
-}
-
-/** What the keys ask for: Down and Up one band's height, Page Down and Page Up a chapter, Home and End the ends of what the rail shows. */
+/**
+ * What the keys ask for: Down and Up one band's height, Page Down and Page Up a chapter, Home and End the ends of what
+ * the rail shows. Left and Right are not the rail's: they stay the app's keys (30 seconds back and on, or a page).
+ */
 export type RailKey = { kind: "band"; direction: -1 | 1 } | { kind: "place"; place: number };
 export function railKey(key: string, segments: readonly RailSegment[], place: number, span?: RailSpan): RailKey | null {
-  if (key === "ArrowDown" || key === "ArrowRight") return { kind: "band", direction: 1 };
-  if (key === "ArrowUp" || key === "ArrowLeft") return { kind: "band", direction: -1 };
+  if (key === "ArrowDown") return { kind: "band", direction: 1 };
+  if (key === "ArrowUp") return { kind: "band", direction: -1 };
   // The ends of what the rail shows: the book's, or the chapter's.
   if (key === "Home") return { kind: "place", place: span?.from ?? 0 };
   if (key === "End") return { kind: "place", place: span?.last ?? 1 };
@@ -203,18 +234,20 @@ export function railKey(key: string, segments: readonly RailSegment[], place: nu
  * The readout of a place, as the foot shows it while the thumb is held: `<Chapter> · <N>%`, the percentage of what the
  * rail shows (`of`): the book, or the chapter from its first sentence to its last.
  */
-export function railReadout(segments: readonly RailSegment[], place: number, span?: RailSpan): { chapter: string; percent: number; of: RailScope } {
+export type RailReadout = { chapter: string; percent: number; of: RailScope };
+export function railReadout(segments: readonly RailSegment[], place: number, span?: RailSpan): RailReadout {
   const share = span && span.scope === "chapter" ? (span.last > span.from ? (place - span.from) / (span.last - span.from) : 0) : place;
   return { chapter: segments[segmentAt(segments, place)]?.label ?? "", percent: Math.round(clamp01(share) * 100), of: span?.scope ?? "book" };
 }
+/** A readout's share in words: "35%", and "35% of the chapter" where the rail shows the chapter. */
+export const readoutShare = (readout: RailReadout) => `${readout.percent}%${readout.of === "chapter" ? " of the chapter" : ""}`;
 /** The foot's words for a readout: "Chapter 9 · 35%", and "Chapter 9 · 35% of the chapter" where the rail shows the chapter. */
-export const readoutLine = (readout: { chapter: string; percent: number; of: RailScope }) =>
-  `${readout.chapter} · ${readout.percent}%${readout.of === "chapter" ? " of the chapter" : ""}`;
+export const readoutLine = (readout: RailReadout) => `${readout.chapter} · ${readoutShare(readout)}`;
 
 /** The slider's value text: the place, and where the narration is. */
 export function railValueText(segments: readonly RailSegment[], place: number, narrated: number | null, following: boolean, span?: RailSpan): string {
-  const { chapter, percent, of } = railReadout(segments, place, span);
-  const here = `${chapter}, ${percent}%${of === "chapter" ? " of the chapter" : ""}.`;
+  const readout = railReadout(segments, place, span);
+  const here = `${readout.chapter}, ${readoutShare(readout)}.`;
   if (narrated === null) return here;
   if (following) return `${here} Following the narration.`;
   return `${here} The narration is in ${segments[segmentAt(segments, narrated)]?.label ?? ""}.`;

@@ -1,11 +1,13 @@
 // The text position rail's rules (#804): chapters from a manifest, place and y, the zoom, the re-anchoring after a
-// zoom, a grab against a jump, a tap against a drag, the keys, the words, and what is drawn in each state.
-import test from "node:test";
+// zoom, a grab against a jump, a tap against a drag, the rests of a held thumb, the keys, the words, and what is drawn
+// in each state.
+import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 import {
   DEAD,
   GRAB,
   PULL,
+  REST_MS,
   ZOOM,
   barMap,
   dragPlace,
@@ -15,10 +17,12 @@ import {
   railKey,
   railPicture,
   railReadout,
+  railRest,
   railSegments,
   railSpan,
   railValueText,
   readoutLine,
+  readoutShare,
   segmentAt,
   spanPlace,
   spanSegments,
@@ -175,6 +179,79 @@ test("the keys: Down and Up a band, Page Down and Page Up a chapter, Home and En
   assert.deepEqual(railKey("Home", segments, 0.3), { kind: "place", place: 0 });
   assert.deepEqual(railKey("End", segments, 0.3), { kind: "place", place: 1 });
   assert.equal(railKey("a", segments, 0.3), null);
+  // Left and Right stay the app's keys (30 seconds back and on, or a page), also with the focus on the rail.
+  assert.equal(railKey("ArrowLeft", segments, 0.3), null);
+  assert.equal(railKey("ArrowRight", segments, 0.3), null);
+});
+
+/** A seam's `showPlace` whose answers the test gives: every call is listed, and `answer` settles the call at `at`. */
+function shows() {
+  const calls: { place: number; load: boolean }[] = [];
+  const open: ((there: boolean) => void)[] = [];
+  const show = (place: number, load: boolean) => {
+    calls.push({ place, load });
+    return new Promise<boolean>((resolve) => open.push(resolve));
+  };
+  const answer = async (at: number, there: boolean) => {
+    open[at]!(there);
+    await new Promise((done) => setImmediate(done));
+  };
+  const asked = () => calls.filter((call) => call.load).map((call) => call.place);
+  return { calls, show, answer, asked };
+}
+
+test("a held thumb's rests: a part is asked for once the thumb has rested on its place, and not while it moves", async (t) => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  t.after(() => mock.timers.reset());
+  const { calls, show, answer, asked } = shows();
+  const rest = railRest(show);
+  // Loaded text follows every move and nothing is asked for.
+  rest.moved(0.1);
+  await answer(0, true);
+  mock.timers.tick(REST_MS * 2);
+  assert.deepEqual(calls, [{ place: 0.1, load: false }]);
+  // A place that is not loaded: asked for after the rest, once.
+  rest.moved(0.5);
+  await answer(1, false);
+  mock.timers.tick(REST_MS - 1);
+  assert.deepEqual(asked(), []);
+  mock.timers.tick(1);
+  assert.deepEqual(asked(), [0.5]);
+  mock.timers.tick(REST_MS * 2);
+  assert.deepEqual(asked(), [0.5]);
+  // A move before the rest is over: the place left is not asked for, the new one after its own rest.
+  rest.moved(0.6);
+  await answer(3, false);
+  mock.timers.tick(REST_MS - 1);
+  rest.moved(0.7);
+  await answer(4, false);
+  mock.timers.tick(REST_MS - 1);
+  assert.deepEqual(asked(), [0.5]);
+  mock.timers.tick(1);
+  assert.deepEqual(asked(), [0.5, 0.7]);
+  // Let go during a rest: nothing more is asked for.
+  rest.moved(0.8);
+  await answer(6, false);
+  rest.stop();
+  mock.timers.tick(REST_MS * 2);
+  assert.deepEqual(asked(), [0.5, 0.7]);
+});
+
+test("a held thumb's rests: the late answer for a place the thumb has left does not end the rest of the place it is on", async (t) => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  t.after(() => mock.timers.reset());
+  const { calls, show, answer, asked } = shows();
+  const rest = railRest(show);
+  // The last two moves of a drag, a frame apart: from loaded text into text that is not loaded.
+  rest.moved(0.4);
+  rest.moved(0.9);
+  assert.deepEqual(calls, [{ place: 0.4, load: false }, { place: 0.9, load: false }]);
+  // The view answers the second at once (not loaded), and the first two frames later: "not shown", as the second
+  // move replaced it.
+  await answer(1, false);
+  await answer(0, false);
+  mock.timers.tick(REST_MS);
+  assert.deepEqual(asked(), [0.9], "the thumb rests on 0.9: its part is asked for");
 });
 
 test("the words: the readout and the slider's value text as the boards' labels read", () => {
@@ -184,6 +261,7 @@ test("the words: the readout and the slider's value text as the boards' labels r
   ];
   assert.deepEqual(railReadout(segments, 0.35), { chapter: "Chapter 9", percent: 35, of: "book" });
   assert.equal(readoutLine(railReadout(segments, 0.35)), "Chapter 9 · 35%");
+  assert.equal(readoutShare(railReadout(segments, 0.35)), "35%");
   assert.equal(railValueText(segments, 0.19, 0.19, true), "Chapter 5, 19%. Following the narration.");
   assert.equal(railValueText(segments, 0.35, 0.2, false), "Chapter 9, 35%. The narration is in Chapter 5.");
   assert.equal(railValueText(segments, 0.35, null, false), "Chapter 9, 35%.");
@@ -324,6 +402,7 @@ test("the chapter's rail: Home and End are the chapter's ends, and the words giv
   assert.equal(railReadout(hundred, 0.2, chapter).percent, 0);
   assert.equal(railReadout(hundred, chapter.last, chapter).percent, 100);
   assert.equal(readoutLine(railReadout(hundred, 0.45, chapter)), "B · 51% of the chapter");
+  assert.equal(readoutShare(railReadout(hundred, 0.45, chapter)), "51% of the chapter");
   assert.deepEqual(railReadout(hundred, 0.45, book), { chapter: "B", percent: 45, of: "book" });
   assert.equal(railValueText(hundred, 0.45, 0.1, false, chapter), "B, 51% of the chapter. The narration is in A.");
   assert.equal(railValueText(hundred, 0.45, 0.45, true, chapter), "B, 51% of the chapter. Following the narration.");

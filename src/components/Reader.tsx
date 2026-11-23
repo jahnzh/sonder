@@ -67,8 +67,8 @@ import { SPREAD_GAP, SPREAD_MIN_HOST, spreadHostWidth } from "../reader-spread";
 import { preparedView } from "../reader-view-switch";
 import { createPreparedView, type PreparedTarget, type PreparedView } from "../prepared-view";
 import { PREPARED_CHANGED_EVENT, reportRefused, type PreparedBook } from "../prepared-book";
-import { createTextRail, type TextRail } from "../text-rail";
-import { railSegments, readoutLine, type RailScope } from "../text-rail-model";
+import { createTextRail, type RailSeam, type TextRail } from "../text-rail";
+import { railSegments, readoutLine, readoutShare, type RailReadout } from "../text-rail-model";
 import { sentencePlaces } from "../reader-places";
 import {
   countedBlocks,
@@ -332,7 +332,7 @@ export function ReaderView({
   const engine = useRef<PreparedView | null>(null);
   // The text position rail of the new view (#804), and the readout of its thumb while it is held (the foot shows it).
   const rail = useRef<TextRail | null>(null);
-  const [railHeld, setRailHeld] = useState<{ chapter: string; percent: number; of: RailScope } | null>(null);
+  const [railHeld, setRailHeld] = useState<RailReadout | null>(null);
   // Appearance docked under the text in place of the foot (#588); not in the address.
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   // Sizes the view to the text band when the band changed (the ResizeObserver's work, #587); set once the book opens.
@@ -670,7 +670,27 @@ export function ReaderView({
       onBandResized: () => redrawHighlight(),
     });
     engine.current = view;
-    const textRail = createTextRail(view.railSeam(), { segments: railSegments(source.manifest, source.index), sentences: source.index.total, scope: railScope.current, onHeld: setRailHeld });
+    // A place chosen on the rail (a drag, a click, a key) is the reader's own choice, as a page turn by hand is
+    // (`turn`): it replaces a follow jump in flight, pages away from the narration and is saved, also in the moment
+    // after a jump of ours, when a move the view reports by itself would count as that jump's.
+    const seam = view.railSeam();
+    const chosen = () => {
+      following.navigate();
+      return following.beginNavigation();
+    };
+    const railSeam: RailSeam = {
+      ...seam,
+      showPlace(place, load) {
+        const ended = chosen();
+        return seam.showPlace(place, load).finally(ended);
+      },
+      turn(direction) {
+        const ended = chosen();
+        seam.turn(direction);
+        ended();
+      },
+    };
+    const textRail = createTextRail(railSeam, { segments: railSegments(source.manifest, source.index), sentences: source.index.total, scope: railScope.current, onHeld: setRailHeld });
     rail.current = textRail;
     textRail.narration(railNarration.current.place, railNarration.current.follow);
     following.openingDisplay();
@@ -2084,7 +2104,7 @@ export function ReaderView({
           {railHeld ? (
             <>
               <strong>{railHeld.chapter}</strong>
-              <span>{railHeld.percent}%{railHeld.of === "chapter" ? " of the chapter" : ""}</span>
+              <span>{readoutShare(railHeld)}</span>
             </>
           ) : ebookLine ? (
             <>
