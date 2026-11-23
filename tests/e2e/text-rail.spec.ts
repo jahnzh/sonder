@@ -94,6 +94,8 @@ async function openFollowing(page: Page, title: string) {
   await expect(room(page)).toHaveAttribute("data-current-passage", first[20].paragraphId, { timeout: READER_WAIT_MS.followHighlight });
   await expect(rail(page)).toBeVisible();
   await expect(rail(page).locator(".text-rail-thumb")).toHaveAttribute("data-tone", "accent");
+  // The opening's own displays settle first: a move by hand inside them is not the reader's (the following module).
+  await page.waitForTimeout(1500);
   return { ...opened, narrated: first[20].paragraphId as string };
 }
 /** A touch moved through points on the page: real touch input through CDP in Chromium, pointer events in Firefox. */
@@ -123,7 +125,6 @@ async function touchDrag(page: Page, browserName: string, points: { x: number; y
     send("pointerup", points.at(-1)!);
   }, { points, pauseMs });
 }
-const hasTouch = (page: Page) => page.evaluate(() => navigator.maxTouchPoints > 0);
 
 test("the thumb follows a hand scroll and stands on the place of the first sentence in view", async ({ page }) => {
   test.setTimeout(150000);
@@ -267,8 +268,8 @@ test("a drag across unloaded parts asks for no more parts than it rests", async 
 
 test("a touch tap on the rail is the text's tap; a touch that moves up or down takes the rail", async ({ page, browserName }) => {
   test.setTimeout(150000);
+  test.skip(!test.info().project.use.hasTouch, "a project without touch");
   await openFollowing(page, `Rail touch ${randomUUID()}`);
-  test.skip(!(await hasTouch(page)), "a project without touch");
   const scroller = band(page).locator(".prepared-scroll");
   const top = () => scroller.evaluate((element) => element.scrollTop);
   const { x, column } = await thumbAt(page);

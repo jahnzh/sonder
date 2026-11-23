@@ -271,7 +271,10 @@ export function createTextRail(seam: RailSeam, options: RailOptions) {
   rail.addEventListener("pointermove", move);
   rail.addEventListener("pointerup", up);
   rail.addEventListener("pointercancel", cancel);
-  rail.addEventListener("lostpointercapture", cancel);
+  // Only the rail's own capture: a touch is captured by the element it began on (the grip) until the rail takes it.
+  rail.addEventListener("lostpointercapture", (event) => {
+    if (event.target === rail) cancel(event);
+  });
   rail.addEventListener("wheel", wheel, { passive: false });
   rail.addEventListener("keydown", key);
   rail.addEventListener("contextmenu", (event) => event.preventDefault());
