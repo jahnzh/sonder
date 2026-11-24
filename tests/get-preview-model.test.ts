@@ -54,3 +54,61 @@ test("the time played reads minutes and seconds; two minutes at most", () => {
   assert.equal(previewTime(119), "1:59");
   assert.equal(PREVIEW_SECONDS, 120);
 });
+
+test("the five-second fallback: nothing sounded five seconds after the seek to 3:00 starts again from 0:00", async () => {
+  const { previewTracker, PREVIEW_SILENT_MS } = await import("../src/pages/get-preview-model.ts");
+  let clock = 1_000;
+  const tracker = previewTracker(() => clock);
+  assert.equal(tracker.started(640), 180);
+  // Still at the seek point (loading), 4.9 s on: wait.
+  clock += PREVIEW_SILENT_MS - 100;
+  assert.equal(tracker.step(180, true).action, null);
+  clock += 100;
+  assert.equal(tracker.step(180, true).action, "restart");
+  // Only once: from the start it plays on.
+  clock += 10_000;
+  assert.equal(tracker.step(0.5, false).action, null);
+  assert.equal(tracker.step(1, false).played, 1);
+});
+
+test("the five-second fallback does not fire when the preview sounds after the seek, nor for a short file", async () => {
+  const { previewTracker, PREVIEW_SILENT_MS } = await import("../src/pages/get-preview-model.ts");
+  let clock = 0;
+  const tracker = previewTracker(() => clock);
+  tracker.started(640);
+  clock += 1_000;
+  assert.equal(tracker.step(180.5, false).action, null);
+  clock += PREVIEW_SILENT_MS * 2;
+  assert.equal(tracker.step(181, false).action, null);
+  const short = previewTracker(() => clock);
+  assert.equal(short.started(300), 0);
+  clock += PREVIEW_SILENT_MS * 2;
+  assert.equal(short.step(0, true).action, null);
+});
+
+test("the two-minute stop: after 120 s played, counted from the element's time, not from seeks or pauses", async () => {
+  const { previewTracker } = await import("../src/pages/get-preview-model.ts");
+  let clock = 0;
+  const tracker = previewTracker(() => clock);
+  tracker.started(640);
+  let time = 180;
+  let result = tracker.step(time, false);
+  for (let second = 1; second < 120; second++) {
+    clock += 1_000;
+    time += 1;
+    result = tracker.step(time, false);
+    assert.equal(result.action, null, `at ${second} s`);
+  }
+  assert.equal(result.played, 119);
+  // Paused for a while: nothing counts.
+  clock += 60_000;
+  assert.equal(tracker.step(time, true).action, null);
+  // A jump forward is a seek, not time played.
+  time += 30;
+  assert.equal(tracker.step(time, false).played, 119);
+  clock += 1_000;
+  time += 1;
+  result = tracker.step(time, false);
+  assert.equal(result.action, "stop");
+  assert.equal(result.played, 120);
+});

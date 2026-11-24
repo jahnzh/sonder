@@ -66,3 +66,45 @@ export function previewControl({
   if (bookPlaying) return { label: "Preview", disabled: true, line: { text: PAUSE_THE_BOOK, failed: false } };
   return { label: "Preview", disabled: !online, line: phase === "failed" ? { text: NOT_PREVIEWED, failed: true } : null };
 }
+
+export type PreviewTracker = {
+  /** The file's length is known (`loadedmetadata`): where to seek, and the clock for the silent check starts. */
+  started(duration: number): number;
+  /**
+   * The element's state now (each `timeupdate`, and each second while it plays): "restart" from the start when nothing
+   * has sounded five seconds after the seek, "stop" once two minutes have played, else nothing; and the time played.
+   */
+  step(currentTime: number, paused: boolean): { action: "restart" | "stop" | null; played: number };
+};
+
+/** Where the preview starts, when it falls back to the start, and when it stops: the clock (`now`) is injected. */
+export function previewTracker(now: () => number): PreviewTracker {
+  let from = 0;
+  let seekedAt = 0;
+  let last = 0;
+  let played = 0;
+  let sounded = true;
+  return {
+    started(duration) {
+      from = previewStart(duration);
+      seekedAt = now();
+      last = from;
+      played = 0;
+      sounded = from === 0;
+      return from;
+    },
+    step(currentTime, paused) {
+      if (!sounded && currentTime >= from + 0.25 && !paused) sounded = true;
+      if (!sounded && now() - seekedAt >= PREVIEW_SILENT_MS) {
+        sounded = true;
+        last = 0;
+        return { action: "restart", played };
+      }
+      const delta = currentTime - last;
+      last = currentTime;
+      // A seek (a jump back, or forward by more than two seconds) is not time played.
+      if (!paused && delta > 0 && delta <= 2) played += delta;
+      return { action: played >= PREVIEW_SECONDS ? "stop" : null, played };
+    },
+  };
+}

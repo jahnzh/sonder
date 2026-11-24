@@ -58,6 +58,10 @@ _Avoid_: Source (alone), copy
 The administrator's action of bringing a missing file to a work: a recording from AudioBookBay, Prowlarr, a magnet link or audio files from the device, or an ebook edition from Library Genesis or a file from the device. It always happens in the Get sheet of that work, and the file joins that work.
 _Avoid_: Find another release, Find ebook, acquire (on screen), download (for the action)
 
+**Preview**:
+A stretch of a release TorBox already holds ("Plays now"), heard in the Get sheet before it is got: up to two minutes of one of its files, in an audio element of its own, never the player's. It makes no recording and writes no listening position. The release stays on the TorBox account afterwards.
+_Avoid_: Sample (a file name the preview passes over), trial
+
 **Release**:
 A listing a source offers before Sonder has it: a torrent of a recording on AudioBookBay or an indexer behind Prowlarr, or a file of an edition on Library Genesis. Getting one makes it a recording or an ebook edition of the work. A release TorBox already holds plays at once ("Plays now"). On screen a release is called a recording or an edition.
 _Avoid_: Result, torrent (alone), version
