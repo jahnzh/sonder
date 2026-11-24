@@ -183,7 +183,14 @@ class Jobs(unittest.TestCase):
         return BookJobs(self.root, stages, registry, clock=self.clock, state_bytes=STATE)
 
     def done(self, jobs, key="job-1"):
-        return wait_for(lambda: jobs.status(key)["state"] in ("done", "failed", "cancelled"))
+        ended = wait_for(lambda: jobs.status(key)["state"] in ("done", "failed", "cancelled"))
+        # "failed" is set in memory just before the error record is written: wait for the thread, so a
+        # test that reads the folder from disk afterwards sees the record.
+        job = jobs._jobs.get(key)
+        if ended and job is not None and job.thread is not None:
+            job.thread.join(5)
+            return not job.thread.is_alive()
+        return ended
 
     def test_start_progress_and_result(self):
         stages = FakeStages()
@@ -326,10 +333,23 @@ class Jobs(unittest.TestCase):
         jobs.start(request())
         self.assertTrue(self.done(jobs))
         self.assertEqual(jobs.status("job-1")["state"], "failed")
-        jobs._jobs["job-1"].thread.join(5)  # "failed" is set in memory just before the record is written
         record = (self.root / "job-1" / "state.json").stat().st_size
         self.assertEqual(budget.reserved("job-1"), record)
         self.assertLessEqual(budget.peak, budget.total, "the record never takes the budget over its total")
+
+    def test_done_waits_for_a_failed_jobs_record_even_when_the_save_is_slow(self):
+        real_save = book_job.Job.save
+
+        def slow_save(job):
+            if job.state.get("state") == "failed":
+                time.sleep(0.2)
+            return real_save(job)
+
+        jobs = self.jobs(FakeStages(fail_at=1))
+        with mock.patch.object(book_job.Job, "save", slow_save):
+            jobs.start(request())
+            self.assertTrue(self.done(jobs))
+            self.assertEqual([p.name for p in (self.root / "job-1").iterdir()], ["state.json"])
 
     def test_a_failed_start_deletes_what_it_wrote(self):
         def broken_save(job):
