@@ -32,7 +32,7 @@ import {
   type EbookAsk,
   type EbookSearch,
 } from "./get-ebook-state";
-import { GetSheetBook, GetSheetSearch, LeavingMark, RowChevron, SourceFailureLine, SourceLinkLine } from "./get-sheet-parts";
+import { GetSheetBook, GetSheetSearch, LeavingMark, RowChevron, SourceFailureLine, SourceLinkLine, useChosenRowInView } from "./get-sheet-parts";
 import { GetImportRow } from "./get-import-row";
 import "./get-ebook-sheet.css";
 
@@ -187,6 +187,13 @@ export function GetEbookSheet({ workId, online, libgenUrl, onChanged }: Props) {
     }
   };
 
+  // The footer, bottom to top: the button row, pinned to the foot and never moving; the sentence that says what the
+  // button will do, 8 above it; the link to the chosen edition's own page; a refusal. Nothing is reserved, so the footer
+  // is the button alone while nothing is chosen and grows upward into the list when there is something to say. This
+  // departs from the board's order (the button, then its sentence under it) on purpose: the button under the thumb must
+  // not move when a row is chosen, and under it the sentence would have to be kept room for (#889).
+  const link = editionSourceLink(chosenRow?.result);
+  useChosenRowInView(`${chosenRow?.id}|${link?.href}|${line}|${refusal}`);
   const footer = (
     <>
       {refusal && (
@@ -194,11 +201,13 @@ export function GetEbookSheet({ workId, online, libgenUrl, onChanged }: Props) {
           {refusal}
         </p>
       )}
-      <Button kind="primary" disabled={!chosenRow || getting || !online} onClick={() => void get()}>
-        Get this edition
-      </Button>
-      <p className="get-sheet-line get-sheet-line-fixed">{line}</p>
-      <SourceLinkLine link={editionSourceLink(chosenRow?.result)} />
+      <SourceLinkLine link={link} />
+      {line && <p className="get-sheet-line">{line}</p>}
+      <div className="get-sheet-buttons">
+        <Button kind="primary" disabled={!chosenRow || getting || !online} onClick={() => void get()}>
+          Get this edition
+        </Button>
+      </div>
     </>
   );
 

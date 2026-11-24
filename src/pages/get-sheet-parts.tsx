@@ -3,7 +3,7 @@
 // a failing source's line with its Retry, and the marks of the Group's rows. The styles are the Get audiobook sheet's
 // (`get-sheet-*` in get-audiobook-sheet.css). Get ebook is built from these; Get audiobook keeps its own copies until
 // its language and Load more ticket (#602) has landed, so that ticket's files are not touched here.
-import type { FormEvent } from "react";
+import { useLayoutEffect, type FormEvent } from "react";
 import { Button } from "../parts/Button";
 import type { LibraryWork } from "../types";
 import type { SourceLink } from "./get-source-link";
@@ -37,21 +37,27 @@ export function LeavingMark() {
 }
 
 /**
- * The footer's line for the link to the chosen candidate's own page, opened in a new tab (#889). The line is always
- * there at the same height, so the Get button above it stays where it is whatever is chosen; without a link it is
- * empty: nothing to focus, nothing announced.
+ * The footer's link to the chosen candidate's own page, a 44 high row opened in a new tab (#889); nothing, and no
+ * space, without a link.
  */
 export function SourceLinkLine({ link }: { link: SourceLink | null }) {
+  if (!link) return null;
   return (
-    <div className="get-sheet-source-line">
-      {link && (
-        <a className="get-sheet-source" href={link.href} target="_blank" rel="noopener noreferrer">
-          <span className="type-label">{link.text}</span>
-          <LeavingMark />
-        </a>
-      )}
-    </div>
+    <a className="get-sheet-source" href={link.href} target="_blank" rel="noopener noreferrer">
+      <span className="type-label">{link.text}</span>
+      <LeavingMark />
+    </a>
   );
+}
+
+/**
+ * Keeps the chosen row in view when the footer grows over the list (a link, a sentence or a refusal arrives): the body
+ * is shorter then, so the row is scrolled back into it. `footerKey` changes with what the footer says.
+ */
+export function useChosenRowInView(footerKey: string) {
+  useLayoutEffect(() => {
+    document.querySelector<HTMLElement>('.part-sheet [role="radio"][aria-checked="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [footerKey]);
 }
 
 /** The book the sheet gets a file for: its cover, the title as the sheet's one heading, the author under it. */
