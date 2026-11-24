@@ -464,7 +464,7 @@ test("the local fallback gets past its report directory with the real check and 
 
 test("the real check leaves its report and result files in the run's own directory", (t) => {
   const f = fixture(t);
-  const out = f.run(f.second, { ...useRealCheckLocal(f), STUB_CI_EXIT: "0", STUB_NPM_MODE: "real-check" });
+  const out = f.run(f.second, { ...useRealCheckLocal(f), STUB_CI_EXIT: "0" });
   // Every later stage is this stub's `exit 0`, so the browser stage has no report and the check fails there;
   // what matters here is that the files readers look for are in the run's directory and the pid file is gone.
   const root = path.join(f.repo, "artifacts", "ci", f.second);

@@ -4,8 +4,10 @@
 #
 # history_check_result maps report.json + RESULT → pass | pass_with_known_failures |
 # pass_with_flaky | fail | aborted | unknown. A shell RESULT of remote_check_failed|failed always wins
-# as fail. A missing report falls back to the RESULT mapping. pass_with_known_failures
-# and pass_with_flaky only come from the report's result field.
+# as fail. local_setup_failed (the local fallback ended before it started a stage) is
+# unknown even when a report exists: that report, a setup_failed one, judged nothing.
+# A missing report falls back to the RESULT mapping. pass_with_known_failures and pass_with_flaky only come
+# from the report's result field.
 #
 # record_history_check <name> records when SONDER_CI_DISPATCH is set. An id that
 # fails the same allowlist as orca-history requireId is rejected with one warning

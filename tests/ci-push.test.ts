@@ -213,6 +213,28 @@ test("a SHA with a finished result file is skipped as already checked", async ()
   assert.equal(invocations(fx).length, 0);
 });
 
+test("a SHA whose only run is local_setup_failed is not skipped: nothing was checked (#887)", async () => {
+  const fx = setup([[SHA_A, "main"]], [[SHA_B, "main"]]);
+  const runDir = path.join(fx.artifacts, SHA_B, "ci-ssh-20260101T000000Z-1");
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, "ci-ssh-result.txt"), "mode=local_fallback\nresult=local_setup_failed\n");
+  const r = run(fx);
+  assert.equal(r.status, 0);
+  assert.doesNotMatch(r.stdout, /already checked/);
+  assert.equal(dispatchLines(r.stdout).length, 1);
+  await waitFor(() => invocations(fx).length === 1);
+  assert.equal(invocations(fx).length, 1, "the check started");
+
+  // A genuine result beside it still counts as checked.
+  const checked = setup([[SHA_A, "main"]], [[SHA_B, "main"]]);
+  for (const [name, result] of [["ci-ssh-20260101T000000Z-1", "local_setup_failed"], ["ci-ssh-20260102T000000Z-2", "failed"]]) {
+    const dir = path.join(checked.artifacts, SHA_B, name);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "ci-ssh-result.txt"), `result=${result}\n`);
+  }
+  assert.match(run(checked).stdout, new RegExp(`skipped ${SHA_B} main \\(already checked\\)`));
+});
+
 test("SONDER_SKIP_PUSH_CI=1 is a plain push and propagates its status", async () => {
   const ok = setup([[SHA_A, "main"]], [[SHA_B, "main"]]);
   const r = run(ok, ["origin", "main"], { SONDER_SKIP_PUSH_CI: "1" });
