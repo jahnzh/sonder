@@ -61,7 +61,8 @@ export async function expectTextUncovered(room: Locator) {
  * - the one pop-up (with Radix's wrapper and its own content), standing on the band's lower edge and reaching at most
  *   120 px into the band with the upward spread of its shadow, or
  * - the catcher over the text, which paints nothing: no background colour or image, no backdrop filter or filter, no
- *   border, no outline, no shadow, no ::before or ::after content, no children.
+ *   border, no outline, no shadow, no ::before or ::after content, no children; or the timeline's pointer surface, a
+ *   hit area 44 high around the foot's 20-high slider that reaches 12 px over the band, painting nothing either.
  * The elements the band stands in are checked at the same points: none may come before the band's content (a
  * pseudo-element of theirs drawn over the text would).
  */
@@ -93,7 +94,7 @@ async function expectPopupAllowed(room: Locator, text: Box) {
       return index < 0 ? [] : stack.slice(0, index);
     };
     const force = document.createElement("style");
-    force.textContent = "* { pointer-events: auto !important; }";
+    force.textContent = "*, *::before, *::after { pointer-events: auto !important; }";
     document.head.append(force);
     const wrong: string[] = [];
     let reach = 0;
@@ -105,7 +106,9 @@ async function expectPopupAllowed(room: Locator, text: Box) {
         const area = meet(element.getBoundingClientRect());
         if (!area || !grid(area).some(([x, y]) => above(x, y).includes(element))) continue;
         if (wrapper.contains(element)) continue;
-        if (element === catcher) {
+        // The catcher, and the timeline's pointer surface (44 high around its 20-high slider, so it reaches 12 px over
+        // the band's lower edge, as Undo's and the rail's grip's targets do): hit areas that must paint nothing.
+        if (element === catcher || element.matches(".reader-player .timeline-pointer-surface")) {
           const css = getComputedStyle(element);
           const pseudo = ["::before", "::after"].map((which) => getComputedStyle(element, which).content);
           const paints = [
@@ -117,9 +120,9 @@ async function expectPopupAllowed(room: Locator, text: Box) {
             css.outlineStyle !== "none" && parseFloat(css.outlineWidth) > 0 && `outline ${css.outlineWidth}`,
             css.boxShadow !== "none" && `shadow ${css.boxShadow}`,
             pseudo.some((content) => content !== "none" && content !== "normal") && `pseudo content ${pseudo.join(" / ")}`,
-            element.childElementCount > 0 && `${element.childElementCount} children`,
+            element === catcher && element.childElementCount > 0 && `${element.childElementCount} children`,
           ].filter(Boolean);
-          if (paints.length) wrong.push(`the catcher paints: ${paints.join(", ")}`);
+          if (paints.length) wrong.push(`${element === catcher ? "the catcher" : name(element)} paints: ${paints.join(", ")}`);
           continue;
         }
         wrong.push(name(element));

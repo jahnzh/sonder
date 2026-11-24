@@ -493,12 +493,12 @@ test("nothing but its own button opens a setting pop-up: not focus, a hover, Esc
   }
   // The keys a reader may press with the focus on a button or on the page (no key opens Speed or the sleep timer;
   // Space and Enter would press the focused button, F and the arrows are the reader's own).
-  for (const key of ["Escape", "s", "S", "t", "+", "-", "[", "]", "ArrowUp", "ArrowDown", "Tab", "Shift+Tab"]) {
+  for (const key of ["s", "S", "t", "+", "-", "[", "]", "ArrowUp", "ArrowDown", "Tab", "Shift+Tab"]) {
     await page.keyboard.press(key);
     await expect(popups).toHaveCount(0);
   }
   await page.locator("body").focus();
-  for (const key of ["s", "+", "-", "Escape"]) {
+  for (const key of ["s", "+", "-"]) {
     await page.keyboard.press(key);
     await expect(popups).toHaveCount(0);
   }
@@ -510,34 +510,44 @@ test("nothing but its own button opens a setting pop-up: not focus, a hover, Esc
   await expect(popups).toHaveCount(0);
   await showControls(page, room);
   await expect(popups).toHaveCount(0);
+  // Last, since with nothing open it leaves the reader: Escape closes Now playing, and opens no pop-up.
+  await page.keyboard.press("Escape");
+  await expect(popups).toHaveCount(0);
 });
 
-// A chapter whose first paragraph holds a link to the second chapter, for the tap on a link.
+// A chapter whose first paragraph holds a note link to a paragraph pages further on, for the tap on a link.
 const LINKED: [string, string] = [
-  `<p id="p0">Alice was beginning to get very tired of sitting by her sister on the bank. <a href="two.xhtml">Follow the rabbit to the pool</a> and see where it goes.</p>` +
-    Array.from({ length: 10 }, (_, i) => `<p id="p${i + 1}">Passage ${i + 2} tells another part of Alice’s story. The curious rabbit carried a watch and hurried past the trees.</p>`).join(""),
-  `<p id="p0">This is the beginning of the second chapter by the pool of tears.</p>` +
-    Array.from({ length: 10 }, (_, i) => `<p id="p${i + 1}">Passage ${i + 2} of the second chapter.</p>`).join(""),
+  `<p id="p0">Alice was beginning to get very tired of sitting by her sister on the bank. <a href="#far">Follow the rabbit to the note</a> and see where it goes.</p>` +
+    Array.from({ length: 40 }, (_, i) => `<p id="p${i + 1}">Passage ${i + 2} tells another part of Alice’s story. The curious rabbit carried a watch and hurried past the trees, and Alice followed the little creature through the garden.</p>`).join("") +
+    `<p id="far">The far note of the first chapter.</p>`,
+  `<p id="p0">This is the beginning of the second chapter by the pool of tears.</p>`,
 ];
 test("a tap on a link in the text with a setting pop-up open only closes it; without one the link is followed", async ({ page }) => {
   const { book, ebook } = await fixture(page, "Foot link", LINKED);
   const room = await readerWithNarration(page, book, ebook);
   const foot = room.locator(".reader-player");
   const before = await frameState(room);
-  const link = bookText(page).getByRole("link", { name: "Follow the rabbit to the pool", exact: true });
+  const link = bookText(page).getByRole("link", { name: "Follow the rabbit to the note", exact: true });
   await expect(link).toBeVisible();
-  const second = bookText(page).getByText("This is the beginning of the second chapter", { exact: false });
+  const note = bookText(page).getByText("The far note of the first chapter.", { exact: true });
+  const band = before.boxes.text;
+  // Whether the note is on the page shown: inside the band, across in the EPUB's columns, down in a scrolling column.
+  const shown = async () => {
+    const at = await note.boundingBox();
+    return !!at && at.x >= band.x - 1 && at.x + Math.min(at.width, 40) <= band.x + band.width + 1 && at.y >= band.y - 1 && at.y + Math.min(at.height, 20) <= band.y + band.height + 1;
+  };
+  expect(await shown()).toBe(false);
   await foot.getByRole("button", { name: /^Speed [\d.]+ times$/ }).click();
   await expect(popupOf(page, "Speed")).toBeVisible();
   const at = await box(link);
   await page.mouse.click(at.x + at.width / 2, at.y + at.height / 2);
   await expect(popupOf(page, "Speed")).toHaveCount(0);
   await expect(room.locator(".reader-topbar")).toBeVisible();
-  await expect(second).toHaveCount(0);
+  expect(await shown()).toBe(false);
   expect(await frameState(room)).toEqual(before);
-  // Without a pop-up the same tap follows the link: the test above would see it.
+  // Without a pop-up the same tap follows the link: the check above would see it.
   await page.mouse.click(at.x + at.width / 2, at.y + at.height / 2);
-  await expect(second.first()).toBeVisible();
+  await expect.poll(shown).toBe(true);
 });
 
 // Touch (#890 review): with a finger a tap on the text only closes the pop-up, and so does a swipe and a long press.
