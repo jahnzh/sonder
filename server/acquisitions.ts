@@ -13,6 +13,7 @@ import { getSecret, torbox } from "./services.ts";
 import { ownCover } from "../src/types.ts";
 import { addTorrent, getTorrent, removeTorrent, transmission } from "./transmission.ts";
 import { getTorrentHealth } from "./torrent-health.ts";
+import { audioPattern } from "./preview-file.ts";
 import { getWorkMediaState, trackWorkMediaState } from "./work-media-state.ts";
 import {
   ACTIVE_ACQUISITION_STATUSES,
@@ -26,7 +27,6 @@ import {
   resolveTorrentFile,
   torrentDownloadDir,
 } from "./storage.ts";
-const audioPattern = /\.(m4b|m4a|mp3|ogg|flac|opus|wav)$/i;
 export function magnetHash(magnet: string) {
   const url = new URL(magnet);
   if (url.protocol !== "magnet:") throw new Error("Enter a valid magnet link.");

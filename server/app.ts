@@ -72,6 +72,7 @@ import {
 import { serverStorage, type StorageProbe } from "./server-storage.ts";
 import { acquireReplacing, acquisitionsLoop, cancelAcquisition, controlAcquisition } from "./acquisitions.ts";
 import { acquireForNewBook } from "./new-book.ts";
+import { registerPreviewRoutes, torboxPreviewLoop } from "./torbox-preview.ts";
 import { retrySeriesAcquisitionJob, seriesAcquisitionLoop } from "./series-acquisition.ts";
 import { getTorrentStates, transmission, transmissionConfigured } from "./transmission.ts";
 import { getTorrentHealth } from "./torrent-health.ts";
@@ -318,7 +319,7 @@ export async function createApp(options?: {
   });
   app.addHook("preHandler", async (req) => {
     const path = req.routeOptions.url || "";
-    if (/^\/api\/(prowlarr|torbox)(?:\/|$)/.test(path) || /^\/api\/acquisitions(?:\/|$)/.test(path) || path === "/api/acquire" || path === "/api/torrents/health" || path === "/api/alignments/pool" || path === "/api/alignments/pool/staging" || path === "/api/alignments/pool/staging/remove" || path === "/api/local/test" || /^\/api\/discover\/(abb|prowlarr)(?:\/|$)/.test(path) || path === "/api/discover/ebooks" || (req.method === "POST" && ["/api/ebooks", "/api/ebooks/import", "/api/import"].includes(path)) || (req.method === "POST" && /^\/api\/books\/[^/]+\/keep$/.test(path)) || (req.method === "POST" && /^\/api\/reader\/[^/]+\/link$/.test(path)) || (["PUT", "DELETE"].includes(req.method) && /^\/api\/recordings\/[^/]+\/(faults\/[^/]+|server-copy)$/.test(path)) || (["POST", "PATCH"].includes(req.method) && /^\/api\/alignments(?:\/|$)/.test(path)) || (req.method === "POST" && /^\/api\/works\/[^/]+\/ebook-set\/fetch$/.test(path))) requireAdmin(req);
+    if (/^\/api\/(prowlarr|torbox)(?:\/|$)/.test(path) || /^\/api\/acquisitions(?:\/|$)/.test(path) || path === "/api/acquire" || path === "/api/torrents/health" || path === "/api/alignments/pool" || path === "/api/alignments/pool/staging" || path === "/api/alignments/pool/staging/remove" || path === "/api/local/test" || /^\/api\/discover\/(abb|prowlarr|previews)(?:\/|$)/.test(path) || path === "/api/discover/ebooks" || (req.method === "POST" && ["/api/ebooks", "/api/ebooks/import", "/api/import"].includes(path)) || (req.method === "POST" && /^\/api\/books\/[^/]+\/keep$/.test(path)) || (req.method === "POST" && /^\/api\/reader\/[^/]+\/link$/.test(path)) || (["PUT", "DELETE"].includes(req.method) && /^\/api\/recordings\/[^/]+\/(faults\/[^/]+|server-copy)$/.test(path)) || (["POST", "PATCH"].includes(req.method) && /^\/api\/alignments(?:\/|$)/.test(path)) || (req.method === "POST" && /^\/api\/works\/[^/]+\/ebook-set\/fetch$/.test(path))) requireAdmin(req);
   });
   registerCsp(app, { mode: cspMode() });
   app.get("/api/health", async () => ({ ok: true }));
@@ -864,6 +865,12 @@ export async function createApp(options?: {
       userId: currentUserId(req),
     });
   });
+  // A preview of a recording cached on TorBox, before Get (#889): the candidate named as the add routes name it.
+  registerPreviewRoutes(app, {
+    abbSlug,
+    magnetOf: ({ source, key }) => (source === "abb" ? abbMagnet(key) : prowlarrMagnet(key)),
+    userOf: currentUserId,
+  });
   // Older clients may still send "annas"; refuse it with a readable message.
   const libgenOnly = <T extends { source: "annas" | "libgen" }>(input: T) => {
     if (input.source === "annas")
@@ -972,6 +979,7 @@ export async function createApp(options?: {
     seriesAcquisitionLoop,
     ebookSetEvaluationLoop,
     databaseBackupLoop(app.log),
+    torboxPreviewLoop(app.log),
   ])
     background.add(loop);
   // The catalogue cache keeps to its licence (#721): expired searches go, a week's details are fetched again.

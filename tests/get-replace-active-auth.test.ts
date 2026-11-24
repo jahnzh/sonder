@@ -88,4 +88,17 @@ test("someone who is not the administrator cannot get or replace a recording", a
   assert.equal(job?.status, "downloading");
   assert.equal(db.select().from(s.userAcquisitions).all().length, 1);
   assert.equal(db.select().from(s.acquisitions).all().length, 1);
+
+  // The preview of a TorBox recording (#889) is the administrator's too: its start, its bytes and its end.
+  const preview = "00000000-0000-4000-8000-000000000000";
+  for (const [method, url, payload] of [
+    ["POST", "/api/discover/abb/preview", { slug: "some-release" }],
+    ["POST", "/api/discover/prowlarr/preview", { id: `prowlarr-${"0".repeat(32)}` }],
+    ["GET", `/api/discover/previews/${preview}/audio`, undefined],
+    ["DELETE", `/api/discover/previews/${preview}`, undefined],
+  ] as const) {
+    const response = await app.inject({ method, url, cookies: { sonder_session: listener }, ...(payload ? { payload } : {}) });
+    assert.equal(response.statusCode, 403, `${method} ${url}: ${response.body}`);
+  }
+  assert.deepEqual(fetched, []);
 });

@@ -132,6 +132,11 @@
   flex: 1 1 0;
   min-width: 0;
 }
+/* Preview (#889), for a row that says "Plays now": at its own width at the row's left; Get fills the rest. */
+.get-sheet-buttons > .get-sheet-preview {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
 /* The link to the chosen candidate's own page, above the sentence (#889): a 44 high row of words and the leaving mark. */
 .get-sheet-source {
   box-sizing: border-box;

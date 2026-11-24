@@ -7,8 +7,9 @@
 // a failing source with its Retry, nothing found and fewer than two characters; the administrator-only address; and
 // the sheet measured against the board at phone size and on a desktop.
 import { test, expect, type Locator, type Page, type Request } from "@playwright/test";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import type { AudiobookRelease } from "../../src/types";
+import { listenOnBookPage } from "./library-play";
 
 test.use({ serviceWorkers: "block" });
 
@@ -491,3 +492,319 @@ for (const size of [
     await noOverflow(page);
     await page.screenshot({ path: `${OUT}/get-audiobook-${size.name}.png` });
   });
+
+// The preview of a recording cached on TorBox (#889, part 2): the server's routes are answered by the test (the server
+// side is tests/torbox-preview.test.ts), the file is the demo chapter (10:40 long, so the preview starts at 3:00).
+const PREVIEW_MEDIA = readFileSync("server/demo/alice-01.mp3");
+const PREVIEW_ID = "11111111-1111-4111-8111-111111111111";
+const CACHED_ID = `prowlarr-${"c".repeat(32)}`;
+const SEEDED_ID = `prowlarr-${"d".repeat(32)}`;
+const PREVIEWABLE = [
+  abb(CACHED_ID, { source: "prowlarr", indexer: "Fixture Tracker", narrator: "Cached Reader", size: "480 MB", infoHash: "c".repeat(40), cached: true, seeders: 24 }),
+  abb(SEEDED_ID, { source: "prowlarr", indexer: "Fixture Tracker", narrator: "Seeded Reader", size: "900 MB", infoHash: "d".repeat(40), cached: false, seeders: 9 }),
+];
+const previewButton = (page: Page) => sheet(page).locator(".get-sheet-preview");
+const previewLine = (page: Page) => sheet(page).getByTestId("preview-line");
+const chooseRow = async (page: Page, voice: string) => {
+  const row = rows(page).filter({ hasText: voice });
+  await row.click();
+  await expect(row).toHaveAttribute("aria-checked", "true");
+};
+
+/** Every audio element the page makes, kept on `window.__audios` (the player's own and the preview's). */
+async function watchAudios(page: Page) {
+  await page.addInitScript(() => {
+    const Original = window.Audio;
+    const made: HTMLAudioElement[] = [];
+    (window as any).__audios = made;
+    const Watched = function (this: unknown, src?: string) {
+      const element = new Original(src);
+      made.push(element);
+      return element;
+    } as unknown as typeof Audio;
+    Watched.prototype = Original.prototype;
+    window.Audio = Watched;
+  });
+}
+const audios = (page: Page) =>
+  page.evaluate(() => ((window as any).__audios as HTMLAudioElement[]).map((a) => ({ src: a.getAttribute("src") ?? "", paused: a.paused, time: a.currentTime })));
+const previewAudio = async (page: Page) => (await audios(page)).at(-1)!;
+
+/** The preview's own element (the last one made) really plays: not paused, and its time moves on. */
+async function previewAdvances(page: Page) {
+  const at = (await previewAudio(page)).time;
+  await expect.poll(async () => {
+    const audio = await previewAudio(page);
+    return !audio.paused && audio.time > at;
+  }, { timeout: 20_000 }).toBe(true);
+}
+
+/** Preview pressed once it can be, and playing: Stop on the button and its own element advancing. */
+async function playPreview(page: Page) {
+  await expect(previewButton(page)).toHaveText("Preview");
+  await expect(previewButton(page)).toBeEnabled();
+  await previewButton(page).click();
+  await expect(previewButton(page)).toHaveText(/^Stop/, { timeout: 20_000 });
+  await previewAdvances(page);
+}
+
+/**
+ * The book started as the other specs start it (library-play.ts): Listen on its Book page, enabled once the book is
+ * loaded, then the dock's Pause; and the player's own element really advancing. Answers that element's index.
+ */
+async function playBook(page: Page, workId: string) {
+  await page.goto(`/#book/${workId}`);
+  await listenOnBookPage(page);
+  await expect(page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true })).toBeVisible({ timeout: 20_000 });
+  let book = -1;
+  await expect
+    .poll(async () => (book = await page.evaluate(() => ((window as any).__audios as HTMLAudioElement[]).findIndex((a) => !a.paused))), { timeout: 20_000 })
+    .toBeGreaterThanOrEqual(0);
+  const at = await page.evaluate((index) => (window as any).__audios[index].currentTime as number, book);
+  await expect.poll(() => page.evaluate((index) => (window as any).__audios[index].currentTime as number, book), { timeout: 20_000 }).toBeGreaterThan(at);
+  return book;
+}
+
+/** The preview's start, bytes (with ranges) and end answered by the test; starts, ends and progress writes counted. */
+async function previewRoutes(page: Page, options: { start?: () => unknown } = {}) {
+  const asked = { starts: [] as unknown[], ends: [] as string[], progress: 0 };
+  page.on("request", (request) => {
+    if (request.method() !== "GET" && request.url().includes("/api/progress")) asked.progress++;
+  });
+  await page.route("**/api/discover/*/preview", async (route) => {
+    asked.starts.push(route.request().postDataJSON());
+    await answerWith(route, await (options.start ? options.start() : { id: PREVIEW_ID }));
+  });
+  await page.route("**/api/discover/previews/*", async (route) => {
+    if (route.request().method() === "DELETE") asked.ends.push(route.request().url().split("/").pop()!);
+    await route.fulfill({ json: { ok: true } }).catch(() => {});
+  });
+  await page.route("**/api/discover/previews/*/audio", async (route) => {
+    const size = PREVIEW_MEDIA.length;
+    const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers()["range"] ?? "");
+    const start = range ? Number(range[1]) : 0;
+    const end = range?.[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+    await route
+      .fulfill({
+        status: range ? 206 : 200,
+        headers: {
+          "Content-Type": "audio/mpeg",
+          "Accept-Ranges": "bytes",
+          "Content-Length": String(end - start + 1),
+          ...(range ? { "Content-Range": `bytes ${start}-${end}/${size}` } : {}),
+        },
+        body: PREVIEW_MEDIA.subarray(start, end + 1),
+      })
+      .catch(() => {});
+  });
+  return asked;
+}
+
+test("Preview stands at the left of Get only while the chosen row says Plays now, and the button row does not move (#889)", async ({ page }) => {
+  const asked = await previewRoutes(page);
+  await sources(page, { prowlarr: () => ({ results: PREVIEWABLE, nextPage: null }) });
+  await page.goto(`/#book/${WAR.workId}/get/audiobook`);
+  await expect(rows(page)).toHaveCount(4);
+  await expect(previewButton(page)).toHaveCount(0);
+  const home = await getButton(page).boundingBox();
+  for (const voice of ["Aidan Gillen", "Seeded Reader"]) {
+    await chooseRow(page, voice);
+    await expect(previewButton(page)).toHaveCount(0);
+  }
+  await chooseRow(page, "Cached Reader");
+  await expect(previewButton(page)).toHaveText("Preview");
+  await expect(previewButton(page)).toBeEnabled();
+  const preview = (await previewButton(page).boundingBox())!;
+  const get = (await getButton(page).boundingBox())!;
+  expect(preview.x + preview.width).toBeLessThan(get.x);
+  expect(preview.y).toBe(get.y);
+  expect(get.y + get.height).toBe(home!.y + home!.height);
+  expect(get.x + get.width).toBe(home!.x + home!.width);
+  await noOverflow(page);
+  await page.screenshot({ path: `${OUT}/get-audiobook-preview-390x844.png` });
+  // Choosing a row starts nothing.
+  expect(asked.starts).toEqual([]);
+});
+
+test("Preview plays in its own audio element from 3:00, reads Stop with the time, and leaves the player and progress alone (#889)", async ({ page }) => {
+  await watchAudios(page);
+  const asked = await previewRoutes(page);
+  await sources(page, { prowlarr: () => ({ results: PREVIEWABLE, nextPage: null }) });
+  await page.goto(`/#book/${WAR.workId}/get/audiobook`);
+  await chooseRow(page, "Cached Reader");
+  const before = await audios(page);
+  const dock = await page.locator(".player-dock").count();
+  const session = () => page.evaluate(() => (navigator.mediaSession?.metadata ? navigator.mediaSession.metadata.title : null));
+  const metadata = await session();
+  await playPreview(page);
+  await expect(previewButton(page)).toHaveText(/^Stop 0:0[1-9]$/, { timeout: 20_000 });
+  expect(asked.starts).toEqual([{ id: CACHED_ID }]);
+  // Its own element: a new one, playing the preview's address from 3:00 on.
+  const playing = await previewAudio(page);
+  expect(playing.src).toBe(`/api/discover/previews/${PREVIEW_ID}/audio`);
+  expect(playing.paused).toBe(false);
+  expect(playing.time).toBeGreaterThanOrEqual(180);
+  expect(playing.time).toBeLessThan(200);
+  // The player's element and the dock are as they were; no listening position is written; Media Session is untouched.
+  expect((await audios(page)).slice(0, before.length)).toEqual(before);
+  expect(await page.locator(".player-dock").count()).toBe(dock);
+  expect(await session()).toBe(metadata);
+  expect(asked.progress).toBe(0);
+  await page.screenshot({ path: `${OUT}/get-audiobook-preview-playing-390x844.png` });
+  // Stop, then Preview again: the same preview plays; the release is not asked for twice and nothing is ended.
+  await previewButton(page).click();
+  await expect(previewButton(page)).toHaveText("Preview");
+  expect((await audios(page)).at(-1)!.paused).toBe(true);
+  await playPreview(page);
+  expect(asked.starts).toHaveLength(1);
+  expect(asked.ends).toEqual([]);
+  // Another row chosen: it stops.
+  await chooseRow(page, "Seeded Reader");
+  await expect(previewButton(page)).toHaveCount(0);
+  expect((await audios(page)).every((audio) => audio.paused)).toBe(true);
+  // The sheet closes: it ends on the server.
+  await chooseRow(page, "Cached Reader");
+  await expect(previewButton(page)).toHaveText("Preview");
+  await sheet(page).getByRole("button", { name: "Close", exact: true }).click();
+  await expect(sheet(page)).toHaveCount(0);
+  await expect.poll(() => asked.ends).toEqual([PREVIEW_ID]);
+  expect(asked.progress).toBe(0);
+  expect((await audios(page)).slice(0, before.length)).toEqual(before);
+});
+
+test("a preview stops when the page is hidden, on Get, and says one sentence when it fails (#889)", async ({ page }) => {
+  await watchAudios(page);
+  const asked = await previewRoutes(page);
+  const got = await sources(page, { prowlarr: () => ({ results: PREVIEWABLE, nextPage: null }), add: () => ({ status: 409, error: "Refused by the test." }) });
+  await page.goto(`/#book/${WAR.workId}/get/audiobook`);
+  await chooseRow(page, "Cached Reader");
+  await playPreview(page);
+  // Hidden (another app, a locked screen): it stops.
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect(previewButton(page)).toHaveText("Preview");
+  expect((await previewAudio(page)).paused).toBe(true);
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  // Get this recording: it stops (the add is refused here, so the sheet stays).
+  await playPreview(page);
+  await getButton(page).click();
+  await expect(previewButton(page)).toHaveText("Preview");
+  expect((await previewAudio(page)).paused).toBe(true);
+  await expect.poll(() => got.posts.length).toBe(1);
+  // A failure (the server no longer plays it): one plain sentence in the footer, and Get still works.
+  const ended = (route: import("@playwright/test").Route) => route.fulfill({ status: 404, json: { error: "This preview has ended." } }).catch(() => {});
+  await page.route("**/api/discover/previews/*/audio", ended);
+  await previewButton(page).click();
+  await expect(previewLine(page)).toHaveText("This recording could not be previewed.");
+  await expect(previewButton(page)).toHaveText("Preview");
+  await expect(getButton(page)).toBeEnabled();
+  // The failed preview ends; Preview of the same release asks for a new one and plays, without closing the sheet.
+  await expect.poll(() => asked.ends).toEqual([PREVIEW_ID]);
+  await page.unroute("**/api/discover/previews/*/audio", ended);
+  await playPreview(page);
+  expect(asked.starts).toHaveLength(2);
+  await expect(previewLine(page)).toHaveCount(0);
+  await previewButton(page).click();
+  // Another row clears the sentence.
+  await chooseRow(page, "Aidan Gillen");
+  await expect(previewLine(page)).toHaveCount(0);
+  expect(asked.progress).toBe(0);
+});
+
+test("while the book plays Preview is off and the footer says to pause it; a playing preview stops when the book starts (#889)", async ({ page }) => {
+  await watchAudios(page);
+  const asked = await previewRoutes(page);
+  // The book's own playing writes its place; answered here so the suite's Alice keeps hers.
+  await page.route("**/api/progress", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    await route.fulfill({ json: { progress: route.request().postDataJSON(), conflict: false } }).catch(() => {});
+  });
+  await sources(page, { prowlarr: () => ({ results: PREVIEWABLE, nextPage: null }) });
+  const book = await playBook(page, ALICE.workId);
+  await page.evaluate((hash) => (location.hash = hash), `#book/${WAR.workId}/get/audiobook`);
+  await chooseRow(page, "Cached Reader");
+  await expect(previewButton(page)).toHaveText("Preview");
+  await expect(previewButton(page)).toBeDisabled();
+  await expect(previewLine(page)).toHaveText("Pause the book to preview.");
+  await page.screenshot({ path: `${OUT}/get-audiobook-preview-book-playing-390x844.png` });
+  expect(asked.starts).toEqual([]);
+  // Still the book playing under the sheet.
+  expect(await page.evaluate((index) => !(window as any).__audios[index].paused, book)).toBe(true);
+  // The book paused (by the test, on the player's own element): Preview is on; the preview plays.
+  await page.evaluate((index) => (window as any).__audios[index].pause(), book);
+  await expect(previewButton(page)).toBeEnabled();
+  await expect(previewLine(page)).toHaveCount(0);
+  await playPreview(page);
+  // The book starts again: the preview stops, and Preview is off again.
+  await page.evaluate((index) => void (window as any).__audios[index].play(), book);
+  await expect.poll(() => page.evaluate((index) => !(window as any).__audios[index].paused, book)).toBe(true);
+  await expect(previewButton(page)).toHaveText("Preview");
+  await expect(previewButton(page)).toBeDisabled();
+  await expect(previewLine(page)).toHaveText("Pause the book to preview.");
+  expect((await previewAudio(page)).paused).toBe(true);
+  await page.evaluate((index) => (window as any).__audios[index].pause(), book);
+});
+
+test("a late answer to an older start does not replace the newer preview, and its record ends (#889)", async ({ page }) => {
+  await watchAudios(page);
+  const OLD_ID = "22222222-2222-4222-8222-222222222222";
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let starts = 0;
+  const asked = await previewRoutes(page, {
+    start: async () => {
+      starts++;
+      if (starts === 1) {
+        await held;
+        return { id: OLD_ID };
+      }
+      return { id: PREVIEW_ID };
+    },
+  });
+  await sources(page, { prowlarr: () => ({ results: PREVIEWABLE, nextPage: null }) });
+  await page.goto(`/#book/${WAR.workId}/get/audiobook`);
+  await chooseRow(page, "Cached Reader");
+  await expect(previewButton(page)).toBeEnabled();
+  await previewButton(page).click();
+  await expect(previewButton(page)).toHaveText("Preparing…");
+  // Another row and back: the first start is left waiting, a second one plays.
+  await chooseRow(page, "Seeded Reader");
+  await chooseRow(page, "Cached Reader");
+  await playPreview(page);
+  release();
+  await expect.poll(() => asked.ends).toEqual([OLD_ID]);
+  await expect(previewButton(page)).toHaveText(/^Stop/);
+  expect((await previewAudio(page)).src).toBe(`/api/discover/previews/${PREVIEW_ID}/audio`);
+  // Stop, then Preview again still plays the newer one: no third start.
+  await previewButton(page).click();
+  await playPreview(page);
+  expect(asked.starts).toHaveLength(2);
+  expect((await previewAudio(page)).src).toBe(`/api/discover/previews/${PREVIEW_ID}/audio`);
+});
+
+test("a preview the server has ended by time is not ended again beside the new start (#889)", async ({ page }) => {
+  await watchAudios(page);
+  let next = 0;
+  const ids = [PREVIEW_ID, "33333333-3333-4333-8333-333333333333"];
+  const asked = await previewRoutes(page, { start: () => ({ id: ids[next++] }) });
+  await sources(page, { prowlarr: () => ({ results: PREVIEWABLE, nextPage: null }) });
+  await page.goto(`/#book/${WAR.workId}/get/audiobook`);
+  await chooseRow(page, "Cached Reader");
+  await playPreview(page);
+  await previewButton(page).click();
+  await expect(previewButton(page)).toHaveText("Preview");
+  // 26 minutes later (the server ends a preview at 30; the sheet asks for a new one after 25).
+  await page.evaluate(() => {
+    const real = Date.now;
+    Date.now = () => real() + 26 * 60_000;
+  });
+  await playPreview(page);
+  expect(asked.starts).toHaveLength(2);
+  expect(asked.ends).toEqual([]);
+  expect((await previewAudio(page)).src).toBe(`/api/discover/previews/${ids[1]}/audio`);
+});
