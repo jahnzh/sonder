@@ -1,4 +1,4 @@
-// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing, mobile-iphone-slice14, prepared-view
+// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing, mobile-iphone-slice14, prepared-view, mobile-chrome
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -19,14 +19,14 @@ test.afterEach(async ({ page }) => {
   while (imported.length) await page.request.delete(`/api/library/${imported.pop()}`);
 });
 
-async function fixture(page: Page, name: string) {
+async function fixture(page: Page, name: string, bodies?: [string, string]) {
   const title = `${name} ${randomUUID().slice(0, 8)}`;
   const response = await page.request.post("/api/import", { multipart: { title, author: "Foot QA", file: { name: "Narration.mp3", mimeType: "audio/mpeg", buffer: readFileSync("server/demo/alice-01.mp3") } } });
   expect(response.ok()).toBe(true);
   const id = (await response.json()).id;
   imported.push(id);
   const book = (await (await page.request.get("/api/books")).json()).find((b: any) => b.id === id);
-  const uploaded = await page.request.post(`/api/ebooks/import?workId=${book.workId}`, { multipart: { file: { name: "Foot.epub", mimeType: "application/epub+zip", buffer: await readerFixture({ title }) } } });
+  const uploaded = await page.request.post(`/api/ebooks/import?workId=${book.workId}`, { multipart: { file: { name: "Foot.epub", mimeType: "application/epub+zip", buffer: await readerFixture({ title, bodies }) } } });
   expect(uploaded.ok()).toBe(true);
   return { title, book, ebook: (await uploaded.json()).id as string };
 }
@@ -174,8 +174,9 @@ async function expectPopup(page: Page, foot: Locator, button: Locator, name: "Sp
   expect(label.x).toBeLessThan(minus.x);
   expect([minus.x, value.x, plus.x]).toEqual([minus.x, value.x, plus.x].sort((a, b) => a - b));
   expect(plus.x + plus.width).toBeCloseTo(popupBox.x + popupBox.width - 8, 0);
-  // Nothing dims the page: the only layers over it are the pop-up and the catcher over the text.
-  expect(await page.evaluate(() => [...document.body.children].filter((element) => element.matches("[data-radix-popper-content-wrapper]")).length)).toBe(1);
+  // It is rendered inside the reader's own foot, not in a portal on the document's body; nothing dims the page.
+  expect(await popup.evaluate((element) => !!element.closest(".reader-room .reader-player"))).toBe(true);
+  expect(await page.locator("[data-radix-popper-content-wrapper]").count()).toBe(1);
   expect(await page.locator(".reader-text-catcher").evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
 }
 
@@ -302,15 +303,48 @@ test("the rule's test refuses a pop-up that reaches further than 120 px into the
   });
   await expect(expectTextUncovered(room)).rejects.toThrow(/nothing but the pop-up is over the text/);
   await page.evaluate(() => document.querySelector(".test-veil")?.remove());
-  // A catcher that draws: refused as well.
-  await page.locator(".reader-text-catcher").evaluate((element) => { (element as HTMLElement).style.background = "rgb(0 0 0 / 20%)"; });
+  // A second element over the band beside the pop-up, painting nothing at all: refused, being there is enough.
+  await page.evaluate(() => {
+    const band = document.querySelector(".reader-viewport")!.getBoundingClientRect();
+    const other = document.createElement("div");
+    other.className = "test-beside";
+    other.style.cssText = `position:fixed;left:${band.left + 8}px;top:${band.bottom - 40}px;width:24px;height:24px;z-index:93`;
+    document.body.append(other);
+  });
   await expect(expectTextUncovered(room)).rejects.toThrow(/nothing but the pop-up is over the text/);
+  await page.evaluate(() => document.querySelector(".test-beside")?.remove());
+  await expectTextUncovered(room);
+  // A pseudo-element of an element the band stands in, drawn over the text: refused.
+  await page.evaluate(() => {
+    const style = document.createElement("style");
+    style.className = "test-style";
+    style.textContent = "body::after { content: ''; position: fixed; inset: 0; z-index: 95; pointer-events: none; }";
+    document.head.append(style);
+  });
+  await expect(expectTextUncovered(room)).rejects.toThrow(/nothing but the pop-up is over the text/);
+  await page.evaluate(() => document.querySelector(".test-style")?.remove());
+  await expectTextUncovered(room);
+  // A catcher that paints, in each way it could: a colour, an image, a backdrop filter, a pseudo-element's content.
+  const catcher = page.locator(".reader-text-catcher");
+  for (const paint of ["background: rgb(0 0 0 / 20%)", "background-image: linear-gradient(red, blue)", "backdrop-filter: blur(4px)", "::before"]) {
+    if (paint === "::before") await page.evaluate(() => {
+      const style = document.createElement("style");
+      style.className = "test-style";
+      style.textContent = ".reader-text-catcher::before { content: ''; }";
+      document.head.append(style);
+    });
+    else await catcher.evaluate((element, paint) => { (element as HTMLElement).style.cssText += `;${paint}`; }, paint);
+    await expect(expectTextUncovered(room), paint).rejects.toThrow(/the catcher paints/);
+    await page.evaluate(() => document.querySelector(".test-style")?.remove());
+    await catcher.evaluate((element) => { const style = (element as HTMLElement).style; for (const name of ["background", "background-image", "backdrop-filter"]) style.removeProperty(name); });
+    await expectTextUncovered(room);
+  }
   await page.keyboard.press("Escape");
   await expect(popup).toHaveCount(0);
   await expectTextUncovered(room);
 });
 
-test("the sleep timer's pop-up steps Off, 5, 15, 30, 45, 60, counts down and pauses the narration at the end, as on ReaderSleep.dc.html", async ({ page, browserName }) => {
+test("the sleep timer's pop-up steps Off, 5, 15, 30, 45, 60 at once, closes by Escape and its button, counts down and pauses the narration at the end", async ({ page, browserName }) => {
   const { book, ebook } = await fixture(page, "Foot sleep");
   await instrument(page);
   // A fake clock in the page: it runs as time does until the test moves it on.
@@ -387,6 +421,165 @@ test("the sleep timer's pop-up steps Off, 5, 15, 30, 45, 60, counts down and pau
   await expect(sleep).toHaveAccessibleName("Sleep timer: off");
   await expectTextUncovered(room);
   expect(await frameState(room)).toEqual(before);
+});
+
+// The catcher's late close (LATE_CLOSE_MS in src/components/ReaderFootSetting.tsx): a press on the text that moved is
+// followed by no click, so the catcher closes the pop-up this long after it ends.
+const LATE_CLOSE_MS = 350;
+// A swipe on the catcher, as a finger's pointer events with no click after them.
+async function swipeCatcher(page: Page) {
+  const catcher = page.locator(".reader-text-catcher");
+  const at = await box(catcher);
+  for (const [type, x] of [["pointerdown", 0.7], ["pointermove", 0.5], ["pointerup", 0.3]] as const)
+    await catcher.dispatchEvent(type, { pointerType: "touch", isPrimary: true, pointerId: 7, button: 0, buttons: type === "pointerup" ? 0 : 1, clientX: at.x + at.width * x, clientY: at.y + at.height / 2 });
+}
+// A tap that reaches the text itself, past the catcher (into the epub.js frame, or the view of prepared text): the
+// reader's own handlers take it as a tap in the middle of the page and show or hide the controls.
+async function tapPastCatcher(room: Locator) {
+  await room.locator(".reader-viewport").evaluate((host) => {
+    const band = host.getBoundingClientRect();
+    const x = band.left + band.width / 2, y = band.top + band.height / 2;
+    let doc: Document = document, cx = x, cy = y;
+    for (const frame of host.querySelectorAll("iframe")) {
+      const r = frame.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom && frame.contentDocument) {
+        doc = frame.contentDocument;
+        cx = x - r.left;
+        cy = y - r.top;
+        break;
+      }
+    }
+    const target = doc === document ? host.querySelector(".prepared-text") ?? host : doc.elementFromPoint(cx, cy) ?? doc.body;
+    const View = doc.defaultView as Window & typeof globalThis;
+    for (const type of ["pointerdown", "pointerup"])
+      target.dispatchEvent(new View.PointerEvent(type, { bubbles: true, button: 0, pointerType: "mouse", isPrimary: true, clientX: cx, clientY: cy }));
+  });
+}
+
+// #890 review: the late close a swipe leaves must not close the next setting's pop-up.
+test("a swipe on the text with Speed open, then Sleep timer at once: Sleep timer's pop-up stays, and a swipe closes it", async ({ page }) => {
+  const { book, ebook } = await fixture(page, "Foot late close");
+  const room = await readerWithNarration(page, book, ebook);
+  const foot = room.locator(".reader-player");
+  await foot.getByRole("button", { name: /^Speed [\d.]+ times$/ }).click();
+  await expect(popupOf(page, "Speed")).toBeVisible();
+  await swipeCatcher(page);
+  await foot.getByRole("button", { name: /^Sleep timer: / }).click();
+  const sleep = popupOf(page, "Sleep timer");
+  await expect(sleep).toBeVisible();
+  await expect(popupOf(page, "Speed")).toHaveCount(0);
+  // Past the swipe's late close: nothing may close Sleep timer's pop-up by itself. (A fixed wait: what is asserted is
+  // that nothing happens within the time.)
+  await page.waitForTimeout(LATE_CLOSE_MS + 400);
+  await expect(sleep).toBeVisible();
+  // A swipe with Sleep timer open closes it after the late close, with the controls still shown.
+  await swipeCatcher(page);
+  await expect(sleep).toHaveCount(0);
+  await expect(room.locator(".reader-topbar")).toBeVisible();
+});
+
+test("nothing but its own button opens a setting pop-up: not focus, a hover, Escape or the reader's keys; the controls hiding closes it", async ({ page }) => {
+  const { book, ebook } = await fixture(page, "Foot only button");
+  const room = await readerWithNarration(page, book, ebook);
+  const foot = room.locator(".reader-player");
+  const popups = page.locator(".reader-foot-popup");
+  const speed = foot.getByRole("button", { name: /^Speed [\d.]+ times$/ }), sleep = foot.getByRole("button", { name: /^Sleep timer: / });
+  // Focus and a hover on each button open nothing.
+  for (const button of [speed, sleep]) {
+    await button.focus();
+    await expect(button).toBeFocused();
+    await button.hover();
+    await expect(popups).toHaveCount(0);
+  }
+  // The keys a reader may press with the focus on a button or on the page (no key opens Speed or the sleep timer;
+  // Space and Enter would press the focused button, F and the arrows are the reader's own).
+  for (const key of ["Escape", "s", "S", "t", "+", "-", "[", "]", "ArrowUp", "ArrowDown", "Tab", "Shift+Tab"]) {
+    await page.keyboard.press(key);
+    await expect(popups).toHaveCount(0);
+  }
+  await page.locator("body").focus();
+  for (const key of ["s", "+", "-", "Escape"]) {
+    await page.keyboard.press(key);
+    await expect(popups).toHaveCount(0);
+  }
+  // Its button opens it; the controls hiding (a tap that reaches the text past the catcher) closes it.
+  await speed.click();
+  await expect(popupOf(page, "Speed")).toBeVisible();
+  await tapPastCatcher(room);
+  await expect(room.locator(".reader-topbar")).toBeHidden();
+  await expect(popups).toHaveCount(0);
+  await showControls(page, room);
+  await expect(popups).toHaveCount(0);
+});
+
+// A chapter whose first paragraph holds a link to the second chapter, for the tap on a link.
+const LINKED: [string, string] = [
+  `<p id="p0">Alice was beginning to get very tired of sitting by her sister on the bank. <a href="two.xhtml">Follow the rabbit to the pool</a> and see where it goes.</p>` +
+    Array.from({ length: 10 }, (_, i) => `<p id="p${i + 1}">Passage ${i + 2} tells another part of Alice’s story. The curious rabbit carried a watch and hurried past the trees.</p>`).join(""),
+  `<p id="p0">This is the beginning of the second chapter by the pool of tears.</p>` +
+    Array.from({ length: 10 }, (_, i) => `<p id="p${i + 1}">Passage ${i + 2} of the second chapter.</p>`).join(""),
+];
+test("a tap on a link in the text with a setting pop-up open only closes it; without one the link is followed", async ({ page }) => {
+  const { book, ebook } = await fixture(page, "Foot link", LINKED);
+  const room = await readerWithNarration(page, book, ebook);
+  const foot = room.locator(".reader-player");
+  const before = await frameState(room);
+  const link = bookText(page).getByRole("link", { name: "Follow the rabbit to the pool", exact: true });
+  await expect(link).toBeVisible();
+  const second = bookText(page).getByText("This is the beginning of the second chapter", { exact: false });
+  await foot.getByRole("button", { name: /^Speed [\d.]+ times$/ }).click();
+  await expect(popupOf(page, "Speed")).toBeVisible();
+  const at = await box(link);
+  await page.mouse.click(at.x + at.width / 2, at.y + at.height / 2);
+  await expect(popupOf(page, "Speed")).toHaveCount(0);
+  await expect(room.locator(".reader-topbar")).toBeVisible();
+  await expect(second).toHaveCount(0);
+  expect(await frameState(room)).toEqual(before);
+  // Without a pop-up the same tap follows the link: the test above would see it.
+  await page.mouse.click(at.x + at.width / 2, at.y + at.height / 2);
+  await expect(second.first()).toBeVisible();
+});
+
+// Touch (#890 review): with a finger a tap on the text only closes the pop-up, and so does a swipe and a long press.
+test("with a finger, a tap, an edge tap, a swipe and a long press on the text each only close the setting pop-up", async ({ page, browserName }) => {
+  test.skip(!test.info().project.use.hasTouch, "needs a project with touch");
+  const { book, ebook } = await fixture(page, "Foot touch");
+  const room = await readerWithNarration(page, book, ebook);
+  const foot = room.locator(".reader-player");
+  const speed = foot.getByRole("button", { name: /^Speed [\d.]+ times$/ });
+  const popup = popupOf(page, "Speed");
+  const before = await frameState(room);
+  const text = before.boxes.text;
+  const unchanged = async () => {
+    await expect(popup).toHaveCount(0);
+    await expect(room.locator(".reader-topbar")).toBeVisible();
+    await expect(room.locator(".reader-player > .reader-message")).toHaveCount(0);
+    expect(await frameState(room)).toEqual(before);
+  };
+  for (const fraction of [0.5, 0.9, 0.1]) {
+    await speed.tap();
+    await expect(popup).toBeVisible();
+    await page.touchscreen.tap(text.x + text.width * fraction, text.y + text.height / 2);
+    await unchanged();
+  }
+  // A swipe and a long press need a finger that moves and stays: Chromium's touch input, through its protocol.
+  if (browserName !== "chromium") return;
+  const cdp = await page.context().newCDPSession(page);
+  const touch = (type: "touchStart" | "touchMove" | "touchEnd", x = 0, y = 0) =>
+    cdp.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x, y }] });
+  const y = text.y + text.height / 2;
+  await speed.tap();
+  await expect(popup).toBeVisible();
+  await touch("touchStart", text.x + text.width * 0.8, y);
+  for (const fraction of [0.65, 0.5, 0.35, 0.2]) await touch("touchMove", text.x + text.width * fraction, y);
+  await touch("touchEnd");
+  await unchanged();
+  await speed.tap();
+  await expect(popup).toBeVisible();
+  await touch("touchStart", text.x + text.width / 2, y);
+  await page.waitForTimeout(800); // the hold of a long press
+  await touch("touchEnd");
+  await unchanged();
 });
 
 // Behaviour 31 of spec #586 from the foot: the default speed applies once saved, chapter lengths stay real for a

@@ -22,7 +22,7 @@
   background: var(--raised);
 }
 /* The pop-up: one row of 44 inside 8 of padding, 60 high, far less than the 120 it may reach into the text band. No
-   backdrop: the page is not dimmed. Above Now playing's dialog, whose layer it belongs to. */
+   backdrop: the page is not dimmed. Above the text band and its catcher (z-index 6). */
 .reader-foot-popup {
   box-sizing: border-box;
   z-index: 92;
@@ -32,7 +32,7 @@
   background: var(--surface);
   color: var(--text);
   /* Its edge is a ring, so the row keeps its 44 inside the 8. */
-  box-shadow: 0 0 0 1px var(--border), 0 6px 20px rgb(0 0 0 / 28%);
+  box-shadow: 0 0 0 1px var(--border), 0 6px 20px color-mix(in srgb, var(--shadow) 28%, transparent);
 }
 .reader-foot-setting {
   box-sizing: border-box;

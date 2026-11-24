@@ -1,4 +1,4 @@
-// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing, prepared-view
+// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing, prepared-view, mobile-chrome
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -331,7 +331,73 @@ test("with the controls shown the notice with Undo leaves the transport row, Sle
   const before = await audioPosition(page);
   await foot.getByRole("button", { name: "Forward 30 seconds", exact: true }).click();
   await expect(message(room)).toHaveCount(0, { timeout: 2000 });
+  await expect(timelineOf(room)).toBeVisible();
   await expect.poll(() => audioPosition(page)).toBeGreaterThan(before + 25);
+  // The page afterwards: its bands as before and nothing over the text. Which sentence it shows is not asserted: 30 s
+  // on from the listen can land in the map's gap between two sections (195 to 200 s), where nothing is narrated.
+  await expectTextUncovered(room);
+});
+
+// A book without a recording (#890, review): its foot's first row is the status line (the chapter and "N% of the
+// book") and its second Chapters and the position slider. A notice with Undo takes the status line's place, nothing
+// is drawn over the line it replaces, and Chapters and the slider stay usable.
+test("a book without a recording: Bookmark removed takes the status line's place; Chapters and the slider stay usable", async ({ page }) => {
+  const title = `Notice ebook only ${randomUUID().slice(0, 8)}`;
+  const imported = await page.request.post("/api/ebooks/import", {
+    multipart: { file: { name: `${title}.epub`, mimeType: "application/epub+zip", buffer: await readerFixture({ title }) } },
+  });
+  expect(imported.ok()).toBe(true);
+  const id = (await imported.json()).id as string;
+  const ebook = ((await (await page.request.get("/api/ebooks")).json()) as { id: string; workId: string }[]).find((entry) => entry.id === id)!;
+  try {
+    await page.goto(`/#read/${encodeURIComponent(ebook.workId)}`);
+    const room = page.locator(".now-playing-screen .reader-room");
+    const foot = room.locator(".reader-player");
+    await expect(bookTextIn(room).getByText("Alice was beginning", { exact: false })).toBeVisible();
+    await expect(foot).toHaveAttribute("data-recording", "none");
+    await toggleControls(page, room);
+    const status = foot.locator(".reader-player-info");
+    await expect(status).toBeVisible();
+    await room.getByRole("button", { name: "Bookmark the first sentence on this page", exact: true }).click();
+    await expect.poll(async () => (await serverBookmarks(page, id)).length).toBe(1);
+    await room.getByRole("button", { name: "Remove the bookmark from the first sentence on this page", exact: true }).click();
+    await expect.poll(async () => (await serverBookmarks(page, id)).length).toBe(0);
+    await expect(message(room)).toBeVisible();
+    await expect(foot).toHaveAttribute("data-message-place", "status");
+    // The notice in the status line's 20-high row, its sentence, then Undo, whose 44-high target ends where the row
+    // of Chapters and the slider begins; the line it replaces is hidden, so nothing is drawn over it.
+    const footBox = (await foot.boundingBox())!, row = (await message(room).boundingBox())!;
+    expect(row.y - footBox.y).toBeCloseTo(4, 0);
+    expect(row.height).toBeCloseTo(20, 0);
+    await expect(message(room).getByRole("status")).toHaveText("Bookmark removed");
+    const undo = message(room).getByRole("button", { name: "Undo: keep the bookmark", exact: true });
+    const target = (await undo.boundingBox())!;
+    expect(target.height).toBeCloseTo(44, 0);
+    expect(target.y + target.height).toBeCloseTo(footBox.y + 28, 0);
+    await expect(status).toBeHidden();
+    await expect(message(room).getByRole("button")).toHaveCount(1);
+    // Chapters and the position slider stay whole and tappable, the notice over neither.
+    const slider = foot.getByRole("slider", { name: "Position in the book", exact: true });
+    await expectTappable(slider);
+    await expectTappable(foot.getByRole("button", { name: "Chapters", exact: true }));
+    const sliderBox = (await slider.boundingBox())!;
+    expect(intersects(sliderBox, row)).toBe(false);
+    expect(intersects(sliderBox, target)).toBe(false);
+    await expectTextUncovered(room);
+    // Undo puts the bookmark back and the status line is shown again.
+    await undo.click();
+    await expect(message(room)).toHaveCount(0);
+    await expect.poll(async () => (await serverBookmarks(page, id)).length).toBe(1);
+    await expect(status).toBeVisible();
+    // Again, and a tap on the slider (a control) ends the notice at once.
+    await room.getByRole("button", { name: "Remove the bookmark from the first sentence on this page", exact: true }).click();
+    await expect(foot).toHaveAttribute("data-message-place", "status");
+    await slider.click();
+    await expect(message(room)).toHaveCount(0, { timeout: 2000 });
+    await expect(status).toBeVisible();
+  } finally {
+    await page.request.delete(`/api/works/${encodeURIComponent(ebook.workId)}/library`);
+  }
 });
 
 test("Bookmark removed from the head says so with Undo, and Undo puts the same bookmark back", async ({ page }) => {

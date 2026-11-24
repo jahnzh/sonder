@@ -335,7 +335,7 @@ for (const size of SIZES) {
     expect(await rect(listen(page).locator(".now-playing-footer"))).toEqual(foot);
   });
 
-  test(`Read at ${size.width}: Hide contents is remembered, Appearance docks in the text's column, Speed and messages take the footer's row`, async ({ page }) => {
+  test(`Read at ${size.width}: Hide contents is remembered, Appearance docks in the text's column, Speed opens its setting pop-up above the footer and a message takes the footer's row`, async ({ page }) => {
     await page.setViewportSize(size);
     const { workId } = await book(page, "Desktop dock");
     await openRead(page, workId);

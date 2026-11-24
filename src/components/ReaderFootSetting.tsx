@@ -98,58 +98,75 @@ export function FootSettingButtons({ open, onOpen }: { open: FootSetting | null;
   );
 }
 
-/** The pop-up: a group named "Speed" or "Sleep timer", not a dialog, with no backdrop and no Done. */
+/**
+ * The pop-up: a group named "Speed" or "Sleep timer", not a dialog, with no backdrop and no Done. It is rendered where
+ * it is declared, inside the foot, not in a portal on the document's body: everything of a reader stays inside its own
+ * room, so the inline reader of Now playing and another reader never mix their pop-ups, and the foot's own handlers
+ * (a tap on a control ends a notice) see it. No portal is needed for layering: it is positioned fixed above the foot,
+ * inside the room's box, and stands above the text band and its catcher by its z-index.
+ */
 function SettingPopup({ setting, offset, onEscape, onOutside }: { setting: FootSetting; offset: number; onEscape: () => void; onOutside: () => void }) {
   const content = useRef<HTMLDivElement>(null);
   return (
-    <Popover.Portal>
-      <Popover.Content
-        ref={content}
-        role="group"
-        aria-label={setting === "speed" ? "Speed" : "Sleep timer"}
-        className="reader-foot-popup"
-        data-setting={setting}
-        side="top"
-        align="end"
-        sideOffset={offset}
-        collisionPadding={16}
-        // The keyboard carries on at the value, as when the row took the transport row's place.
-        onOpenAutoFocus={(event) => {
+    <Popover.Content
+      ref={content}
+      role="group"
+      aria-label={setting === "speed" ? "Speed" : "Sleep timer"}
+      className="reader-foot-popup"
+      data-setting={setting}
+      side="top"
+      align="end"
+      sideOffset={offset}
+      collisionPadding={16}
+      // The keyboard carries on at the value, as when the row took the transport row's place.
+      onOpenAutoFocus={(event) => {
+        event.preventDefault();
+        content.current?.querySelector<HTMLElement>('[role="spinbutton"]')?.focus();
+      }}
+      // Escape and the button put the focus back on the button themselves; a tap elsewhere keeps it where it went.
+      onCloseAutoFocus={(event) => event.preventDefault()}
+      onEscapeKeyDown={(event) => {
+        event.preventDefault();
+        onEscape();
+      }}
+      onInteractOutside={(event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        if (target?.closest(LEFT_TO_CLICK)) {
           event.preventDefault();
-          content.current?.querySelector<HTMLElement>('[role="spinbutton"]')?.focus();
-        }}
-        // Escape and the button put the focus back on the button themselves; a tap elsewhere keeps it where it went.
-        onCloseAutoFocus={(event) => event.preventDefault()}
-        onEscapeKeyDown={(event) => {
-          event.preventDefault();
-          onEscape();
-        }}
-        onInteractOutside={(event) => {
-          const target = event.target instanceof Element ? event.target : null;
-          if (target?.closest(LEFT_TO_CLICK)) {
-            event.preventDefault();
-            return;
-          }
-          onOutside();
-        }}
-      >
-        {setting === "speed" ? <SpeedSetting /> : <SleepSetting />}
-      </Popover.Content>
-    </Popover.Portal>
+          return;
+        }
+        onOutside();
+      }}
+    >
+      {setting === "speed" ? <SpeedSetting /> : <SleepSetting />}
+    </Popover.Content>
   );
 }
 
 /**
- * Over the text band while a pop-up is open: draws nothing, and takes the tap meant for the text, so that the tap
- * only closes the pop-up. It must not also show or hide the controls, turn a page, follow a link, start Listen from
- * here or move the rail. The epub.js frame and the view of prepared text never see it.
+ * How long after a press on the text ends the catcher waits for its click before closing the pop-up by itself. A tap
+ * is followed by a click, which closes it at once; a press that moved (a swipe) is followed by none, so without this
+ * the pop-up would stay open. The catcher stays until then so that the click of a touch never reaches the text beneath.
+ */
+const LATE_CLOSE_MS = 350;
+
+/**
+ * Over the text band while a setting pop-up is open: draws nothing, and takes the tap meant for the text, so that the
+ * tap only closes the pop-up. It must not also show or hide the controls, turn a page, follow a link, start Listen
+ * from here or move the rail. The epub.js frame and the view of prepared text never see it. The reader mounts one per
+ * open setting (keyed by it), so a late close left by one setting's catcher never closes the next.
  */
 export function TextCatcher({ viewport, onClose }: { viewport: RefObject<HTMLElement | null>; onClose: () => void }) {
-  const element = viewport.current;
   const late = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancel = () => {
+    if (late.current) clearTimeout(late.current);
+    late.current = null;
+  };
+  useEffect(() => cancel, []);
+  const element = viewport.current;
   if (!element) return null;
   const close = () => {
-    if (late.current) clearTimeout(late.current);
+    cancel();
     onClose();
   };
   return (
@@ -157,10 +174,13 @@ export function TextCatcher({ viewport, onClose }: { viewport: RefObject<HTMLEle
       className="reader-text-catcher"
       aria-hidden="true"
       style={{ left: element.offsetLeft, top: element.offsetTop, width: element.offsetWidth, height: element.offsetHeight }}
-      onPointerDown={(event) => event.preventDefault()}
-      // A press that moved is followed by no click: it closes the pop-up a moment after it ends.
+      onPointerDown={(event) => {
+        cancel();
+        event.preventDefault();
+      }}
       onPointerUp={() => {
-        late.current = setTimeout(onClose, 350);
+        cancel();
+        late.current = setTimeout(close, LATE_CLOSE_MS);
       }}
       onPointerCancel={close}
       onClick={close}

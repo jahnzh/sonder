@@ -1967,9 +1967,10 @@ export function ReaderView({
     reload: () => void reloadForUpdate(() => { if (playerRef.current.playing) playerRef.current.toggle(); }),
     dismissUpdate,
   };
-  // Where the message stands (#890): a notice with Undo takes the timeline's row on a phone with the controls shown;
-  // the others take the row's place, and a setting's pop-up, whose button gives way with the row, closes.
-  const messageAt = message ? messagePlace(message, { controls, desktop }) : null;
+  // Where the message stands (#890): on a phone with the controls shown a notice with Undo takes the foot's first row
+  // (the timeline, or without a recording the status line); the others take the row's place, and a setting pop-up,
+  // whose button gives way with the row, closes.
+  const messageAt = message ? messagePlace(message, { controls, desktop, recording }) : null;
   const rowTaken = messageAt === "row" && controls;
   useEffect(() => {
     if (rowTaken) setFootSetting(null);
@@ -2064,7 +2065,7 @@ export function ReaderView({
             style={prepared ? preparedStyle : spreadWidth ? ({ "--reader-spread": `${spreadWidth}px` } as CSSProperties) : undefined}
             aria-label="Ebook pages"
           />
-          {footSetting && <TextCatcher viewport={viewport} onClose={() => setFootSetting(null)} />}
+          {footSetting && <TextCatcher key={footSetting} viewport={viewport} onClose={() => setFootSetting(null)} />}
           {desktop && <button className="reader-edge reader-edge-next" aria-label="Next page" onClick={()=>turn(1)}><ArrowRight size={20}/></button>}
         </div>
       </div>
