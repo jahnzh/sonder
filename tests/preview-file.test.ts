@@ -66,3 +66,13 @@ test("no audio file at all: nothing to preview", () => {
 test("a folder named Sample does not exclude the files in it; a size TorBox does not give is not small", () => {
   assert.equal(previewFile([{ id: 1, name: "Sample Reader/Chapter 1.mp3" }])?.id, 1);
 });
+
+test("the names are whole words: Introvert is a reading, Sample Chapter and 01 - Intro.mp3 are not", () => {
+  const reading = file(3, "Book/03 - The Introvert.mp3", 30 * MB);
+  assert.equal(previewFile([file(1, "Book/01 - Intro.mp3", 30 * MB), file(2, "Book/02 - Sample Chapter.mp3", 30 * MB), reading])?.id, 3);
+  assert.equal(previewFile([file(1, "Book/Introvert Diaries 01.mp3", 30 * MB)])?.id, 1, "Introvert alone is a reading");
+  assert.equal(previewFile([file(1, "Book/Sample Chapter.mp3", 30 * MB), file(2, "Book/Chapter 1.mp3", 30 * MB)])?.id, 2);
+  assert.equal(previewFile([file(1, "Book/01 - Intro.mp3", 30 * MB), file(2, "Book/02 - Chapter One.mp3", 30 * MB)])?.id, 2);
+  assert.equal(previewFile([file(1, "Book/00_INTRODUCTION.mp3", 30 * MB), file(2, "Book/01_Chapter.mp3", 30 * MB)])?.id, 2, "case and underscores");
+  assert.equal(previewFile([file(1, "Book/Outrovert Credits-free 01.mp3", 30 * MB), file(2, "Book/02.mp3", 30 * MB)])?.id, 2, "credits as a word");
+});

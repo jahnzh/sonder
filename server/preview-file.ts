@@ -11,15 +11,18 @@ export function byTrackName(a: { name: string }, b: { name: string }) {
 /** A file this small is a jingle or a credits file, not the reading. */
 export const PREVIEW_MIN_BYTES = 3 * 1024 * 1024;
 
-/** Names that are not the reading itself. */
-const notTheReading = /credits|intro|preface|foreword|sample|epilogue|afterword|outro/i;
+/**
+ * Names that are not the reading itself, as whole words ("Introvert" is a reading; "01 - Intro" is not). Digits,
+ * spaces, dashes, dots and underscores separate words in file names.
+ */
+const notTheReading = /(?:^|[^a-z])(?:credits|intro|introduction|preface|foreword|sample|epilogue|afterword|outro)(?:$|[^a-z])/i;
 
 export type ReleaseFile = { id: number; name: string; size?: number | null };
 
 /**
  * The file a preview plays, by this rule in order: the release's audio files only (none: null, there is nothing to
  * preview); sorted by name with numbers in order, as Get orders tracks; without files under 3 MB and without files
- * whose name says credits, intro, preface, foreword, sample, epilogue, afterword or outro (if none is left, the
+ * whose name has the word credits, intro, introduction, preface, foreword, sample, epilogue, afterword or outro (if none is left, the
  * largest audio file); the first of those. A file whose size TorBox does not give is not counted as small.
  */
 export function previewFile<T extends ReleaseFile>(files: readonly T[]): T | null {
