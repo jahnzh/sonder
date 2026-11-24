@@ -306,21 +306,6 @@ test("with the controls shown the notice with Undo leaves the transport row, Sle
   if (plays) await foot.locator(".reader-transport").getByRole("button", { name: "Pause narration", exact: true }).click();
   await expect.poll(() => audioPosition(page)).toBeGreaterThanOrEqual(170.25);
   expect(await audioPosition(page)).toBeLessThan(175);
-  // Forward 30 seconds while it shows: the narration moves on and the notice ends at once.
-  await longPress(page, room);
-  await expectInFoot(room, "notice", "Listening from here", ["Undo"]);
-  const before = await audioPosition(page);
-  await foot.getByRole("button", { name: "Forward 30 seconds", exact: true }).click();
-  await expect(message(room)).toHaveCount(0, { timeout: 2000 });
-  await expect(timelineOf(room)).toBeVisible();
-  await expect.poll(() => audioPosition(page)).toBeGreaterThan(before + 25);
-  // Back 30 seconds the same way.
-  await longPress(page, room);
-  await expect(foot).toHaveAttribute("data-message-place", "timeline");
-  const back = await audioPosition(page);
-  await foot.getByRole("button", { name: "Back 30 seconds", exact: true }).click();
-  await expect(message(room)).toHaveCount(0, { timeout: 2000 });
-  await expect.poll(() => audioPosition(page)).toBeLessThan(back - 25);
   // Speed and the sleep timer open their pop-up, and the notice ends.
   for (const [button, group] of [[/^Speed [\d.]+ times$/, "Speed"], [/^Sleep timer: /, "Sleep timer"]] as const) {
     await longPress(page, room);
@@ -331,6 +316,22 @@ test("with the controls shown the notice with Undo leaves the transport row, Sle
     await page.keyboard.press("Escape");
     await expect(page.getByRole("group", { name: group, exact: true })).toHaveCount(0);
   }
+  // Back 30 seconds while it shows: the narration moves back and the notice ends at once. (Back first: the map's
+  // section ends at 195 s, and a page past it holds no sentence for the next long press.)
+  await longPress(page, room);
+  await expectInFoot(room, "notice", "Listening from here", ["Undo"]);
+  const back = await audioPosition(page);
+  await foot.getByRole("button", { name: "Back 30 seconds", exact: true }).click();
+  await expect(message(room)).toHaveCount(0, { timeout: 2000 });
+  await expect(timelineOf(room)).toBeVisible();
+  await expect.poll(() => audioPosition(page)).toBeLessThan(back - 25);
+  // Forward 30 seconds the same way.
+  await longPress(page, room);
+  await expect(foot).toHaveAttribute("data-message-place", "timeline");
+  const before = await audioPosition(page);
+  await foot.getByRole("button", { name: "Forward 30 seconds", exact: true }).click();
+  await expect(message(room)).toHaveCount(0, { timeout: 2000 });
+  await expect.poll(() => audioPosition(page)).toBeGreaterThan(before + 25);
 });
 
 test("Bookmark removed from the head says so with Undo, and Undo puts the same bookmark back", async ({ page }) => {
