@@ -1,0 +1,13 @@
+{
+  "label": "qwen35-9b-q4",
+  "model": "Qwen3.5-9B-Q4_K_M.gguf",
+  "ctx": 16384,
+  "gpuLayers": "all",
+  "kvCache": "q8_0",
+  "baselineMiB": 2025,
+  "loadedMiB": 7492,
+  "peakMiB": 7548,
+  "seconds": 789,
+  "alignmentWorkerBusySeconds": 0,
+  "note": "Written by hand from vram.log: the server aborted with a CUDA illegal memory access after about 13 minutes (50 of 62 units), so measure.sh never wrote this file. The baseline is the reading after the previous model stopped."
+}

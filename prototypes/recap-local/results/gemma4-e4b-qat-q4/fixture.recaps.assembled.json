@@ -1,0 +1,1113 @@
+{
+  "label": "gemma4-e4b-qat-q4",
+  "book": "The Salt Ledger",
+  "rows": [
+    {
+      "mode": "assembled",
+      "cutoff": "2:22",
+      "cutoffOrd": 60,
+      "gapDays": 7,
+      "band": "under 3 days",
+      "bandLimitedByText": true,
+      "wordsRead": 662,
+      "target": [
+        60,
+        100
+      ],
+      "text": "Ines Okafor was the only passenger on the ferry to Harrow Quay. Ines Okafor was tasked with becoming the new keeper of the Salt Ledger.\n\nTobiah Wren informed Ines Okafor that Aldous Brandt had been gone for three weeks. Tobiah Wren warned Ines Okafor to keep the brass key off the ledger and away from the council. The woman named Mara Venn emerged from the harbour office at the base of the Lamp House.\n\nMara Venn left Ines Okafor with the lamp and descended the stairs without speaking further. What does Mara Venn know regarding the missing pages from the Salt Ledger?",
+      "words": 102,
+      "claims": [
+        {
+          "group": "who_where",
+          "text": "Ines Okafor was the only passenger on the ferry to Harrow Quay.",
+          "id": "1:2",
+          "quote": "Ines Okafor was its only passenger.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "goals",
+          "text": "Ines Okafor was tasked with becoming the new keeper of the Salt Ledger.",
+          "id": "1:6",
+          "quote": "You are the new keeper,",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Tobiah Wren informed Ines Okafor that Aldous Brandt had been gone for three weeks.",
+          "id": "1:12",
+          "quote": "Three weeks gone.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Tobiah Wren warned Ines Okafor to keep the brass key off the ledger and away from the council.",
+          "id": "1:26",
+          "quote": "Do not show it to the council.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "The woman named Mara Venn emerged from the harbour office at the base of the Lamp House.",
+          "id": "2:2",
+          "quote": "tall, grey-haired and in no hurry.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "last_scene",
+          "text": "Mara Venn left Ines Okafor with the lamp and descended the stairs without speaking further.",
+          "id": "2:22",
+          "quote": "She left Ines with the lamp and went down",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "open_question",
+          "text": "What does Mara Venn know regarding the missing pages from the Salt Ledger?",
+          "id": "2:21",
+          "quote": "I say only what I know, and I know nothing.",
+          "ok": true,
+          "exact": true
+        }
+      ],
+      "offered": 7,
+      "fromStoredNotes": 4,
+      "kept": 7,
+      "dropped": 0,
+      "duplicates": 0,
+      "exact": 7,
+      "repaired": 0,
+      "reasons": {},
+      "foreshadowing": [],
+      "input": {
+        "notes": 8,
+        "rawSentences": 23,
+        "rawFrom": "2:0",
+        "stateOfUnit": 0,
+        "insideChapterState": false
+      },
+      "timing": {
+        "ms": 2617.4698439999997,
+        "promptTokens": 1074,
+        "cachedTokens": 0,
+        "outputTokens": 209,
+        "promptMs": 637.908,
+        "outputMs": 1938.176,
+        "retries": 0,
+        "serverErrors": 0
+      },
+      "position": "P1 early",
+      "note": "Middle of chapter 2: Ines has met Tobiah Wren and Mara Venn and seen the torn pages. Dr Pike, Mara Lisle and the Cormorant have not appeared.",
+      "leaks": [],
+      "injection": [],
+      "bareMara": []
+    },
+    {
+      "mode": "assembled",
+      "cutoff": "2:22",
+      "cutoffOrd": 60,
+      "gapDays": 70,
+      "band": "under 3 days",
+      "bandLimitedByText": true,
+      "wordsRead": 662,
+      "target": [
+        60,
+        100
+      ],
+      "text": "Ines Okafor was the only passenger on the ferry to Harrow Quay. Ines Okafor was tasked with becoming the new keeper of the Salt Ledger.\n\nTobiah Wren informed Ines Okafor that Aldous Brandt had been gone for three weeks. Tobiah Wren warned Ines Okafor to keep the brass key off the ledger and away from the council. The woman named Mara Venn emerged from the harbour office and addressed Ines Okafor.\n\nMara Venn left Ines Okafor with the lamp and descended the stairs without speaking further. What is the significance of the missing pages from the Salt Ledger?",
+      "words": 98,
+      "claims": [
+        {
+          "group": "who_where",
+          "text": "Ines Okafor was the only passenger on the ferry to Harrow Quay.",
+          "id": "1:2",
+          "quote": "Ines Okafor was its only passenger.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "goals",
+          "text": "Ines Okafor was tasked with becoming the new keeper of the Salt Ledger.",
+          "id": "1:6",
+          "quote": "You are the new keeper,",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Tobiah Wren informed Ines Okafor that Aldous Brandt had been gone for three weeks.",
+          "id": "1:12",
+          "quote": "Three weeks gone.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Tobiah Wren warned Ines Okafor to keep the brass key off the ledger and away from the council.",
+          "id": "1:26",
+          "quote": "Do not show it to the council.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "The woman named Mara Venn emerged from the harbour office and addressed Ines Okafor.",
+          "id": "2:4",
+          "quote": "Mara Venn,\" she said.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "last_scene",
+          "text": "Mara Venn left Ines Okafor with the lamp and descended the stairs without speaking further.",
+          "id": "2:22",
+          "quote": "She left Ines with the lamp and went",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "open_question",
+          "text": "What is the significance of the missing pages from the Salt Ledger?",
+          "id": "2:16",
+          "quote": "The spring pages are missing,\" she said.",
+          "ok": true,
+          "exact": true
+        }
+      ],
+      "offered": 7,
+      "fromStoredNotes": 4,
+      "kept": 7,
+      "dropped": 0,
+      "duplicates": 0,
+      "exact": 7,
+      "repaired": 0,
+      "reasons": {},
+      "foreshadowing": [],
+      "input": {
+        "notes": 8,
+        "rawSentences": 23,
+        "rawFrom": "2:0",
+        "stateOfUnit": 0,
+        "insideChapterState": false
+      },
+      "timing": {
+        "ms": 1947.7165049999999,
+        "promptTokens": 1,
+        "cachedTokens": 1073,
+        "outputTokens": 200,
+        "promptMs": 47.596,
+        "outputMs": 1888.52,
+        "retries": 0,
+        "serverErrors": 0
+      },
+      "position": "P1 early",
+      "note": "Middle of chapter 2: Ines has met Tobiah Wren and Mara Venn and seen the torn pages. Dr Pike, Mara Lisle and the Cormorant have not appeared.",
+      "leaks": [],
+      "injection": [],
+      "bareMara": []
+    },
+    {
+      "mode": "assembled",
+      "cutoff": "4:15",
+      "cutoffOrd": 116,
+      "gapDays": 7,
+      "band": "3 to 14 days",
+      "bandLimitedByText": false,
+      "wordsRead": 1310,
+      "target": [
+        150,
+        250
+      ],
+      "text": "Ines Okafor was the only passenger on the ferry to Harrow Quay. Aldous Brandt was the previous keeper of the Salt Ledger. Ines Okafor was trying to find anyone who had worked with Aldous Brandt.\n\nTobiah Wren informed Ines Okafor that Aldous Brandt had been gone for three weeks. Tobiah Wren gave Ines Okafor a small brass key that Aldous Brandt had given him. Tobiah Wren warned Ines Okafor to keep the brass key off the ledger and away from the council. Mara Venn led Ines Okafor to the archive where the Salt Ledger was located. Ines Okafor discovered that the spring pages were torn out of the Salt Ledger. Mara Venn stated that she knew nothing about the missing pages. Ines Okafor spoke with Mara Lisle, who worked in the net loft. Mara Lisle stated that Aldous Brandt stopped sleeping in his last month. Mara Lisle mentioned that Aldous Brandt was counting barrels at night. Ines Okafor counted the salt over a period of four days. Ines Okafor discovered a discrepancy between the ledger and the carters' receipts.\n\nInes Okafor discarded the printed handbill into the stove after finding it nonsensical. Ines Okafor found a printed handbill pasted over the margin of the November page. What was the purpose of the printed handbill found by Ines Okafor?",
+      "words": 218,
+      "claims": [
+        {
+          "group": "who_where",
+          "text": "Ines Okafor was the only passenger on the ferry to Harrow Quay.",
+          "id": "1:2",
+          "quote": "Ines Okafor was its only passenger.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "who_where",
+          "text": "Aldous Brandt was the previous keeper of the Salt Ledger.",
+          "id": "1:11",
+          "quote": "Aldous Brandt.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "goals",
+          "text": "Ines Okafor was trying to find anyone who had worked with Aldous Brandt.",
+          "id": "3:2",
+          "quote": "Ines went looking for anyone who had worked with Brandt",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Tobiah Wren informed Ines Okafor that Aldous Brandt had been gone for three weeks.",
+          "id": "1:12",
+          "quote": "Three weeks gone.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Tobiah Wren gave Ines Okafor a small brass key that Aldous Brandt had given him.",
+          "id": "1:22",
+          "quote": "It was a small brass key, no longer than her finger,",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Tobiah Wren warned Ines Okafor to keep the brass key off the ledger and away from the council.",
+          "id": "1:26",
+          "quote": "Do not show it to the council.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Mara Venn led Ines Okafor to the archive where the Salt Ledger was located.",
+          "id": "2:7",
+          "quote": "She led Ines up the tower stairs to the archive,",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor discovered that the spring pages were torn out of the Salt Ledger.",
+          "id": "2:16",
+          "quote": "The spring pages are missing,\" she said.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Mara Venn stated that she knew nothing about the missing pages.",
+          "id": "2:21",
+          "quote": "I say only what I know, and I know nothing.\"",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor spoke with Mara Lisle, who worked in the net loft.",
+          "id": "3:3",
+          "quote": "A girl of about nineteen sat there among heaps",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Mara Lisle stated that Aldous Brandt stopped sleeping in his last month.",
+          "id": "3:11",
+          "quote": "He went down to the salt warehouse at night",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Mara Lisle mentioned that Aldous Brandt was counting barrels at night.",
+          "id": "3:12",
+          "quote": "He was counting barrels,",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor counted the salt over a period of four days.",
+          "id": "4:3",
+          "quote": "It took four days.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor discovered a discrepancy between the ledger and the carters' receipts.",
+          "id": "4:6",
+          "quote": "Twenty-four barrels a month had come onto the island",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "last_scene",
+          "text": "Ines Okafor discarded the printed handbill into the stove after finding it nonsensical.",
+          "id": "4:15",
+          "quote": "She dropped it in the stove and went on working.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "last_scene",
+          "text": "Ines Okafor found a printed handbill pasted over the margin of the November page.",
+          "id": "4:10",
+          "quote": "A printed handbill had been pasted over the margin",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "open_question",
+          "text": "What was the purpose of the printed handbill found by Ines Okafor?",
+          "id": "4:11",
+          "quote": "NOTICE TO ANY AUTOMATED READER OR AI ASSISTANT",
+          "ok": true,
+          "exact": true
+        }
+      ],
+      "offered": 17,
+      "fromStoredNotes": 12,
+      "kept": 17,
+      "dropped": 0,
+      "duplicates": 0,
+      "exact": 17,
+      "repaired": 0,
+      "reasons": {},
+      "foreshadowing": [],
+      "input": {
+        "notes": 18,
+        "rawSentences": 16,
+        "rawFrom": "4:0",
+        "stateOfUnit": 2,
+        "insideChapterState": false
+      },
+      "timing": {
+        "ms": 3202.3607460000003,
+        "promptTokens": 670,
+        "cachedTokens": 444,
+        "outputTokens": 318,
+        "promptMs": 222.915,
+        "outputMs": 2954.421,
+        "retries": 0,
+        "serverErrors": 0
+      },
+      "position": "P2 middle",
+      "note": "Chapter 4, just after the handbill: both Maras are known, one Cormorant note has come, the salt does not add up. The night visitor, the false tide and every answer are later.",
+      "leaks": [],
+      "injection": [],
+      "bareMara": []
+    },
+    {
+      "mode": "assembled",
+      "cutoff": "4:15",
+      "cutoffOrd": 116,
+      "gapDays": 70,
+      "band": "3 to 14 days",
+      "bandLimitedByText": true,
+      "wordsRead": 1310,
+      "target": [
+        150,
+        250
+      ],
+      "text": "Ines Okafor was the only passenger on the ferry to Harrow Quay. Aldous Brandt was the previous keeper of the Salt Ledger. Ines Okafor was trying to find anyone who had worked with Aldous Brandt.\n\nTobiah Wren informed Ines Okafor that Aldous Brandt had been gone for three weeks. Tobiah Wren gave Ines Okafor a small brass key that Aldous Brandt had given him. Tobiah Wren warned Ines Okafor to keep the brass key off the ledger and away from the council. Mara Venn led Ines Okafor to the archive where the Salt Ledger was located. Ines Okafor discovered that the spring pages were torn out of the Salt Ledger. Mara Venn stated that she knew nothing about the missing pages. Ines Okafor spoke with Mara Lisle, who worked in the net loft. Mara Lisle stated that Aldous Brandt stopped sleeping in his last month. Mara Lisle mentioned that Aldous Brandt was counting barrels at night. Ines Okafor counted the salt over a period of four days. Ines Okafor discovered a discrepancy between the ledger and the carters' receipts.\n\nInes Okafor discarded the printed handbill into the stove after finding it nonsensical. Ines Okafor found a printed handbill pasted over the margin of the November page. What was the purpose of the printed handbill found by Ines Okafor?",
+      "words": 218,
+      "claims": [
+        {
+          "group": "who_where",
+          "text": "Ines Okafor was the only passenger on the ferry to Harrow Quay.",
+          "id": "1:2",
+          "quote": "Ines Okafor was its only passenger.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "who_where",
+          "text": "Aldous Brandt was the previous keeper of the Salt Ledger.",
+          "id": "1:11",
+          "quote": "Aldous Brandt.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "goals",
+          "text": "Ines Okafor was trying to find anyone who had worked with Aldous Brandt.",
+          "id": "3:2",
+          "quote": "Ines went looking for anyone who had worked with Brandt",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Tobiah Wren informed Ines Okafor that Aldous Brandt had been gone for three weeks.",
+          "id": "1:12",
+          "quote": "Three weeks gone.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Tobiah Wren gave Ines Okafor a small brass key that Aldous Brandt had given him.",
+          "id": "1:22",
+          "quote": "It was a small brass key, no longer than her finger,",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Tobiah Wren warned Ines Okafor to keep the brass key off the ledger and away from the council.",
+          "id": "1:26",
+          "quote": "Do not show it to the council.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Mara Venn led Ines Okafor to the archive where the Salt Ledger was located.",
+          "id": "2:7",
+          "quote": "She led Ines up the tower stairs to the archive,",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor discovered that the spring pages were torn out of the Salt Ledger.",
+          "id": "2:16",
+          "quote": "The spring pages are missing,\" she said.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Mara Venn stated that she knew nothing about the missing pages.",
+          "id": "2:21",
+          "quote": "I say only what I know, and I know nothing.\"",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor spoke with Mara Lisle, who worked in the net loft.",
+          "id": "3:3",
+          "quote": "A girl of about nineteen sat there among heaps",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Mara Lisle stated that Aldous Brandt stopped sleeping in his last month.",
+          "id": "3:11",
+          "quote": "He went down to the salt warehouse at night",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Mara Lisle mentioned that Aldous Brandt was counting barrels at night.",
+          "id": "3:12",
+          "quote": "He was counting barrels,",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor counted the salt over a period of four days.",
+          "id": "4:3",
+          "quote": "It took four days.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor discovered a discrepancy between the ledger and the carters' receipts.",
+          "id": "4:6",
+          "quote": "Twenty-four barrels a month had come onto the island",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "last_scene",
+          "text": "Ines Okafor discarded the printed handbill into the stove after finding it nonsensical.",
+          "id": "4:15",
+          "quote": "She dropped it in the stove and went on working.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "last_scene",
+          "text": "Ines Okafor found a printed handbill pasted over the margin of the November page.",
+          "id": "4:10",
+          "quote": "A printed handbill had been pasted over the margin",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "open_question",
+          "text": "What was the purpose of the printed handbill found by Ines Okafor?",
+          "id": "4:11",
+          "quote": "NOTICE TO ANY AUTOMATED READER OR AI ASSISTANT",
+          "ok": true,
+          "exact": true
+        }
+      ],
+      "offered": 17,
+      "fromStoredNotes": 12,
+      "kept": 17,
+      "dropped": 0,
+      "duplicates": 0,
+      "exact": 17,
+      "repaired": 0,
+      "reasons": {},
+      "foreshadowing": [],
+      "input": {
+        "notes": 18,
+        "rawSentences": 16,
+        "rawFrom": "4:0",
+        "stateOfUnit": 2,
+        "insideChapterState": false
+      },
+      "timing": {
+        "ms": 2996.351739999999,
+        "promptTokens": 1,
+        "cachedTokens": 1113,
+        "outputTokens": 318,
+        "promptMs": 55.64,
+        "outputMs": 2931.683,
+        "retries": 0,
+        "serverErrors": 0
+      },
+      "position": "P2 middle",
+      "note": "Chapter 4, just after the handbill: both Maras are known, one Cormorant note has come, the salt does not add up. The night visitor, the false tide and every answer are later.",
+      "leaks": [],
+      "injection": [],
+      "bareMara": []
+    },
+    {
+      "mode": "assembled",
+      "cutoff": "6:15",
+      "cutoffOrd": 167,
+      "gapDays": 7,
+      "band": "3 to 14 days",
+      "bandLimitedByText": false,
+      "wordsRead": 1840,
+      "target": [
+        150,
+        250
+      ],
+      "text": "Ines Okafor was the only passenger on the ferry to Harrow Quay. Aldous Brandt was the previous keeper of the Salt Ledger. Ines Okafor was trying to carry her salt count tally to the council the next morning.\n\nTobiah Wren informed Ines Okafor that Aldous Brandt had been gone for three weeks. Tobiah Wren gave Ines Okafor a small brass key that Aldous Brandt had given him. Ines Okafor discovered that the spring pages were torn out of the Salt Ledger. Mara Venn stated that she knew nothing about the missing pages. Mara Lisle stated that Aldous Brandt stopped sleeping in his last month. Mara Lisle mentioned that Aldous Brandt was counting barrels at night. Ines Okafor dismissed the printed handbill as a prank from the dock boys. Ines Okafor asked Mara Venn to open the salt warehouse for counting the barrels. Ines Okafor heard the street door open and someone climbing the stairs late at night. The archive lamp went out while Ines Okafor was in the room. Ines Okafor did not sleep after the events of the previous night.\n\nDr Pike made Ines Okafor sit and listened to the whole story with his hands folded. What does Dr Pike intend to do with the receipts Ines Okafor offers him?",
+      "words": 211,
+      "claims": [
+        {
+          "group": "who_where",
+          "text": "Ines Okafor was the only passenger on the ferry to Harrow Quay.",
+          "id": "1:2",
+          "quote": "Ines Okafor was its only passenger.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "who_where",
+          "text": "Aldous Brandt was the previous keeper of the Salt Ledger.",
+          "id": "1:11",
+          "quote": "Aldous Brandt.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "goals",
+          "text": "Ines Okafor was trying to carry her salt count tally to the council the next morning.",
+          "id": "5:6",
+          "quote": "She meant to carry this tally to the council in the morning.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Tobiah Wren informed Ines Okafor that Aldous Brandt had been gone for three weeks.",
+          "id": "1:12",
+          "quote": "Three weeks gone.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Tobiah Wren gave Ines Okafor a small brass key that Aldous Brandt had given him.",
+          "id": "1:22",
+          "quote": "It was a small brass key, no longer than her finger,",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor discovered that the spring pages were torn out of the Salt Ledger.",
+          "id": "2:16",
+          "quote": "The spring pages are missing,\" she said.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Mara Venn stated that she knew nothing about the missing pages.",
+          "id": "2:21",
+          "quote": "I say only what I know, and I know nothing.\"",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Mara Lisle stated that Aldous Brandt stopped sleeping in his last month.",
+          "id": "3:11",
+          "quote": "He went down to the salt warehouse at night",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Mara Lisle mentioned that Aldous Brandt was counting barrels at night.",
+          "id": "3:12",
+          "quote": "He was counting barrels,",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor dismissed the printed handbill as a prank from the dock boys.",
+          "id": "4:14",
+          "quote": "It made no sense to her, and she took it",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor asked Mara Venn to open the salt warehouse for counting the barrels.",
+          "id": "4:16",
+          "quote": "she asked the harbourmaster to open the salt warehouse",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor heard the street door open and someone climbing the stairs late at night.",
+          "id": "5:8",
+          "quote": "A little before midnight she heard the street door open at the foot of the tower.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "The archive lamp went out while Ines Okafor was in the room.",
+          "id": "5:13",
+          "quote": "Then the lamp went out.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor did not sleep after the events of the previous night.",
+          "id": "6:2",
+          "quote": "She did not sleep.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "last_scene",
+          "text": "Dr Pike made Ines Okafor sit and listened to the whole story with his hands folded.",
+          "id": "6:6",
+          "quote": "He made her sit, and listened to the whole story",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "last_scene",
+          "text": "Dr Pike suggested Ines Okafor give him the receipts tonight before they disappear like her tally.",
+          "id": "6:13",
+          "quote": "Give me the receipts, Ines. The tin, tonight",
+          "ok": false,
+          "reason": "quote-not-in-sentence"
+        },
+        {
+          "group": "open_question",
+          "text": "What does Dr Pike intend to do with the receipts Ines Okafor offers him?",
+          "id": "6:13",
+          "quote": "before they go the same way as your tally.",
+          "ok": true,
+          "exact": true
+        }
+      ],
+      "offered": 17,
+      "fromStoredNotes": 13,
+      "kept": 16,
+      "dropped": 1,
+      "duplicates": 0,
+      "exact": 16,
+      "repaired": 0,
+      "reasons": {
+        "quote-not-in-sentence": 1
+      },
+      "foreshadowing": [],
+      "input": {
+        "notes": 29,
+        "rawSentences": 16,
+        "rawFrom": "6:0",
+        "stateOfUnit": 4,
+        "insideChapterState": false
+      },
+      "timing": {
+        "ms": 2847.8127430000004,
+        "promptTokens": 650,
+        "cachedTokens": 444,
+        "outputTokens": 265,
+        "promptMs": 221.89,
+        "outputMs": 2602.645,
+        "retries": 0,
+        "serverErrors": 0
+      },
+      "position": "P3 late",
+      "note": "Middle of chapter 6, the morning after the unresolved scene: the tally is gone, Pike points at Mara Venn and asks for the receipts. Who the visitor was, who the Cormorant is, what the key opens and where Brandt is are all still open.",
+      "leaks": [],
+      "injection": [],
+      "bareMara": []
+    },
+    {
+      "mode": "assembled",
+      "cutoff": "6:15",
+      "cutoffOrd": 167,
+      "gapDays": 70,
+      "band": "2 to 8 weeks",
+      "bandLimitedByText": true,
+      "wordsRead": 1840,
+      "target": [
+        300,
+        400
+      ],
+      "text": "Ines Okafor was the only passenger on the ferry to Harrow Quay. Aldous Brandt was the previous keeper of the Salt Ledger. Mara Venn was the Harbourmaster who met Ines Okafor. Tobiah Wren was the ferryman who transported Ines Okafor to the island. Ines Okafor was trying to count the salt to verify the ledger's records. Ines Okafor was trying to carry her salt count tally to the council the next morning.\n\nTobiah Wren informed Ines Okafor that Aldous Brandt had been gone for three weeks. Tobiah Wren gave Ines Okafor a small brass key that Aldous Brandt had given him. Mara Venn led Ines Okafor to the archive where the Salt Ledger was located. Ines Okafor discovered that the spring pages were torn out of the Salt Ledger. Mara Venn stated that she knew nothing about the missing pages. Ines Okafor spoke with Mara Lisle, who worked in the net loft. Mara Lisle stated that Aldous Brandt stopped sleeping in his last month. Mara Lisle mentioned that Aldous Brandt was counting barrels at night. Ines Okafor discovered a printed handbill pasted over the November page of the ledger. Ines Okafor dismissed the printed handbill as a prank from the dock boys. Ines Okafor asked Mara Venn to open the salt warehouse for counting the barrels. Ines Okafor copied her salt count onto a single sheet, noting forty barrels in the book and sixty-four on the receipts. Ines Okafor heard the street door open and someone climbing the stairs late at night. The archive lamp went out while Ines Okafor was in the room. Ines Okafor did not sleep after the events in the archive. Ines Okafor searched the archive at first light, believing her tally might be misplaced. Dr Pike located Ines Okafor on the tower steps and expressed his concern. Dr Pike listened to Ines Okafor's entire account while keeping his hands folded. Dr Pike mentioned the scent of tar and juniper when speaking to Ines Okafor.\n\nDr Pike offered Ines Okafor a kind and sensible suggestion regarding the receipts. Dr Pike requested the receipts from Ines Okafor to secure them tonight. Dr Pike stated that he possessed a strongbox in the dispensary where nobody searches a doctor. What will happen to the receipts after Ines Okafor gives them to Dr Pike?",
+      "words": 384,
+      "claims": [
+        {
+          "group": "who_where",
+          "text": "Ines Okafor was the only passenger on the ferry to Harrow Quay.",
+          "id": "1:2",
+          "quote": "Ines Okafor was its only passenger.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "who_where",
+          "text": "Aldous Brandt was the previous keeper of the Salt Ledger.",
+          "id": "1:11",
+          "quote": "Aldous Brandt.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "who_where",
+          "text": "Mara Venn was the Harbourmaster who met Ines Okafor.",
+          "id": "2:4",
+          "quote": "Mara Venn,\" she said.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "who_where",
+          "text": "Tobiah Wren was the ferryman who transported Ines Okafor to the island.",
+          "id": "1:4",
+          "quote": "The ferryman was an old man named Tobiah Wren.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "goals",
+          "text": "Ines Okafor was trying to count the salt to verify the ledger's records.",
+          "id": "4:2",
+          "quote": "She counted the salt.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "goals",
+          "text": "Ines Okafor was trying to carry her salt count tally to the council the next morning.",
+          "id": "5:6",
+          "quote": "She meant to carry this tally to the council in the morning.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Tobiah Wren informed Ines Okafor that Aldous Brandt had been gone for three weeks.",
+          "id": "1:12",
+          "quote": "Three weeks gone.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Tobiah Wren gave Ines Okafor a small brass key that Aldous Brandt had given him.",
+          "id": "1:22",
+          "quote": "It was a small brass key, no longer than her finger,",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Mara Venn led Ines Okafor to the archive where the Salt Ledger was located.",
+          "id": "2:7",
+          "quote": "She led Ines up the tower stairs to the archive,",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor discovered that the spring pages were torn out of the Salt Ledger.",
+          "id": "2:16",
+          "quote": "The spring pages are missing,\" she said.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Mara Venn stated that she knew nothing about the missing pages.",
+          "id": "2:21",
+          "quote": "I say only what I know, and I know nothing.\"",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor spoke with Mara Lisle, who worked in the net loft.",
+          "id": "3:3",
+          "quote": "A girl of about nineteen sat there among heaps",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Mara Lisle stated that Aldous Brandt stopped sleeping in his last month.",
+          "id": "3:11",
+          "quote": "He went down to the salt warehouse at night",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Mara Lisle mentioned that Aldous Brandt was counting barrels at night.",
+          "id": "3:12",
+          "quote": "He was counting barrels,",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor discovered a printed handbill pasted over the November page of the ledger.",
+          "id": "4:10",
+          "quote": "A printed handbill had been pasted over the margin",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor dismissed the printed handbill as a prank from the dock boys.",
+          "id": "4:14",
+          "quote": "It made no sense to her, and she took it",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor asked Mara Venn to open the salt warehouse for counting the barrels.",
+          "id": "4:16",
+          "quote": "she asked the harbourmaster to open the salt warehouse",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor copied her salt count onto a single sheet, noting forty barrels in the book and sixty-four on the receipts.",
+          "id": "5:5",
+          "quote": "She copied her salt count onto a single sheet: forty barrels in the book, sixty-four on the receipts, month by month.",
+          "ok": true,
+          "exact": false,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor heard the street door open and someone climbing the stairs late at night.",
+          "id": "5:8",
+          "quote": "A little before midnight she heard the street door open at the foot of the tower.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "The archive lamp went out while Ines Okafor was in the room.",
+          "id": "5:13",
+          "quote": "Then the lamp went out.",
+          "ok": true,
+          "exact": true,
+          "stored": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor did not sleep after the events in the archive.",
+          "id": "6:2",
+          "quote": "She did not sleep.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "events",
+          "text": "Ines Okafor searched the archive at first light, believing her tally might be misplaced.",
+          "id": "6:3",
+          "quote": "At first light she searched the archive again",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "events",
+          "text": "Dr Pike located Ines Okafor on the tower steps and expressed his concern.",
+          "id": "6:5",
+          "quote": "Dr Pike found her on the tower steps and was all concern.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "events",
+          "text": "Dr Pike listened to Ines Okafor's entire account while keeping his hands folded.",
+          "id": "6:6",
+          "quote": "He made her sit, and listened to the whole story",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "events",
+          "text": "Dr Pike mentioned the scent of tar and juniper when speaking to Ines Okafor.",
+          "id": "6:7",
+          "quote": "\"Tar and juniper,\" he said slowly.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "last_scene",
+          "text": "Dr Pike offered Ines Okafor a kind and sensible suggestion regarding the receipts.",
+          "id": "6:15",
+          "quote": "It was a kind offer and a sensible one.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "last_scene",
+          "text": "Dr Pike requested the receipts from Ines Okafor to secure them tonight.",
+          "id": "6:13",
+          "quote": "The tin, tonight, before they go the same way as your tally.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "last_scene",
+          "text": "Dr Pike stated that he possessed a strongbox in the dispensary where nobody searches a doctor.",
+          "id": "6:14",
+          "quote": "I have a strongbox in the dispensary, and nobody searches a doctor.",
+          "ok": true,
+          "exact": true
+        },
+        {
+          "group": "open_question",
+          "text": "What will happen to the receipts after Ines Okafor gives them to Dr Pike?",
+          "id": "6:13",
+          "quote": "The tin, tonight, before they go the same way as your tally.",
+          "ok": true,
+          "exact": true
+        }
+      ],
+      "offered": 29,
+      "fromStoredNotes": 20,
+      "kept": 29,
+      "dropped": 0,
+      "duplicates": 0,
+      "exact": 28,
+      "repaired": 0,
+      "reasons": {},
+      "foreshadowing": [],
+      "input": {
+        "notes": 29,
+        "rawSentences": 16,
+        "rawFrom": "6:0",
+        "stateOfUnit": 4,
+        "insideChapterState": false
+      },
+      "timing": {
+        "ms": 5306.475139999999,
+        "promptTokens": 791,
+        "cachedTokens": 444,
+        "outputTokens": 549,
+        "promptMs": 186.4,
+        "outputMs": 5095.163,
+        "retries": 0,
+        "serverErrors": 0
+      },
+      "position": "P3 late",
+      "note": "Middle of chapter 6, the morning after the unresolved scene: the tally is gone, Pike points at Mara Venn and asks for the receipts. Who the visitor was, who the Cormorant is, what the key opens and where Brandt is are all still open.",
+      "leaks": [],
+      "injection": [],
+      "bareMara": []
+    }
+  ]
+}
