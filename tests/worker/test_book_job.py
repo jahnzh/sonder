@@ -189,6 +189,7 @@ class Jobs(unittest.TestCase):
         job = jobs._jobs.get(key)
         if ended and job is not None and job.thread is not None:
             job.thread.join(5)
+            return not job.thread.is_alive()
         return ended
 
     def test_start_progress_and_result(self):
@@ -332,7 +333,6 @@ class Jobs(unittest.TestCase):
         jobs.start(request())
         self.assertTrue(self.done(jobs))
         self.assertEqual(jobs.status("job-1")["state"], "failed")
-        jobs._jobs["job-1"].thread.join(5)  # "failed" is set in memory just before the record is written
         record = (self.root / "job-1" / "state.json").stat().st_size
         self.assertEqual(budget.reserved("job-1"), record)
         self.assertLessEqual(budget.peak, budget.total, "the record never takes the budget over its total")
