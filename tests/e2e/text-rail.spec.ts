@@ -11,7 +11,8 @@ import { appearancePanel, closeAppearance, openAppearance } from "./reader-appea
 import { REST_MS } from "../../src/text-rail-model";
 // The text position rail of the new view's scroll mode (#804; boards RailB, RailBDrag, RailBZoom, RailTry): the thumb
 // follows the place in view, a drag moves the text as a move by hand does and never the audio, a touch takes the rail
-// only once it moves up or down, the zoom by pulling away, parts asked for only at rests, and nothing over the text.
+// only once it moves up or down, the zoom on the rail that eases out as the finger is pulled away, parts asked for
+// only at rests, and nothing over the text.
 test.use({ serviceWorkers: "block" });
 installReaderWaitBudget(test);
 const imported: string[] = [];
@@ -85,6 +86,8 @@ function progressWrites(page: Page) {
   });
   return writes;
 }
+/** A finger this far to the left of the rail's centre line is pulled away: nothing is zoomed, the rail is the whole book. */
+const AWAY = 110;
 const audioState = (page: Page) => page.evaluate(() => [...document.querySelectorAll("audio")].map((audio) => ({ time: Math.round(audio.currentTime * 10) / 10, paused: audio.paused, src: audio.currentSrc })));
 /**
  * Opens the book following the narration at its 20th mapped sentence, with the rail drawn. `settle` false returns
@@ -272,38 +275,43 @@ test("a press and release on the thumb moves nothing: the text, the following an
   expect(await firstInView(page)).toBe(first);
 });
 
-test("pulled 100 px away from the rail the same travel moves the place by an eighth; the overview shows while zoomed", async ({ page }) => {
+test("on the rail the thumb is zoomed in and moves by an eighth of the finger's travel; pulled 100 px away it is the whole book again", async ({ page }) => {
   test.setTimeout(150000);
   await openFollowing(page, `Rail zoom ${randomUUID()}`);
   const { x, column } = await thumbAt(page);
   const middle = column.y + column.height / 2;
-  // On the rail: from the middle, 80 px down.
+  // A click on the rail goes to the place the rail at rest shows there, zoomed in or not.
   await page.mouse.click(x, middle);
   await expect.poll(() => railPlace(page)).toBeCloseTo(0.5, 2);
   await page.waitForTimeout(400);
+  // On the rail: zoomed in, with the overview. From the middle, 80 px down.
   const start = await railPlace(page);
   const at = await thumbAt(page);
   await page.mouse.move(at.x, at.y);
   await page.mouse.down();
+  await expect(rail(page)).toHaveAttribute("data-zoomed", "");
+  await expect(rail(page).locator(".text-rail-overview")).toBeVisible();
+  await expectRailBesideText(room(page));
   await page.mouse.move(at.x, at.y + 80, { steps: 4 });
   const onRail = (await railPlace(page)) - start;
   await page.mouse.up();
+  await expect(rail(page)).not.toHaveAttribute("data-zoomed", "");
   await page.waitForTimeout(400);
-  // Pulled 100 px to the left of the rail's centre line, the same 80 px.
+  // Pulled away to the left of the rail: nothing is zoomed, and the same 80 px are 80 px of the whole rail.
   const again = await railPlace(page);
   const next = await thumbAt(page);
   await page.mouse.move(next.x, next.y);
   await page.mouse.down();
-  await page.mouse.move(next.x - 100, next.y, { steps: 4 });
-  await expect(rail(page)).toHaveAttribute("data-zoomed", "");
-  await expect(rail(page).locator(".text-rail-overview")).toBeVisible();
-  await expectRailBesideText(room(page));
-  await page.mouse.move(next.x - 100, next.y + 80, { steps: 4 });
-  const zoomed = (await railPlace(page)) - again;
-  await page.mouse.up();
-  expect(onRail).toBeGreaterThan(0.05);
-  expect(Math.abs(zoomed / onRail - 1 / 8)).toBeLessThan(0.02);
+  await page.mouse.move(next.x - AWAY, next.y, { steps: 4 });
   await expect(rail(page)).not.toHaveAttribute("data-zoomed", "");
+  await expect(rail(page).locator(".text-rail-overview")).toBeHidden();
+  await expectRailBesideText(room(page));
+  await page.mouse.move(next.x - AWAY, next.y + 80, { steps: 4 });
+  const away = (await railPlace(page)) - again;
+  await page.mouse.up();
+  expect(away).toBeGreaterThan(0.05);
+  expect(Math.abs(away - 80 / (column.height - 20))).toBeLessThan(0.01);
+  expect(Math.abs(onRail / away - 1 / 8)).toBeLessThan(0.02);
 });
 
 test("a drag across unloaded parts asks for no more parts than it rests", async ({ page }) => {
@@ -335,11 +343,13 @@ test("a drag across unloaded parts asks for no more parts than it rests", async 
   const { x, y, column } = await thumbAt(page);
   await page.mouse.move(x, y);
   await page.mouse.down();
-  // Across the book, then one rest: the part of that place is asked for.
-  for (const share of [0.2, 0.35, 0.5, 0.65, 0.8]) await page.mouse.move(x, column.y + column.height * share);
+  // Pulled away, so the finger's travel is the whole book's. Across the book, then one rest: the part of that place
+  // is asked for.
+  await page.mouse.move(x - AWAY, y);
+  for (const share of [0.2, 0.35, 0.5, 0.65, 0.8]) await page.mouse.move(x - AWAY, column.y + column.height * share);
   await page.waitForTimeout(600);
   await expect.poll(async () => (await seen()).parts.length).toBeGreaterThanOrEqual(1);
-  for (const share of [0.6, 0.4, 0.25]) await page.mouse.move(x, column.y + column.height * share);
+  for (const share of [0.6, 0.4, 0.25]) await page.mouse.move(x - AWAY, column.y + column.height * share);
   await page.mouse.up();
   // The release shows the place let go at, its part asked for then.
   await expect.poll(async () => Math.abs((await railPlace(page)) - 0.25)).toBeLessThan(0.03);
@@ -396,9 +406,11 @@ test("Reading position shows the chapter: its sentences are the cuts, a drag sta
     const { x, y, column } = await thumbAt(page);
     await page.mouse.move(x, y);
     await page.mouse.down();
-    await page.mouse.move(x, column.y + column.height * 0.5, { steps: 4 });
+    // Pulled away, so the rail's height is the whole chapter.
+    await page.mouse.move(x - AWAY, y, { steps: 2 });
+    await page.mouse.move(x - AWAY, column.y + column.height * 0.5, { steps: 4 });
     await expect(room(page).locator(".reader-foot-place")).toHaveText(new RegExp(`^${chapter} · \\d+% of the chapter$`));
-    await page.mouse.move(x, column.y + column.height - 2, { steps: 4 });
+    await page.mouse.move(x - AWAY, column.y + column.height - 2, { steps: 4 });
     await page.mouse.up();
     await expect(rail(page)).toHaveAttribute("aria-valuetext", new RegExp(`^${chapter}, 100% of the chapter\\.`));
     // Away from the narration, which is in this chapter: its mark is on the chapter's rail, near the top.
@@ -489,9 +501,9 @@ test("a touch tap on the rail is the text's tap; a touch that moves up or down t
   await page.waitForTimeout(800);
   expect(Math.abs((await top()) - before - turned)).toBeLessThan(4);
   expect(await railPlace(page)).toBeLessThan(place + 0.05);
-  // A touch moved down the rail takes it: the place goes with the finger.
+  // A touch moved down the rail takes it, finely while it is on the rail; pulled away the place goes with the finger.
   const at = await thumbAt(page);
-  await touchDrag(page, browserName, [0, 4, 12, 60, 120, 180].map((dy) => ({ x: at.x, y: at.y + dy })));
+  await touchDrag(page, browserName, [[0, 0], [0, 4], [0, 12], [AWAY, 12], [AWAY, 60], [AWAY, 120], [AWAY, 180]].map(([left, down]) => ({ x: at.x - left!, y: at.y + down! })));
   await expect.poll(() => railPlace(page)).toBeGreaterThan(place + 0.15);
   await expect.poll(async () => Math.abs(placeOf(await manifestOfPage(page), (await firstInView(page)) ?? "0:0") - (await railPlace(page)))).toBeLessThan(1e-5);
 });
@@ -503,7 +515,7 @@ async function manifestOfPage(page: Page): Promise<Manifest> {
 }
 
 // Pictures for the owner's check (#804): saved to artifacts/rail-804 when SONDER_RAIL_PICTURES is set.
-test("pictures of the rail at rest, away, held and zoomed, on a phone and a desktop, in Forest and Light, of the whole book and of the chapter", async ({ page, browser }) => {
+test("pictures of the rail at rest, away, held on the rail (zoomed in) and held pulled away, on a phone and a desktop, in Forest and Light, of the whole book and of the chapter", async ({ page, browser }) => {
   test.skip(!process.env.SONDER_RAIL_PICTURES, "pictures only when asked for");
   test.setTimeout(400000);
   const appearance = await (await page.request.get("/api/appearance")).json();
@@ -521,10 +533,12 @@ test("pictures of the rail at rest, away, held and zoomed, on a phone and a desk
           const { x, y, column } = await thumbAt(shown);
           await shown.mouse.move(x, y);
           await shown.mouse.down();
-          await shown.mouse.move(x, column.y + column.height * 0.45, { steps: 6 });
+          await shown.mouse.move(x - AWAY, y, { steps: 3 });
+          await shown.mouse.move(x - AWAY, column.y + column.height * 0.45, { steps: 6 });
           await shown.waitForTimeout(500);
-          await shot("held");
-          await shown.mouse.move(x - 100, column.y + column.height * 0.45, { steps: 6 });
+          await shot("held-away");
+          await shown.mouse.move(x, column.y + column.height * 0.45, { steps: 6 });
+          await shown.mouse.move(x, column.y + column.height * 0.45 + 40, { steps: 4 });
           await shown.waitForTimeout(300);
           await shot("held-zoomed");
           await shown.mouse.up();

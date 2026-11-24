@@ -2,6 +2,10 @@
 // of the book is on the rail, the drag and its zoom, what a touch is, and what is drawn in each state. Pure: no page,
 // no view. The rail's page part is text-rail.ts.
 //
+// The zoom is by the finger's sideways distance from the rail, the other way round from the RailTry board (the
+// owner's change, 2026-11-23): on the rail the held thumb moves finely, zoomed in ZOOM times about its place, and
+// pulling the finger away zooms out, to the whole of what the rail shows at FAR.
+//
 // A place is a sentence's place among the book's sentences, 0 to 1 (`SentenceIndex.progression`, the number the foot's
 // percent uses), fractional while the thumb is held between two sentences. The rail's top is the first sentence and
 // its bottom the last; its y is measured from the rail's top, 0 to `height`.
@@ -13,11 +17,11 @@ export type RailSegment = { label: string; start: number; end: number };
 
 /** A press this near the thumb, above or below, picks it up where it is (no jump). */
 export const GRAB = 22;
-/** No zoom while the finger is this near the rail's centre line, sideways. */
-export const DEAD = 32;
-/** The sideways distance at which the zoom is whole. */
-export const PULL = 100;
-/** The zoom at PULL and beyond. */
+/** The zoom is whole while the finger is this near the rail's centre line, sideways. */
+export const NEAR = 32;
+/** The sideways distance at which nothing is zoomed any more: the rail is the whole of what it shows. */
+export const FAR = 100;
+/** The zoom at NEAR and nearer. */
 export const ZOOM = 8;
 /** A touch takes the rail once it has moved this far, more up or down than sideways. */
 export const TOUCH_SLOP = 8;
@@ -105,15 +109,18 @@ export const placeToY = (place: number, height: number) => clamp01(place) * heig
 /** A y on the rail at rest to its place. */
 export const yToPlace = (y: number, height: number) => (height > 0 ? clamp01(y / height) : 0);
 
-/** The zoom for the finger's sideways distance from the rail's centre line: 1 within DEAD, then `8 ^ s` to 8 at PULL. */
+/**
+ * The zoom for the finger's sideways distance from the rail's centre line: ZOOM within NEAR, then `8 ^ (1 - s)` down
+ * to 1 at FAR and beyond.
+ */
 export function zoomOf(dx: number): number {
-  const side = Math.max(10, PULL - DEAD);
-  const s = clamp01((Math.abs(dx) - DEAD) / side);
-  return Math.exp(Math.log(ZOOM) * s);
+  const side = Math.max(10, FAR - NEAR);
+  const s = clamp01((Math.abs(dx) - NEAR) / side);
+  return Math.exp(Math.log(ZOOM) * (1 - s));
 }
 
 /**
- * Back on the rail after a zoom: the whole book again, re-anchored so that the finger's spot `y0` is the current
+ * Pulled away to FAR after a zoom: the whole book again, re-anchored so that the finger's spot `y0` is the current
  * place `u0` and the rail's ends are still the book's ends (RailTry's `barMap`).
  */
 export function barMap(y: number, y0: number, u0: number, height: number): number {
@@ -128,7 +135,9 @@ export type RailDrag = { off: number; lastY: number; u: number; y0: number; u0: 
 
 /**
  * A press on the rail: within GRAB of the thumb it picks the thumb up where it is; elsewhere the thumb goes to the
- * finger (at a zoom, by `1 / zoom` of the way from the thumb). `place` is the thumb's place before the press.
+ * finger, whatever the zoom: the rail at rest shows the whole of its span, so the finger is on the place it asks for.
+ * The drag begins at the zoom of the finger's distance (on the rail: zoomed in). `place` is the thumb's place before
+ * the press.
  */
 export function pressRail(pointer: RailPointer, place: number, height: number): RailDrag {
   const a = placeToY(place, height);
@@ -136,14 +145,15 @@ export function pressRail(pointer: RailPointer, place: number, height: number): 
   const off = grabbed ? pointer.y - a : 0;
   const ye = clamp(pointer.y - off, 0, height);
   let zoom = zoomOf(pointer.dx);
-  let u = ye;
   if (zoom <= 1.001) zoom = 1;
-  else if (!grabbed) u = clamp(a + (ye - a) / zoom, 0, height);
-  if (grabbed) u = a;
+  const u = grabbed ? a : ye;
   return { off, lastY: ye, u, y0: clamp(ye, 1, height - 1), u0: u, fine: zoom > 1, zoom, grabbed };
 }
 
-/** The finger moved while held (RailTry's `dragTo`): the drag after it. Zoomed, the same travel moves `1 / zoom` of it. */
+/**
+ * The finger moved while held (RailTry's `dragTo`): the drag after it. Zoomed, the same travel moves `1 / zoom` of
+ * it; at FAR the finger's y is a place of the whole rail again (`barMap`).
+ */
 export function dragRail(drag: RailDrag, pointer: RailPointer, height: number): RailDrag {
   const ye = clamp(pointer.y - drag.off, 0, height);
   let zoom = zoomOf(pointer.dx);

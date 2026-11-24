@@ -4,9 +4,9 @@
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 import {
-  DEAD,
+  FAR,
   GRAB,
-  PULL,
+  NEAR,
   REST_MS,
   ZOOM,
   barMap,
@@ -100,56 +100,69 @@ test("a place and its y are one measure, and the ends of the rail are the book's
   for (const place of [0, 0.1, 0.5, 0.999]) assert.ok(Math.abs(yToPlace(placeToY(place, 696), 696) - place) < 1e-12);
 });
 
-test("the zoom is none within 32 px of the centre line, then 8 ^ s up to 8 at 100 px", () => {
-  assert.equal(zoomOf(0), 1);
-  assert.equal(zoomOf(DEAD), 1);
-  assert.equal(zoomOf(-DEAD), 1);
-  assert.ok(Math.abs(zoomOf(PULL) - ZOOM) < 1e-9);
-  assert.ok(Math.abs(zoomOf(400) - ZOOM) < 1e-9);
-  assert.ok(Math.abs(zoomOf(DEAD + (PULL - DEAD) / 2) - Math.sqrt(ZOOM)) < 1e-9);
-  assert.ok(Math.abs(zoomOf(-PULL) - ZOOM) < 1e-9, "either side");
+test("the zoom is whole (8) within 32 px of the centre line, then 8 ^ (1 - s) down to none at 100 px", () => {
+  assert.ok(Math.abs(zoomOf(0) - ZOOM) < 1e-9);
+  assert.ok(Math.abs(zoomOf(NEAR) - ZOOM) < 1e-9);
+  assert.ok(Math.abs(zoomOf(-NEAR) - ZOOM) < 1e-9);
+  assert.equal(zoomOf(FAR), 1);
+  assert.equal(zoomOf(400), 1);
+  assert.ok(Math.abs(zoomOf(NEAR + (FAR - NEAR) / 2) - Math.sqrt(ZOOM)) < 1e-9);
+  assert.equal(zoomOf(-FAR), 1, "either side");
 });
 
-test("a press near the thumb picks it up where it is; a press elsewhere moves it to the finger", () => {
+test("a press near the thumb picks it up where it is; a press elsewhere moves it to the finger, zoomed or not", () => {
   const height = 600;
   const grab = pressRail({ y: 300 + GRAB, dx: 0 }, 0.5, height);
   assert.equal(grab.grabbed, true);
   assert.equal(dragPlace(grab, height), 0.5);
+  // On the rail the drag begins zoomed in; the thumb still goes to the finger, the place the rail at rest shows there.
   const jump = pressRail({ y: 300 + GRAB + 1, dx: 0 }, 0.5, height);
   assert.equal(jump.grabbed, false);
-  assert.ok(Math.abs(dragPlace(jump, height) - (323 / 600)) < 1e-9);
-  // Picked up 10 px below its middle, the thumb keeps that offset under the finger.
-  const moved = dragRail(pressRail({ y: 310, dx: 0 }, 0.5, height), { y: 370, dx: 0 }, height);
+  assert.ok(Math.abs(jump.zoom - ZOOM) < 1e-9);
+  assert.ok(Math.abs(dragPlace(jump, height) - 323 / 600) < 1e-9);
+  assert.ok(Math.abs(dragPlace(pressRail({ y: 520, dx: -FAR }, 0.5, height), height) - 520 / 600) < 1e-9);
+  // Picked up 10 px below its middle and pulled away: the thumb keeps that offset under the finger.
+  let moved = dragRail(pressRail({ y: 310, dx: 0 }, 0.5, height), { y: 310, dx: -FAR }, height);
+  moved = dragRail(moved, { y: 370, dx: -FAR }, height);
   assert.ok(Math.abs(dragPlace(moved, height) - 360 / 600) < 1e-9);
 });
 
-test("pulled 100 px away the same travel moves the place by an eighth of what it moves on the rail", () => {
+test("on the rail the same travel moves the place by an eighth of what it moves pulled 100 px away", () => {
   const height = 600;
   const near = dragRail(pressRail({ y: 300, dx: 0 }, 0.5, height), { y: 360, dx: 0 }, height);
   const onRail = dragPlace(near, height) - 0.5;
   let far = pressRail({ y: 300, dx: 0 }, 0.5, height);
-  far = dragRail(far, { y: 300, dx: -PULL }, height);
-  far = dragRail(far, { y: 360, dx: -PULL }, height);
-  const zoomed = dragPlace(far, height) - 0.5;
-  assert.ok(Math.abs(zoomed - onRail / ZOOM) < 1e-9, `${zoomed} against ${onRail / ZOOM}`);
+  far = dragRail(far, { y: 300, dx: -FAR }, height);
+  far = dragRail(far, { y: 360, dx: -FAR }, height);
+  const away = dragPlace(far, height) - 0.5;
+  assert.ok(Math.abs(away - 60 / 600) < 1e-9, "pulled away the finger's travel is the thumb's");
+  assert.ok(Math.abs(onRail - away / ZOOM) < 1e-9, `${onRail} against ${away / ZOOM}`);
+  // Between the two the zoom eases: halfway out the same travel moves the place by 1 / sqrt(8) of it.
+  let half = pressRail({ y: 300, dx: 0 }, 0.5, height);
+  half = dragRail(half, { y: 300, dx: NEAR + (FAR - NEAR) / 2 }, height);
+  half = dragRail(half, { y: 360, dx: NEAR + (FAR - NEAR) / 2 }, height);
+  assert.ok(Math.abs(dragPlace(half, height) - 0.5 - away / Math.sqrt(ZOOM)) < 1e-9);
 });
 
-test("back on the rail after a zoom, the finger's spot is the current place and the rail's ends are the book's ends", () => {
+test("pulled away after a zoom, the finger's spot is the current place and the rail's ends are the book's ends", () => {
   const height = 600;
   let drag = pressRail({ y: 300, dx: 0 }, 0.5, height);
-  drag = dragRail(drag, { y: 300, dx: PULL }, height);
-  drag = dragRail(drag, { y: 380, dx: PULL }, height);
+  drag = dragRail(drag, { y: 380, dx: 0 }, height);
   const current = dragPlace(drag, height);
   assert.ok(Math.abs(current - (300 + 80 / ZOOM) / 600) < 1e-9);
-  // Back on the rail at the same y: the place stays.
-  drag = dragRail(drag, { y: 380, dx: 0 }, height);
+  // Pulled away at the same y: the place stays.
+  drag = dragRail(drag, { y: 380, dx: FAR }, height);
+  assert.equal(drag.zoom, 1);
   assert.ok(Math.abs(dragPlace(drag, height) - current) < 1e-9);
   // From there the top of the rail is the book's start and the bottom its end.
-  assert.equal(dragPlace(dragRail(drag, { y: 0, dx: 0 }, height), height), 0);
-  assert.equal(dragPlace(dragRail(drag, { y: height, dx: 0 }, height), height), 1);
+  assert.equal(dragPlace(dragRail(drag, { y: 0, dx: FAR }, height), height), 0);
+  assert.equal(dragPlace(dragRail(drag, { y: height, dx: FAR }, height), height), 1);
   // Halfway to the bottom from the finger's spot is halfway from the current place to the end.
-  const half = dragPlace(dragRail(drag, { y: 380 + (height - 380) / 2, dx: 0 }, height), height);
+  const half = dragPlace(dragRail(drag, { y: 380 + (height - 380) / 2, dx: FAR }, height), height);
   assert.ok(Math.abs(half - (current + (1 - current) / 2)) < 1e-9);
+  // Back on the rail the thumb moves finely again from where it is.
+  const fine = dragRail(dragRail(drag, { y: 380, dx: 0 }, height), { y: 388, dx: 0 }, height);
+  assert.ok(Math.abs(dragPlace(fine, height) - current - 1 / 600) < 1e-9);
   assert.equal(barMap(0, 380, 300, height), 0);
   assert.equal(barMap(height, 380, 300, height), height);
   assert.equal(barMap(380, 380, 300, height), 300);
