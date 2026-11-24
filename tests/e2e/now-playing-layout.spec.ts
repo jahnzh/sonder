@@ -199,19 +199,24 @@ for(const size of sizes){
   expect(timerBox.box.width).toBeGreaterThanOrEqual(44);
   expect(timerBox.box.x+timerBox.box.width).toBeLessThanOrEqual(width);
   expect(timerBox.box.x).toBeGreaterThanOrEqual(forwardBox.x+forwardBox.width);
-  // The sleep timer takes the transport row's place with its stepper and Done (#589); its row stays in the window.
+  // The sleep timer opens its pop-up above its button with its stepper (#589, #890); it stays in the window and the
+  // transport row stays.
   await timer.click();
-  const longer=player.getByRole("button",{name:"Longer",exact:true});
+  const popup=page.getByRole("group",{name:"Sleep timer",exact:true});
+  const longer=popup.getByRole("button",{name:"Longer",exact:true});
   await expect(longer).toBeVisible();
-  const rowBox=await boxOf(player.locator(".reader-foot-setting"));
+  const rowBox=await boxOf(popup);
   expect(rowBox.x).toBeGreaterThanOrEqual(0);expect(rowBox.x+rowBox.width).toBeLessThanOrEqual(width);
+  await expect(forward).toBeVisible();
   await longer.click();await longer.click();
-  await expect(player.getByRole("spinbutton",{name:"Sleep timer",exact:true})).toHaveText("15 min");
-  await player.getByRole("button",{name:"Done",exact:true}).click();
+  await expect(popup.getByRole("spinbutton",{name:"Sleep timer",exact:true})).toHaveText("15 min");
+  await timer.click();
+  await expect(popup).toHaveCount(0);
   await expect(timer).toContainText("15 min");
   await timer.click();
-  await player.getByRole("spinbutton",{name:"Sleep timer",exact:true}).press("Home");
-  await player.getByRole("button",{name:"Done",exact:true}).click();
+  await popup.getByRole("spinbutton",{name:"Sleep timer",exact:true}).press("Home");
+  await page.keyboard.press("Escape");
+  await expect(popup).toHaveCount(0);
   await expect(timer).toHaveAccessibleName("Sleep timer: off");
   const box=await boxOf(dialog);
   expect(box.y).toBeGreaterThanOrEqual(0); expect(box.y+box.height).toBeLessThanOrEqual(height);

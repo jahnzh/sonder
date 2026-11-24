@@ -1,4 +1,4 @@
-// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing, prepared-view
+// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing, prepared-view, mobile-chrome
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -7,9 +7,10 @@ import { expectTextUncovered, intersects } from "./reader-bands";
 import { openRead } from "./now-playing";
 import { playFromLibrary } from "./library-play";
 import {textFrame,bookTextIn} from "./reader-view";
-// Every message while reading appears in the foot (#591, ADR 0019, spec #586 "Messages in the foot"; boards
+// Every message while reading appears in the foot (#591, #890, ADR 0019, spec #586 "Messages in the foot"; boards
 // ReaderUndo, ReaderError, ReaderConflict, ReaderUpdate, ReaderConfirm): the foot's lower row holds the message and
-// keeps Play or Pause at its end, at rest and with the controls shown, and nothing is drawn over the text.
+// keeps Play or Pause at its end, at rest and with the controls shown, except a notice with Undo with the controls
+// shown, which takes the timeline's row and leaves the transport row in place; nothing is drawn over the text.
 
 test.afterEach(async ({ page }) => { await page.unrouteAll({ behavior: "wait" }); });
 
@@ -141,11 +142,27 @@ async function closeNowPlaying(page: Page, room: Locator) {
 }
 const message = (room: Locator) => room.locator(".reader-player > .reader-message");
 
+// A control a tap reaches: shown, and the topmost element at its centre is the control itself.
+async function expectTappable(control: Locator) {
+  await expect(control).toBeVisible();
+  const at = (await control.boundingBox())!;
+  expect(await control.evaluate((element, [x, y]) => {
+    const top = document.elementFromPoint(x, y);
+    return !!top && element.contains(top);
+  }, [at.x + at.width / 2, at.y + at.height / 2]), `${control} is not covered`).toBe(true);
+}
+const TRANSPORT = ["Back 30 seconds", /^(Play|Pause) narration$/, "Forward 30 seconds", /^Sleep timer: /, /^Speed [\d.]+ times$/] as const;
+const timelineOf = (room: Locator) => room.locator(".reader-player :is(.reader-audio-timeline, .reader-scrubber)");
+
 /**
- * The message is in the foot's lower row, measured against the boards at 390 by 844: under the 2-high progress line
- * at rest (8 + 2 + 4 from the foot's top), under the 20-high timeline with the controls shown (4 + 20 + 4); 44 high,
- * 16 from the foot's sides, its sentence in Label (14/20), its actions quiet buttons 44 high, and Play or Pause the
- * row's last button. What the row held gives way, and no box intersects the text.
+ * The message in the foot, measured against the boards at 390 by 844 (#591, #890). A notice with Undo with the
+ * controls shown takes the timeline's row (4 from the foot's top, 20 high): its sentence, then Undo, whose 44-high
+ * target ends where the transport row begins and reaches up over the text drawing nothing; the transport row, Sleep
+ * timer and Speed stay whole. Every other message, and a notice at rest, is in the foot's lower row: under the
+ * 2-high progress line at rest (8 + 2 + 4 from the foot's top), under the 20-high timeline with the controls shown
+ * (4 + 20 + 4); 44 high, its actions quiet buttons 44 high and Play or Pause the row's last button; a notice's Undo
+ * directly after its sentence. Always 16 from the foot's sides, the sentence in Label (14/20), and no box over the
+ * text.
  */
 async function expectInFoot(room: Locator, kind: string, text: string, actions: string[]) {
   const row = message(room);
@@ -153,29 +170,63 @@ async function expectInFoot(room: Locator, kind: string, text: string, actions: 
   await expect(row).toHaveAttribute("data-kind", kind);
   const sentence = row.getByRole(kind === "error" ? "alert" : "status");
   await expect(sentence).toHaveText(text);
+  const controls = (await room.getAttribute("data-controls-visible")) === "true";
+  const timeline = kind === "notice" && controls;
+  await expect(room.locator(".reader-player")).toHaveAttribute("data-message-place", timeline ? "timeline" : "row");
   const buttons = row.getByRole("button");
   const names = await buttons.evaluateAll((all) => all.map((button) => button.getAttribute("aria-label") || button.textContent?.trim() || ""));
-  expect(names.slice(0, -1)).toEqual(actions);
-  expect(names.at(-1)).toMatch(/^(Play|Pause) narration$/);
-  const controls = (await room.getAttribute("data-controls-visible")) === "true";
+  if (timeline) expect(names).toEqual(actions);
+  else {
+    expect(names.slice(0, -1)).toEqual(actions);
+    expect(names.at(-1)).toMatch(/^(Play|Pause) narration$/);
+  }
   const foot = (await room.locator(".reader-player").boundingBox())!;
   const box = (await row.boundingBox())!;
-  expect(box.y - foot.y).toBeCloseTo(controls ? 28 : 14, 0);
-  expect(box.height).toBeCloseTo(44, 0);
+  expect(box.y - foot.y).toBeCloseTo(timeline ? 4 : controls ? 28 : 14, 0);
+  expect(box.height).toBeCloseTo(timeline ? 20 : 44, 0);
   expect(box.x - foot.x).toBeCloseTo(16, 0);
   expect(foot.x + foot.width - (box.x + box.width)).toBeCloseTo(16, 0);
   expect(box.y + box.height).toBeLessThanOrEqual(foot.y + foot.height + 0.5);
-  const last = (await buttons.last().boundingBox())!;
-  expect(last.x + last.width).toBeCloseTo(box.x + box.width, 0);
+  if (!timeline) {
+    const last = (await buttons.last().boundingBox())!;
+    expect(last.x + last.width).toBeCloseTo(box.x + box.width, 0);
+  }
   for (let i = 0; i < names.length; i++) expect((await buttons.nth(i).boundingBox())!.height).toBeCloseTo(44, 0);
+  if (kind === "notice") {
+    // Undo directly after the sentence, not at the row's far end.
+    const words = (await sentence.boundingBox())!, undo = (await buttons.first().boundingBox())!;
+    expect(undo.x - (words.x + words.width)).toBeGreaterThanOrEqual(-0.5);
+    expect(undo.x - (words.x + words.width)).toBeLessThanOrEqual(8.5);
+  }
   const style = await sentence.evaluate((element) => {
     const css = getComputedStyle(element);
     return { size: css.fontSize, line: css.lineHeight, weight: css.fontWeight };
   });
   expect(style).toEqual({ size: "14px", line: "20px", weight: "500" });
-  // What the row held is gone from view: the place and the small Pause at rest, the transport with the controls.
-  await expect(room.locator(".reader-foot-place")).toBeHidden();
-  await expect(room.locator(".reader-transport")).toBeHidden();
+  if (timeline) {
+    // Undo's target: 44 high, ending where the transport row begins (4 + 20 + 4), reaching over the text, drawing
+    // nothing there: its word stays inside the timeline's row.
+    const undo = buttons.first();
+    const target = (await undo.boundingBox())!;
+    expect(target.y + target.height).toBeCloseTo(foot.y + 28, 0);
+    expect(target.y).toBeLessThan(foot.y);
+    expect(await undo.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
+    const word = await undo.evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const rect = range.getBoundingClientRect();
+      return { y: rect.y, height: rect.height };
+    });
+    expect(word.y).toBeGreaterThanOrEqual(box.y - 0.5);
+    expect(word.y + word.height).toBeLessThanOrEqual(box.y + box.height + 0.5);
+    // The timeline gives way; the transport row, Sleep timer and Speed stay whole and tappable.
+    await expect(timelineOf(room)).toBeHidden();
+    for (const name of TRANSPORT) await expectTappable(room.locator(".reader-player").getByRole("button", { name, exact: typeof name === "string" }));
+  } else {
+    // What the row held is gone from view: the place and the small Pause at rest, the transport with the controls.
+    await expect(room.locator(".reader-foot-place")).toBeHidden();
+    await expect(room.locator(".reader-transport")).toBeHidden();
+  }
   const boxes = await expectTextUncovered(room);
   expect(intersects(box, boxes.text)).toBe(false);
 }
@@ -224,15 +275,129 @@ test("a notice leaves after 8 seconds or at the next tap on a control; Undo is n
   await expect(message(room)).toBeVisible();
   await page.clock.fastForward(3500);
   await expect(message(room)).toHaveCount(0);
-  // Again, and the next tap on a control (Pause, at the row's end) ends it at once.
+  // Again, with the controls shown, and the next tap on a control (Pause, in the transport row it left in place) ends
+  // it at once.
   await longPress(page, room);
   await expect(message(room)).toBeVisible();
+  await expect(room.locator(".reader-player")).toHaveAttribute("data-message-place", "timeline");
   if (plays) await expect.poll(() => page.evaluate(() => ((window as any).__messageAudio as HTMLAudioElement[]).some((item) => !!item.src && !item.paused))).toBe(true);
-  await message(room).getByRole("button", { name: /^(Pause|Play) narration$/ }).click();
+  await room.locator(".reader-transport").getByRole("button", { name: /^(Pause|Play) narration$/ }).click();
   // At once: well inside the notice's own 8 seconds.
   await expect(message(room)).toHaveCount(0, { timeout: 2000 });
-  // The transport row is back in its place.
-  await expect(room.locator(".reader-transport")).toBeVisible();
+  // The timeline is back in its row.
+  await expect(timelineOf(room)).toBeVisible();
+});
+
+// The notice leaves the controls in place (#890): with the controls shown it takes the timeline's row, and the skip
+// buttons, Sleep timer and Speed do what they do while it shows; the tap on one of them ends it.
+test("with the controls shown the notice with Undo leaves the transport row, Sleep timer and Speed usable", async ({ page }) => {
+  const { title } = await fixture(page, "Notice controls");
+  await page.clock.install();
+  const room = await openNowPlaying(page, title);
+  const foot = room.locator(".reader-player");
+  await narrateAt(page, room, 170.25);
+  await toggleControls(page, room);
+  // Undo, tapped with the controls shown, takes the listen back.
+  await longPress(page, room);
+  await expectInFoot(room, "notice", "Listening from here", ["Undo"]);
+  await message(room).getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(message(room)).toHaveCount(0);
+  await expect(timelineOf(room)).toBeVisible();
+  if (plays) await foot.locator(".reader-transport").getByRole("button", { name: "Pause narration", exact: true }).click();
+  await expect.poll(() => audioPosition(page)).toBeGreaterThanOrEqual(170.25);
+  expect(await audioPosition(page)).toBeLessThan(175);
+  // Speed and the sleep timer open their pop-up, and the notice ends.
+  for (const [button, group] of [[/^Speed [\d.]+ times$/, "Speed"], [/^Sleep timer: /, "Sleep timer"]] as const) {
+    await longPress(page, room);
+    await expect(foot).toHaveAttribute("data-message-place", "timeline");
+    await foot.getByRole("button", { name: button }).click();
+    await expect(page.getByRole("group", { name: group, exact: true })).toBeVisible();
+    await expect(message(room)).toHaveCount(0, { timeout: 2000 });
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("group", { name: group, exact: true })).toHaveCount(0);
+  }
+  // Back 30 seconds while it shows: the narration moves back and the notice ends at once. (Back first: the map's
+  // section ends at 195 s, and a page past it holds no sentence for the next long press.)
+  await longPress(page, room);
+  await expectInFoot(room, "notice", "Listening from here", ["Undo"]);
+  const back = await audioPosition(page);
+  await foot.getByRole("button", { name: "Back 30 seconds", exact: true }).click();
+  await expect(message(room)).toHaveCount(0, { timeout: 2000 });
+  await expect(timelineOf(room)).toBeVisible();
+  await expect.poll(() => audioPosition(page)).toBeLessThan(back - 25);
+  // Forward 30 seconds the same way.
+  await longPress(page, room);
+  await expect(foot).toHaveAttribute("data-message-place", "timeline");
+  const before = await audioPosition(page);
+  await foot.getByRole("button", { name: "Forward 30 seconds", exact: true }).click();
+  await expect(message(room)).toHaveCount(0, { timeout: 2000 });
+  await expect(timelineOf(room)).toBeVisible();
+  await expect.poll(() => audioPosition(page)).toBeGreaterThan(before + 25);
+  // The page afterwards: its bands as before and nothing over the text. Which sentence it shows is not asserted: 30 s
+  // on from the listen can land in the map's gap between two sections (195 to 200 s), where nothing is narrated.
+  await expectTextUncovered(room);
+});
+
+// A book without a recording (#890, review): its foot's first row is the status line (the chapter and "N% of the
+// book") and its second Chapters and the position slider. A notice with Undo takes the status line's place, nothing
+// is drawn over the line it replaces, and Chapters and the slider stay usable.
+test("a book without a recording: Bookmark removed takes the status line's place; Chapters and the slider stay usable", async ({ page }) => {
+  const title = `Notice ebook only ${randomUUID().slice(0, 8)}`;
+  const imported = await page.request.post("/api/ebooks/import", {
+    multipart: { file: { name: `${title}.epub`, mimeType: "application/epub+zip", buffer: await readerFixture({ title }) } },
+  });
+  expect(imported.ok()).toBe(true);
+  const id = (await imported.json()).id as string;
+  const ebook = ((await (await page.request.get("/api/ebooks")).json()) as { id: string; workId: string }[]).find((entry) => entry.id === id)!;
+  try {
+    await page.goto(`/#read/${encodeURIComponent(ebook.workId)}`);
+    const room = page.locator(".now-playing-screen .reader-room");
+    const foot = room.locator(".reader-player");
+    await expect(bookTextIn(room).getByText("Alice was beginning", { exact: false })).toBeVisible();
+    await expect(foot).toHaveAttribute("data-recording", "none");
+    await toggleControls(page, room);
+    const status = foot.locator(".reader-player-info");
+    await expect(status).toBeVisible();
+    await room.getByRole("button", { name: "Bookmark the first sentence on this page", exact: true }).click();
+    await expect.poll(async () => (await serverBookmarks(page, id)).length).toBe(1);
+    await room.getByRole("button", { name: "Remove the bookmark from the first sentence on this page", exact: true }).click();
+    await expect.poll(async () => (await serverBookmarks(page, id)).length).toBe(0);
+    await expect(message(room)).toBeVisible();
+    await expect(foot).toHaveAttribute("data-message-place", "status");
+    // The notice in the status line's 20-high row, its sentence, then Undo, whose 44-high target ends where the row
+    // of Chapters and the slider begins; the line it replaces is hidden, so nothing is drawn over it.
+    const footBox = (await foot.boundingBox())!, row = (await message(room).boundingBox())!;
+    expect(row.y - footBox.y).toBeCloseTo(4, 0);
+    expect(row.height).toBeCloseTo(20, 0);
+    await expect(message(room).getByRole("status")).toHaveText("Bookmark removed");
+    const undo = message(room).getByRole("button", { name: "Undo: keep the bookmark", exact: true });
+    const target = (await undo.boundingBox())!;
+    expect(target.height).toBeCloseTo(44, 0);
+    expect(target.y + target.height).toBeCloseTo(footBox.y + 28, 0);
+    await expect(status).toBeHidden();
+    await expect(message(room).getByRole("button")).toHaveCount(1);
+    // Chapters and the position slider stay whole and tappable, the notice over neither.
+    const slider = foot.getByRole("slider", { name: "Position in the book", exact: true });
+    await expectTappable(slider);
+    await expectTappable(foot.getByRole("button", { name: "Chapters", exact: true }));
+    const sliderBox = (await slider.boundingBox())!;
+    expect(intersects(sliderBox, row)).toBe(false);
+    expect(intersects(sliderBox, target)).toBe(false);
+    await expectTextUncovered(room);
+    // Undo puts the bookmark back and the status line is shown again.
+    await undo.click();
+    await expect(message(room)).toHaveCount(0);
+    await expect.poll(async () => (await serverBookmarks(page, id)).length).toBe(1);
+    await expect(status).toBeVisible();
+    // Again, and a tap on the slider (a control) ends the notice at once.
+    await room.getByRole("button", { name: "Remove the bookmark from the first sentence on this page", exact: true }).click();
+    await expect(foot).toHaveAttribute("data-message-place", "status");
+    await slider.click();
+    await expect(message(room)).toHaveCount(0, { timeout: 2000 });
+    await expect(status).toBeVisible();
+  } finally {
+    await page.request.delete(`/api/works/${encodeURIComponent(ebook.workId)}/library`);
+  }
 });
 
 test("Bookmark removed from the head says so with Undo, and Undo puts the same bookmark back", async ({ page }) => {

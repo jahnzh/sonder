@@ -335,7 +335,7 @@ for (const size of SIZES) {
     expect(await rect(listen(page).locator(".now-playing-footer"))).toEqual(foot);
   });
 
-  test(`Read at ${size.width}: Hide contents is remembered, Appearance docks in the text's column, Speed and messages take the footer's row`, async ({ page }) => {
+  test(`Read at ${size.width}: Hide contents is remembered, Appearance docks in the text's column, Speed opens its setting pop-up above the footer and a message takes the footer's row`, async ({ page }) => {
     await page.setViewportSize(size);
     const { workId } = await book(page, "Desktop dock");
     await openRead(page, workId);
@@ -373,24 +373,24 @@ for (const size of SIZES) {
     await panel.getByRole("button", { name: /^Close/ }).click();
     await expect(panel).toHaveCount(0);
     await settled(reader);
-    // Speed takes the footer's row with its stepper and Done; the footer keeps its box.
+    // Speed opens its pop-up above its button, standing on the footer's top edge (#890); the footer's controls and
+    // the timeline stay, and the footer keeps its box.
     const player = reader.locator(".reader-player");
-    await player.getByRole("button", { name: /^Speed [\d.]+ times$/ }).click();
-    const setting = player.locator(".reader-foot-setting");
+    const speed = player.getByRole("button", { name: /^Speed [\d.]+ times$/ });
+    await speed.click();
+    const setting = page.getByRole("group", { name: "Speed", exact: true });
     await expect(setting).toBeVisible();
-    await expect(player.getByRole("button", { name: "Back 30 seconds", exact: true })).toBeHidden();
-    // The timeline stays beside it, as the foot's timeline stays above it.
-    const slider = await rect(player.getByRole("slider", { name: /^Seek in / }));
-    const row = await rect(setting);
-    expect(row.x).toBeGreaterThanOrEqual(foot.x + 23);
-    expect(row.x + row.width).toBeLessThanOrEqual(slider.x);
-    await expect(player.getByRole("button", { name: /^Sleep timer: / })).toBeHidden();
-    near(centreY(row), centreY(foot), 1.5);
+    await expect(player.getByRole("button", { name: "Back 30 seconds", exact: true })).toBeVisible();
+    await expect(player.getByRole("slider", { name: /^Seek in / })).toBeVisible();
+    await expect(player.getByRole("button", { name: /^Sleep timer: / })).toBeVisible();
+    const row = await rect(setting), speedBox = await rect(speed);
+    near(row.y + row.height, foot.y, 1);
+    near(row.x + row.width, speedBox.x + speedBox.width, 1);
     expect(await rect(player)).toEqual(foot);
     await expectNothingOverText(page);
-    await player.getByRole("button", { name: "Done", exact: true }).click();
+    await page.keyboard.press("Escape");
     await expect(setting).toHaveCount(0);
-    await expect(player.getByRole("button", { name: "Back 30 seconds", exact: true })).toBeVisible();
+    await expect(speed).toBeFocused();
     // A message takes the footer's row, with Play or Pause at its end; the footer keeps its box.
     const message = await longPress(page);
     const shown = await rect(message);

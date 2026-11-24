@@ -118,11 +118,15 @@ _Avoid_: Screen, view, dialog
 
 **Sheet**:
 A full-screen task opened over a page, such as Get. Going back closes it and returns to the page.
-_Avoid_: Modal, dialog, popup
+_Avoid_: Modal, dialog, popup (a pop-up is a setting pop-up, which is not a sheet)
 
 **Picker**:
 A short list of choices that opens over a page from its bottom edge, such as the Library's Sort and view or its Shelf. It has no address: a choice applies at once, Done or a tap outside closes it, and Back leaves the page under it, as for a tooltip.
 _Avoid_: Dropdown, menu, popover, select
+
+**Setting pop-up**:
+The small box that Speed or the sleep timer in the reader's foot opens above its button, holding that setting's controls, each change applied at once. It is the one thing drawn over the text band, at most 120 px into it, and only on the reader's tap on its button; nothing is dimmed and the text is not laid out again, and a tap outside it, Escape, its button again or the controls hiding closes it (ADR 0019, amended 2026-11-24). It has no address and is not a sheet, a picker or a dialog.
+_Avoid_: Popover, menu, dialog, overlay
 
 **Old name**:
 An address from before the redesign, such as `#downloads` or `#reader/<ebook id>`, that keeps working for good by opening the page that took its place and replacing itself in the history.
@@ -147,7 +151,7 @@ The band at the top of the reader's page, 44 high plus the phone's safe area. At
 _Avoid_: Top bar, toolbar, header
 
 **Foot**:
-The band at the bottom of the reader's page, 72 high plus the phone's safe area. At rest it holds the progress line, the time left and Pause; with the controls shown, the timeline and the transport. Speed, the sleep timer and every message while reading take its lower row.
+The band at the bottom of the reader's page, 72 high plus the phone's safe area. At rest it holds the progress line, the time left and Pause; with the controls shown, the timeline and the transport. Every message while reading is in it: a notice with Undo takes its first row (the timeline, or the status line of a book without a recording) on a phone with the controls shown, the others its lower row. Speed and the sleep timer open a setting pop-up above their button, the one thing drawn over the text band (ADR 0019).
 _Avoid_: Player bar, bottom bar, footer, toast
 
 **Text band**:

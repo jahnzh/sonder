@@ -251,13 +251,16 @@ async function walkRead({page,size,book,ebook,sequence,middle,snap,step,report})
   await row.getByRole('button',{name:'Longer',exact:true}).click();
   await expect(stepper).toHaveText('5 min');
   await snap('sleep-timer');
-  await row.getByRole('button',{name:'Done',exact:true}).click();
+  // The setting pop-up (#890) has no Done: its button again closes it.
+  await controls.click(sleep,'Sleep timer');
+  await expect(row).toHaveCount(0);
   await expect(sleep).toHaveAccessibleName('Sleep timer: 5 min left');
-  // Off again, so nothing is left running.
+  // Off again, so nothing is left running; Escape closes it as a reader would.
   await controls.click(sleep,'Sleep timer');
   await row.getByRole('button',{name:'Shorter',exact:true}).click();
   await expect(stepper).toHaveText('Off');
-  await row.getByRole('button',{name:'Done',exact:true}).click();
+  await page.keyboard.press('Escape');
+  await expect(row).toHaveCount(0);
   await expect(sleep).toHaveAccessibleName('Sleep timer: off');
  });
  await step('Search, a bookmark and Back to narration',async()=>{

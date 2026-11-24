@@ -148,3 +148,22 @@ export function messageText(message: ReaderMessage): string {
 export function errorRetries(error: ReaderError) {
   return error === "narration" || error === "locate" || error === "text-load" || error === "book-load" || error === "book-offline";
 }
+
+/**
+ * Where the foot shows a message (#890, ADR 0019 amended 2026-11-24). On a phone with the controls shown a notice with
+ * Undo takes the foot's first row, so the row of controls under it stays whole and usable, and any tap on a control
+ * ends the notice and gives the first row back:
+ * - `"timeline"`: a book with a recording, whose first row is the timeline (the scrubber and its times); the transport
+ *   row, the Sleep timer and Speed stay.
+ * - `"status"`: a book without a recording, whose first row is the status line (the chapter and "N% of the book");
+ *   Chapters and the position slider stay.
+ * - `"row"`: everything else stands where it stood before, in the row's place: at rest the lower row under the progress
+ *   line, with the controls shown the row of controls, on a desktop the footer's row. The other messages need an
+ *   answer or are the reader's own status, and the desktop is the second ticket's.
+ */
+export type MessagePlace = "row" | "timeline" | "status";
+
+export function messagePlace(message: ReaderMessage, foot: { controls: boolean; desktop: boolean; recording: boolean }): MessagePlace {
+  if (message.kind !== "notice" || !foot.controls || foot.desktop) return "row";
+  return foot.recording ? "timeline" : "status";
+}
