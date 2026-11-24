@@ -112,6 +112,27 @@ async function withoutAudio(page: Page, queued: () => boolean) {
   });
 }
 
+test("the magnet sheet has no link to a source page, and Get's link for a chosen row is there again on Back (#889)", async ({ page }) => {
+  await serve(page);
+  await withoutAudio(page, () => false);
+  await page.goto(`/#book/${WAR.workId}/get/audiobook`);
+  await expect(rows(page)).toHaveCount(2);
+  await rows(page).nth(0).click();
+  const link = getSheet(page).locator(".part-sheet-foot").getByRole("link");
+  await expect(link).toHaveAccessibleName("On AudioBookBay");
+  await expect(link).toHaveAttribute("href", "https://audiobookbay.lu/abss/war-gillen/");
+  await getSheet(page).getByRole("button", { name: "Paste a magnet link", exact: true }).click();
+  await expect(page).toHaveURL(MAGNET_ADDRESS);
+  await field(page).fill(MAGNET);
+  await expect(getButton(page)).toBeEnabled();
+  await expect(magnetSheet(page).getByRole("link")).toHaveCount(0);
+  await expect(magnetSheet(page).locator("a[href]")).toHaveCount(0);
+  await page.goBack();
+  await expect(page).toHaveURL(GET_ADDRESS);
+  await expect(link).toHaveAccessibleName("On AudioBookBay");
+  await expect(link).toHaveAttribute("href", "https://audiobookbay.lu/abss/war-gillen/");
+});
+
 test("from Get: the magnet sheet over it, Back and Close show Get's kept words, rows and choice without a second search", async ({ page }) => {
   const asked = await serve(page);
   await withoutAudio(page, () => false);

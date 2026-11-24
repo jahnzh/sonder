@@ -4,6 +4,7 @@
 // off, when the work already has this file (`libgen-<md5>` among its ebook editions). EPUBs first, then PDFs, each in
 // Library Genesis's order.
 import type { EbookResult, LibraryWork } from "../types";
+import { isWebAddress, type SourceLink } from "./get-source-link";
 
 const DOT = " · ";
 
@@ -69,4 +70,10 @@ export function getEditionLine(result: Pick<EbookResult, "extension"> | null, wo
   if (!result) return null;
   if (result.extension !== "epub") return LINE_PDF;
   return work && work.recordings.length > 0 ? LINE_EPUB_CHECKED : LINE_EPUB;
+}
+
+/** The link in the footer to the chosen edition's page on Library Genesis (#889); none without an http(s) address. */
+export function editionSourceLink(result: Pick<EbookResult, "url"> | null | undefined): SourceLink | null {
+  if (!result || !isWebAddress(result.url)) return null;
+  return { text: "On Library Genesis", href: result.url.trim() };
 }

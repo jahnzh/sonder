@@ -11,7 +11,7 @@
 // Get this edition's `POST /api/ebooks` is routed too: the server would fetch the file from Library Genesis. The
 // route imports a real EPUB into the book through `POST /api/ebooks/import?workId=` (what the server does with the
 // fetched file), so the Book page shows the edition the server really has.
-import { test, expect, type Page, type Request, type Route } from "@playwright/test";
+import { test, expect, type Locator, type Page, type Request, type Route } from "@playwright/test";
 import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import type { EbookResult } from "../../src/types";
@@ -49,6 +49,15 @@ const FILES = [
   edition(3, { size: "0.9 MB", year: "2008" }),
   edition(4, { language: "Spanish", size: "2.3 MB", year: "2010" }),
 ];
+
+/** The chosen row is inside the sheet's body, not left under the footer that has grown over it (#889). */
+async function expectInBody(row: Locator, body: Locator) {
+  await expect(async () => {
+    const [r, b] = [await row.boundingBox(), await body.boundingBox()];
+    expect(r!.y).toBeGreaterThanOrEqual(b!.y - 1);
+    expect(r!.y + r!.height).toBeLessThanOrEqual(b!.y + b!.height + 1);
+  }).toPass();
+}
 
 const sheet = (page: Page) => page.getByRole("dialog", { name: "Get ebook", exact: true });
 const rows = (page: Page) => sheet(page).getByRole("radiogroup", { name: "Editions", exact: true }).getByRole("radio");
@@ -210,6 +219,85 @@ test("from the Book page: title and author searched, EPUBs before PDFs, a tap se
   await expect(page).toHaveURL(new RegExp(`#book/${book.workId}$`));
   await page.goBack();
   await expect(page).not.toHaveURL(/\/get\/ebook$/);
+});
+
+test("the footer links to the chosen edition's page on Library Genesis, follows the choice, and no row holds a link (#889)", async ({ page, context }) => {
+  const book = await bookWithRecording(page, unique("Edition link book"));
+  // The third file has no web address: the sheet shows no link for it, and no gap. Its first answer to Get is a refusal.
+  let refuse: unknown = null;
+  const listed = [edition(1, { size: "1.1 MB" }), edition(2, { size: "2.2 MB" }), edition(3, { size: "3.3 MB", url: "javascript:alert(1)" })];
+  const asked = await libgen(page, { search: () => ({ files: listed, website: "https://libgen.li" }), save: () => refuse });
+  let opened = 0;
+  context.on("page", () => opened++);
+  await page.goto(`/#book/${book.workId}/get/ebook`);
+  await expect(rows(page)).toHaveCount(3);
+  const foot = sheet(page).locator(".part-sheet-foot");
+  const link = foot.getByRole("link");
+  const row = (size: string) => rows(page).filter({ hasText: size });
+  // Nothing chosen: the footer is the button alone, at the foot, as high as on main.
+  await expect(link).toHaveCount(0);
+  await expect(foot.locator(":scope > *")).toHaveCount(1);
+  expect((await foot.boundingBox())!.height).toBe(44);
+  // The Get button stays where it is for nothing chosen, an edition with an address, one without and after a refusal.
+  const home = await getButton(page).boundingBox();
+  const stays = async () => expect(await getButton(page).boundingBox()).toEqual(home);
+  for (const [size, n] of [["1.1 MB", 1], ["2.2 MB", 2]] as const) {
+    await row(size).click();
+    await expect(row(size)).toHaveAttribute("aria-checked", "true");
+    await expect(link).toHaveCount(1);
+    await expect(link).toHaveAccessibleName("On Library Genesis");
+    await expect(link).toHaveAttribute("href", `https://libgen.li/ads.php?md5=${md5(n)}`);
+    await expect(link).toHaveAttribute("target", "_blank");
+    await expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    await expect(link.locator(".get-sheet-leaving")).toBeVisible();
+    // The link's 44 high row, the sentence 8 below it, the button 8 below that.
+    const [l, t, b] = [await link.boundingBox(), await foot.locator(".get-sheet-line").boundingBox(), await getButton(page).boundingBox()];
+    expect(l!.height).toBe(44);
+    expect(Math.round(l!.y + l!.height + 8)).toBe(Math.round(t!.y));
+    expect(Math.round(t!.y + t!.height + 8)).toBe(Math.round(b!.y));
+    await stays();
+  }
+  await row("3.3 MB").click();
+  await expect(row("3.3 MB")).toHaveAttribute("aria-checked", "true");
+  await expect(link).toHaveCount(0);
+  await expect(foot.locator("a")).toHaveCount(0);
+  await expect(foot.locator(":scope > *")).toHaveCount(2);
+  await stays();
+  // Choosing opened nothing, sent nothing, and no row holds a link.
+  expect(opened).toBe(0);
+  expect(asked.posts).toEqual([]);
+  await expect(rows(page).locator("a, [href]")).toHaveCount(0);
+
+  // The link opens the edition's page in a new tab; the sheet and its choice stay.
+  await context.route("https://libgen.li/**", (route) => route.fulfill({ contentType: "text/html", body: "<title>Library Genesis</title>" }));
+  await row("2.2 MB").click();
+  const [tab] = await Promise.all([context.waitForEvent("page"), link.click()]);
+  await expect.poll(() => tab.url()).toBe(`https://libgen.li/ads.php?md5=${md5(2)}`);
+  await tab.close();
+  await expect(page).toHaveURL(/\/get\/ebook$/);
+  await expect(row("2.2 MB")).toHaveAttribute("aria-checked", "true");
+  expect(asked.posts).toEqual([]);
+
+  // A refused Get: the refusal stands above the link, and the button stays.
+  refuse = { status: 400, error: "Library Genesis did not send this file. Choose another edition." };
+  await getButton(page).click();
+  const alert = foot.getByRole("alert");
+  await expect(alert).toHaveText("Library Genesis did not send this file. Choose another edition.");
+  const [a, l] = [await alert.boundingBox(), await link.boundingBox()];
+  expect(Math.round(a!.y + a!.height + 8)).toBe(Math.round(l!.y));
+  await stays();
+
+  // On a short screen the footer grows over the list: with nothing chosen and the row at the bottom edge of the list,
+  // choosing it adds the link and the sentence, and the row is scrolled back into view, not left under them.
+  await page.setViewportSize({ width: 390, height: 480 });
+  await searchbox(page).fill("Snow Crash again");
+  await searchbox(page).press("Enter");
+  await expect(link).toHaveCount(0);
+  await expect(rows(page)).toHaveCount(3);
+  await row("2.2 MB").evaluate((el) => el.scrollIntoView({ block: "end" }));
+  await row("2.2 MB").click();
+  await expect(link).toHaveCount(1);
+  await expectInBody(row("2.2 MB"), sheet(page).locator(".part-sheet-body"));
 });
 
 test("from the Ebook page's Get another edition: Already added is off; on a reload and from a link, Close to the Book page", async ({ page, context }) => {
@@ -380,6 +468,9 @@ for (const size of [
     const importRow = await box(sheet(page).getByRole("button", { name: "Import a file from this device", exact: true }));
     const out = await box(sheet(page).getByRole("link", { name: "Search on Library Genesis", exact: true }));
     const button = await box(getButton(page));
+    // The chosen edition's own page (#889): a 44 high row above the sentence, which is 8 above the button.
+    const source = await box(sheet(page).locator(".part-sheet-foot").getByRole("link"));
+    expect(source.height).toBe(44);
     const line = await box(sheet(page).getByText(lineText, { exact: true }));
     const editions = await box(sheet(page).getByRole("heading", { name: "Editions · 4" }));
     const note = await box(sheet(page).getByText("From Library Genesis.", { exact: true }));
@@ -390,11 +481,14 @@ for (const size of [
     expect(importRow.height).toBe(52);
     expect(out.height).toBe(52);
     expect(button.height).toBe(44);
-    // Head, book, search, Editions, the rows, the sources line, the other ways, then the button and its line.
-    const order = [close.y, cover.y, field.y, editions.y, row.y, note.y, importRow.y, out.y, button.y, line.y];
+    // Head, book, search, Editions, the rows, the sources line, the other ways, then the foot: the link, the sentence, the button.
+    const order = [close.y, cover.y, field.y, editions.y, row.y, note.y, importRow.y, out.y, source.y, line.y, button.y];
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     const edge = size.name === "phone" ? 16 : 32;
-    expect(Math.round(line.y + line.height)).toBe(size.height - edge);
+    // The button's bottom is 16 from the screen's edge, as before #889; the sentence and the link stand above it.
+    expect(Math.round(button.y + button.height)).toBe(size.height - edge);
+    expect(Math.round(line.y + line.height + 8)).toBe(Math.round(button.y));
+    expect(Math.round(source.y + source.height + 8)).toBe(Math.round(line.y));
     const column = await box(sheet(page).locator(".part-sheet-column"));
     if (size.name === "desktop") expect(Math.abs(column.x + column.width / 2 - size.width / 2)).toBeLessThanOrEqual(1);
     else expect(column.width).toBe(size.width - 32);

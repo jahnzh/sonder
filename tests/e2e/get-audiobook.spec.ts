@@ -6,7 +6,7 @@
 // with the download's line; a refusal kept above the button; Get on a book outside the library sending the PUT first;
 // a failing source with its Retry, nothing found and fewer than two characters; the administrator-only address; and
 // the sheet measured against the board at phone size and on a desktop.
-import { test, expect, type Page, type Request } from "@playwright/test";
+import { test, expect, type Locator, type Page, type Request } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import type { AudiobookRelease } from "../../src/types";
 
@@ -44,6 +44,15 @@ const RELEASES = {
   abb: [abb("war-gillen"), abb("war-french", { language: "French", narrator: "Lecteur", size: "300 MB" }), abb("war-giles", { narrator: "Lionel Giles", format: "MP3", bitrate: "128 Kbps", size: "1.1 GB", title: "The Art of War: Complete Edition" })],
   prowlarr: [abb(PROWLARR_ID, { source: "prowlarr", indexer: "Fixture Tracker", narrator: null, language: null, title: "Sun Tzu - The Art of War [MP3]", size: "480 MB", bitrate: null, format: null, seeders: 1 })],
 };
+
+/** The chosen row is inside the sheet's body, not left under the footer that has grown over it (#889). */
+async function expectInBody(row: Locator, body: Locator) {
+  await expect(async () => {
+    const [r, b] = [await row.boundingBox(), await body.boundingBox()];
+    expect(r!.y).toBeGreaterThanOrEqual(b!.y - 1);
+    expect(r!.y + r!.height).toBeLessThanOrEqual(b!.y + b!.height + 1);
+  }).toPass();
+}
 
 const sheet = (page: Page) => page.getByRole("dialog", { name: "Get audiobook", exact: true });
 const rows = (page: Page) => sheet(page).getByRole("radiogroup", { name: "Recordings", exact: true }).getByRole("radio");
@@ -165,6 +174,135 @@ test("from the Book page: the search with title and author, rows from both sourc
   await expect(page).toHaveURL(new RegExp(`#book/${WAR.workId}$`));
   await expect(sheet(page)).toHaveCount(0);
   await expect(bookRegion(page).getByRole("list", { name: "Files", exact: true })).toContainText("Downloading to server · 10%");
+});
+
+// Releases of every kind of page address (#889): AudioBookBay's, an older server's (no source), two Prowlarr results
+// (one naming its indexer, one not) and a Prowlarr result with no address, or one that is not a web page.
+const PAGES = {
+  abb: [
+    abb("page-abb", { narrator: "Abby Voice", size: "110 MB" }),
+    (({ source: _source, ...older }) => older)(abb("page-older", { narrator: "Older Voice", size: "210 MB" })) as AudiobookRelease,
+  ],
+  prowlarr: [
+    abb(`prowlarr-${"b".repeat(32)}`, { source: "prowlarr", indexer: "Fixture Tracker", url: "https://tracker.example/details/1", narrator: "Tracker Voice", language: null, size: "310 MB", seeders: 4 }),
+    abb(`prowlarr-${"c".repeat(32)}`, { source: "prowlarr", indexer: null, url: "https://tracker.example/details/2", narrator: "Nameless Voice", language: null, size: "410 MB", seeders: 3 }),
+    abb(`prowlarr-${"d".repeat(32)}`, { source: "prowlarr", indexer: "Fixture Tracker", url: "", narrator: "Addressless Voice", language: null, size: "510 MB", seeders: 2 }),
+    abb(`prowlarr-${"e".repeat(32)}`, { source: "prowlarr", indexer: "Fixture Tracker", url: "magnet:?xt=urn:btih:" + "e".repeat(40), narrator: "Magnet Voice", language: null, size: "610 MB", seeders: 1 }),
+  ],
+};
+
+test("the footer links to the chosen recording's own page, follows the choice, and no row holds a link (#889)", async ({ page }) => {
+  // Get is refused once the test says so: the refusal stands above the footer's other lines, the button stays.
+  let refuse = false;
+  const asked = await sources(page, {
+    abb: () => ({ results: PAGES.abb, nextPage: null }),
+    prowlarr: () => ({ results: PAGES.prowlarr }),
+    add: () => (refuse ? { status: 502, error: "The release could not be added. Choose another." } : { id: "acq-test", backend: "local", status: "downloading", progress: 0.1, error: null }),
+  });
+  let opened = 0;
+  page.context().on("page", () => opened++);
+  await page.goto(`/#book/${WAR.workId}/get/audiobook`);
+  await expect(rows(page)).toHaveCount(6);
+  const row = (voice: string) => rows(page).filter({ hasText: voice });
+  const foot = sheet(page).locator(".part-sheet-foot");
+  const link = foot.getByRole("link");
+  // Nothing chosen: the footer is the button alone, at the foot, as high as on main.
+  await expect(link).toHaveCount(0);
+  await expect(foot.locator(":scope > *")).toHaveCount(1);
+  expect((await foot.boundingBox())!.height).toBe(44);
+  await page.screenshot({ path: `${OUT}/get-audiobook-nothing-chosen-phone.png` });
+  const home = await getButton(page).boundingBox();
+  const stays = async () => expect(await getButton(page).boundingBox()).toEqual(home);
+
+  const expectLink = async (voice: string, name: string, href: string) => {
+    await row(voice).click();
+    await expect(row(voice)).toHaveAttribute("aria-checked", "true");
+    await expect(link).toHaveCount(1);
+    await expect(link).toHaveAccessibleName(name);
+    await expect(link).toHaveAttribute("href", href);
+    await expect(link).toHaveAttribute("target", "_blank");
+    await expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    await expect(link.locator(".get-sheet-leaving")).toBeVisible();
+    await stays();
+  };
+  await expectLink("Abby Voice", "On AudioBookBay", "https://audiobookbay.lu/abss/page-abb/");
+  await page.screenshot({ path: `${OUT}/get-audiobook-source-link-phone.png` });
+  // Above the button: the link's 44 high row, then the sentence 8 above the button (the footer grew upward).
+  const sentence = foot.getByTestId("get-line");
+  const above = async () => {
+    const [l, t, b] = [await link.boundingBox(), await sentence.boundingBox(), await getButton(page).boundingBox()];
+    expect(l!.height).toBe(44);
+    expect(Math.round(l!.y + l!.height + 8)).toBe(Math.round(t!.y));
+    expect(Math.round(t!.y + t!.height + 8)).toBe(Math.round(b!.y));
+  };
+  await above();
+  await stays();
+  // It follows the choice: its words and its address.
+  await expectLink("Tracker Voice", "On Fixture Tracker", "https://tracker.example/details/1");
+  await expectLink("Nameless Voice", "On the indexer's page", "https://tracker.example/details/2");
+  // An older server's release (no source) is AudioBookBay's.
+  await expectLink("Older Voice", "On AudioBookBay", "https://audiobookbay.lu/abss/page-older/");
+  // No address, or one that is not a web page: no link and no gap; the sentence is 8 above the button.
+  for (const voice of ["Addressless Voice", "Magnet Voice"]) {
+    await row(voice).click();
+    await expect(row(voice)).toHaveAttribute("aria-checked", "true");
+    await expect(link).toHaveCount(0);
+    await expect(foot.locator("a")).toHaveCount(0);
+    await expect(foot.locator(":scope > *")).toHaveCount(2);
+    const [t, b] = [await sentence.boundingBox(), await getButton(page).boundingBox()];
+    expect(Math.round(t!.y + t!.height + 8)).toBe(Math.round(b!.y));
+    await stays();
+  }
+  // Choosing a row opened nothing, and no row holds a link or anything with an address.
+  expect(opened).toBe(0);
+  await expect(rows(page).locator("a, [href]")).toHaveCount(0);
+  await expect(sheet(page).getByRole("radiogroup", { name: "Recordings", exact: true }).getByRole("link")).toHaveCount(0);
+
+  // A new search clears the choice, and the link with it.
+  await row("Abby Voice").click();
+  await expect(link).toHaveCount(1);
+  const search = sheet(page).getByRole("searchbox", { name: "Search for a recording" });
+  const before = asked.abb.length;
+  await search.fill("art of war");
+  await search.press("Enter");
+  await expect.poll(() => asked.abb.length).toBe(before + 1);
+  await expect(link).toHaveCount(0);
+  await stays();
+  expect(asked.posts).toEqual([]);
+  expect(opened).toBe(0);
+
+  // The link opens the release's own page in a new tab.
+  await page.context().route("https://audiobookbay.lu/**", (route) => route.fulfill({ contentType: "text/html", body: "<title>AudioBookBay</title>" }));
+  await row("Abby Voice").click();
+  const [tab] = await Promise.all([page.context().waitForEvent("page"), link.click()]);
+  await expect.poll(() => tab.url()).toBe("https://audiobookbay.lu/abss/page-abb/");
+  await tab.close();
+  await expect(page).toHaveURL(new RegExp(`#book/${WAR.workId}/get/audiobook$`));
+  await expect(row("Abby Voice")).toHaveAttribute("aria-checked", "true");
+
+  // A refused Get: the refusal stands above the link, the sentence and the button, and the button stays.
+  refuse = true;
+  await getButton(page).click();
+  const alert = foot.getByRole("alert");
+  await expect(alert).toHaveText("The release could not be added. Choose another.");
+  await expect.poll(() => asked.posts.length).toBe(1);
+  const [a, l, t] = [await alert.boundingBox(), await link.boundingBox(), await sentence.boundingBox()];
+  expect(Math.round(a!.y + a!.height + 8)).toBe(Math.round(l!.y));
+  expect(Math.round(l!.y + l!.height + 8)).toBe(Math.round(t!.y));
+  await stays();
+
+  // On a short screen the footer grows over the list: with nothing chosen and the row at the bottom edge of the list,
+  // choosing it adds the link and the sentence, and the row is scrolled back into view, not left under them.
+  await page.setViewportSize({ width: 390, height: 560 });
+  const again = sheet(page).getByRole("searchbox", { name: "Search for a recording" });
+  await again.fill("art of war again");
+  await again.press("Enter");
+  await expect(link).toHaveCount(0);
+  await expect(rows(page)).toHaveCount(6);
+  await row("Older Voice").evaluate((el) => el.scrollIntoView({ block: "end" }));
+  await row("Older Voice").click();
+  await expect(link).toHaveCount(1);
+  await expectInBody(row("Older Voice"), sheet(page).locator(".part-sheet-body"));
 });
 
 test("from the Audiobook page, on a reload and from a link; Close goes back, or to the Book page", async ({ page, context }) => {
@@ -326,6 +464,9 @@ for (const size of [
     const row = await box(rows(page).nth(0));
     const other = await box(sheet(page).getByRole("button", { name: "Paste a magnet link", exact: true }));
     const button = await box(getButton(page));
+    // The chosen candidate's own page (#889): the foot's last line, a 44 high target under the button's line.
+    const source = await box(sheet(page).locator(".part-sheet-foot").getByRole("link"));
+    expect(source.height).toBe(44);
     const line = await box(sheet(page).getByText("Plays from TorBox right away.", { exact: true }));
     const recordings = await box(sheet(page).getByRole("heading", { name: "Recordings · 3" }));
     expect([close.width, close.height]).toEqual([44, 44]);
@@ -335,11 +476,14 @@ for (const size of [
     expect(other.height).toBe(52);
     expect(button.height).toBe(44);
     // The order of the parts: head, book, search, Recordings, the other ways, then the button and its line at the foot.
-    const order = [close.y, cover.y, field.y, recordings.y, row.y, other.y, button.y, line.y];
+    // Bottom to top the foot is the button, the sentence 8 above it, the link's 44 high row 8 above that.
+    const order = [close.y, cover.y, field.y, recordings.y, row.y, other.y, source.y, line.y, button.y];
     expect([...order].sort((a, b) => a - b)).toEqual(order);
-    // The foot at the bottom of the screen, 16 from its edge.
+    // The foot at the bottom of the screen, 16 from its edge: the button's bottom, as before #889.
     const edge = size.name === "phone" ? 16 : 32;
-    expect(Math.round(line.y + line.height)).toBe(size.height - edge);
+    expect(Math.round(button.y + button.height)).toBe(size.height - edge);
+    expect(Math.round(line.y + line.height + 8)).toBe(Math.round(button.y));
+    expect(Math.round(source.y + source.height + 8)).toBe(Math.round(line.y));
     // One centred column on a desktop.
     const column = await box(sheet(page).locator(".part-sheet-column"));
     if (size.name === "desktop") expect(Math.abs(column.x + column.width / 2 - size.width / 2)).toBeLessThanOrEqual(1);
