@@ -80,6 +80,13 @@ export async function chooseBackend(
     return "torbox-uncached";
   }
 }
+/** The torrent a preview of this release put on the TorBox account (#889, `torbox_previews`), or null. */
+function previewedTorrentId(hash: string): number | null {
+  const row = sqlite
+    .prepare("SELECT torrent_id FROM torbox_previews WHERE hash=? ORDER BY created_at DESC LIMIT 1")
+    .get(hash) as { torrent_id: number } | undefined;
+  return row?.torrent_id ?? null;
+}
 type Acquisition = typeof s.acquisitions.$inferSelect;
 export async function acquire(
   magnet: string,
@@ -171,7 +178,15 @@ export async function acquire(
           updatedAt: Date.now(),
         });
       } catch {
-        backend = "local";
+        // A preview put this cached release on the account (#889): Get takes that one if TorBox will not add it again.
+        const previewed = route === "torbox-cached" ? previewedTorrentId(hash) : null;
+        if (previewed === null) backend = "local";
+        else
+          setAcquisitionStatus(id, "preparing", {
+            backend: "torbox",
+            remoteId: String(previewed),
+            updatedAt: Date.now(),
+          });
       }
     }
     if (backend === "local") {
