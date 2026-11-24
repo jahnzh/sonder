@@ -321,17 +321,9 @@ export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarr
       <Button kind="primary" disabled={!chosenRow || getting || !online} onClick={() => void get()}>
         Get this recording
       </Button>
-      {newBook ? (
-        <p className={line?.failed ? "get-sheet-line get-sheet-line-failed" : "get-sheet-line"} data-testid="get-line">
-          {line ? `${ADDS_THE_BOOK} ${line.text}` : ADDS_THE_BOOK}
-        </p>
-      ) : (
-        line && (
-          <p className={line.failed ? "get-sheet-line get-sheet-line-failed" : "get-sheet-line"} data-testid="get-line">
-            {line.text}
-          </p>
-        )
-      )}
+      <p className={line?.failed ? "get-sheet-line get-sheet-line-fixed get-sheet-line-failed" : "get-sheet-line get-sheet-line-fixed"} data-testid="get-line">
+        {newBook ? (line ? `${ADDS_THE_BOOK} ${line.text}` : ADDS_THE_BOOK) : line?.text}
+      </p>
       <SourceLinkLine link={sourceLink(chosenRow?.release)} />
     </>
   );

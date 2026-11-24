@@ -4,7 +4,7 @@
 // off, when the work already has this file (`libgen-<md5>` among its ebook editions). EPUBs first, then PDFs, each in
 // Library Genesis's order.
 import type { EbookResult, LibraryWork } from "../types";
-import { isWebAddress, type SourceLink } from "./get-audiobook-rows";
+import { isWebAddress, type SourceLink } from "./get-source-link";
 
 const DOT = " · ";
 

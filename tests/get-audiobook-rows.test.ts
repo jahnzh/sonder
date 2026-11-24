@@ -1,7 +1,9 @@
 // The Get audiobook sheet's rows (#601, spec #600 "The rows").
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isWebAddress, recordingRow, recordingRows, rowEdge, sourceLink } from "../src/pages/get-audiobook-rows";
+import { recordingRow, recordingRows, rowEdge, sourceLink } from "../src/pages/get-audiobook-rows";
+import { isWebAddress } from "../src/pages/get-source-link";
+import { parseProwlarrResults } from "../server/sources/prowlarr";
 import type { AudiobookRelease } from "../src/types";
 
 const release = (over: Partial<AudiobookRelease>): AudiobookRelease => ({
@@ -124,7 +126,30 @@ test("no link for nothing chosen, the magnet link, or an address that is not htt
     for (const source of ["abb", "prowlarr", undefined] as const)
       assert.equal(sourceLink(release({ url, source })), null, `${source} ${JSON.stringify(url)}`);
   assert.equal(sourceLink(release({ url: undefined as unknown as string })), null);
+  // An address with credentials in it is not one to lead the owner to.
+  for (const url of ["https://user:pass@example.invalid/x", "http://user@example.invalid/", "https://:pass@example.invalid/"])
+    assert.equal(sourceLink(release({ url })), null, url);
+  assert.equal(isWebAddress("https://user:pass@example.invalid/x"), false);
   assert.equal(isWebAddress("HTTPS://example.invalid/x"), true);
   assert.equal(isWebAddress("http://example.invalid"), true);
   assert.equal(isWebAddress(null), false);
+});
+
+test("a Prowlarr result the server gives no indexer name says the indexer's page, not Prowlarr (#889)", () => {
+  // What the server really sends: parseProwlarrResults fills the name of a result without one with "Prowlarr".
+  const item = (over: Record<string, unknown>) => ({
+    title: "Sun Tzu - The Art of War [MP3]",
+    protocol: "torrent",
+    categories: [{ id: 3030 }],
+    magnetUrl: "magnet:?xt=urn:btih:" + "a".repeat(40),
+    guid: "https://tracker.example/details/9",
+    ...over,
+  });
+  const { releases } = parseProwlarrResults([item({}), item({ indexer: "MyAnonaMouse", indexerId: 4, guid: "https://mam.example/t/9" })]);
+  assert.equal(releases.length, 2);
+  assert.equal(releases[0].indexer, "Prowlarr");
+  assert.deepEqual(sourceLink(releases[0]), { text: "On the indexer's page", href: "https://tracker.example/details/9" });
+  assert.deepEqual(sourceLink(releases[1]), { text: "On MyAnonaMouse", href: "https://mam.example/t/9" });
+  // However it is written.
+  assert.equal(sourceLink(release({ source: "prowlarr", indexer: " prowlarr ", url: "https://t.example/1" }))?.text, "On the indexer's page");
 });

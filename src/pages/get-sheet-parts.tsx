@@ -6,6 +6,7 @@
 import type { FormEvent } from "react";
 import { Button } from "../parts/Button";
 import type { LibraryWork } from "../types";
+import type { SourceLink } from "./get-source-link";
 import { Cover } from "../parts/Cover";
 import "./get-audiobook-sheet.css";
 
@@ -35,14 +36,21 @@ export function LeavingMark() {
   );
 }
 
-/** The footer's link to the chosen candidate's own page, in words, opened in a new tab (#889); nothing without one. */
-export function SourceLinkLine({ link }: { link: { text: string; href: string } | null }) {
-  if (!link) return null;
+/**
+ * The footer's line for the link to the chosen candidate's own page, opened in a new tab (#889). The line is always
+ * there at the same height, so the Get button above it stays where it is whatever is chosen; without a link it is
+ * empty: nothing to focus, nothing announced.
+ */
+export function SourceLinkLine({ link }: { link: SourceLink | null }) {
   return (
-    <a className="get-sheet-source" href={link.href} target="_blank" rel="noopener noreferrer">
-      <span className="type-label">{link.text}</span>
-      <LeavingMark />
-    </a>
+    <div className="get-sheet-source-line">
+      {link && (
+        <a className="get-sheet-source" href={link.href} target="_blank" rel="noopener noreferrer">
+          <span className="type-label">{link.text}</span>
+          <LeavingMark />
+        </a>
+      )}
+    </div>
   );
 }
 
