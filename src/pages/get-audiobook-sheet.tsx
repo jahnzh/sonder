@@ -44,7 +44,7 @@ import {
   type SourceId,
 } from "./get-audiobook-state";
 import { GetImportRow } from "./get-import-row";
-import { SourceLinkLine } from "./get-sheet-parts";
+import { SourceLinkLine, useChosenRowInView } from "./get-sheet-parts";
 import { usePlayer } from "../player";
 import { usePreview } from "./get-preview";
 import { previewControl } from "./get-preview-model";
@@ -257,7 +257,6 @@ export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarr
   const { playing: bookPlaying } = usePlayer();
   const preview = usePreview(chosenRow?.release ?? null, bookPlaying);
   const previewing = previewControl({ chosen: chosenRow?.release, phase: preview.phase, played: preview.played, bookPlaying, online });
-  const link = sourceLink(chosenRow?.release);
   const asked = Object.keys(search.sources) as SourceId[];
   const named = (asked.length ? asked : sources()).map((source) => SOURCE_NAMES[source]);
   const sourcesLine = `From ${named.join(" and ")}.`;
@@ -321,6 +320,14 @@ export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarr
     }
   };
 
+  // The footer, bottom to top: the button row, pinned to the foot and never moving; the sentence that says what the
+  // button will do, 8 above it; the link to the chosen release's own page; a refusal. Nothing is reserved, so the
+  // footer is the button alone while nothing is chosen and grows upward into the list when there is something to say.
+  // This departs from the board's order (the button, then its sentence under it) on purpose: the button under the
+  // thumb must not move when a row is chosen, and under it the sentence would have to be kept room for (#889).
+  const link = sourceLink(chosenRow?.release);
+  const sentence = newBook ? (line ? `${ADDS_THE_BOOK} ${line.text}` : ADDS_THE_BOOK) : line?.text;
+  useChosenRowInView(`${chosen}|${link?.href}|${sentence}|${refusal}|${previewing?.line?.text}`);
   const footer = (
     <>
       {refusal && (
@@ -328,26 +335,19 @@ export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarr
           {refusal}
         </p>
       )}
-      {/* The link's row only when the chosen row has an address; nothing is reserved (#889). */}
-      {link && <SourceLinkLine link={link} />}
-      {newBook ? (
+      <SourceLinkLine link={link} />
+      {sentence && (
         <p className={line?.failed ? "get-sheet-line get-sheet-line-failed" : "get-sheet-line"} data-testid="get-line">
-          {line ? `${ADDS_THE_BOOK} ${line.text}` : ADDS_THE_BOOK}
+          {sentence}
         </p>
-      ) : (
-        line && (
-          <p className={line.failed ? "get-sheet-line get-sheet-line-failed" : "get-sheet-line"} data-testid="get-line">
-            {line.text}
-          </p>
-        )
       )}
       {previewing?.line && (
         <p className={previewing.line.failed ? "get-sheet-line get-sheet-line-failed" : "get-sheet-line"} data-testid="preview-line" role="status">
           {previewing.line.text}
         </p>
       )}
-      {/* The button row, at the footer's bottom edge: Preview at its own width on the left, Get filling the rest. */}
-      <div className="get-sheet-actions">
+      {/* Preview (#889) at its own width on the left, only for a row that says "Plays now"; Get fills the rest. */}
+      <div className="get-sheet-buttons">
         {previewing && (
           <Button
             kind="secondary"
@@ -358,7 +358,7 @@ export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarr
             {previewing.label}
           </Button>
         )}
-        <Button kind="primary" className="get-sheet-get" disabled={!chosenRow || getting || !online} onClick={() => void get()}>
+        <Button kind="primary" disabled={!chosenRow || getting || !online} onClick={() => void get()}>
           Get this recording
         </Button>
       </div>

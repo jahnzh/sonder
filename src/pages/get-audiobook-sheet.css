@@ -110,18 +110,6 @@
   text-align: center;
   overflow-wrap: anywhere;
 }
-/* Get this recording, and Preview beside it for a row that says "Plays now" (#889). */
-.get-sheet-actions {
-  display: flex;
-  gap: var(--space-8);
-}
-.get-sheet-actions > .get-sheet-get {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.get-sheet-preview {
-  font-variant-numeric: tabular-nums;
-}
 .get-sheet-line {
   margin: 0;
   padding: 0 var(--space-16);
@@ -135,17 +123,24 @@
   flex: none;
   color: var(--muted);
 }
-/* The link to the chosen candidate's own page under the line (#889): its line is always there, 44 high like a control,
-   so the button above does not move; the link is words and the leaving mark. */
-.get-sheet-source-line {
-  box-sizing: border-box;
-  height: var(--height-control);
+/* The button row of the Get sheets (#889): pinned to the foot, Get at full width; a control may stand at its left. */
+.get-sheet-buttons {
   display: flex;
-  justify-content: center;
-  align-items: center;
+  gap: var(--space-8);
 }
+.get-sheet-buttons > .part-button {
+  flex: 1 1 0;
+  min-width: 0;
+}
+/* Preview (#889), for a row that says "Plays now": at its own width at the row's left; Get fills the rest. */
+.get-sheet-buttons > .get-sheet-preview {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+/* The link to the chosen candidate's own page, above the sentence (#889): a 44 high row of words and the leaving mark. */
 .get-sheet-source {
   box-sizing: border-box;
+  align-self: center;
   max-width: 100%;
   height: var(--height-control);
   padding: 0 var(--space-12);
@@ -166,11 +161,6 @@
 .get-sheet-source:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
-}
-/* The Get sheets' line (#889): always laid out, two lines high (the longest sentences wrap at 390), so the button above it
-   stays where it is whatever is chosen. */
-.get-sheet-line.get-sheet-line-fixed {
-  min-height: 2lh;
 }
 /* The torrent client's own message when a recording would need it and it is not working (#603). */
 .get-sheet-line.get-sheet-line-failed {

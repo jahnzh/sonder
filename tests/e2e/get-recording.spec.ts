@@ -8,7 +8,7 @@
 // The sources' rows are answered by the test. The add is answered by the suite server's fixture (tests/
 // new-book-browser-fixture.ts): the server's own `acquireForNewBook` makes the work, its placeholder and the library
 // row in the real database, and the acquisition stays "Finding a source"; nothing is fetched or downloaded.
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import type { AudiobookRelease } from "../../src/types";
 
@@ -41,6 +41,15 @@ const RELEASES = [
   release("atlas-bryce", { narrator: "Tom Bryce", format: "MP3", size: "1.1 GB", seeders: 12 }),
   release("atlas-short", { title: "Lamplighters Atlas", narrator: "June Ash", format: "MP3", size: "480 MB", seeders: 2 }),
 ];
+
+/** The chosen row is inside the sheet's body, not left under the footer that has grown over it (#889). */
+async function expectInBody(row: Locator, body: Locator) {
+  await expect(async () => {
+    const [r, b] = [await row.boundingBox(), await body.boundingBox()];
+    expect(r!.y).toBeGreaterThanOrEqual(b!.y - 1);
+    expect(r!.y + r!.height).toBeLessThanOrEqual(b!.y + b!.height + 1);
+  }).toPass();
+}
 
 const discover = (page: Page) => page.getByRole("region", { name: "Discover", exact: true });
 const field = (page: Page) => discover(page).getByRole("searchbox", { name: "Search for a book", exact: true });
@@ -146,26 +155,27 @@ test("the last row opens the sheet with the words; Get makes the book, its page 
   await expect(page.getByRole("button", { name: `About ${QUERY}`, exact: true })).toBeVisible();
 });
 
-test("without a book the footer links to the chosen recording's own page, and no row holds a link (#889)", async ({ page }) => {
+test("without a book the footer links to the chosen recording's own page, stays above a button that never moves, and no row holds a link (#889)", async ({ page }) => {
   await sources(page);
+  // The third recording has no address, and Get is refused: the answers of this test come after the suite's.
+  const listed = [...RELEASES.slice(0, 2), { ...RELEASES[2], url: "" }];
+  await page.route("**/api/discover/abb/releases?*", (route) => route.fulfill({ json: { results: listed, nextPage: null } }).catch(() => {}));
+  await page.route("**/api/discover/abb/add", (route) => route.fulfill({ status: 502, json: { error: "The release could not be added. Choose another." } }).catch(() => {}));
   await page.goto(`/#discover/get/${encodeURIComponent(QUERY)}`);
   await expect(rows(page)).toHaveCount(3);
   const foot = sheet(page).locator(".part-sheet-foot");
   const link = foot.getByRole("link");
+  const sentence = foot.getByTestId("get-line");
+  // Nothing chosen: the sentence says what Get does to the library, above the button; no link.
   await expect(link).toHaveCount(0);
-  await expect(foot.locator("a")).toHaveCount(0);
-  // Nothing is reserved for it (the footer's final layout, #889).
-  await expect(foot.locator(".get-sheet-source-line")).toHaveCount(0);
-  // Choosing a row, with its line, leaves the Get button where it is.
+  await expect(sentence).toHaveText("Adds the book to your library.");
+  // The button stays where it is for nothing chosen, a recording with an address, one without, and after a refusal.
   const home = await getButton(page).boundingBox();
+  const stays = async () => expect(await getButton(page).boundingBox()).toEqual(home);
+  await stays();
   let opened = 0;
   page.context().on("page", () => opened++);
-  const names = [
-    ["Tom Bryce", "atlas-bryce"],
-    ["Ines Marlow", "atlas-marlow"],
-    ["June Ash", "atlas-short"],
-  ];
-  for (const [voice, id] of names) {
+  for (const [voice, id] of [["Tom Bryce", "atlas-bryce"], ["Ines Marlow", "atlas-marlow"]]) {
     await rows(page).filter({ hasText: voice }).click();
     await expect(rows(page).filter({ hasText: voice })).toHaveAttribute("aria-checked", "true");
     await expect(link).toHaveCount(1);
@@ -173,14 +183,43 @@ test("without a book the footer links to the chosen recording's own page, and no
     await expect(link).toHaveAttribute("href", `https://audiobookbay.lu/abss/${id}/`);
     await expect(link).toHaveAttribute("target", "_blank");
     await expect(link).toHaveAttribute("rel", "noopener noreferrer");
-    // The button row is the footer's last; the link stands above the sentence.
-    await expect(foot.locator(":scope > :last-child")).toHaveClass(/get-sheet-actions/);
-    await expect(foot.locator(".get-sheet-source-line")).toHaveCount(1);
-    expect(await getButton(page).boundingBox()).toEqual(home);
+    // The link's 44 high row, the sentence 8 below it, the button 8 below that.
+    const [l, t, b] = [await link.boundingBox(), await sentence.boundingBox(), await getButton(page).boundingBox()];
+    expect(l!.height).toBe(44);
+    expect(Math.round(l!.y + l!.height + 8)).toBe(Math.round(t!.y));
+    expect(Math.round(t!.y + t!.height + 8)).toBe(Math.round(b!.y));
+    await stays();
   }
+  await rows(page).filter({ hasText: "June Ash" }).click();
+  await expect(rows(page).filter({ hasText: "June Ash" })).toHaveAttribute("aria-checked", "true");
+  await expect(link).toHaveCount(0);
+  await expect(foot.locator("a")).toHaveCount(0);
+  await expect(foot.locator(":scope > *")).toHaveCount(2);
+  await stays();
   expect(opened).toBe(0);
   await expect(rows(page).locator("a, [href]")).toHaveCount(0);
+  // A refused Get: the refusal stands above the others, the button stays.
+  await rows(page).filter({ hasText: "Ines Marlow" }).click();
+  await getButton(page).click();
+  const alert = foot.getByRole("alert");
+  await expect(alert).toHaveText("The release could not be added. Choose another.");
+  const [a, l] = [await alert.boundingBox(), await link.boundingBox()];
+  expect(Math.round(a!.y + a!.height + 8)).toBe(Math.round(l!.y));
+  await stays();
   await noOverflow(page);
+  // On a short screen the footer grows over the list: with nothing chosen and the row at the bottom edge of the list,
+  // choosing it adds the link and the sentence, and the row is scrolled back into view, not left under them.
+  await page.setViewportSize({ width: 390, height: 440 });
+  const again = sheet(page).getByRole("searchbox", { name: "Search for a recording" });
+  await again.fill("lamplighter again");
+  await again.press("Enter");
+  await expect(link).toHaveCount(0);
+  await expect(rows(page)).toHaveCount(3);
+  const tom = rows(page).filter({ hasText: "Tom Bryce" });
+  await tom.evaluate((el) => el.scrollIntoView({ block: "end" }));
+  await tom.click();
+  await expect(link).toHaveCount(1);
+  await expectInBody(tom, sheet(page).locator(".part-sheet-body"));
 });
 
 test("Close returns to Discover with its results; a reload on the sheet shows it again", async ({ page }) => {
