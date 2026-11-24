@@ -144,7 +144,7 @@ async function expectTransportUsable(foot: Locator) {
 
 /**
  * The pop-up as the amendment draws it (ADR 0019, 2026-11-24): a group named after its setting, not a dialog, with no
- * Done; it stands on the foot's top edge, its right edge at its button's (inside the window's 16), one row of 44
+ * Done; it stands on the foot's top edge, its right edge at its button's (shifted to stay 16 inside the window), one row of 44
  * inside 8 of padding; the label first, then the Stepper with 44 by 44 buttons either side of its value. No backdrop:
  * only the pop-up and the catcher that draws nothing are new on the page.
  */
@@ -159,7 +159,8 @@ async function expectPopup(page: Page, foot: Locator, button: Locator, name: "Sp
   expect(popupBox.height).toBeCloseTo(60, 0);
   expect(popupBox.x).toBeGreaterThanOrEqual(16 - 0.5);
   expect(popupBox.x + popupBox.width).toBeLessThanOrEqual(width - 16 + 0.5);
-  expect(popupBox.x + popupBox.width).toBeCloseTo(Math.min(buttonBox.x + buttonBox.width, width - 16), 0);
+  // Its right edge at its button's, shifted only as far as keeps it 16 inside the window.
+  expect(popupBox.x + popupBox.width).toBeCloseTo(Math.max(16 + popupBox.width, Math.min(buttonBox.x + buttonBox.width, width - 16)), 0);
   const label = await box(popup.getByText(name, { exact: true }));
   const minus = await box(popup.getByRole("button", { name: decrease, exact: true }));
   const value = await box(popup.getByRole("spinbutton"));
@@ -269,7 +270,9 @@ for (const [mode, label] of [["paginated", "pages"], ["scroll", "scroll"]] as co
       await showControls(page, room);
       await expect(popup).toHaveCount(0);
       await expectTransportUsable(foot);
-      expect(await frameState(room)).toEqual(before);
+      // The band kept its box and was not laid out again (the bookmark may have moved the scroll).
+      const after = await frameState(room);
+      expect([after.boxes, after.scroll.resizes]).toEqual([before.boxes, before.scroll.resizes]);
     });
   });
 }
