@@ -9,6 +9,7 @@
 import { test, expect, type Locator, type Page, type Request } from "@playwright/test";
 import { mkdirSync, readFileSync } from "node:fs";
 import type { AudiobookRelease } from "../../src/types";
+import { listenOnBookPage } from "./library-play";
 
 test.use({ serviceWorkers: "block" });
 
@@ -529,6 +530,41 @@ const audios = (page: Page) =>
   page.evaluate(() => ((window as any).__audios as HTMLAudioElement[]).map((a) => ({ src: a.getAttribute("src") ?? "", paused: a.paused, time: a.currentTime })));
 const previewAudio = async (page: Page) => (await audios(page)).at(-1)!;
 
+/** The preview's own element (the last one made) really plays: not paused, and its time moves on. */
+async function previewAdvances(page: Page) {
+  const at = (await previewAudio(page)).time;
+  await expect.poll(async () => {
+    const audio = await previewAudio(page);
+    return !audio.paused && audio.time > at;
+  }, { timeout: 20_000 }).toBe(true);
+}
+
+/** Preview pressed once it can be, and playing: Stop on the button and its own element advancing. */
+async function playPreview(page: Page) {
+  await expect(previewButton(page)).toHaveText("Preview");
+  await expect(previewButton(page)).toBeEnabled();
+  await previewButton(page).click();
+  await expect(previewButton(page)).toHaveText(/^Stop/, { timeout: 20_000 });
+  await previewAdvances(page);
+}
+
+/**
+ * The book started as the other specs start it (library-play.ts): Listen on its Book page, enabled once the book is
+ * loaded, then the dock's Pause; and the player's own element really advancing. Answers that element's index.
+ */
+async function playBook(page: Page, workId: string) {
+  await page.goto(`/#book/${workId}`);
+  await listenOnBookPage(page);
+  await expect(page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true })).toBeVisible({ timeout: 20_000 });
+  let book = -1;
+  await expect
+    .poll(async () => (book = await page.evaluate(() => ((window as any).__audios as HTMLAudioElement[]).findIndex((a) => !a.paused))), { timeout: 20_000 })
+    .toBeGreaterThanOrEqual(0);
+  const at = await page.evaluate((index) => (window as any).__audios[index].currentTime as number, book);
+  await expect.poll(() => page.evaluate((index) => (window as any).__audios[index].currentTime as number, book), { timeout: 20_000 }).toBeGreaterThan(at);
+  return book;
+}
+
 /** The preview's start, bytes (with ranges) and end answered by the test; starts, ends and progress writes counted. */
 async function previewRoutes(page: Page, options: { start?: () => unknown } = {}) {
   const asked = { starts: [] as unknown[], ends: [] as string[], progress: 0 };
@@ -600,7 +636,7 @@ test("Preview plays in its own audio element from 3:00, reads Stop with the time
   const dock = await page.locator(".player-dock").count();
   const session = () => page.evaluate(() => (navigator.mediaSession?.metadata ? navigator.mediaSession.metadata.title : null));
   const metadata = await session();
-  await previewButton(page).click();
+  await playPreview(page);
   await expect(previewButton(page)).toHaveText(/^Stop 0:0[1-9]$/, { timeout: 20_000 });
   expect(asked.starts).toEqual([{ id: CACHED_ID }]);
   // Its own element: a new one, playing the preview's address from 3:00 on.
@@ -619,8 +655,7 @@ test("Preview plays in its own audio element from 3:00, reads Stop with the time
   await previewButton(page).click();
   await expect(previewButton(page)).toHaveText("Preview");
   expect((await audios(page)).at(-1)!.paused).toBe(true);
-  await previewButton(page).click();
-  await expect(previewButton(page)).toHaveText(/^Stop/, { timeout: 20_000 });
+  await playPreview(page);
   expect(asked.starts).toHaveLength(1);
   expect(asked.ends).toEqual([]);
   // Another row chosen: it stops.
@@ -643,8 +678,7 @@ test("a preview stops when the page is hidden, on Get, and says one sentence whe
   const got = await sources(page, { prowlarr: () => ({ results: PREVIEWABLE, nextPage: null }), add: () => ({ status: 409, error: "Refused by the test." }) });
   await page.goto(`/#book/${WAR.workId}/get/audiobook`);
   await chooseRow(page, "Cached Reader");
-  await previewButton(page).click();
-  await expect(previewButton(page)).toHaveText(/^Stop/, { timeout: 20_000 });
+  await playPreview(page);
   // Hidden (another app, a locked screen): it stops.
   await page.evaluate(() => {
     Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
@@ -657,8 +691,7 @@ test("a preview stops when the page is hidden, on Get, and says one sentence whe
     document.dispatchEvent(new Event("visibilitychange"));
   });
   // Get this recording: it stops (the add is refused here, so the sheet stays).
-  await previewButton(page).click();
-  await expect(previewButton(page)).toHaveText(/^Stop/, { timeout: 20_000 });
+  await playPreview(page);
   await getButton(page).click();
   await expect(previewButton(page)).toHaveText("Preview");
   expect((await previewAudio(page)).paused).toBe(true);
@@ -673,8 +706,7 @@ test("a preview stops when the page is hidden, on Get, and says one sentence whe
   // The failed preview ends; Preview of the same release asks for a new one and plays, without closing the sheet.
   await expect.poll(() => asked.ends).toEqual([PREVIEW_ID]);
   await page.unroute("**/api/discover/previews/*/audio", ended);
-  await previewButton(page).click();
-  await expect(previewButton(page)).toHaveText(/^Stop/, { timeout: 20_000 });
+  await playPreview(page);
   expect(asked.starts).toHaveLength(2);
   await expect(previewLine(page)).toHaveCount(0);
   await previewButton(page).click();
@@ -693,9 +725,7 @@ test("while the book plays Preview is off and the footer says to pause it; a pla
     await route.fulfill({ json: { progress: route.request().postDataJSON(), conflict: false } }).catch(() => {});
   });
   await sources(page, { prowlarr: () => ({ results: PREVIEWABLE, nextPage: null }) });
-  await page.goto(`/#listen/${ALICE.workId}`);
-  await page.locator(".now-playing-play").click();
-  await expect(page.locator(".now-playing-play")).toHaveAttribute("aria-label", "Pause", { timeout: 20_000 });
+  const book = await playBook(page, ALICE.workId);
   await page.evaluate((hash) => (location.hash = hash), `#book/${WAR.workId}/get/audiobook`);
   await chooseRow(page, "Cached Reader");
   await expect(previewButton(page)).toHaveText("Preview");
@@ -703,16 +733,16 @@ test("while the book plays Preview is off and the footer says to pause it; a pla
   await expect(previewLine(page)).toHaveText("Pause the book to preview.");
   await page.screenshot({ path: `${OUT}/get-audiobook-preview-book-playing-390x844.png` });
   expect(asked.starts).toEqual([]);
+  // Still the book playing under the sheet.
+  expect(await page.evaluate((index) => !(window as any).__audios[index].paused, book)).toBe(true);
   // The book paused (by the test, on the player's own element): Preview is on; the preview plays.
-  const book = await page.evaluate(() => ((window as any).__audios as HTMLAudioElement[]).findIndex((a) => !a.paused));
-  expect(book).toBeGreaterThanOrEqual(0);
   await page.evaluate((index) => (window as any).__audios[index].pause(), book);
   await expect(previewButton(page)).toBeEnabled();
   await expect(previewLine(page)).toHaveCount(0);
-  await previewButton(page).click();
-  await expect(previewButton(page)).toHaveText(/^Stop/, { timeout: 20_000 });
+  await playPreview(page);
   // The book starts again: the preview stops, and Preview is off again.
   await page.evaluate((index) => void (window as any).__audios[index].play(), book);
+  await expect.poll(() => page.evaluate((index) => !(window as any).__audios[index].paused, book)).toBe(true);
   await expect(previewButton(page)).toHaveText("Preview");
   await expect(previewButton(page)).toBeDisabled();
   await expect(previewLine(page)).toHaveText("Pause the book to preview.");
@@ -739,21 +769,20 @@ test("a late answer to an older start does not replace the newer preview, and it
   await sources(page, { prowlarr: () => ({ results: PREVIEWABLE, nextPage: null }) });
   await page.goto(`/#book/${WAR.workId}/get/audiobook`);
   await chooseRow(page, "Cached Reader");
+  await expect(previewButton(page)).toBeEnabled();
   await previewButton(page).click();
   await expect(previewButton(page)).toHaveText("Preparing…");
   // Another row and back: the first start is left waiting, a second one plays.
   await chooseRow(page, "Seeded Reader");
   await chooseRow(page, "Cached Reader");
-  await previewButton(page).click();
-  await expect(previewButton(page)).toHaveText(/^Stop/, { timeout: 20_000 });
+  await playPreview(page);
   release();
   await expect.poll(() => asked.ends).toEqual([OLD_ID]);
   await expect(previewButton(page)).toHaveText(/^Stop/);
   expect((await previewAudio(page)).src).toBe(`/api/discover/previews/${PREVIEW_ID}/audio`);
   // Stop, then Preview again still plays the newer one: no third start.
   await previewButton(page).click();
-  await previewButton(page).click();
-  await expect(previewButton(page)).toHaveText(/^Stop/, { timeout: 20_000 });
+  await playPreview(page);
   expect(asked.starts).toHaveLength(2);
   expect((await previewAudio(page)).src).toBe(`/api/discover/previews/${PREVIEW_ID}/audio`);
 });
@@ -766,8 +795,7 @@ test("a preview the server has ended by time is not ended again beside the new s
   await sources(page, { prowlarr: () => ({ results: PREVIEWABLE, nextPage: null }) });
   await page.goto(`/#book/${WAR.workId}/get/audiobook`);
   await chooseRow(page, "Cached Reader");
-  await previewButton(page).click();
-  await expect(previewButton(page)).toHaveText(/^Stop/, { timeout: 20_000 });
+  await playPreview(page);
   await previewButton(page).click();
   await expect(previewButton(page)).toHaveText("Preview");
   // 26 minutes later (the server ends a preview at 30; the sheet asks for a new one after 25).
@@ -775,8 +803,7 @@ test("a preview the server has ended by time is not ended again beside the new s
     const real = Date.now;
     Date.now = () => real() + 26 * 60_000;
   });
-  await previewButton(page).click();
-  await expect(previewButton(page)).toHaveText(/^Stop/, { timeout: 20_000 });
+  await playPreview(page);
   expect(asked.starts).toHaveLength(2);
   expect(asked.ends).toEqual([]);
   expect((await previewAudio(page)).src).toBe(`/api/discover/previews/${ids[1]}/audio`);
