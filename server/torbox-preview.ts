@@ -174,8 +174,9 @@ export async function expirePreviews(deps: PreviewDeps = {}) {
 export function keepPreviewedRelease(magnet: string) {
   try {
     sqlite.prepare("DELETE FROM torbox_previews WHERE hash=?").run(magnetHash(magnet));
-  } catch {
+  } catch (error) {
     // Not a magnet Get could use either; nothing to give up.
+    console.warn(`No preview to give up for this magnet: ${(error as Error).message}`);
   }
 }
 
@@ -213,7 +214,8 @@ async function serveBytes(req: FastifyRequest, reply: FastifyReply) {
       await response.body?.cancel();
       response = await ask(true);
     }
-  } catch {
+  } catch (error) {
+    req.log.warn({ error }, "TorBox preview bytes could not be fetched");
     return reply.code(503).send({ error: "TorBox could not be reached for this preview." });
   } finally {
     clearTimeout(headersTimeout);

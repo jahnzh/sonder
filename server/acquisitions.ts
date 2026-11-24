@@ -177,16 +177,18 @@ export async function acquire(
           remoteId: String(data.torrent_id),
           updatedAt: Date.now(),
         });
-      } catch {
+      } catch (error) {
         // A preview put this cached release on the account (#889): Get takes that one if TorBox will not add it again.
         const previewed = route === "torbox-cached" ? previewedTorrentId(hash) : null;
         if (previewed === null) backend = "local";
-        else
+        else {
+          console.warn(`TorBox did not add ${hash} again (${(error as Error).message}); using the previewed torrent ${previewed}.`);
           setAcquisitionStatus(id, "preparing", {
             backend: "torbox",
             remoteId: String(previewed),
             updatedAt: Date.now(),
           });
+        }
       }
     }
     if (backend === "local") {

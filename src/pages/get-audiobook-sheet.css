@@ -110,6 +110,18 @@
   text-align: center;
   overflow-wrap: anywhere;
 }
+/* Get this recording, and Preview beside it for a row that says "Plays now" (#889). */
+.get-sheet-actions {
+  display: flex;
+  gap: var(--space-8);
+}
+.get-sheet-actions > .part-button:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.get-sheet-preview {
+  font-variant-numeric: tabular-nums;
+}
 .get-sheet-line {
   margin: 0;
   padding: 0 var(--space-16);
