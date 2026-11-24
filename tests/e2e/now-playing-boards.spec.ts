@@ -164,7 +164,7 @@ const states: Record<string, (page: Page) => Promise<void | (() => Promise<unkno
     const reader = await openRead(page, book.workId);
     await showControls(page, reader);
     await reader.locator(".reader-player").getByRole("button", { name: /^Speed [\d.]+ times$/ }).click();
-    await expect(reader.locator(".reader-player").getByRole("button", { name: "Done", exact: true })).toBeVisible();
+    await expect(page.getByRole("group", { name: "Speed", exact: true }).getByRole("spinbutton", { name: "Playback speed", exact: true })).toBeFocused();
   },
   sleep: async (page) => {
     const book = await narrated(page);
@@ -173,7 +173,7 @@ const states: Record<string, (page: Page) => Promise<void | (() => Promise<unkno
     await showControls(page, reader);
     const foot = reader.locator(".reader-player");
     await foot.getByRole("button", { name: /^Sleep timer: / }).click();
-    const row = foot.getByRole("group", { name: "Sleep timer", exact: true });
+    const row = page.getByRole("group", { name: "Sleep timer", exact: true });
     for (let step = 0; step < 3; step++) await row.getByRole("button", { name: "Longer", exact: true }).click();
     await expect(row.getByRole("spinbutton", { name: "Sleep timer", exact: true })).toHaveText("30 min");
   },

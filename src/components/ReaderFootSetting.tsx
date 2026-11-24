@@ -1,8 +1,11 @@
-// Speed and the sleep timer in the reader's foot (#589, spec #586 "Speed and the sleep timer in the foot"; boards
-// ReaderSpeed.dc.html, ReaderSleep.dc.html). The foot's Sleep timer and Speed buttons do not open a menu over the
-// page: each puts its row, the label, a Stepper and Done, in place of the foot's transport row for a moment. The
-// timeline above stays, and the foot keeps its box, so nothing is covered and the text is not laid out again.
-import { useEffect, useRef, useState } from "react";
+// Speed and the sleep timer in the reader's foot (#589, #890; ADR 0019 amended 2026-11-24, "a setting's pop-up";
+// boards ReaderSpeed.dc.html, ReaderSleep.dc.html). A tap on the foot's Sleep timer or Speed button opens a pop-up
+// above the foot, anchored to that button: the label and its Stepper (for Speed also "Use default"), each change
+// applied at once. The transport row stays underneath and usable. It is the one thing drawn over the book's text,
+// and only so: it opens on the reader's own tap on its button, reaches at most 120 px into the text band, dims
+// nothing and lays nothing out again; a tap outside it, Escape, its button again or the controls hiding closes it.
+import * as Popover from "@radix-ui/react-popover";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { Moon } from "lucide-react";
 import { Button } from "../parts/Button";
 import { Stepper } from "../parts/Stepper";
@@ -13,7 +16,7 @@ import "../reader-foot-setting.css";
 
 export type FootSetting = "speed" | "sleep";
 
-/** Which setting holds the foot's row, if any. Hiding the controls puts the transport row back. */
+/** Which setting's pop-up is open, if any. Hiding the controls closes it. */
 export function useFootSetting(controls: boolean) {
   const [setting, setSetting] = useState<FootSetting | null>(null);
   useEffect(() => {
@@ -22,61 +25,147 @@ export function useFootSetting(controls: boolean) {
   return [controls ? setting : null, setSetting] as const;
 }
 
-/** The foot's Sleep timer and Speed buttons: the minutes left while the timer runs, and the speed. */
-export function FootSettingButtons({ open, onOpen }: { open: FootSetting | null; onOpen: (setting: FootSetting) => void }) {
+// What a press outside the pop-up must leave to its own click: the two setting buttons decide by themselves (the
+// same button closes it, the other switches), and the catcher over the text closes it and does nothing else.
+const LEFT_TO_CLICK = ".reader-foot-sleep, .reader-foot-speed, .reader-text-catcher";
+
+/**
+ * The foot's Sleep timer and Speed buttons, the minutes left while the timer runs and the speed, each with its pop-up.
+ * `onOpen(null)` closes the one open.
+ */
+export function FootSettingButtons({ open, onOpen }: { open: FootSetting | null; onOpen: (setting: FootSetting | null) => void }) {
   const p = usePlayer();
   const speed = useBookSpeed(undefined);
   const minutes = sleepShown(p.sleep);
   const sleepButton = useRef<HTMLButtonElement>(null), speedButton = useRef<HTMLButtonElement>(null);
-  // Done (or the controls hiding) puts the buttons back: focus returns to the one that was used.
-  const last = useRef<FootSetting | null>(null);
-  useEffect(() => {
-    const was = last.current;
-    last.current = open;
-    if (!open && was && (document.activeElement === document.body || !document.activeElement))
-      (was === "sleep" ? sleepButton : speedButton).current?.focus();
-  }, [open]);
+  // The pop-up stands on the foot's top edge: its distance from the button's top, measured when it opens.
+  const [offset, setOffset] = useState(0);
+  const toggle = (setting: FootSetting, button: HTMLButtonElement) => {
+    if (open === setting) {
+      button.focus();
+      onOpen(null);
+      return;
+    }
+    const foot = button.closest(".reader-player");
+    setOffset(foot ? Math.max(0, button.getBoundingClientRect().top - foot.getBoundingClientRect().top) : 0);
+    onOpen(setting);
+  };
+  const popup = (setting: FootSetting, button: RefObject<HTMLButtonElement | null>) => (
+    <SettingPopup
+      setting={setting}
+      offset={offset}
+      onEscape={() => {
+        button.current?.focus();
+        onOpen(null);
+      }}
+      onOutside={() => onOpen(null)}
+    />
+  );
   return (
     <>
-      <button
-        ref={sleepButton}
-        type="button"
-        className="icon-button reader-foot-sleep"
-        aria-label={minutes === SLEEP_OFF ? "Sleep timer: off" : `Sleep timer: ${formatSleep(minutes)} left`}
-        aria-expanded={open === "sleep"}
-        data-running={minutes !== SLEEP_OFF || undefined}
-        onClick={() => onOpen("sleep")}
-      >
-        {minutes === SLEEP_OFF ? <Moon size={20} aria-hidden="true" /> : <span aria-hidden="true">{formatSleep(minutes)}</span>}
-      </button>
-      <button
-        ref={speedButton}
-        type="button"
-        className="icon-button reader-foot-speed"
-        aria-label={`Speed ${formatSpeed(speed)} times`}
-        aria-expanded={open === "speed"}
-        onClick={() => onOpen("speed")}
-      >
-        <span aria-hidden="true">{formatSpeed(speed)}×</span>
-      </button>
+      <Popover.Root open={open === "sleep"}>
+        <Popover.Anchor asChild>
+          <button
+            ref={sleepButton}
+            type="button"
+            className="icon-button reader-foot-sleep"
+            aria-label={minutes === SLEEP_OFF ? "Sleep timer: off" : `Sleep timer: ${formatSleep(minutes)} left`}
+            aria-expanded={open === "sleep"}
+            data-running={minutes !== SLEEP_OFF || undefined}
+            onClick={(event) => toggle("sleep", event.currentTarget)}
+          >
+            {minutes === SLEEP_OFF ? <Moon size={20} aria-hidden="true" /> : <span aria-hidden="true">{formatSleep(minutes)}</span>}
+          </button>
+        </Popover.Anchor>
+        {popup("sleep", sleepButton)}
+      </Popover.Root>
+      <Popover.Root open={open === "speed"}>
+        <Popover.Anchor asChild>
+          <button
+            ref={speedButton}
+            type="button"
+            className="icon-button reader-foot-speed"
+            aria-label={`Speed ${formatSpeed(speed)} times`}
+            aria-expanded={open === "speed"}
+            onClick={(event) => toggle("speed", event.currentTarget)}
+          >
+            <span aria-hidden="true">{formatSpeed(speed)}×</span>
+          </button>
+        </Popover.Anchor>
+        {popup("speed", speedButton)}
+      </Popover.Root>
     </>
   );
 }
 
-/** The row that takes the transport row's place: "Speed" or "Sleep timer", its Stepper, Done. */
-export function FootSettingRow({ setting, onDone }: { setting: FootSetting; onDone: () => void }) {
-  const row = useRef<HTMLDivElement>(null);
-  // The row replaces the button that opened it: the keyboard carries on at its value.
-  useEffect(() => {
-    row.current?.querySelector<HTMLElement>('[role="spinbutton"]')?.focus();
-  }, [setting]);
+/** The pop-up: a group named "Speed" or "Sleep timer", not a dialog, with no backdrop and no Done. */
+function SettingPopup({ setting, offset, onEscape, onOutside }: { setting: FootSetting; offset: number; onEscape: () => void; onOutside: () => void }) {
+  const content = useRef<HTMLDivElement>(null);
   return (
-    <div ref={row} className="reader-foot-setting" role="group" aria-label={setting === "speed" ? "Speed" : "Sleep timer"}>
-      {setting === "speed" ? <SpeedSetting /> : <SleepSetting />}
-      <Button kind="quiet" className="reader-foot-setting-done" onClick={onDone}>
-        Done
-      </Button>
-    </div>
+    <Popover.Portal>
+      <Popover.Content
+        ref={content}
+        role="group"
+        aria-label={setting === "speed" ? "Speed" : "Sleep timer"}
+        className="reader-foot-popup"
+        data-setting={setting}
+        side="top"
+        align="end"
+        sideOffset={offset}
+        collisionPadding={16}
+        // The keyboard carries on at the value, as when the row took the transport row's place.
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          content.current?.querySelector<HTMLElement>('[role="spinbutton"]')?.focus();
+        }}
+        // Escape and the button put the focus back on the button themselves; a tap elsewhere keeps it where it went.
+        onCloseAutoFocus={(event) => event.preventDefault()}
+        onEscapeKeyDown={(event) => {
+          event.preventDefault();
+          onEscape();
+        }}
+        onInteractOutside={(event) => {
+          const target = event.target instanceof Element ? event.target : null;
+          if (target?.closest(LEFT_TO_CLICK)) {
+            event.preventDefault();
+            return;
+          }
+          onOutside();
+        }}
+      >
+        {setting === "speed" ? <SpeedSetting /> : <SleepSetting />}
+      </Popover.Content>
+    </Popover.Portal>
+  );
+}
+
+/**
+ * Over the text band while a pop-up is open: draws nothing, and takes the tap meant for the text, so that the tap
+ * only closes the pop-up. It must not also show or hide the controls, turn a page, follow a link, start Listen from
+ * here or move the rail. The epub.js frame and the view of prepared text never see it.
+ */
+export function TextCatcher({ viewport, onClose }: { viewport: RefObject<HTMLElement | null>; onClose: () => void }) {
+  const element = viewport.current;
+  const late = useRef<ReturnType<typeof setTimeout> | null>(null);
+  if (!element) return null;
+  const close = () => {
+    if (late.current) clearTimeout(late.current);
+    onClose();
+  };
+  return (
+    <div
+      className="reader-text-catcher"
+      aria-hidden="true"
+      style={{ left: element.offsetLeft, top: element.offsetTop, width: element.offsetWidth, height: element.offsetHeight }}
+      onPointerDown={(event) => event.preventDefault()}
+      // A press that moved is followed by no click: it closes the pop-up a moment after it ends.
+      onPointerUp={() => {
+        late.current = setTimeout(onClose, 350);
+      }}
+      onPointerCancel={close}
+      onClick={close}
+      onWheel={close}
+    />
   );
 }
 
@@ -87,7 +176,7 @@ function SpeedSetting() {
   const speed = useBookSpeed(undefined);
   const own = useHasOwnSpeed(undefined);
   return (
-    <>
+    <div className="reader-foot-setting">
       <span className="reader-foot-setting-label type-body">Speed</span>
       {own.recordingId && own.has && (
         <Button
@@ -110,7 +199,7 @@ function SpeedSetting() {
         increaseLabel="Faster"
         onChange={(value) => p.setSpeed(value)}
       />
-    </>
+    </div>
   );
 }
 
@@ -119,7 +208,7 @@ function SleepSetting() {
   const p = usePlayer();
   const shown = sleepShown(p.sleep);
   return (
-    <>
+    <div className="reader-foot-setting">
       <span className="reader-foot-setting-label type-body">Sleep timer</span>
       <Stepper
         label="Sleep timer"
@@ -135,6 +224,6 @@ function SleepSetting() {
           if (minutes !== undefined) p.setSleep(minutes);
         }}
       />
-    </>
+    </div>
   );
 }

@@ -27,7 +27,7 @@ import { useAppearance } from "./Appearance";
 import { fontFamilies, paletteFor } from "../appearance";
 import { useReaderMap } from "../use-reader-map";
 import { PlaybackSource } from "./PlaybackSource";
-import { FootSettingButtons, FootSettingRow, useFootSetting } from "./ReaderFootSetting";
+import { FootSettingButtons, TextCatcher, useFootSetting } from "./ReaderFootSetting";
 import { PlaybackTimeline } from "./PlaybackTimeline";
 import { readerNeedsScripts } from "../reader-sandbox";
 import { closeRawTextElements } from "../reader-section-markup";
@@ -44,7 +44,7 @@ import { ReaderAppearance } from "./ReaderAppearance";
 import { Button } from "../parts/Button";
 import { BLOCKS_IN_LINK, BLOCKS_INSIDE_LINK_SELECTOR, LINK_SELECTOR, followedLink, fragmentTarget } from "../reader-links";
 import { ReaderFootMessage, tappedControl, useReaderMessages, useReaderUpdate } from "./ReaderFootMessage";
-import { messageToShow, type ReaderError, type ReaderNotice } from "../reader-messages";
+import { messagePlace, messageToShow, type ReaderError, type ReaderNotice } from "../reader-messages";
 import { dismissUpdate, reloadForUpdate } from "../app-update";
 import { usePlayer, type SeekTarget } from "../player";
 import { api, forgetPositionHistory, localDB } from "../lib";
@@ -1967,6 +1967,13 @@ export function ReaderView({
     reload: () => void reloadForUpdate(() => { if (playerRef.current.playing) playerRef.current.toggle(); }),
     dismissUpdate,
   };
+  // Where the message stands (#890): a notice with Undo takes the timeline's row on a phone with the controls shown;
+  // the others take the row's place, and a setting's pop-up, whose button gives way with the row, closes.
+  const messageAt = message ? messagePlace(message, { controls, desktop }) : null;
+  const rowTaken = messageAt === "row" && controls;
+  useEffect(() => {
+    if (rowTaken) setFootSetting(null);
+  }, [rowTaken]);
   // The next tap on a control ends a notice with Undo (spec #586 "How long").
   // The notice leaves on the next task, not in the capture phase: React would unmount the message's own Play or Pause
   // before its click reached it, and the narration would not stop (#592, found with Listen from here's long-press).
@@ -2057,6 +2064,7 @@ export function ReaderView({
             style={prepared ? preparedStyle : spreadWidth ? ({ "--reader-spread": `${spreadWidth}px` } as CSSProperties) : undefined}
             aria-label="Ebook pages"
           />
+          {footSetting && <TextCatcher viewport={viewport} onClose={() => setFootSetting(null)} />}
           {desktop && <button className="reader-edge reader-edge-next" aria-label="Next page" onClick={()=>turn(1)}><ArrowRight size={20}/></button>}
         </div>
       </div>
@@ -2080,9 +2088,9 @@ export function ReaderView({
       </div>
       {/* The foot (#587): its box stays whether the controls show or not. At rest the progress line, where the
           narration is and a small Play or Pause; with the controls shown the timeline and the transport row. */}
-      <section className="reader-player" aria-label="Player" data-controls={controls} data-recording={recording ? undefined : "none"} data-setting={footSetting ?? undefined} data-message={message?.kind} onClickCapture={tapControls}>
+      <section className="reader-player" aria-label="Player" data-controls={controls} data-recording={recording ? undefined : "none"} data-message={message?.kind} data-message-place={messageAt ?? undefined} onClickCapture={tapControls}>
         {message && (
-          <ReaderFootMessage message={message} actions={messageActions} play={p.book && atRest.has("pause") ? { playing: p.playing, toggle: p.toggle } : null} />
+          <ReaderFootMessage message={message} actions={messageActions} play={p.book && atRest.has("pause") && messageAt === "row" ? { playing: p.playing, toggle: p.toggle } : null} />
         )}
         <div className="reader-foot-rest">
           <span className="reader-foot-line" aria-hidden="true"><i style={{ width: `${restProgress * 100}%` }} /></span>
@@ -2164,7 +2172,6 @@ export function ReaderView({
             <FootSettingButtons open={footSetting} onOpen={setFootSetting} />
           </div>
         )}
-        {footSetting && inRow.has("speed") && <FootSettingRow setting={footSetting} onDone={() => setFootSetting(null)} />}
         </div>
       </section>
     </div>

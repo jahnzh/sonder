@@ -1,7 +1,9 @@
-/* The reader's message in the foot (#591, ADR 0019, spec #586 "Messages in the foot"; boards ReaderUndo, ReaderError,
-   ReaderConflict, ReaderUpdate, ReaderConfirm). On a phone the message takes the foot's lower row: under the progress
-   line at rest (the place and the small Pause give way), under the timeline with the controls shown (the transport
-   row gives way). The foot keeps its box, so the text band is not laid out again. */
+/* The reader's message in the foot (#591, #890, ADR 0019, spec #586 "Messages in the foot"; boards ReaderUndo,
+   ReaderError, ReaderConflict, ReaderUpdate, ReaderConfirm). Where it stands is `messagePlace` (src/reader-messages.ts),
+   marked on the foot as data-message-place. On a phone a message takes the foot's lower row: under the progress line
+   at rest (the place and the small Pause give way), under the timeline with the controls shown (the transport row
+   gives way); a notice with Undo, with the controls shown, takes the timeline's row instead and leaves the transport
+   row whole. The foot keeps its box, so the text band is not laid out again. */
 .reader-message {
   display: none;
 }
@@ -49,10 +51,53 @@
     background: var(--accent);
     color: var(--on-accent);
   }
-  .reader-player[data-message] .reader-foot-row,
-  .reader-player[data-message] .reader-player-leading,
-  .reader-player[data-message] .reader-transport,
-  .reader-player[data-message] .reader-player-extras {
+  .reader-player[data-message-place="row"] .reader-foot-row,
+  .reader-player[data-message-place="row"] .reader-player-leading,
+  .reader-player[data-message-place="row"] .reader-transport,
+  .reader-player[data-message-place="row"] .reader-player-extras {
+    visibility: hidden;
+  }
+  /* A notice with Undo says what happened and offers to take it back: Undo follows its sentence, and at rest Play or
+     Pause stays at the row's far end (#890). */
+  .reader-player > .reader-message[data-kind="notice"] .reader-message-text {
+    flex: 0 1 auto;
+  }
+  .reader-player > .reader-message[data-kind="notice"] .reader-message-play {
+    margin: 0 0 0 auto;
+  }
+  /* With the controls shown the notice takes the timeline's row, 20 high (#890, ADR 0019 amended 2026-11-24): the
+     transport row under it stays whole. Undo's target is 44 high and reaches up over the text band's last line,
+     drawing nothing there, and ends where the transport row begins (the row's gap under the timeline). */
+  .reader-player[data-controls="true"][data-message-place="timeline"] > .reader-message {
+    top: var(--space-4);
+    height: 20px;
+    gap: var(--space-8);
+  }
+  .reader-player[data-message-place="timeline"] > .reader-message .reader-message-text {
+    display: block;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .reader-player[data-message-place="timeline"] > .reader-message .part-button.reader-message-action {
+    align-self: flex-end;
+    height: var(--height-control);
+    min-height: var(--height-control);
+    margin: 0 0 calc(var(--space-4) * -1);
+    padding: 0 var(--space-8) var(--space-4);
+    align-items: flex-end;
+    background: transparent;
+  }
+  /* Neither a hover nor the keyboard's focus draws in the part over the text: the focus underlines the word. */
+  .reader-player[data-message-place="timeline"] > .reader-message .part-button.reader-message-action:hover {
+    background: transparent;
+  }
+  .reader-player[data-message-place="timeline"] > .reader-message .part-button.reader-message-action:focus-visible {
+    outline: none;
+    text-decoration: underline 2px;
+    text-underline-offset: 3px;
+  }
+  .reader-player[data-message-place="timeline"] .reader-scrubber,
+  .reader-player[data-message-place="timeline"] .reader-audio-timeline {
     visibility: hidden;
   }
 }

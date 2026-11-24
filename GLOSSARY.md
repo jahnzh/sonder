@@ -143,7 +143,7 @@ The band at the top of the reader's page, 44 high plus the phone's safe area. At
 _Avoid_: Top bar, toolbar, header
 
 **Foot**:
-The band at the bottom of the reader's page, 72 high plus the phone's safe area. At rest it holds the progress line, the time left and Pause; with the controls shown, the timeline and the transport. Speed, the sleep timer and every message while reading take its lower row.
+The band at the bottom of the reader's page, 72 high plus the phone's safe area. At rest it holds the progress line, the time left and Pause; with the controls shown, the timeline and the transport. Every message while reading is in it: a notice with Undo takes the timeline's row on a phone with the controls shown, the others its lower row. Speed and the sleep timer open a setting's pop-up above their button, the one thing drawn over the text band (ADR 0019).
 _Avoid_: Player bar, bottom bar, footer, toast
 
 **Text band**:

@@ -27,12 +27,21 @@ export async function bandBoxes(room: Locator) {
   };
 }
 
+/** How far a setting's pop-up may reach into the text band (ADR 0019, amended 2026-11-24, #890). */
+export const POPUP_REACH = 120;
+
 /**
  * The rule (ADR 0019, spec #586 "The rule, asserted once"): the boxes of the head, the foot and a docked panel do
  * not intersect the box of the text. Returns the boxes it measured.
+ *
+ * With a setting's pop-up open (Speed or the sleep timer, the amendment of 2026-11-24) it allows that pop-up and
+ * nothing else: one pop-up, standing on the band's lower edge and reaching at most 120 px into it; every other point of the band shows the text, or the catcher that takes a tap meant for the text and draws
+ * nothing (no backdrop, no dimming). With none open it is as strict as before.
  */
 export async function expectTextUncovered(room: Locator) {
   const boxes = await bandBoxes(room);
+  const popups = room.page().locator(".reader-foot-popup");
+  if (await popups.count()) await expectPopupAllowed(room, boxes.text);
   const covering: Record<string, Box> = { head: boxes.head, foot: boxes.foot };
   if (boxes.dock && boxes.dock.height > 0) covering.dock = boxes.dock;
   for (const panel of await room.locator(".reader-dock > *").all()) {
@@ -43,6 +52,33 @@ export async function expectTextUncovered(room: Locator) {
     expect(intersects(value, boxes.text), `${name} ${JSON.stringify(value)} intersects the text ${JSON.stringify(boxes.text)}`).toBe(false);
   if (await room.locator(".text-rail").count()) await expectRailBesideText(room);
   return boxes;
+}
+
+async function expectPopupAllowed(room: Locator, text: Box) {
+  const popups = room.page().locator(".reader-foot-popup");
+  expect(await popups.count(), "one setting's pop-up at a time").toBe(1);
+  const popup = await box(popups);
+  const bottom = text.y + text.height;
+  expect(popup.y + popup.height, `the pop-up ${JSON.stringify(popup)} stands on the text band's lower edge ${bottom}`).toBeGreaterThanOrEqual(bottom - 0.5);
+  expect(bottom - popup.y, `the pop-up ${JSON.stringify(popup)} reaches at most ${POPUP_REACH} px into the text ${JSON.stringify(text)}`).toBeLessThanOrEqual(POPUP_REACH + 0.5);
+  // Every other point of the band: the text, or the catcher, which draws nothing.
+  const found = await room.locator(".reader-viewport").evaluate((host, popup) => {
+    const band = host.getBoundingClientRect();
+    const wrong: string[] = [];
+    for (let row = 0; row < 12; row++)
+      for (let column = 0; column < 8; column++) {
+        const x = band.left + 2 + ((band.width - 4) * column) / 7, y = band.top + 2 + ((band.height - 4) * row) / 11;
+        if (x >= popup.x - 1 && x <= popup.x + popup.width + 1 && y >= popup.y - 1 && y <= popup.y + popup.height + 1) continue;
+        const element = document.elementFromPoint(x, y);
+        if (!element || host.contains(element)) continue;
+        const css = getComputedStyle(element);
+        const draws = `background ${css.backgroundColor}, shadow ${css.boxShadow}, border ${["Top", "Right", "Bottom", "Left"].map((side) => css.getPropertyValue(`border-${side.toLowerCase()}-width`)).join(" ")}, outline ${css.outlineStyle === "none" ? "none" : css.outlineWidth}, ${element.childElementCount} children`;
+        if (element.matches(".reader-text-catcher") && draws === "background rgba(0, 0, 0, 0), shadow none, border 0px 0px 0px 0px, outline none, 0 children") continue;
+        wrong.push(`${element.tagName.toLowerCase()}.${element.className} at ${Math.round(x)},${Math.round(y)} (${draws})`);
+      }
+    return wrong;
+  }, popup);
+  expect(found, "nothing but the pop-up is over the text").toEqual([]);
 }
 
 /**

@@ -1,5 +1,6 @@
-/* Speed and the sleep timer in the reader's foot (#589; src/components/ReaderFootSetting.tsx; boards
-   ReaderSpeed.dc.html, ReaderSleep.dc.html): the row takes the transport row's place, the timeline above stays. */
+/* Speed and the sleep timer in the reader's foot (#589, #890; src/components/ReaderFootSetting.tsx; ADR 0019 amended
+   2026-11-24; boards ReaderSpeed.dc.html, ReaderSleep.dc.html): each button opens a pop-up that stands on the foot's
+   top edge, anchored to the button; the transport row stays. */
 .reader-player .reader-foot-speed,
 .reader-player .reader-foot-sleep {
   font-family: var(--font-body);
@@ -16,14 +17,24 @@
   padding: 0 var(--space-4);
   color: var(--accent);
 }
-.reader-player[data-setting] .reader-player-leading,
-.reader-player[data-setting] .reader-transport,
-.reader-player[data-setting] .reader-player-extras {
-  display: none;
+.reader-player .reader-foot-sleep[aria-expanded="true"],
+.reader-player .reader-foot-speed[aria-expanded="true"] {
+  background: var(--raised);
+}
+/* The pop-up: one row of 44 inside 8 of padding, 60 high, far less than the 120 it may reach into the text band. No
+   backdrop: the page is not dimmed. Above Now playing's dialog, whose layer it belongs to. */
+.reader-foot-popup {
+  box-sizing: border-box;
+  z-index: 92;
+  width: min(344px, calc(100vw - 2 * var(--space-16)));
+  padding: var(--space-8);
+  border-radius: var(--corner-group);
+  background: var(--surface);
+  color: var(--text);
+  /* Its edge is a ring, so the row keeps its 44 inside the 8. */
+  box-shadow: 0 0 0 1px var(--border), 0 6px 20px rgb(0 0 0 / 28%);
 }
 .reader-foot-setting {
-  grid-row: 2;
-  grid-column: 1 / -1;
   box-sizing: border-box;
   height: var(--height-control);
   min-width: 0;
@@ -34,6 +45,7 @@
 .reader-foot-setting-label {
   flex: 1;
   min-width: 0;
+  padding: 0 0 0 var(--space-8);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -43,16 +55,11 @@
   padding: 0 var(--space-8);
   color: var(--muted);
 }
-.reader-foot-setting .reader-foot-setting-done {
-  padding: 0 var(--space-4) 0 var(--space-12);
-  color: var(--accent);
-  font-weight: 600;
-}
-/* On a desktop (#595) the row takes the footer's controls' place as it takes the foot's transport row: the timeline
-   stays beside it and the footer keeps its box. */
-@media (min-width: 760px) {
-  .reader-foot-setting {
-    grid-row: 1;
-    grid-column: 1 / 3;
-  }
+/* Over the text band while a pop-up is open: it draws nothing and takes the tap meant for the text, which then only
+   closes the pop-up. */
+.reader-text-catcher {
+  position: absolute;
+  z-index: 6;
+  background: transparent;
+  touch-action: none;
 }

@@ -8,9 +8,10 @@ import { bandBoxes, expectTextUncovered, intersects, showControls } from "./read
 import { openRead } from "./now-playing";
 import { gotoRead } from "./read-face";
 import {bookText,textFrame} from "./reader-view";
-// Speed and the sleep timer in the reader's foot (#589, spec #586 "Speed and the sleep timer in the foot"; boards
-// ReaderSpeed.dc.html, ReaderSleep.dc.html): each takes the place of the foot's transport row with its label, a
-// Stepper and Done; the timeline above stays, nothing covers the text and the view is not laid out again.
+// Speed and the sleep timer in the reader's foot (#589, #890, spec #586 "Speed and the sleep timer in the foot"; ADR
+// 0019 amended 2026-11-24; boards ReaderSpeed.dc.html, ReaderSleep.dc.html): each opens a pop-up above its button
+// with its label and a Stepper, each change applied at once; the transport row stays usable underneath, the pop-up
+// reaches at most 120 px into the text, nothing dims the page and the view is not laid out again.
 
 const imported: string[] = [];
 test.afterEach(async ({ page }) => {
@@ -123,104 +124,190 @@ async function expectPlaying(page: Page, browserName: string) {
 const lastRate = async (page: Page) => (await page.evaluate(() => (window as any).__positionStates as MediaPositionState[])).at(-1)?.playbackRate;
 
 const TRANSPORT = ["Chapters", "Back to narration", "Back 30 seconds", /^(Play|Pause) narration$/, "Forward 30 seconds"] as const;
-async function expectTransport(foot: Locator, shown: boolean) {
-  for (const name of TRANSPORT)
-    await expect(foot.getByRole("button", { name, exact: typeof name === "string" })).toHaveCount(shown ? 1 : 0);
-}
 const box = async (locator: Locator) => (await locator.boundingBox())!;
+const popupOf = (page: Page, name: "Speed" | "Sleep timer") => page.getByRole("group", { name, exact: true });
+// A control a tap reaches: shown, and the topmost element at its centre is the control itself.
+async function expectTappable(control: Locator) {
+  await expect(control).toBeVisible();
+  const at = await box(control);
+  expect(await control.evaluate((element, [x, y]) => {
+    const top = document.elementFromPoint(x, y);
+    return !!top && element.contains(top);
+  }, [at.x + at.width / 2, at.y + at.height / 2]), `${control} is not covered`).toBe(true);
+}
+// The transport row with Sleep timer and Speed, whole and tappable (#890): a pop-up leaves it in place.
+async function expectTransportUsable(foot: Locator) {
+  for (const name of TRANSPORT) await expectTappable(foot.getByRole("button", { name, exact: typeof name === "string" }));
+  await expectTappable(foot.getByRole("button", { name: /^Sleep timer: / }));
+  await expectTappable(foot.getByRole("button", { name: /^Speed [\d.]+ times$/ }));
+}
 
-// The row as on the board: under the 20-high timeline (4 + 20 + 4 from the foot's top), 44 high, inside the foot's
-// 16 of padding; the label first and widest, then the Stepper (44 by 44 buttons either side of its value), Done last.
-async function expectBoardRow(foot: Locator, label: string, decrease: string, increase: string) {
-  const footBox = await box(foot);
-  const row = foot.locator(".reader-foot-setting");
-  const rowBox = await box(row);
-  expect(rowBox.y).toBeCloseTo(footBox.y + 28, 0);
-  expect(rowBox.height).toBeCloseTo(44, 0);
-  expect(rowBox.x).toBeCloseTo(footBox.x + 16, 0);
-  expect(rowBox.x + rowBox.width).toBeCloseTo(footBox.x + footBox.width - 16, 0);
-  const name = await box(row.getByText(label, { exact: true }));
-  const minus = await box(row.getByRole("button", { name: decrease, exact: true }));
-  const value = await box(row.getByRole("spinbutton"));
-  const plus = await box(row.getByRole("button", { name: increase, exact: true }));
-  const done = await box(row.getByRole("button", { name: "Done", exact: true }));
-  expect(name.x).toBeCloseTo(rowBox.x, 0);
+/**
+ * The pop-up as the amendment draws it (ADR 0019, 2026-11-24): a group named after its setting, not a dialog, with no
+ * Done; it stands on the foot's top edge, its right edge at its button's (inside the window's 16), one row of 44
+ * inside 8 of padding; the label first, then the Stepper with 44 by 44 buttons either side of its value. No backdrop:
+ * only the pop-up and the catcher that draws nothing are new on the page.
+ */
+async function expectPopup(page: Page, foot: Locator, button: Locator, name: "Speed" | "Sleep timer", decrease: string, increase: string) {
+  const popup = popupOf(page, name);
+  await expect(popup).toBeVisible();
+  await expect(page.getByRole("dialog", { name, exact: true })).toHaveCount(0);
+  await expect(popup.getByRole("button", { name: "Done", exact: true })).toHaveCount(0);
+  const [footBox, buttonBox, popupBox] = [await box(foot), await box(button), await box(popup)];
+  const width = page.viewportSize()!.width;
+  expect(popupBox.y + popupBox.height).toBeCloseTo(footBox.y, 0);
+  expect(popupBox.height).toBeCloseTo(60, 0);
+  expect(popupBox.x).toBeGreaterThanOrEqual(16 - 0.5);
+  expect(popupBox.x + popupBox.width).toBeLessThanOrEqual(width - 16 + 0.5);
+  expect(popupBox.x + popupBox.width).toBeCloseTo(Math.min(buttonBox.x + buttonBox.width, width - 16), 0);
+  const label = await box(popup.getByText(name, { exact: true }));
+  const minus = await box(popup.getByRole("button", { name: decrease, exact: true }));
+  const value = await box(popup.getByRole("spinbutton"));
+  const plus = await box(popup.getByRole("button", { name: increase, exact: true }));
   for (const control of [minus, plus]) {
     expect(control.width).toBeCloseTo(44, 0);
     expect(control.height).toBeCloseTo(44, 0);
+    expect(control.y).toBeCloseTo(popupBox.y + 8, 0);
   }
   expect(value.width).toBeGreaterThanOrEqual(48);
-  expect(done.height).toBeCloseTo(44, 0);
-  const xs = [name.x, minus.x, value.x, plus.x, done.x];
-  expect(xs).toEqual([...xs].sort((a, b) => a - b));
-  expect(name.x + name.width).toBeLessThanOrEqual(minus.x);
-  expect(done.x + done.width).toBeLessThanOrEqual(rowBox.x + rowBox.width + 0.5);
-  for (const part of [name, minus, value, plus, done]) {
-    expect(part.y).toBeGreaterThanOrEqual(rowBox.y - 0.5);
-    expect(part.y + part.height).toBeLessThanOrEqual(rowBox.y + rowBox.height + 0.5);
-  }
-  // The foot keeps its 72 and its place; the row stays inside it.
-  expect(rowBox.y + rowBox.height).toBeLessThanOrEqual(footBox.y + footBox.height + 0.5);
+  expect(label.x).toBeLessThan(minus.x);
+  expect([minus.x, value.x, plus.x]).toEqual([minus.x, value.x, plus.x].sort((a, b) => a - b));
+  expect(plus.x + plus.width).toBeCloseTo(popupBox.x + popupBox.width - 8, 0);
+  // Nothing dims the page: the only layers over it are the pop-up and the catcher over the text.
+  expect(await page.evaluate(() => [...document.body.children].filter((element) => element.matches("[data-radix-popper-content-wrapper]")).length)).toBe(1);
+  expect(await page.locator(".reader-text-catcher").evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
+}
+
+// A tap, a tap at the page's right edge and a long press on the book's text: each with a pop-up open only closes it.
+async function tapText(page: Page, room: Locator, fraction: number, hold = 0) {
+  const text = await box(room.locator(".reader-viewport"));
+  await page.mouse.move(text.x + text.width * fraction, text.y + text.height / 2);
+  await page.mouse.down();
+  if (hold) await page.waitForTimeout(hold);
+  await page.mouse.up();
 }
 
 for (const [mode, label] of [["paginated", "pages"], ["scroll", "scroll"]] as const) {
-  test(`Speed replaces the transport row and Done brings it back in ${label} mode, as on ReaderSpeed.dc.html`, async ({ page }) => {
+  test(`Speed opens a pop-up above its button in ${label} mode; the transport row stays usable and every way of closing it works`, async ({ page }) => {
     const { book, ebook } = await fixture(page, `Foot speed ${label}`);
+    await instrument(page);
     await withReader(page, { mode }, async () => {
       const room = await readerWithNarration(page, book, ebook);
       const foot = room.locator(".reader-player");
       const before = await frameState(room);
-      const timeline = await box(foot.getByRole("slider"));
-      await expectTransport(foot, true);
       const speed = foot.getByRole("button", { name: /^Speed [\d.]+ times$/ });
+      const sleep = foot.getByRole("button", { name: /^Sleep timer: / });
       const shownSpeed = (await speed.innerText()).trim();
+      const popup = popupOf(page, "Speed");
       await speed.click();
-      // The row in place of the transport: the label, the Stepper at the recording's speed, Done.
-      const row = foot.getByRole("group", { name: "Speed", exact: true });
-      await expect(row).toBeVisible();
-      await expectTransport(foot, false);
-      await expect(foot.getByRole("button", { name: /^Sleep timer/ })).toHaveCount(0);
-      const stepper = row.getByRole("spinbutton", { name: "Playback speed", exact: true });
+      // The pop-up: the label and the Stepper at the recording's speed, focused; the transport row stays underneath.
+      await expectPopup(page, foot, speed, "Speed", "Slower", "Faster");
+      await expect(speed).toHaveAttribute("aria-expanded", "true");
+      const stepper = popup.getByRole("spinbutton", { name: "Playback speed", exact: true });
       await expect(stepper).toHaveText(shownSpeed);
       await expect(stepper).toBeFocused();
-      // The timeline above stays where it was; nothing covers the text and nothing moved or was laid out again.
-      expect(await box(foot.getByRole("slider"))).toEqual(timeline);
+      await expectTransportUsable(foot);
+      // It is the one thing over the text, within the 120 the rule allows; nothing moved or was laid out again.
       await expectTextUncovered(room);
       expect(await frameState(room)).toEqual(before);
-      await expectBoardRow(foot, "Speed", "Slower", "Faster");
-      // Today's steps: 0.05 a step, and the speed is the player's.
-      await row.getByRole("button", { name: "Faster", exact: true }).click();
+      // Today's steps: 0.05 a step, applied at once, the pop-up staying open.
+      await popup.getByRole("button", { name: "Faster", exact: true }).click();
       const faster = `${Number((Number(shownSpeed.replace("×", "")) + 0.05).toFixed(2))}×`;
       await expect(stepper).toHaveText(faster);
-      await expect(row.getByRole("button", { name: /^Use default · / })).toBeVisible();
-      await expectBoardRow(foot, "Speed", "Slower", "Faster");
-      // Use default drops the recording's own speed, as the speed menu did.
-      await row.getByRole("button", { name: /^Use default · / }).click();
-      await expect(stepper).toHaveText(shownSpeed);
-      await expect(row.getByRole("button", { name: /^Use default · / })).toHaveCount(0);
-      // Done puts the transport row back, with the focus on Speed.
-      await row.getByRole("button", { name: "Done", exact: true }).click();
-      await expect(row).toHaveCount(0);
-      await expectTransport(foot, true);
-      await expect(speed).toBeFocused();
-      await expect(speed).toHaveText(shownSpeed);
+      await expect(speed).toHaveText(faster);
+      await expect.poll(async () => (await audioOf(page)).rate).toBeCloseTo(Number(faster.replace("×", "")), 5);
+      await expect(popup.getByRole("button", { name: /^Use default · / })).toBeVisible();
+      await expectPopup(page, foot, speed, "Speed", "Slower", "Faster");
       await expectTextUncovered(room);
-      expect(await frameState(room)).toEqual(before);
-      // A tap on the text hides the controls and with them the row: the next time the transport shows.
+      // Use default drops the recording's own speed, as the speed menu did.
+      await popup.getByRole("button", { name: /^Use default · / }).click();
+      await expect(stepper).toHaveText(shownSpeed);
+      await expect(popup.getByRole("button", { name: /^Use default · / })).toHaveCount(0);
+      // A second tap on its button closes it, with the focus on the button.
       await speed.click();
-      await expect(row).toBeVisible();
-      const text = before.boxes.text;
-      await page.mouse.click(text.x + text.width / 2, text.y + text.height / 2);
+      await expect(popup).toHaveCount(0);
+      await expect(speed).toBeFocused();
+      await expect(speed).toHaveAttribute("aria-expanded", "false");
+      // Escape closes it, with the focus back on the button.
+      await speed.click();
+      await expect(stepper).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(popup).toHaveCount(0);
+      await expect(speed).toBeFocused();
+      await expect(room.locator(".reader-topbar")).toBeVisible();
+      // The other setting's button closes it and opens the other.
+      await speed.click();
+      await sleep.click();
+      await expect(popup).toHaveCount(0);
+      await expect(popupOf(page, "Sleep timer").getByRole("spinbutton", { name: "Sleep timer", exact: true })).toBeFocused();
+      await sleep.click();
+      await expect(popupOf(page, "Sleep timer")).toHaveCount(0);
+      // A tap on the book's text only closes it: the controls stay, no page turns, nothing scrolls, no Listen from here.
+      for (const [fraction, hold] of [[0.5, 0], [0.9, 0], [0.5, 800]] as const) {
+        await speed.click();
+        await expect(popup).toBeVisible();
+        await tapText(page, room, fraction, hold);
+        await expect(popup).toHaveCount(0);
+        await expect(room.locator(".reader-topbar")).toBeVisible();
+        await expect(room.locator(".reader-player > .reader-message")).toHaveCount(0);
+        expect(await frameState(room)).toEqual(before);
+      }
+      // A tap on another control of the foot does what it does and closes it: Forward 30 seconds moves the narration.
+      const position = (await audioOf(page)).position;
+      await speed.click();
+      await foot.getByRole("button", { name: "Forward 30 seconds", exact: true }).click();
+      await expect(popup).toHaveCount(0);
+      await expect.poll(async () => (await audioOf(page)).position).toBeGreaterThan(position + 25);
+      // A control of the head too: the bookmark button bookmarks and closes it.
+      await speed.click();
+      await room.getByRole("button", { name: "Bookmark current sentence", exact: true }).click();
+      await expect(popup).toHaveCount(0);
+      await expect(room.getByRole("button", { name: "Remove bookmark from current sentence", exact: true })).toHaveAttribute("aria-pressed", "true");
+      // A tap on the text hides the controls; shown again, no pop-up is open.
+      await tapText(page, room, 0.5);
       await expect(room.locator(".reader-topbar")).toBeHidden();
       await showControls(page, room);
-      await expect(row).toHaveCount(0);
-      await expectTransport(foot, true);
+      await expect(popup).toHaveCount(0);
+      await expectTransportUsable(foot);
       expect(await frameState(room)).toEqual(before);
     });
   });
 }
 
-test("the sleep timer in the foot steps Off, 5, 15, 30, 45, 60, counts down and pauses the narration at the end, as on ReaderSleep.dc.html", async ({ page, browserName }) => {
+// The rule's test allows the pop-up and nothing else (#890): the same pop-up made to reach 200 px into the text, or a
+// backdrop over the text while it is open, fails it.
+test("the rule's test refuses a pop-up that reaches further than 120 px into the text, and anything else over the text", async ({ page }) => {
+  const { book, ebook } = await fixture(page, "Foot rule");
+  const room = await readerWithNarration(page, book, ebook);
+  const foot = room.locator(".reader-player");
+  await foot.getByRole("button", { name: /^Speed [\d.]+ times$/ }).click();
+  const popup = popupOf(page, "Speed");
+  await expect(popup).toBeVisible();
+  await expectTextUncovered(room);
+  // 200 high, standing on the same edge.
+  await popup.evaluate((element) => { element.style.height = "200px"; });
+  await expect.poll(async () => (await box(popup)).height).toBeCloseTo(200, 0);
+  await expect(expectTextUncovered(room)).rejects.toThrow(/reaches at most 120 px/);
+  await popup.evaluate((element) => { element.style.height = ""; });
+  await expectTextUncovered(room);
+  // A dimming layer over the page, beside the pop-up.
+  await page.evaluate(() => {
+    const veil = document.createElement("div");
+    veil.className = "test-veil";
+    veil.style.cssText = "position:fixed;inset:0;z-index:91;background:rgb(0 0 0 / 30%)";
+    document.body.append(veil);
+  });
+  await expect(expectTextUncovered(room)).rejects.toThrow(/nothing but the pop-up is over the text/);
+  await page.evaluate(() => document.querySelector(".test-veil")?.remove());
+  // A catcher that draws: refused as well.
+  await page.locator(".reader-text-catcher").evaluate((element) => { (element as HTMLElement).style.background = "rgb(0 0 0 / 20%)"; });
+  await expect(expectTextUncovered(room)).rejects.toThrow(/nothing but the pop-up is over the text/);
+  await page.keyboard.press("Escape");
+  await expect(popup).toHaveCount(0);
+  await expectTextUncovered(room);
+});
+
+test("the sleep timer's pop-up steps Off, 5, 15, 30, 45, 60, counts down and pauses the narration at the end, as on ReaderSleep.dc.html", async ({ page, browserName }) => {
   const { book, ebook } = await fixture(page, "Foot sleep");
   await instrument(page);
   // A fake clock in the page: it runs as time does until the test moves it on.
@@ -231,33 +318,40 @@ test("the sleep timer in the foot steps Off, 5, 15, 30, 45, 60, counts down and 
   const sleep = foot.getByRole("button", { name: /^Sleep timer: / });
   await expect(sleep).toHaveAccessibleName("Sleep timer: off");
   await sleep.click();
-  const row = foot.getByRole("group", { name: "Sleep timer", exact: true });
-  await expect(row).toBeVisible();
-  await expectTransport(foot, false);
-  const stepper = row.getByRole("spinbutton", { name: "Sleep timer", exact: true });
-  const shorter = row.getByRole("button", { name: "Shorter", exact: true }), longer = row.getByRole("button", { name: "Longer", exact: true });
+  const popup = popupOf(page, "Sleep timer");
+  await expectPopup(page, foot, sleep, "Sleep timer", "Shorter", "Longer");
+  await expectTransportUsable(foot);
+  const stepper = popup.getByRole("spinbutton", { name: "Sleep timer", exact: true });
+  const shorter = popup.getByRole("button", { name: "Shorter", exact: true }), longer = popup.getByRole("button", { name: "Longer", exact: true });
   await expect(stepper).toHaveText("Off");
   await expect(stepper).toBeFocused();
   await expect(shorter).toBeDisabled();
   await expectTextUncovered(room);
   expect(await frameState(room)).toEqual(before);
-  // Every step up from Off, then down again to 15.
+  // Every step up from Off, then down again to 15; each applies at once and the pop-up stays.
   for (const minutes of ["5 min", "15 min", "30 min", "45 min", "60 min"]) {
     await longer.click();
     await expect(stepper).toHaveText(minutes);
+    await expect(sleep).toHaveText(minutes);
   }
   await expect(longer).toBeDisabled();
   for (const minutes of ["45 min", "30 min", "15 min"]) {
     await shorter.click();
     await expect(stepper).toHaveText(minutes);
   }
-  await expectBoardRow(foot, "Sleep timer", "Shorter", "Longer");
-  await row.getByRole("button", { name: "Done", exact: true }).click();
-  await expectTransport(foot, true);
-  // The foot's sleep button shows the minutes left.
+  await expectPopup(page, foot, sleep, "Sleep timer", "Shorter", "Longer");
+  await expectTextUncovered(room);
+  // Escape closes it, with the focus on the button, which shows the minutes left.
+  await page.keyboard.press("Escape");
+  await expect(popup).toHaveCount(0);
+  await expect(sleep).toBeFocused();
   await expect(sleep).toHaveAccessibleName("Sleep timer: 15 min left");
   await expect(sleep).toHaveText("15 min");
+  // Play from the transport row with the pop-up open: it plays and the pop-up closes.
+  await sleep.click();
+  await expect(popup).toBeVisible();
   await foot.getByRole("button", { name: "Play narration", exact: true }).click();
+  await expect(popup).toHaveCount(0);
   await expectPlaying(page, browserName);
   // This host's Firefox raises a media error on the element just after it starts, though the audio goes on
   // playing, so the player shows Play there (the #656 family); the audio element itself is what the timer pauses.
@@ -267,14 +361,17 @@ test("the sleep timer in the foot steps Off, 5, 15, 30, 45, 60, counts down and 
   await expect(sleep).toHaveText("14 min");
   await sleep.click();
   await expect(stepper).toHaveText("14 min");
-  await expectBoardRow(foot, "Sleep timer", "Shorter", "Longer");
+  await expectPopup(page, foot, sleep, "Sleep timer", "Shorter", "Longer");
   await longer.click();
   await expect(stepper).toHaveText("15 min");
   await page.clock.fastForward("00:30");
   await expect(stepper).toHaveText("15 min");
   await shorter.click();
   await expect(stepper).toHaveText("5 min");
-  await row.getByRole("button", { name: "Done", exact: true }).click();
+  // Its button again closes it.
+  await sleep.click();
+  await expect(popup).toHaveCount(0);
+  await expect(sleep).toBeFocused();
   await expect(sleep).toHaveAccessibleName("Sleep timer: 5 min left");
   // 4 min 30 s later half a minute is left, shown as 1; the narration still plays.
   await page.clock.fastForward("04:30");
@@ -316,8 +413,9 @@ test("the default speed from Settings shows in the foot's Speed once saved, and 
     await showControls(page, room);
     await expect(speed(room)).toHaveAccessibleName("Speed 1.8 times");
     await speed(room).click();
-    await expect(room.getByRole("spinbutton", { name: "Playback speed", exact: true })).toHaveText("1.8×");
-    await room.getByRole("button", { name: "Done", exact: true }).click();
+    await expect(page.getByRole("spinbutton", { name: "Playback speed", exact: true })).toHaveText("1.8×");
+    await page.keyboard.press("Escape");
+    await expect(popupOf(page, "Speed")).toHaveCount(0);
     // The book dialog's chapter list is gone with the Book page (#532): that a book not in the player keeps real
     // chapter lengths is held by tests/playback-speed.test.ts (chapterRowTime); Now playing's Chapters page (#593)
     // shows it on screen again.
@@ -355,7 +453,7 @@ test("speed from the foot: the lock screen's rate, the chapter list's time left 
   const speed = foot.getByRole("button", { name: /^Speed [\d.]+ times$/ });
   await expect(speed).toHaveAccessibleName(`Speed ${defaultSpeed} times`);
   await speed.click();
-  const row = foot.getByRole("group", { name: "Speed", exact: true });
+  const row = popupOf(page, "Speed");
   const stepper = row.getByRole("spinbutton", { name: "Playback speed", exact: true });
   // Until the speed is changed the recording follows the default: nothing to go back to.
   await expect(row.getByRole("button", { name: /^Use default/ })).toHaveCount(0);
@@ -372,7 +470,8 @@ test("speed from the foot: the lock screen's rate, the chapter list's time left 
   await expect.poll(count, { timeout: 15000 }).toBeGreaterThan(start + 3);
   const later = (await page.evaluate(() => (window as any).__positionStates as MediaPositionState[])).slice(start);
   expect(later.every((state) => state.playbackRate === 2.65)).toBe(true);
-  await row.getByRole("button", { name: "Done", exact: true }).click();
+  await speed.click();
+  await expect(row).toHaveCount(0);
   await expect(speed).toHaveAccessibleName("Speed 2.65 times");
   // The current chapter's time left at 2.65× was in the book dialog's chapter list, gone with the Book page (#532):
   // tests/playback-speed.test.ts holds the rule (chapterRowTime), and Now playing's Chapters page (#593) shows it.
@@ -382,10 +481,11 @@ test("speed from the foot: the lock screen's rate, the chapter list's time left 
   await settled(again);
   await showControls(page, again);
   await again.locator(".reader-player").getByRole("button", { name: /^Speed [\d.]+ times$/ }).click();
-  await again.getByRole("button", { name: `Use default · ${defaultSpeed}×`, exact: true }).click();
-  await expect(again.getByRole("spinbutton", { name: "Playback speed", exact: true })).toHaveText(`${defaultSpeed}×`);
+  await page.getByRole("button", { name: `Use default · ${defaultSpeed}×`, exact: true }).click();
+  await expect(page.getByRole("spinbutton", { name: "Playback speed", exact: true })).toHaveText(`${defaultSpeed}×`);
   await expect.poll(async () => (await audioOf(page)).rate).toBe(defaultSpeed);
-  await again.getByRole("button", { name: "Done", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect(popupOf(page, "Speed")).toHaveCount(0);
   await page.reload();
   const reloaded = standalone(page);
   await settled(reloaded);
@@ -393,16 +493,16 @@ test("speed from the foot: the lock screen's rate, the chapter list's time left 
   await expect(reloaded.locator(".reader-player").getByRole("button", { name: /^Speed [\d.]+ times$/ })).toHaveAccessibleName(`Speed ${defaultSpeed} times`);
 });
 
-// The desktop keeps today's player bar until its ticket (#586 ticket 09): there too Speed and the sleep timer take
-// the transport's place in the bar instead of opening a menu over the page. (Its head is not a band yet, so the
-// boxes are the top bar's, the text's and the player bar's.)
+// On a desktop (#890) the same pop-up opens above its button in the footer: the footer's controls and the timeline
+// stay, the footer keeps its box and the text is not laid out again. (The boxes are the top bar's, the text's and the
+// footer's.)
 async function desktopState(room: Locator) {
   return room.evaluate((el) => {
     const rect = (selector: string) => { const r = el.querySelector(selector)!.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; };
     return { topbar: rect(".reader-topbar"), text: rect(".reader-viewport"), bar: rect(".reader-player"), resizes: el.querySelector(".reader-viewport")!.getAttribute("data-view-resizes") };
   });
 }
-test("on the desktop Speed and the sleep timer take the transport's place in the player bar", async ({ page }) => {
+test("on the desktop Speed and the sleep timer open the same pop-up above their button; the footer's controls stay", async ({ page }) => {
   skipOnMobile(true, "the desktop layout needs a desktop window, not a phone profile");
   await page.setViewportSize({ width: 1280, height: 800 });
   const { book, ebook } = await fixture(page, "Foot desktop");
@@ -415,22 +515,21 @@ test("on the desktop Speed and the sleep timer take the transport's place in the
   await expect.poll(async () => { const now = JSON.stringify(await desktopState(room)); const same = now === previous; previous = now; return same; }, { intervals: [300] }).toBe(true);
   const before = await desktopState(room);
   const foot = room.locator(".reader-player");
-  for (const [button, group] of [[/^Speed [\d.]+ times$/, "Speed"], [/^Sleep timer: /, "Sleep timer"]] as const) {
-    await foot.getByRole("button", { name: button }).click();
-    const row = foot.getByRole("group", { name: group, exact: true });
-    await expect(row).toBeVisible();
-    for (const name of ["Back 30 seconds", "Forward 30 seconds", "Back to narration"])
-      await expect(foot.getByRole("button", { name, exact: true })).toHaveCount(0);
+  for (const [name, group, decrease, increase] of [[/^Speed [\d.]+ times$/, "Speed", "Slower", "Faster"], [/^Sleep timer: /, "Sleep timer", "Shorter", "Longer"]] as const) {
+    const button = foot.getByRole("button", { name });
+    await button.click();
+    await expectPopup(page, foot, button, group, decrease, increase);
+    await expect(popupOf(page, group).getByRole("spinbutton")).toBeFocused();
+    for (const control of ["Back 30 seconds", "Forward 30 seconds", "Back to narration", /^(Play|Pause) narration$/] as const)
+      await expectTappable(foot.getByRole("button", { name: control, exact: typeof control === "string" }));
     await expect(foot.getByRole("slider")).toBeVisible();
-    const rowBox = await box(row);
-    expect(rowBox.y).toBeGreaterThanOrEqual(before.bar.y);
-    expect(rowBox.y + rowBox.height).toBeLessThanOrEqual(before.bar.y + before.bar.height);
-    expect(rowBox.x + rowBox.width).toBeLessThanOrEqual(before.bar.x + before.bar.width);
     const now = await desktopState(room);
     expect(now).toEqual(before);
-    expect(intersects(now.topbar, now.text) || intersects(now.bar, now.text) || intersects(rowBox, now.text)).toBe(false);
-    await row.getByRole("button", { name: "Done", exact: true }).click();
-    await expect(foot.getByRole("button", { name: "Back 30 seconds", exact: true })).toBeVisible();
+    expect(intersects(now.topbar, now.text) || intersects(now.bar, now.text)).toBe(false);
+    await expectTextUncovered(room);
+    await page.keyboard.press("Escape");
+    await expect(popupOf(page, group)).toHaveCount(0);
+    await expect(button).toBeFocused();
   }
   expect(await desktopState(room)).toEqual(before);
 });

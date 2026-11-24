@@ -148,3 +148,17 @@ export function messageText(message: ReaderMessage): string {
 export function errorRetries(error: ReaderError) {
   return error === "narration" || error === "locate" || error === "text-load" || error === "book-load" || error === "book-offline";
 }
+
+/**
+ * Where the foot shows a message (#890, ADR 0019 amended 2026-11-24). `"timeline"`: on a phone with the controls
+ * shown, a notice with Undo takes the timeline's row (the scrubber and its times), so the transport row, the Sleep
+ * timer and Speed stay whole and usable; any tap on a control ends the notice and the timeline is back. `"row"`:
+ * everything else stands where it stood before, in the row's place: at rest the lower row under the progress line,
+ * with the controls shown the transport row, on a desktop the footer's row. The other messages need an answer or are
+ * the reader's own status, and the desktop is the second ticket's.
+ */
+export type MessagePlace = "row" | "timeline";
+
+export function messagePlace(message: ReaderMessage, foot: { controls: boolean; desktop: boolean }): MessagePlace {
+  return message.kind === "notice" && foot.controls && !foot.desktop ? "timeline" : "row";
+}

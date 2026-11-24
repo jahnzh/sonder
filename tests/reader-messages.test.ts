@@ -8,12 +8,14 @@ import {
   errorRetries,
   expire,
   messageText,
+  messagePlace,
   messageToShow,
   noMessages,
   noticeLeavesIn,
   postError,
   postNotice,
   type MessageContext,
+  type ReaderMessage,
 } from "../src/reader-messages";
 // The reader's messages in the foot (#591, spec #586 "Messages in the foot"). The clock is a number passed in.
 
@@ -181,4 +183,35 @@ test("a long-press without a matching map asks for one in the foot, until dismis
     "Choose this recording and prepare its reading sync first.",
   );
   assert.notEqual(messageText({ kind: "error", error: "no-map" }), messageText({ kind: "error", error: "no-sync" }));
+});
+
+// Where a message goes (#890, ADR 0019 amended 2026-11-24).
+const every: ReaderMessage[] = [
+  { kind: "notice", notice: "listening" },
+  { kind: "notice", notice: "bookmark-removed" },
+  { kind: "error", error: "narration" },
+  { kind: "error", error: "bookmark-save" },
+  { kind: "conflict", chapter: "Chapter 2" },
+  { kind: "locating" },
+  { kind: "update", build: "b2" },
+];
+
+test("on a phone with the controls shown, a notice with Undo takes the timeline's row, so the transport row stays", () => {
+  assert.equal(messagePlace({ kind: "notice", notice: "listening" }, { controls: true, desktop: false }), "timeline");
+  assert.equal(messagePlace({ kind: "notice", notice: "bookmark-removed" }, { controls: true, desktop: false }), "timeline");
+});
+
+test("at rest a notice stands where it stood, in the lower row", () => {
+  for (const notice of ["listening", "bookmark-removed"] as const)
+    assert.equal(messagePlace({ kind: "notice", notice }, { controls: false, desktop: false }), "row");
+});
+
+test("the foot's other messages keep the row's place, at rest and with the controls shown", () => {
+  for (const message of every.filter((value) => value.kind !== "notice"))
+    for (const controls of [false, true])
+      assert.equal(messagePlace(message, { controls, desktop: false }), "row", `${JSON.stringify(message)} controls ${controls}`);
+});
+
+test("on a desktop every message, the notice too, keeps the footer's row in this cut", () => {
+  for (const message of every) assert.equal(messagePlace(message, { controls: true, desktop: true }), "row");
 });
