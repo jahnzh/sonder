@@ -154,7 +154,8 @@ test("without a book the footer links to the chosen recording's own page, and no
   const link = foot.getByRole("link");
   await expect(link).toHaveCount(0);
   await expect(foot.locator("a")).toHaveCount(0);
-  await expect(foot.locator(".get-sheet-source-line")).toBeEmpty();
+  // Nothing is reserved for it (the footer's final layout, #889).
+  await expect(foot.locator(".get-sheet-source-line")).toHaveCount(0);
   // Choosing a row, with its line, leaves the Get button where it is.
   const home = await getButton(page).boundingBox();
   let opened = 0;
@@ -172,7 +173,9 @@ test("without a book the footer links to the chosen recording's own page, and no
     await expect(link).toHaveAttribute("href", `https://audiobookbay.lu/abss/${id}/`);
     await expect(link).toHaveAttribute("target", "_blank");
     await expect(link).toHaveAttribute("rel", "noopener noreferrer");
-    await expect(foot.locator(":scope > :last-child")).toHaveClass(/get-sheet-source-line/);
+    // The button row is the footer's last; the link stands above the sentence.
+    await expect(foot.locator(":scope > :last-child")).toHaveClass(/get-sheet-actions/);
+    await expect(foot.locator(".get-sheet-source-line")).toHaveCount(1);
     expect(await getButton(page).boundingBox()).toEqual(home);
   }
   expect(opened).toBe(0);
