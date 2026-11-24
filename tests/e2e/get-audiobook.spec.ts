@@ -167,6 +167,88 @@ test("from the Book page: the search with title and author, rows from both sourc
   await expect(bookRegion(page).getByRole("list", { name: "Files", exact: true })).toContainText("Downloading to server · 10%");
 });
 
+// Releases of every kind of page address (#889): AudioBookBay's, an older server's (no source), two Prowlarr results
+// (one naming its indexer, one not) and a Prowlarr result with no address, or one that is not a web page.
+const PAGES = {
+  abb: [
+    abb("page-abb", { narrator: "Abby Voice", size: "110 MB" }),
+    (({ source: _source, ...older }) => older)(abb("page-older", { narrator: "Older Voice", size: "210 MB" })) as AudiobookRelease,
+  ],
+  prowlarr: [
+    abb(`prowlarr-${"b".repeat(32)}`, { source: "prowlarr", indexer: "Fixture Tracker", url: "https://tracker.example/details/1", narrator: "Tracker Voice", language: null, size: "310 MB", seeders: 4 }),
+    abb(`prowlarr-${"c".repeat(32)}`, { source: "prowlarr", indexer: null, url: "https://tracker.example/details/2", narrator: "Nameless Voice", language: null, size: "410 MB", seeders: 3 }),
+    abb(`prowlarr-${"d".repeat(32)}`, { source: "prowlarr", indexer: "Fixture Tracker", url: "", narrator: "Addressless Voice", language: null, size: "510 MB", seeders: 2 }),
+    abb(`prowlarr-${"e".repeat(32)}`, { source: "prowlarr", indexer: "Fixture Tracker", url: "magnet:?xt=urn:btih:" + "e".repeat(40), narrator: "Magnet Voice", language: null, size: "610 MB", seeders: 1 }),
+  ],
+};
+
+test("the footer links to the chosen recording's own page, follows the choice, and no row holds a link (#889)", async ({ page }) => {
+  const asked = await sources(page, { abb: () => ({ results: PAGES.abb, nextPage: null }), prowlarr: () => ({ results: PAGES.prowlarr }) });
+  let opened = 0;
+  page.context().on("page", () => opened++);
+  await page.goto(`/#book/${WAR.workId}/get/audiobook`);
+  await expect(rows(page)).toHaveCount(6);
+  const row = (voice: string) => rows(page).filter({ hasText: voice });
+  const foot = sheet(page).locator(".part-sheet-foot");
+  const link = foot.getByRole("link");
+  // Nothing chosen: no link, and nothing in the footer where it would be.
+  await expect(link).toHaveCount(0);
+  await expect(foot.locator("a, .get-sheet-source")).toHaveCount(0);
+
+  const expectLink = async (voice: string, name: string, href: string) => {
+    await row(voice).click();
+    await expect(row(voice)).toHaveAttribute("aria-checked", "true");
+    await expect(link).toHaveCount(1);
+    await expect(link).toHaveAccessibleName(name);
+    await expect(link).toHaveAttribute("href", href);
+    await expect(link).toHaveAttribute("target", "_blank");
+    await expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    await expect(link.locator(".get-sheet-leaving")).toBeVisible();
+  };
+  await expectLink("Abby Voice", "On AudioBookBay", "https://audiobookbay.lu/abss/page-abb/");
+  await page.screenshot({ path: `${OUT}/get-audiobook-source-link-phone.png` });
+  // It is the footer's last line, under the one that says how the recording is got.
+  await expect(foot.locator(":scope > :last-child")).toHaveClass(/get-sheet-source/);
+  // It follows the choice: its words and its address.
+  await expectLink("Tracker Voice", "On Fixture Tracker", "https://tracker.example/details/1");
+  await expectLink("Nameless Voice", "On the indexer's page", "https://tracker.example/details/2");
+  // An older server's release (no source) is AudioBookBay's.
+  await expectLink("Older Voice", "On AudioBookBay", "https://audiobookbay.lu/abss/page-older/");
+  // No address, or one that is not a web page: no link and no gap.
+  for (const voice of ["Addressless Voice", "Magnet Voice"]) {
+    await row(voice).click();
+    await expect(row(voice)).toHaveAttribute("aria-checked", "true");
+    await expect(link).toHaveCount(0);
+    await expect(foot.locator("a, .get-sheet-source")).toHaveCount(0);
+    await expect(foot.locator(":scope > :last-child")).toHaveAttribute("data-testid", "get-line");
+  }
+  // Choosing a row opened nothing, and no row holds a link or anything with an address.
+  expect(opened).toBe(0);
+  await expect(rows(page).locator("a, [href]")).toHaveCount(0);
+  await expect(sheet(page).getByRole("radiogroup", { name: "Recordings", exact: true }).getByRole("link")).toHaveCount(0);
+
+  // A new search clears the choice, and the link with it.
+  await row("Abby Voice").click();
+  await expect(link).toHaveCount(1);
+  const search = sheet(page).getByRole("searchbox", { name: "Search for a recording" });
+  const before = asked.abb.length;
+  await search.fill("art of war");
+  await search.press("Enter");
+  await expect.poll(() => asked.abb.length).toBe(before + 1);
+  await expect(link).toHaveCount(0);
+  expect(asked.posts).toEqual([]);
+  expect(opened).toBe(0);
+
+  // The link opens the release's own page in a new tab.
+  await page.context().route("https://audiobookbay.lu/**", (route) => route.fulfill({ contentType: "text/html", body: "<title>AudioBookBay</title>" }));
+  await row("Abby Voice").click();
+  const [tab] = await Promise.all([page.context().waitForEvent("page"), link.click()]);
+  await expect.poll(() => tab.url()).toBe("https://audiobookbay.lu/abss/page-abb/");
+  await tab.close();
+  await expect(page).toHaveURL(new RegExp(`#book/${WAR.workId}/get/audiobook$`));
+  await expect(row("Abby Voice")).toHaveAttribute("aria-checked", "true");
+});
+
 test("from the Audiobook page, on a reload and from a link; Close goes back, or to the Book page", async ({ page, context }) => {
   const asked = await sources(page);
   await page.goto(`/#book/${ALICE.workId}/audiobook`);
@@ -326,6 +408,9 @@ for (const size of [
     const row = await box(rows(page).nth(0));
     const other = await box(sheet(page).getByRole("button", { name: "Paste a magnet link", exact: true }));
     const button = await box(getButton(page));
+    // The chosen candidate's own page (#889): the foot's last line, a 44 high target under the button's line.
+    const source = await box(sheet(page).locator(".part-sheet-foot").getByRole("link"));
+    expect(source.height).toBe(44);
     const line = await box(sheet(page).getByText("Plays from TorBox right away.", { exact: true }));
     const recordings = await box(sheet(page).getByRole("heading", { name: "Recordings · 3" }));
     expect([close.width, close.height]).toEqual([44, 44]);
@@ -335,11 +420,11 @@ for (const size of [
     expect(other.height).toBe(52);
     expect(button.height).toBe(44);
     // The order of the parts: head, book, search, Recordings, the other ways, then the button and its line at the foot.
-    const order = [close.y, cover.y, field.y, recordings.y, row.y, other.y, button.y, line.y];
+    const order = [close.y, cover.y, field.y, recordings.y, row.y, other.y, button.y, line.y, source.y];
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     // The foot at the bottom of the screen, 16 from its edge.
     const edge = size.name === "phone" ? 16 : 32;
-    expect(Math.round(line.y + line.height)).toBe(size.height - edge);
+    expect(Math.round(source.y + source.height)).toBe(size.height - edge);
     // One centred column on a desktop.
     const column = await box(sheet(page).locator(".part-sheet-column"));
     if (size.name === "desktop") expect(Math.abs(column.x + column.width / 2 - size.width / 2)).toBeLessThanOrEqual(1);

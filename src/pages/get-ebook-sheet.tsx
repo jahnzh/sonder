@@ -17,7 +17,7 @@ import { Sheet } from "../parts/Sheet";
 import { InfoMark } from "../parts/Tooltip";
 import { tip } from "../tooltip-texts";
 import type { EbookResult } from "../types";
-import { addedEditions, getEditionLine } from "./get-ebook-rows";
+import { addedEditions, editionSourceLink, getEditionLine } from "./get-ebook-rows";
 import {
   ebookAnswered,
   ebookFailed,
@@ -32,7 +32,7 @@ import {
   type EbookAsk,
   type EbookSearch,
 } from "./get-ebook-state";
-import { GetSheetBook, GetSheetSearch, LeavingMark, RowChevron, SourceFailureLine } from "./get-sheet-parts";
+import { GetSheetBook, GetSheetSearch, LeavingMark, RowChevron, SourceFailureLine, SourceLinkLine } from "./get-sheet-parts";
 import { GetImportRow } from "./get-import-row";
 import "./get-ebook-sheet.css";
 
@@ -198,6 +198,7 @@ export function GetEbookSheet({ workId, online, libgenUrl, onChanged }: Props) {
         Get this edition
       </Button>
       {line && <p className="get-sheet-line">{line}</p>}
+      <SourceLinkLine link={editionSourceLink(chosenRow?.result)} />
     </>
   );
 

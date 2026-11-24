@@ -27,7 +27,7 @@ import { InfoMark } from "../parts/Tooltip";
 import { tip } from "../tooltip-texts";
 import { useTorrentHealth } from "../components/TorrentHealth";
 import type { Acquisition, AudiobookRelease } from "../types";
-import { GET_LANGUAGE, getLine, LANGUAGE_KEY, languageChoices, languageName, recordingRows } from "./get-audiobook-rows";
+import { GET_LANGUAGE, getLine, LANGUAGE_KEY, languageChoices, languageName, recordingRows, sourceLink } from "./get-audiobook-rows";
 import {
   answered,
   emptySearch,
@@ -44,6 +44,7 @@ import {
   type SourceId,
 } from "./get-audiobook-state";
 import { GetImportRow } from "./get-import-row";
+import { SourceLinkLine } from "./get-sheet-parts";
 import { Cover } from "../parts/Cover";
 import "./get-audiobook-sheet.css";
 
@@ -331,6 +332,7 @@ export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarr
           </p>
         )
       )}
+      <SourceLinkLine link={sourceLink(chosenRow?.release)} />
     </>
   );
 

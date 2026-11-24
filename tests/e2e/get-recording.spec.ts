@@ -146,6 +146,36 @@ test("the last row opens the sheet with the words; Get makes the book, its page 
   await expect(page.getByRole("button", { name: `About ${QUERY}`, exact: true })).toBeVisible();
 });
 
+test("without a book the footer links to the chosen recording's own page, and no row holds a link (#889)", async ({ page }) => {
+  await sources(page);
+  await page.goto(`/#discover/get/${encodeURIComponent(QUERY)}`);
+  await expect(rows(page)).toHaveCount(3);
+  const foot = sheet(page).locator(".part-sheet-foot");
+  const link = foot.getByRole("link");
+  await expect(link).toHaveCount(0);
+  await expect(foot.locator("a, .get-sheet-source")).toHaveCount(0);
+  let opened = 0;
+  page.context().on("page", () => opened++);
+  const names = [
+    ["Tom Bryce", "atlas-bryce"],
+    ["Ines Marlow", "atlas-marlow"],
+    ["June Ash", "atlas-short"],
+  ];
+  for (const [voice, id] of names) {
+    await rows(page).filter({ hasText: voice }).click();
+    await expect(rows(page).filter({ hasText: voice })).toHaveAttribute("aria-checked", "true");
+    await expect(link).toHaveCount(1);
+    await expect(link).toHaveAccessibleName("On AudioBookBay");
+    await expect(link).toHaveAttribute("href", `https://audiobookbay.lu/abss/${id}/`);
+    await expect(link).toHaveAttribute("target", "_blank");
+    await expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    await expect(foot.locator(":scope > :last-child")).toHaveClass(/get-sheet-source/);
+  }
+  expect(opened).toBe(0);
+  await expect(rows(page).locator("a, [href]")).toHaveCount(0);
+  await noOverflow(page);
+});
+
 test("Close returns to Discover with its results; a reload on the sheet shows it again", async ({ page }) => {
   const asked = await sources(page);
   made = asked.made;

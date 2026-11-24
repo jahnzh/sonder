@@ -173,3 +173,25 @@ export function getLine({ chosen, mediaState, torboxConnected, health }: GetLine
   }
   return line("Plays at once if TorBox has it, else downloads to your server.");
 }
+
+/** A link out of the sheet: the words it says and where it leads. */
+export type SourceLink = { text: string; href: string };
+
+/** Whether an address is one a link may lead to: `http://` or `https://` and something after it. */
+export function isWebAddress(url: string | null | undefined): url is string {
+  return typeof url === "string" && /^https?:\/\/\S+/i.test(url.trim());
+}
+
+/**
+ * The link in the footer to the chosen recording's own page (#889): "On AudioBookBay" for an AudioBookBay release
+ * (and one from an older server, which names no source), "On <indexer>" for a Prowlarr release that names its
+ * indexer, "On the indexer's page" for one that does not. No link for nothing chosen, the magnet link, or a release
+ * whose address is not http(s).
+ */
+export function sourceLink(chosen: Pick<AudiobookRelease, "url" | "source" | "indexer"> | "magnet" | null | undefined): SourceLink | null {
+  if (!chosen || chosen === "magnet" || !isWebAddress(chosen.url)) return null;
+  const href = chosen.url.trim();
+  if (chosen.source !== "prowlarr") return { text: "On AudioBookBay", href };
+  const indexer = chosen.indexer?.trim();
+  return { text: indexer ? `On ${indexer}` : "On the indexer's page", href };
+}

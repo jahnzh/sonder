@@ -35,6 +35,17 @@ export function LeavingMark() {
   );
 }
 
+/** The footer's link to the chosen candidate's own page, in words, opened in a new tab (#889); nothing without one. */
+export function SourceLinkLine({ link }: { link: { text: string; href: string } | null }) {
+  if (!link) return null;
+  return (
+    <a className="get-sheet-source" href={link.href} target="_blank" rel="noopener noreferrer">
+      <span className="type-label">{link.text}</span>
+      <LeavingMark />
+    </a>
+  );
+}
+
 /** The book the sheet gets a file for: its cover, the title as the sheet's one heading, the author under it. */
 export function GetSheetBook({ work }: { work: (Pick<LibraryWork, "title" | "author" | "cover"> & { workId?: string }) | null }) {
   return (
