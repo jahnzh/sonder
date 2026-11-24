@@ -1,11 +1,12 @@
 // Settings › Playback (board SettingsPlayback.dc.html): Listening (Default speed, Progress bar shows), Reading
-// (Reading mode, Follow the narration) and Keyboard shortcuts, which opens its page (#614). Each saves when changed: the speed, the progress bar
+// (Reading mode, Follow the narration, and Reading position shows on a device with the new reading view) and Keyboard shortcuts, which opens its page (#614). Each saves when changed: the speed, the progress bar
 // and the reading mode in the appearance (as the old form's Save did), Follow the narration on this device.
 import { useAppearance } from "../../components/Appearance";
 import { useAddress } from "../../navigation";
 import { usePlayer } from "../../player";
 import { SPEED_MAX, SPEED_MIN, SPEED_STEP, formatSpeed, resolveSpeed } from "../../playback-speed";
 import { setFollowsNarration, useFollowsNarration } from "../../follow-default";
+import { preparedView } from "../../reader-view-switch";
 import { Group } from "../../parts/Group";
 import { Row } from "../../parts/Row";
 import { Segmented } from "../../parts/Segmented";
@@ -74,6 +75,20 @@ export function PlaybackPage({ notify }: { notify: Notify }) {
             onChange={(mode) => void saveReader({ mode }).catch(failed)}
           />
         </StackedRow>
+        {/* The text position rail (#804) is in the new reading view only, so its row is listed on a device that has it. */}
+        {preparedView() && (
+          <StackedRow label="Reading position shows">
+            <Segmented
+              label="Reading position shows"
+              options={[
+                { value: "book", label: "Whole book" },
+                { value: "chapter", label: "Current chapter" },
+              ]}
+              value={appearance.reader.positionScope}
+              onChange={(positionScope) => void saveReader({ positionScope }).catch(failed)}
+            />
+          </StackedRow>
+        )}
         <Row
           label="Follow the narration"
           info={<InfoMark name="Follow the narration" text={tip("follow")} />}

@@ -211,7 +211,9 @@ test("at rest and with the controls shown as on Reader.dc.html and ReaderControl
     await expect(room.getByRole("button", { name, exact: typeof name === "string" })).toHaveCount(0);
     await expect(room.getByRole("button", { name, exact: typeof name === "string", includeHidden: true })).toHaveCount(1);
   }
-  await expect(room.getByRole("slider")).toHaveCount(0);
+  // The foot's timeline is not either. (The new view's text position rail, #804, is a slider in the text band that is
+  // always there.)
+  await expect(foot.getByRole("slider")).toHaveCount(0);
   await expect(room.getByRole("button", { name: /^(Play|Pause) narration$/ })).toHaveCount(1);
   const atRest = await expectTextUncovered(room);
   expect(atRest.head.height).toBeCloseTo(44, 0);

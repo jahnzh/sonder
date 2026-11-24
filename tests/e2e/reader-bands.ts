@@ -41,7 +41,51 @@ export async function expectTextUncovered(room: Locator) {
   }
   for (const [name, value] of Object.entries(covering))
     expect(intersects(value, boxes.text), `${name} ${JSON.stringify(value)} intersects the text ${JSON.stringify(boxes.text)}`).toBe(false);
+  if (await room.locator(".text-rail").count()) await expectRailBesideText(room);
   return boxes;
+}
+
+/**
+ * The text position rail of the new view (#804, ADR 0019 amended 2026-11-23): every box it draws, with its ring or
+ * halo, lies inside the text band and intersects no line box of the book's text. The box around the thumb that a
+ * finger can take draws nothing and is left out.
+ */
+export async function expectRailBesideText(room: Locator) {
+  const measured = await room.locator(".reader-viewport").evaluate((host) => {
+    const band = host.getBoundingClientRect();
+    const drawn: { name: string; x: number; y: number; width: number; height: number }[] = [];
+    for (const element of host.querySelectorAll<HTMLElement>(".text-rail [class^='text-rail-']:not(.text-rail-grip)")) {
+      const box = element.getBoundingClientRect();
+      if (box.width <= 0 || box.height <= 0 || getComputedStyle(element).display === "none") continue;
+      // A ring or a halo is drawn too: the widest spread of the element's shadow.
+      const spread = Math.max(0, ...[...getComputedStyle(element).boxShadow.matchAll(/(-?[\d.]+)px\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+(-?[\d.]+)px/g)].map((found) => Number(found[4])));
+      drawn.push({ name: element.className, x: box.left - spread, y: box.top - spread, width: box.width + 2 * spread, height: box.height + 2 * spread });
+    }
+    const lines: { x: number; y: number; width: number; height: number }[] = [];
+    const text = host.querySelector(".prepared-text");
+    if (text) {
+      const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (!node.textContent?.trim()) continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        for (const rect of range.getClientRects()) {
+          if (rect.bottom < band.top || rect.top > band.bottom || rect.width <= 0) continue;
+          lines.push({ x: rect.left, y: rect.top, width: rect.width, height: rect.height });
+        }
+      }
+    }
+    return { band: { x: band.left, y: band.top, width: band.width, height: band.height }, drawn, lines };
+  });
+  expect(measured.drawn.length, "the rail draws its segments and its thumb").toBeGreaterThan(1);
+  expect(measured.lines.length, "lines of the text are in the band").toBeGreaterThan(3);
+  const { band } = measured;
+  for (const box of measured.drawn) {
+    expect(box.x >= band.x - 0.5 && box.x + box.width <= band.x + band.width + 0.5 && box.y >= band.y - 0.5 && box.y + box.height <= band.y + band.height + 0.5, `${box.name} ${JSON.stringify(box)} lies inside the band ${JSON.stringify(band)}`).toBe(true);
+    const over = measured.lines.find((line) => intersects(box, line, 0));
+    expect(over, `${box.name} ${JSON.stringify(box)} is drawn over a line of the text ${JSON.stringify(over)}`).toBeUndefined();
+  }
+  return measured;
 }
 
 export type Insets = { name: string; top: number; bottom: number };
