@@ -20,6 +20,11 @@ history_check_result() {
       printf '%s\n' fail
       return 0
       ;;
+    local_setup_failed)
+      # The local check never started a stage: its setup_failed report, if any, judged nothing (#887).
+      printf '%s\n' unknown
+      return 0
+      ;;
   esac
 
   if [[ -f $report ]]; then

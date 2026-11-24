@@ -52,7 +52,7 @@ Use `npm run ci:deck <sha>` only when debugging `scripts/ci-deck.sh` itself — 
 - Retrieve the report and logs, post the commit status, then clean up only that run's files and processes.
 - Live verification scripts (`verify-*.mjs`) never run on the host. They target production and stay on the production machine.
 
-If SSH is unreachable, run the same committed revision locally with `npm run check -- --ref <commit>`. Record the fallback, host, commit and result in the handoff. A test failure on the host is a failure: do not rerun locally to get a pass, and do not treat it as connectivity fallback.
+If SSH is unreachable, run the same committed revision locally with `npm run check -- --ref <commit>`. Record the fallback, host, commit and result in the handoff. A test failure on the host is a failure: do not rerun locally to get a pass, and do not treat it as connectivity fallback. The runners' own fallback (`ci-ssh.sh`, `ci-deck.sh`) runs that check in the run's report directory and records `mode=local_fallback`; a local check that ends before it starts a stage (no `stage-started` file in the report directory) judged nothing and is recorded `result=local_setup_failed`, which does not block the commit (#887).
 
 ## Style and Testing
 

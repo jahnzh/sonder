@@ -43,9 +43,16 @@ cp -r "$(strip "\${args[0]}")" "$(strip "\${args[1]}")"
 
 const npmStub = `#!/usr/bin/env bash
 echo "cwd=$PWD args=$* base=$(git rev-parse --verify refs/remotes/origin/main 2>/dev/null) shards=\${SONDER_BROWSER_SHARDS:-} python=\${SONDER_WORKER_PYTHON:-} torch=\${SONDER_WORKER_TORCH:-}" >>"$STUB_NPM_LOG"
+# The real scripts/check-local.mjs, whose first stage (npm ci) is this stub's trivial exit: STUB_CI_EXIT.
+if [[ $1 == ci ]]; then exit "\${STUB_CI_EXIT:-0}"; fi
 if [[ $1 == run && $2 == check ]]; then
   case "\${STUB_NPM_MODE:-pass}" in
+    real-check) exec node "$STUB_CHECK_LOCAL" "\${@:4}" ;;
     fail) exit "\${STUB_NPM_EXIT:-7}" ;;
+    fail-after-stage)
+      # A check that got as far as a stage, as check-local.mjs marks it, and failed there.
+      out=""; prev=""; for arg in "$@"; do [[ $prev == --output-dir ]] && out=$arg; prev=$arg; done
+      echo started >"$out/stage-started"; exit "\${STUB_NPM_EXIT:-7}" ;;
     die) kill -KILL "$PPID"; sleep 5 ;;
     vanish) rm -rf "$(dirname "$PWD")"; sleep 5 ;;
     hang) sleep 60 ;;
@@ -420,6 +427,71 @@ test("an unreachable host falls back to a local check of the same commit", (t) =
   assert.equal(record.mode, "local_fallback");
   assert.equal(record.commit, f.second);
   assert.equal(record.result, "passed");
+});
+
+// The fallback's own check is the real scripts/check-local.mjs (#887): the stubbed `npm run check` of the other
+// tests never met the report directory ci-ssh.sh makes, so it never showed that the real check refuses it.
+function useRealCheckLocal(f: ReturnType<typeof fixture>) {
+  for (const name of ["check-local.mjs", "check-local-support.mjs", "known-failures.mjs"]) {
+    fs.copyFileSync(path.resolve("scripts", name), path.join(f.repo, "scripts", name));
+  }
+  return {
+    STUB_SSH_MODE: "down",
+    STUB_NPM_MODE: "real-check",
+    STUB_CHECK_LOCAL: path.join(f.repo, "scripts", "check-local.mjs"),
+    // Where the check keeps its port lease and its snapshot: this test's own folder.
+    TMPDIR: f.base,
+  };
+}
+
+test("the local fallback gets past its report directory with the real check and starts its first stage", (t) => {
+  const f = fixture(t);
+  // The first stage (npm ci) fails at once, so the check ends after one stage instead of installing the project.
+  const out = f.run(f.second, { ...useRealCheckLocal(f), STUB_CI_EXIT: "1" });
+  assert.doesNotMatch(out.output, /already contains or reserves another run/, out.output);
+  assert.match(out.output, /Stage 1\/\d+\] npm ci/, "the install stage started");
+  assert.ok(f.read(f.logs.npm).split("\n").some((line) => / args=ci /.test(line)), "npm ci ran in the snapshot");
+  const root = path.join(f.repo, "artifacts", "ci", f.second);
+  const [dir] = fs.readdirSync(root);
+  assert.ok(fs.existsSync(path.join(root, dir, "stage-started")));
+  const report = JSON.parse(fs.readFileSync(path.join(root, dir, "report.json"), "utf8"));
+  assert.equal(report.stages[0].name, "install");
+  assert.notEqual(report.stages[0].status, "skipped");
+  // The check ran and failed in a stage: that one is a verdict on the commit.
+  assert.equal(f.result(f.second).result, "failed");
+  assert.equal(out.status, 1, out.output);
+});
+
+test("the real check leaves its report and result files in the run's own directory", (t) => {
+  const f = fixture(t);
+  const out = f.run(f.second, { ...useRealCheckLocal(f), STUB_CI_EXIT: "0", STUB_NPM_MODE: "real-check" });
+  // Every later stage is this stub's `exit 0`, so the browser stage has no report and the check fails there;
+  // what matters here is that the files readers look for are in the run's directory and the pid file is gone.
+  const root = path.join(f.repo, "artifacts", "ci", f.second);
+  const [dir] = fs.readdirSync(root);
+  for (const name of ["report.json", "check-report.json", "ci-ssh-result.txt", "stage-started"]) {
+    assert.ok(fs.existsSync(path.join(root, dir, name)), `${name} is in the run directory: ${out.output}`);
+  }
+  assert.equal(fs.existsSync(path.join(root, dir, "ci-ssh.pid")), false, "the pid file is removed at the end");
+});
+
+test("a local check that ends before any stage started is recorded as local_setup_failed, not as a failed check", (t) => {
+  const f = fixture(t);
+  const out = f.run(f.second, { STUB_SSH_MODE: "down", STUB_NPM_MODE: "fail", STUB_NPM_EXIT: "3" });
+  assert.equal(out.status, 3, "the check's own exit status");
+  assert.match(out.output, /before it started a stage; that is no verdict on the commit/);
+  const record = f.result(f.second);
+  assert.equal(record.mode, "local_fallback");
+  assert.equal(record.result, "local_setup_failed");
+  assert.equal(record.exit_code, "3");
+  assert.match(f.read(f.logs.gh), /state=failure.*the local check did not start/);
+});
+
+test("a local check that failed in a stage is still recorded as failed", (t) => {
+  const f = fixture(t);
+  const out = f.run(f.second, { STUB_SSH_MODE: "down", STUB_NPM_MODE: "fail-after-stage", STUB_NPM_EXIT: "7" });
+  assert.equal(out.status, 7, out.output);
+  assert.equal(f.result(f.second).result, "failed");
 });
 
 test("a failing remote check is a failure and is never rerun locally", (t) => {
