@@ -96,5 +96,6 @@ test("an edition with no http(s) address, or none chosen, has no link (#889)", (
   assert.equal(editionSourceLink(undefined), null);
   for (const url of ["", "  ", "javascript:alert(1)", "/ads.php?md5=1", "libgen.li/ads.php", "ftp://libgen.li/x", "https://"])
     assert.equal(editionSourceLink(result(3, { url })), null, JSON.stringify(url));
+  assert.equal(editionSourceLink(result(5, { url: "https://user:pass@libgen.li/ads.php" })), null);
   assert.equal(editionSourceLink(result(4, { url: undefined as unknown as string })), null);
 });

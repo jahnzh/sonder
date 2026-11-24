@@ -225,7 +225,11 @@ test("the footer links to the chosen edition's page on Library Genesis, follows 
   const link = foot.getByRole("link");
   const row = (size: string) => rows(page).filter({ hasText: size });
   await expect(link).toHaveCount(0);
-  await expect(foot.locator("a, .get-sheet-source")).toHaveCount(0);
+  await expect(foot.locator("a")).toHaveCount(0);
+  await expect(foot.locator(".get-sheet-source-line")).toBeEmpty();
+  // The Get button stays where it is for nothing chosen, an edition with an address and one without.
+  const home = await getButton(page).boundingBox();
+  const stays = async () => expect(await getButton(page).boundingBox()).toEqual(home);
   for (const [size, n] of [["1.1 MB", 1], ["2.2 MB", 2]] as const) {
     await row(size).click();
     await expect(row(size)).toHaveAttribute("aria-checked", "true");
@@ -235,12 +239,15 @@ test("the footer links to the chosen edition's page on Library Genesis, follows 
     await expect(link).toHaveAttribute("target", "_blank");
     await expect(link).toHaveAttribute("rel", "noopener noreferrer");
     await expect(link.locator(".get-sheet-leaving")).toBeVisible();
-    await expect(foot.locator(":scope > :last-child")).toHaveClass(/get-sheet-source/);
+    await expect(foot.locator(":scope > :last-child")).toHaveClass(/get-sheet-source-line/);
+    await stays();
   }
   await row("3.3 MB").click();
   await expect(row("3.3 MB")).toHaveAttribute("aria-checked", "true");
   await expect(link).toHaveCount(0);
-  await expect(foot.locator("a, .get-sheet-source")).toHaveCount(0);
+  await expect(foot.locator("a")).toHaveCount(0);
+  await expect(foot.locator(".get-sheet-source-line")).toBeEmpty();
+  await stays();
   // Choosing opened nothing, sent nothing, and no row holds a link.
   expect(opened).toBe(0);
   expect(asked.posts).toEqual([]);
@@ -443,6 +450,9 @@ for (const size of [
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     const edge = size.name === "phone" ? 16 : 32;
     expect(Math.round(source.y + source.height)).toBe(size.height - edge);
+    // The line under the button is always two lines high, and sits as before #889 above the link's line (44 and the foot's 8 gap).
+    expect(line.height).toBe(32);
+    expect(Math.round(line.y + line.height)).toBe(size.height - edge - 52);
     const column = await box(sheet(page).locator(".part-sheet-column"));
     if (size.name === "desktop") expect(Math.abs(column.x + column.width / 2 - size.width / 2)).toBeLessThanOrEqual(1);
     else expect(column.width).toBe(size.width - 32);

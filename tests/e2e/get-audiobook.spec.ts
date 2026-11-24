@@ -191,9 +191,13 @@ test("the footer links to the chosen recording's own page, follows the choice, a
   const row = (voice: string) => rows(page).filter({ hasText: voice });
   const foot = sheet(page).locator(".part-sheet-foot");
   const link = foot.getByRole("link");
-  // Nothing chosen: no link, and nothing in the footer where it would be.
+  // Nothing chosen: no link; its line is there, empty, and the Get button is where it will stay.
   await expect(link).toHaveCount(0);
-  await expect(foot.locator("a, .get-sheet-source")).toHaveCount(0);
+  await expect(foot.locator("a")).toHaveCount(0);
+  await expect(foot.locator(".get-sheet-source-line")).toBeEmpty();
+  await page.screenshot({ path: `${OUT}/get-audiobook-nothing-chosen-phone.png` });
+  const home = await getButton(page).boundingBox();
+  const stays = async () => expect(await getButton(page).boundingBox()).toEqual(home);
 
   const expectLink = async (voice: string, name: string, href: string) => {
     await row(voice).click();
@@ -204,11 +208,14 @@ test("the footer links to the chosen recording's own page, follows the choice, a
     await expect(link).toHaveAttribute("target", "_blank");
     await expect(link).toHaveAttribute("rel", "noopener noreferrer");
     await expect(link.locator(".get-sheet-leaving")).toBeVisible();
+    await stays();
   };
   await expectLink("Abby Voice", "On AudioBookBay", "https://audiobookbay.lu/abss/page-abb/");
   await page.screenshot({ path: `${OUT}/get-audiobook-source-link-phone.png` });
   // It is the footer's last line, under the one that says how the recording is got.
-  await expect(foot.locator(":scope > :last-child")).toHaveClass(/get-sheet-source/);
+  await expect(foot.locator(":scope > :last-child")).toHaveClass(/get-sheet-source-line/);
+  await expect(foot.locator(":scope > :last-child a")).toHaveCount(1);
+  await stays();
   // It follows the choice: its words and its address.
   await expectLink("Tracker Voice", "On Fixture Tracker", "https://tracker.example/details/1");
   await expectLink("Nameless Voice", "On the indexer's page", "https://tracker.example/details/2");
@@ -219,8 +226,10 @@ test("the footer links to the chosen recording's own page, follows the choice, a
     await row(voice).click();
     await expect(row(voice)).toHaveAttribute("aria-checked", "true");
     await expect(link).toHaveCount(0);
-    await expect(foot.locator("a, .get-sheet-source")).toHaveCount(0);
-    await expect(foot.locator(":scope > :last-child")).toHaveAttribute("data-testid", "get-line");
+    // Its line stays, empty, and the Get button does not move.
+    await expect(foot.locator("a")).toHaveCount(0);
+    await expect(foot.locator(".get-sheet-source-line")).toBeEmpty();
+    await stays();
   }
   // Choosing a row opened nothing, and no row holds a link or anything with an address.
   expect(opened).toBe(0);
@@ -236,6 +245,7 @@ test("the footer links to the chosen recording's own page, follows the choice, a
   await search.press("Enter");
   await expect.poll(() => asked.abb.length).toBe(before + 1);
   await expect(link).toHaveCount(0);
+  await stays();
   expect(asked.posts).toEqual([]);
   expect(opened).toBe(0);
 
@@ -425,6 +435,9 @@ for (const size of [
     // The foot at the bottom of the screen, 16 from its edge.
     const edge = size.name === "phone" ? 16 : 32;
     expect(Math.round(source.y + source.height)).toBe(size.height - edge);
+    // The line under the button is always two lines high, and sits as before #889 above the link's line (44 and the foot's 8 gap).
+    expect(line.height).toBe(32);
+    expect(Math.round(line.y + line.height)).toBe(size.height - edge - 52);
     // One centred column on a desktop.
     const column = await box(sheet(page).locator(".part-sheet-column"));
     if (size.name === "desktop") expect(Math.abs(column.x + column.width / 2 - size.width / 2)).toBeLessThanOrEqual(1);

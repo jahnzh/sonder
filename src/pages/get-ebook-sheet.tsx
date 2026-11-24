@@ -197,7 +197,7 @@ export function GetEbookSheet({ workId, online, libgenUrl, onChanged }: Props) {
       <Button kind="primary" disabled={!chosenRow || getting || !online} onClick={() => void get()}>
         Get this edition
       </Button>
-      {line && <p className="get-sheet-line">{line}</p>}
+      <p className="get-sheet-line get-sheet-line-fixed">{line}</p>
       <SourceLinkLine link={editionSourceLink(chosenRow?.result)} />
     </>
   );
