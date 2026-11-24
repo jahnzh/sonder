@@ -527,7 +527,8 @@ test("a tap on a link in the text with a setting pop-up open only closes it; wit
   const room = await readerWithNarration(page, book, ebook);
   const foot = room.locator(".reader-player");
   const before = await frameState(room);
-  const link = bookText(page).getByRole("link", { name: "Follow the rabbit to the note", exact: true });
+  // By its words: in the view of prepared text a place of the book is an anchor with no address, so it has no link role.
+  const link = bookText(page).getByText("Follow the rabbit to the note", { exact: true });
   await expect(link).toBeVisible();
   const note = bookText(page).getByText("The far note of the first chapter.", { exact: true });
   const band = before.boxes.text;
@@ -584,7 +585,9 @@ test("with a finger, a tap, an edge tap, a swipe and a long press on the text ea
   for (const fraction of [0.65, 0.5, 0.35, 0.2]) await touch("touchMove", text.x + text.width * fraction, y);
   await touch("touchEnd");
   await unchanged();
-  await speed.tap();
+  // Reopened with a click: right after a swipe sent through the protocol, Chromium's emulation gives the next
+  // protocol tap no click (the button is tapped with a finger above, three times).
+  await speed.click();
   await expect(popup).toBeVisible();
   await touch("touchStart", text.x + text.width / 2, y);
   await page.waitForTimeout(800); // the hold of a long press
