@@ -793,6 +793,23 @@ test("a host failure result with a failed report does not block the commit", () 
   }
 });
 
+test("a local check that ended before any stage started does not block the commit (#887)", () => {
+  const f = fixture();
+  try {
+    // The fallback's check was refused or could not be set up: it judged nothing, even with a setup_failed report.
+    const dir = writeResult(f.repo, f.second, "wsl", "local_setup_failed", { exit_code: "1" });
+    fs.writeFileSync(path.join(dir, "report.json"), JSON.stringify({ ok: false, result: "setup_failed", stages: [] }));
+    const out = f.run();
+    assert.equal(out.status, 0, out.output);
+    assert.equal(f.invocations().length, 1, "the commit is checked again");
+    // A genuinely failed local fallback is still a verdict.
+    writeResult(f.repo, f.second, "wsl", "failed", { exit_code: "1" });
+    assert.equal(f.run().status, 1);
+  } finally {
+    f.cleanup();
+  }
+});
+
 test("a passed result whose report says the check failed blocks the run", () => {
   const f = fixture();
   try {

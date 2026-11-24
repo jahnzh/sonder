@@ -68,6 +68,9 @@ cp -r "$(strip "\${args[0]}")" "$(strip "\${args[1]}")"
 // failing report.
 const npmStub = `#!/usr/bin/env bash
 echo "cwd=$PWD args=$* base=$(git rev-parse --verify refs/remotes/origin/main 2>/dev/null) head=$(git rev-parse HEAD 2>/dev/null)" >>"$STUB_NPM_LOG"
+# STUB_NPM_MODE=real-check runs the real scripts/check-local.mjs, whose first stage (npm ci) is this stub's trivial exit.
+if [[ $1 == ci ]]; then exit "\${STUB_CI_EXIT:-0}"; fi
+if [[ $1 == run && $2 == check && \${STUB_NPM_MODE:-} == real-check ]]; then exec node "$STUB_CHECK_LOCAL" "\${@:4}"; fi
 if [[ $1 == run && $2 == check ]]; then
   out=""
   while [[ $# -gt 0 ]]; do [[ $1 == --output-dir ]] && out=$2; shift; done
@@ -358,6 +361,32 @@ test("an unreachable Deck falls back to a local check of the same commit", (t) =
   const record = f.result(f.second);
   assert.equal(record.mode, "local_fallback");
   assert.equal(record.result, "passed");
+});
+
+test("the Deck's local fallback runs the real check's first stage in the run's own directory (#887)", (t) => {
+  const f = fixture(t);
+  for (const name of ["check-local.mjs", "check-local-support.mjs", "known-failures.mjs"]) {
+    fs.copyFileSync(path.resolve("scripts", name), path.join(f.repo, "scripts", name));
+  }
+  const out = f.run(f.second, {
+    STUB_SSH_MODE: "down", STUB_NPM_MODE: "real-check", STUB_CI_EXIT: "1", TMPDIR: f.base,
+    STUB_CHECK_LOCAL: path.join(f.repo, "scripts", "check-local.mjs"),
+  });
+  assert.doesNotMatch(out.output, /already contains or reserves another run/);
+  assert.match(out.output, /Stage 1\/\d+\] npm ci/);
+  assert.ok(fs.existsSync(path.join(f.runDir(f.second), "stage-started")));
+  assert.equal(f.result(f.second).result, "failed", "a stage ran and failed: a verdict on the commit");
+});
+
+test("a local check that ends before any stage started is recorded as local_setup_failed (#887)", (t) => {
+  const f = fixture(t);
+  const out = f.run(f.second, { STUB_SSH_MODE: "down", STUB_NPM_MODE: "fail", STUB_NPM_EXIT: "3" });
+  assert.equal(out.status, 3, out.output);
+  assert.match(out.output, /before it started a stage; that is no verdict on the commit/);
+  const record = f.result(f.second);
+  assert.equal(record.mode, "local_fallback");
+  assert.equal(record.result, "local_setup_failed");
+  assert.match(f.read(f.logs.gh), /state=failure.*the local check did not start/);
 });
 
 test("a local checkout fuller than SONDER_CI_DISK_MAX_PERCENT is recorded as disk_full before the bundle", (t) => {

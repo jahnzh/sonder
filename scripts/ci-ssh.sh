@@ -11,7 +11,9 @@
 # recorded as disk_full before the bundle is made (#791); 124 the wait cap was
 # reached.
 # Only an unreachable host at the start falls back to a local run. A failure on
-# the host is a failure and is never rerun locally.
+# the host is a failure and is never rerun locally. A local run that ends before
+# it starts a stage (no stage-started file in its report directory) is recorded
+# as result=local_setup_failed, which is no verdict on the commit (#887).
 #
 # Environment: SONDER_CI_HOST, SONDER_CI_REPO, SONDER_CI_STATUS_CONTEXT,
 # SONDER_CI_POST_STATUS (0 skips the GitHub status), SONDER_CI_MAX_WAIT (seconds,
@@ -299,12 +301,24 @@ REMOTE
   return "$rc"
 }
 
+# The local check works in the run's own directory: it takes over a directory that holds only this script's pid file
+# (check-local.mjs). A check that ends without having started a stage (no stage-started file: a refused directory, a
+# bad argument, a port that could not be leased, a snapshot that could not be made) has judged nothing, so it is
+# recorded as local_setup_failed, which scripts/ci-run.sh does not count as a failed check of the commit; the
+# check's own sentence about it is in the log above. The exit status stays the check's own.
 run_local_check() {
   local exit_code
   log "Running npm run check locally for ${FULL_SHA}"
   npm run check -- --ref "$FULL_SHA" --output-dir "$LOCAL_REPORT_DIR"
   exit_code=$?
-  record_result local_fallback "$([[ $exit_code -eq 0 ]] && echo passed || echo failed)" "$exit_code"
+  if [[ $exit_code -eq 0 ]]; then
+    record_result local_fallback passed 0
+  elif [[ ! -f $LOCAL_REPORT_DIR/stage-started ]]; then
+    log "The local check ended (exit ${exit_code}) before it started a stage; that is no verdict on the commit"
+    record_result local_fallback local_setup_failed "$exit_code"
+  else
+    record_result local_fallback failed "$exit_code"
+  fi
   return "$exit_code"
 }
 
@@ -792,7 +806,11 @@ else
   log "SSH unreachable at ${SONDER_CI_HOST}; falling back to local check"
   run_local_check
   FINAL_EXIT=$?
-  DESCRIPTION="CI failed (local fallback)"
+  if [[ $RESULT == local_setup_failed ]]; then
+    DESCRIPTION="CI host failure: the local check did not start"
+  else
+    DESCRIPTION="CI failed (local fallback)"
+  fi
 fi
 
 # The exit status is authoritative, but a report that says the check failed

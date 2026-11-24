@@ -166,7 +166,8 @@ node "$DISPATCHER" prune --artifacts "$ROOT/artifacts/ci" --keep "$FULL_SHA" || 
 # blocking run: <host> <result> <run_dir>. A check result of failed or
 # remote_check_failed means the check ran and the commit failed. A passed run
 # whose report says the check failed counts too (the runners' own final
-# override); host-failure results did not judge the commit, and the runners
+# override); host-failure results and local_setup_failed (the local fallback ended before it started
+# a stage) did not judge the commit, and the runners
 # retrieve the report on those paths too, so a report left beside one is not
 # evidence and does not block. A report that does not parse is not evidence
 # either.

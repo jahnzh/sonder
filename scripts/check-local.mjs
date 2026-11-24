@@ -255,13 +255,28 @@ Options:
 `);
 }
 
+// Written into the report directory just before the first stage starts. A runner that finds it absent after a failed
+// check knows the run ended in setup, so the failure says nothing about the commit (scripts/ci-ssh.sh).
+export const STAGE_STARTED_FILE = "stage-started";
+// A runner that made the directory itself leaves its pid file in it (ci-ssh.sh, for ci-stop.sh) and hands the
+// directory over: that is the one content a directory may have and still be taken.
+const CALLER_RESERVED_FILES = ["ci-ssh.pid"];
+const CLAIM_FILE = "check-local.claim";
+
 function reserveReportDirectory(outputDir) {
   fs.mkdirSync(path.dirname(outputDir), {recursive: true});
-  try { fs.mkdirSync(outputDir); }
+  try { fs.mkdirSync(outputDir); return; }
   catch (error) {
-    if (error.code === "EEXIST") throw new Error(`Output directory already contains or reserves another run: ${outputDir}`);
-    throw error;
+    if (error.code !== "EEXIST") throw error;
   }
+  const refusal = new Error(`Output directory already contains or reserves another run: ${outputDir}`);
+  let entries;
+  try { entries = fs.readdirSync(outputDir); }
+  catch { throw refusal; }
+  if (!entries.length || !entries.every((name) => CALLER_RESERVED_FILES.includes(name))) throw refusal;
+  // Two runs handed the same directory must not both take it: the exclusive create lets one of them.
+  try { fs.writeFileSync(path.join(outputDir, CLAIM_FILE), `${process.pid}\n`, {flag: "wx"}); }
+  catch { throw refusal; }
 }
 
 /**
@@ -327,7 +342,10 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       : path.resolve(callerDir, "artifacts", "ci", `unresolved-${sanitizedRef}`, runId);
 
     try { reserveReportDirectory(outputDir); }
-    catch (error) { return {ok: false, exitCode: 1, error: error.message}; }
+    catch (error) {
+      console.error(`[check-local] Setup error: ${error.message}`);
+      return {ok: false, exitCode: 1, error: error.message};
+    }
 
     const setupLog = `Setup failure: unable to resolve git reference "${options.ref}".\n${resolveResult.error}\n`;
     fs.writeFileSync(path.join(outputDir, "setup.log"), setupLog, "utf8");
@@ -372,7 +390,10 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     : path.resolve(callerDir, "artifacts", "ci", resolvedSha, runId);
 
   try { reserveReportDirectory(outputDir); }
-  catch (error) { return {ok: false, exitCode: 1, error: error.message}; }
+  catch (error) {
+    console.error(`[check-local] Setup error: ${error.message}`);
+    return {ok: false, exitCode: 1, error: error.message};
+  }
 
   // 2. Allocate loopback port with atomic host lease
   let portLease = null;
@@ -654,6 +675,8 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     // Non-fatal startup warning when the local disk is low; names the stale directory families.
     // Never changes the exit code (issue #89).
     warnLocalDisk();
+
+    fs.writeFileSync(path.join(outputDir, STAGE_STARTED_FILE), `${new Date().toISOString()}\n`, "utf8");
 
     for (let i = 0; i < stageDefinitions.length; i++) {
       let stageDef = stageDefinitions[i];

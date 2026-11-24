@@ -6,7 +6,7 @@ import os from "node:os";
 import net from "node:net";
 import { createRequire } from "node:module";
 import { spawn, execFileSync } from "node:child_process";
-import { runCheckLocal, workerTestsSummary } from "../scripts/check-local.mjs";
+import { runCheckLocal, STAGE_STARTED_FILE, workerTestsSummary } from "../scripts/check-local.mjs";
 import {
   acquirePortLease,
   contenderPrecedes,
@@ -1159,6 +1159,53 @@ test("concurrent callers cannot claim the same explicit output directory", async
     const results = await Promise.all([runCheckLocal(["--silent", "--output-dir", output], options), runCheckLocal(["--silent", "--output-dir", output], options)]);
     assert.equal(results.filter(result => result.ok).length, 1);
     assert.match(results.find(result => !result.ok).error, /already contains/);
+  } finally { fixture.cleanup(); }
+});
+
+test("a directory that holds only the runner's pid file is taken over, and only by one run", async () => {
+  const fixture = setupGitFixture();
+  try {
+    const output = path.join(fixture.tempBase, "runner-made");
+    fs.mkdirSync(output);
+    fs.writeFileSync(path.join(output, "ci-ssh.pid"), "12345\n");
+    const options = {cwd: fixture.repoDir, env: {PATH: `${fixture.binDir}:${process.env.PATH}`, STUB_NPM_SLEEP_MS: "150"}};
+    const results = await Promise.all([runCheckLocal(["--silent", "--output-dir", output], options), runCheckLocal(["--silent", "--output-dir", output], options)]);
+    assert.equal(results.filter(result => result.ok).length, 1, "two runs never share the directory");
+    assert.match(results.find(result => !result.ok).error, /already contains/);
+    assert.equal(fs.readFileSync(path.join(output, "ci-ssh.pid"), "utf8"), "12345\n", "the runner's pid file stays");
+    assert.ok(fs.existsSync(path.join(output, "report.json")));
+    assert.ok(fs.existsSync(path.join(output, STAGE_STARTED_FILE)), "the first stage is marked as started");
+  } finally { fixture.cleanup(); }
+});
+
+test("a directory with anything besides the runner's pid file is still refused, and the refusal is printed", async () => {
+  const fixture = setupGitFixture();
+  try {
+    for (const files of [["ci-ssh.pid", "report.json"], ["other.pid"], []]) {
+      const output = path.join(fixture.tempBase, `held-${files.join("-") || "empty"}`);
+      fs.mkdirSync(output);
+      for (const name of files) fs.writeFileSync(path.join(output, name), "x\n");
+      const printed = [];
+      const original = console.error;
+      console.error = (...args) => printed.push(args.join(" "));
+      let result;
+      try { result = await runCheckLocal(["--silent", "--output-dir", output], {cwd: fixture.repoDir}); }
+      finally { console.error = original; }
+      assert.equal(result.ok, false, files.join(","));
+      assert.match(result.error, /already contains/);
+      assert.ok(printed.some((line) => /\[check-local\] Setup error: Output directory already contains/.test(line)), "the refusal is in the log");
+      assert.equal(fs.existsSync(path.join(output, STAGE_STARTED_FILE)), false);
+    }
+  } finally { fixture.cleanup(); }
+});
+
+test("a run that ends in setup leaves no stage-started file", async () => {
+  const fixture = setupGitFixture();
+  try {
+    const output = path.join(fixture.tempBase, "unknown-ref");
+    const result = await runCheckLocal(["--silent", "--ref", "unknown-ref", "--output-dir", output], {cwd: fixture.repoDir});
+    assert.equal(result.report.result, "setup_failed");
+    assert.equal(fs.existsSync(path.join(output, STAGE_STARTED_FILE)), false);
   } finally { fixture.cleanup(); }
 });
 
