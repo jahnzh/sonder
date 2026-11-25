@@ -2,7 +2,7 @@
 // recording, no EPUB, a PDF-only work, both without a last face, both with each last face.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { faceExists, faceFacts, faceKeyName, faceToOpen, readFace } from "../src/now-playing-face.ts";
+import { faceExists, faceFacts, faceKeyName, faceToOpen, prepareOnOpen, readFace } from "../src/now-playing-face.ts";
 import { chosenEbook } from "../src/ebook-choice.ts";
 import type { LibraryWork, Track, WorkEbook, WorkRecording } from "../src/types.ts";
 
@@ -68,4 +68,30 @@ test("the rule's order: without a recording comes first, so a work with neither 
   assert.deepEqual(facts(w), { recording: false, epub: false });
   assert.equal(faceToOpen(facts(w), null), "read");
   assert.equal(faceToOpen(facts(w), "listen"), "read");
+});
+
+// Opening a face with another book in the player (#862): Read loads its own book, paused, unless the other is playing.
+const read = { recordingId: "r-read" };
+test("with nothing in the player, either face loads its book", () => {
+  assert.equal(prepareOnOpen("read", read, null), true);
+  assert.equal(prepareOnOpen("listen", read, null), true);
+});
+
+test("Read loads its book in place of another recording that is paused", () => {
+  assert.equal(prepareOnOpen("read", read, { recordingId: "r-other", playing: false }), true);
+});
+
+test("Read leaves another recording that is playing in the player", () => {
+  assert.equal(prepareOnOpen("read", read, { recordingId: "r-other", playing: true }), false);
+});
+
+test("Listen never swaps another recording out, paused or playing", () => {
+  assert.equal(prepareOnOpen("listen", read, { recordingId: "r-other", playing: false }), false);
+  assert.equal(prepareOnOpen("listen", read, { recordingId: "r-other", playing: true }), false);
+});
+
+test("the book already in the player, or no book to load, loads nothing", () => {
+  assert.equal(prepareOnOpen("read", read, { recordingId: "r-read", playing: false }), false);
+  assert.equal(prepareOnOpen("read", null, { recordingId: "r-other", playing: false }), false);
+  assert.equal(prepareOnOpen("read", null, null), false);
 });
