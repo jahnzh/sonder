@@ -604,9 +604,10 @@ test("at desktop width with two pages side by side the turn comes when the narra
   // Wide enough for epub.js to lay out two pages side by side: one turn moves both (the page step is the pair).
   expect(await room.locator(".reader-viewport").evaluate(host=>host.clientWidth)).toBeGreaterThanOrEqual(800);
   await expect(room.locator(".reader-viewport")).toHaveAttribute("data-pages","2");
-  // and it does: each of epub.js's columns (a page) is at most half the viewport.
+  // and it does: each of epub.js's columns (a page) is at most half the viewport (in the new view each part is a run
+  // of columns of its own).
   expect(await room.locator(".reader-viewport").evaluate(host=>{
-   const body=host.querySelector("iframe")?.contentDocument?.body??host.querySelector(".prepared-text");
+   const body=host.querySelector("iframe")?.contentDocument?.body??host.querySelector(".prepared-part");
    return body?parseFloat(getComputedStyle(body).columnWidth)/host.clientWidth:1;
   })).toBeLessThanOrEqual(.5);
   // A sentence that runs from the first page of a pair onto the second, and one that leaves the second page of a pair.

@@ -120,7 +120,7 @@ async function expectTwoPages(page: Page) {
   const width = (await rect(host(page))).width;
   expect(width).toBeGreaterThanOrEqual(800);
   // The spread's pages keep their own gap of 48 (src/reader-spread.ts), not epub.js's twelfth of the width.
-  expect(await host(page).evaluate((element) => getComputedStyle(element.querySelector("iframe")?.contentDocument!.body ?? element.querySelector(".prepared-text")!).columnGap)).toBe("48px");
+  expect(await host(page).evaluate((element) => getComputedStyle(element.querySelector("iframe")?.contentDocument!.body ?? element.querySelector(".prepared-part")!).columnGap)).toBe("48px");
   const shown = await shownSentences(page);
   expect(shown.some((value) => value.x < width / 2), "a sentence starts on the left page").toBe(true);
   expect(shown.some((value) => value.x > width / 2), "a sentence starts on the right page").toBe(true);
