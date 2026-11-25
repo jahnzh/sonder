@@ -249,7 +249,11 @@ export function startKeepSaver(account: number): KeepSaver {
  */
 async function dropReadingCaches() {
   const copies = await listOfflineEbookCopies().catch(() => []);
-  for (const copy of copies) if (!copy.kept) await removeOfflineEbook(copy.id).catch(() => {});
+  for (const copy of copies) {
+    if (copy.kept) continue;
+    await removeOfflineEbook(copy.id).catch(() => {});
+    window.dispatchEvent(new CustomEvent(EBOOK_DEVICE_EVENT, { detail: { id: copy.id } }));
+  }
 }
 
 /**

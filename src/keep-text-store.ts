@@ -178,10 +178,14 @@ export async function keptTextSize(id: string): Promise<number | null> {
   return (await listKeptTexts([id]))[0]?.size ?? null;
 }
 
-/** Removes an edition's kept text from this device: its record first, then every file of every output of it. */
+/**
+ * Removes an edition's kept text from this device: its record first, then the sentences kept with it (#806), then
+ * every file of every output of it.
+ */
 export async function removeKeptText(id: string): Promise<void> {
   const had = await readRecord(id);
   await authDB.preferences.delete(readerTextKey(id));
+  if (had) await localDB.preferences.delete(`reader-book:${id}`).catch(() => {});
   const cache = await keptCache();
   let removed = false;
   if (cache)
