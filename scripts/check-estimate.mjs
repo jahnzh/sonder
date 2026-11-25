@@ -11,7 +11,7 @@
 //   bar 30.0min fits=wsl,lisa judged=wsl,lisa over=none
 //
 // The figures: `fixedSeconds` (install, build, unit), the browser stage as its longest shard, the repeat stage over
-// the commit's changed specs as its longest part, both from tests/e2e/spec-seconds.json (lisa's seconds, times the
+// the commit's changed specs as its longest part (only when it is asked for, which a dispatched check never is), both from tests/e2e/spec-seconds.json (lisa's seconds, times the
 // host's `speed`) plus `startSeconds` for the servers to come up. A host without an `estimate` entry in
 // scripts/ci-hosts.json is not judged and always fits. An estimate that cannot be made (no table at the commit) says
 // so and judges nothing: this rule refuses a check only on figures it can show.
@@ -50,9 +50,10 @@ const longest = (parts, weightOf) => Math.max(0, ...parts.map((files) => files.r
 /**
  * Pure: the estimate for one host. `suite` is every spec file with its seconds in the table (lisa's),
  * `changed` the commit's changed specs as `{ file, seconds, share }` (share: the part of its projects the repeat runs),
- * `scope` the browser stage's scope ("full", "chromium", "skip"), `host` the entry's `estimate` object.
+ * `scope` the browser stage's scope ("full", "chromium", "skip"), `repeatChanged` whether the check repeats the
+ * changed specs (off unless asked for), `host` the entry's `estimate` object.
  */
-export function estimateOnHost({ suite, changed, scope }, host) {
+export function estimateOnHost({ suite, changed, scope, repeatChanged = false }, host) {
   const { fixedSeconds = 0, speed = 1, shards = 1, startSeconds = 60 } = host;
   const seconds = new Map(suite.map((entry) => [entry.file, entry.seconds]));
   let browser = 0;
@@ -61,7 +62,8 @@ export function estimateOnHost({ suite, changed, scope }, host) {
     browser = Math.round(longest(partitionSpecs(suite.map((entry) => entry.file), shards, (file) => seconds.get(file)), (file) => seconds.get(file)) * share * speed + startSeconds);
   }
   let repeat = 0;
-  if (changed.length) {
+  // The repeat stage runs only when asked for (--repeat-changed, #904); a dispatched check never asks.
+  if (repeatChanged && changed.length) {
     // Two passes of each changed spec, in the projects it is repeated in.
     const cost = new Map(changed.map((entry) => [entry.file, entry.seconds * 2 * entry.share]));
     const parts = dealChangedSpecs(changed.map((entry) => entry.file), shards, (file) => cost.get(file), (file) => (changed.find((entry) => entry.file === file).share < 1 ? ["gained"] : null));

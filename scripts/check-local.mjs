@@ -25,6 +25,8 @@ import {
   sanitizeEnvironment,
   runStageProcess,
   terminateProcessTree,
+  browserStageLimitMs,
+  slowestSoFar,
   stopProcessesUnder,
   CHECKOUT_DIR_FILE,
   preserveArtifacts,
@@ -216,8 +218,9 @@ function printHelp() {
 Usage: node scripts/check-local.mjs [options]
 
 Run isolated local checks (npm ci, npm run build, npm test, npm run test:browser)
-in a disposable git-archive snapshot of the selected committed revision. Changed
-browser specs are also repeated twice and run in order against origin/main.
+in a disposable git-archive snapshot of the selected committed revision. With
+--repeat-changed the browser specs changed against origin/main are also repeated
+twice, in order, on one worker.
 
 Options:
   --ref <git-ref>        Git commit, branch or tag to check (default: HEAD)
@@ -239,6 +242,10 @@ Options:
                          "flaky (passed alone)"; if every failure is flaky or known the
                          result is passed_with_flaky and the exit code is 0. Above n
                          failures nothing is rerun and the check fails as before.
+  --repeat-changed       Also run the changed browser specs twice on one worker, as a stage
+                         of their own (browser-changed-repeat). Off by default;
+                         SONDER_CHECK_REPEAT_CHANGED=1 does the same. A tool for chasing a
+                         flaky test, not a gate.
   --bail                 Stop after the first failed stage
   --full                 Always run the whole browser suite (default: the scope follows the
                          changed files; SONDER_CHECK_FULL=1 does the same). See docs/LOCAL_CHECKS.md.
@@ -630,9 +637,14 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       specWeights.set(file, gained ? Math.max(1, Math.round((all * gained.length) / (1 + splitProjectCount(head)))) : all);
     }
     const changedShards = changedStageShardCount({...process.env, ...overrides.env});
+    // The browser stage stops as too slow past 1.5 times its estimate (SONDER_BROWSER_ESTIMATE_SECONDS), else 40 minutes.
+    const browserLimitMs = browserStageLimitMs({...process.env, ...overrides.env});
     const dealBy = (weightOf) => dealChangedSpecs(changedBrowserSpecs.files, changedShards, weightOf, (file) => specGained.get(file));
     const changedParts = dealBy((file) => specWeights.get(file) ?? 1);
-    const stageDefinitions = [...STAGE_DEFINITIONS, ...changedBrowserStages(changedBrowserSpecs.files, changedParts)];
+    // Opt-in (#904): a check repeats the changed specs only when asked, with --repeat-changed or
+    // SONDER_CHECK_REPEAT_CHANGED=1. It is a tool for chasing a flaky test, not a gate.
+    const repeatChanged = options.repeatChanged || {...process.env, ...overrides.env}.SONDER_CHECK_REPEAT_CHANGED === "1";
+    const stageDefinitions = [...STAGE_DEFINITIONS, ...(repeatChanged ? changedBrowserStages(changedBrowserSpecs.files, changedParts) : [])];
     let changedPartsBy = "the count of tests";
     // The browser stage scope follows the changed files (#34); --full or SONDER_CHECK_FULL=1 runs everything.
     const selection = selectBrowserScope(changedFiles.files, {
@@ -765,6 +777,7 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
           onSpawn: (child) => {
             activeChild = child;
           },
+          limitMs: jsonReport ? browserLimitMs : 0,
         });
       } catch (err) {
         stageRes = {
@@ -780,7 +793,7 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
         activeChild = null;
       }
 
-      const stagePassed = stageRes.exitCode === 0 && !stageRes.signal;
+      const stagePassed = stageRes.exitCode === 0 && !stageRes.signal && !stageRes.tooSlow;
       const stageRecord = {
         index: stageIndex,
         name: stageDef.name,
@@ -795,12 +808,27 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
         stderr: stageRes.stderr,
         logFile: logFileName,
       };
+      if (stageRes.tooSlow) {
+        // Stopped at its limit (#904): failed "too slow", with what it was spending its time on.
+        const slowest = slowestSoFar(stageRes.stdout);
+        stageRecord.tooSlow = {limitSeconds: Math.round(browserLimitMs / 1000), ...slowest};
+        const lines = [
+          `[check-local] The browser stage was stopped as too slow: past ${Math.round(browserLimitMs / 1000)} s (1.5 times the estimate, or 40 minutes without one).`,
+          "[check-local] Slowest tests so far:",
+          ...slowest.tests.map((entry) => `  ${entry.seconds} s  ${entry.file} › ${entry.title}`),
+          "[check-local] Slowest spec files so far:",
+          ...slowest.files.map((entry) => `  ${entry.seconds} s  ${entry.file}`),
+        ];
+        stageRecord.stderr += `\n${lines.join("\n")}\n`;
+        fs.appendFileSync(logFilePath, `\n${lines.join("\n")}\n`);
+        console.error(lines.join("\n"));
+      }
 
       stageResults.push(stageRecord);
 
       // A tolerated failure in the full suite must not prevent changed-spec checks.
       // A failed full suite is classified even without a known-failures list, so its failures can be rerun alone.
-      if (jsonReport && (knownFailures || !stagePassed) && !interruptedSignal) {
+      if (jsonReport && (knownFailures || !stagePassed) && !interruptedSignal && !stageRes.tooSlow) {
         gate = evaluateBrowserRun({
           entries: knownFailures?.entries ?? [],
           reportPath: playwrightReportPath,
@@ -810,7 +838,7 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       }
       // Rerun each unlisted failure once, alone, before calling it a failure (#792). Not after an earlier
       // stage failed: the run cannot pass then, so the reruns would only cost time.
-      if (jsonReport && !stagePassed && gate && !interruptedSignal && !firstFailedStage) {
+      if (jsonReport && !stagePassed && gate && !interruptedSignal && !firstFailedStage && !stageRes.tooSlow) {
         const plan = planReruns(gate, { max: maxReruns });
         browserReruns = { max: maxReruns, skipped: plan.skipped, tests: [] };
         const reruns = [];

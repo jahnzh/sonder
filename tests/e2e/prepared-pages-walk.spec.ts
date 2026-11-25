@@ -21,12 +21,13 @@ import { choosePreparedView } from "./prepared-view";
 // had parts taken out on both sides. It reports every fault it met, with its seed and turn. A seed that fails is kept
 // with its book as a case of its own.
 //
-// In the suite it is four short walks (one page and two, a book of each kind) in a very tall band, where a part is a
-// few pages, so that some eighty turns cross several joints each way: about two minutes a browser. The long walk is
-// run by hand (README, "The new reading view"): `SONDER_WALK=long` walks the whole book backwards and forwards
-// again and every seed kept here, 16 parts' worth of turns each, in a band of a desktop's height, about 25 minutes a
-// browser. `SONDER_WALK_SEEDS=7,8` walks other seeds, `SONDER_WALK_PARTS` sets how many parts' worth of turns a walk
-// takes, `SONDER_WALK_BAND=390x844` the window it walks in (a phone's, where a part has many times the pages).
+// In the suite it is four short walks (one page and two, a book of each kind) in a very tall band and the smallest
+// text, where a part is some two pages, so that some thirty turns cross several joints each way, at most MOST_TURNS
+// (#904: a test takes at most about 30 seconds). In Firefox, where a turn takes twice as long, they run only by hand. The long walk is run by hand (README, "The new reading view"): `SONDER_WALK=long` (or
+// `SONDER_LONG_READS=1`) walks the whole book backwards and forwards again and every seed kept here, 16 parts' worth
+// of turns each, in a band of a desktop's height, about 25 minutes a browser. `SONDER_WALK_SEEDS=7,8` walks other
+// seeds, `SONDER_WALK_PARTS` sets how many parts' worth of turns a walk takes, `SONDER_WALK_BAND=390x844` the window
+// it walks in (a phone's, where a part has many times the pages).
 test.use({ serviceWorkers: "block" });
 
 const asked = process.env.SONDER_WALK_SEEDS ? process.env.SONDER_WALK_SEEDS.split(",").map(Number) : null;
@@ -35,7 +36,9 @@ const imported: string[] = [];
 let appearance: any = null;
 test.beforeEach(async ({ page }) => {
   appearance = await (await page.request.get("/api/appearance")).json();
-  expect((await page.request.put("/api/appearance", { data: { ...appearance, reader: { ...appearance.reader, mode: "paginated" } } })).ok()).toBe(true);
+  // In the suite the smallest text, so that a part is two pages or so and a walk crosses its joints in few turns.
+  const size = long ? appearance.reader.size : 14;
+  expect((await page.request.put("/api/appearance", { data: { ...appearance, reader: { ...appearance.reader, mode: "paginated", size } } })).ok()).toBe(true);
   await page.addInitScript(() => localStorage.setItem("sonder-follow-narration", "off"));
   await choosePreparedView(page);
 });
@@ -46,9 +49,15 @@ test.afterEach(async ({ page }) => {
 
 const band = (page: Page) => page.locator(".reader-room .reader-viewport");
 type Shown = { ids: string[]; lines: string[]; key: string; cut: number; parts: string; pages: string | null; box: { x: number; y: number; width: number; height: number } };
-/** The page shown: its sentences in order, each line box of theirs with its place, and the lines an edge cuts. */
+/**
+ * The page shown: its sentences in order, each line box of theirs with its place, and the lines an edge cuts. One
+ * evaluate in the page, not a locator's, which costs a round trip more.
+ */
 const pageOf = (page: Page): Promise<Shown> =>
-  band(page).evaluate((host) => {
+  page.evaluate(() => {
+    const host = document.querySelector<HTMLElement>(".reader-room .reader-viewport");
+    // Asked while the reader is still opening: nothing is shown yet.
+    if (!host) return { ids: [], lines: [], key: "", cut: 0, parts: "", pages: null, box: { x: 0, y: 0, width: 0, height: 0 } };
     const box = host.getBoundingClientRect();
     const lines: string[] = [];
     const ids: string[] = [];
@@ -101,7 +110,7 @@ const random = (seed: number) => () => {
   return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
 };
 
-const long = process.env.SONDER_WALK === "long";
+const long = process.env.SONDER_WALK === "long" || process.env.SONDER_LONG_READS === "1";
 type Book = { name: string; chapters: number; each: number; seeds: number[]; suite: Record<string, number>; whole?: boolean };
 const BOOKS: Book[] = [
   // Its parts begin inside a chapter: nothing of the book's own stands between two parts.
@@ -118,17 +127,24 @@ const BOOKS: Book[] = [
 // Tall bands: few pages to a part, so a walk crosses many parts in the turns it has, and up to five parts are in the
 // page at once. The suite's are taller still.
 const LAYOUTS = [
-  { name: "one page", viewport: { width: 700, height: long ? 2400 : 8000 }, pages: "1" },
+  { name: "one page", viewport: { width: 700, height: long ? 2400 : 12000 }, pages: "1" },
   { name: "two pages", viewport: { width: 1920, height: long ? 2000 : 6000 }, pages: "2" },
 ] as const;
 /** How many parts' worth of turns a walk takes. */
-const PARTS_WALKED = Number(process.env.SONDER_WALK_PARTS) || (long ? 16 : 14);
+const PARTS_WALKED = Number(process.env.SONDER_WALK_PARTS) || (long ? 16 : 12);
+/** The most turns a walk of the suite takes, whatever it has still to cross: a fixed few, not "until it is one". */
+const MOST_TURNS = 40;
+/** A walk asked for by hand: its turns and its time are not capped. */
+const LONG_READS = long || !!asked || !!process.env.SONDER_WALK_PARTS || !!process.env.SONDER_WALK_BAND;
 
 for (const book of BOOKS)
   for (const layout of LAYOUTS)
     for (const seed of asked ?? (long ? [...(book.whole ? [0] : []), ...book.seeds] : [book.suite[layout.name]!]))
-      test(`${seed ? `a random walk of turns, seed ${seed}` : "the whole book backwards and forwards again"}, ${layout.name}, ${book.name}: every page has text, joins its neighbours, is cut nowhere and comes again as it was`, async ({ page }) => {
-        test.setTimeout(process.env.SONDER_WALK_BAND || process.env.SONDER_WALK_PARTS ? 3600000 : long ? 900000 : 180000);
+      test(`${seed ? `a random walk of turns, seed ${seed}` : "the whole book backwards and forwards again"}, ${layout.name}, ${book.name}: every page has text, joins its neighbours, is cut nowhere and comes again as it was`, async ({ page, browserName }) => {
+        // Firefox reads a page of this band in some 0.75 s a turn, so a walk that crosses its joints both ways takes
+        // longer than a test may (30 s); its pages are held to the same rules in prepared-pages-parts and -same.
+        test.skip(browserName === "firefox" && !LONG_READS, "in Firefox the walks run with SONDER_LONG_READS=1: over 30 s a walk");
+        if (LONG_READS) test.setTimeout(process.env.SONDER_WALK_BAND || process.env.SONDER_WALK_PARTS ? 3600000 : 900000);
         // `SONDER_WALK_BAND=390x844` walks in another window (a phone's, where a part has four times the pages).
         const [wide, high] = (process.env.SONDER_WALK_BAND || "").split("x").map(Number);
         await page.setViewportSize(wide && high ? { width: wide, height: high } : layout.viewport);
@@ -222,17 +238,19 @@ for (const book of BOOKS)
         // now and then a few turns against the leg and back.
         // A part's turns are counted from a full page: the page opened is a part's last, the one before it is full.
         if (seed) await turn(-1);
-        const perPart = Math.max(4, Math.round(order.size / manifest.parts.length / Math.max(1, shown.ids.length - 1)));
+        const perPart = Math.max(long ? 4 : 2, Math.round(order.size / manifest.parts.length / Math.max(1, shown.ids.length - 1)));
         if (seed) await turn(1);
         // Seed 0: two legs, each as long as the book.
         const turns = seed ? PARTS_WALKED * perPart : 100000;
         // A walk goes on past its turns, leg by leg, until it is one: until it crossed joints both ways and had parts
-        // taken out on both sides (the checks at its end), and at most to three times its turns. Its turns alone do
-        // not make sure of that: every part begins on a new page (#803), so a part takes a turn more than its text
-        // fills when it ends on a short page, and whether a leg back is long enough for a part to be taken out beyond
-        // the reader depends on the band and the style. A walk that has done that ends where its turns end.
+        // taken out on both sides (the checks at its end), and at most to three times its turns (in the suite to
+        // MOST_TURNS). Its turns alone do not make sure of that: every part begins on a new page (#803), so a part
+        // takes a turn more than its text fills when it ends on a short page, and whether a leg back is long enough
+        // for a part to be taken out beyond the reader depends on the band and the style. A walk that has done that
+        // ends where its turns end.
         const one = () => joints.back > 1 && joints.forward > 1 && dropped.behind > 0 && dropped.beyond > 0;
-        const walking = () => made < turns || (!!seed && !one() && made < 3 * turns);
+        const most = LONG_READS ? 3 * turns : Math.min(MOST_TURNS, 3 * turns);
+        const walking = () => made < Math.min(turns, most) || (!!seed && !one() && made < most);
         let direction: 1 | -1 = !seed || next() < 0.5 ? -1 : 1;
         for (let legs = 0; walking() && (seed || legs < 2); legs++) {
           const leg = seed ? Math.round(perPart * (2.5 + next() * 4)) : 100000;

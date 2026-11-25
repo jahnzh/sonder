@@ -832,7 +832,7 @@ test("config resolution: SONDER_CI_HOST=lisa uses SSD base without other env", (
   );
 });
 
-test("the wait cap grows with the commit's changed browser specs, unless it is set by hand (#845)", (t) => {
+test("the wait cap does not grow with the commit's changed browser specs: they are not repeated (#904)", (t) => {
   const f = fixture(t);
   // The check's support module is in the checkout, and the commit changes two specs since origin/main.
   fs.copyFileSync(path.resolve("scripts/check-local-support.mjs"), path.join(f.repo, "scripts", "check-local-support.mjs"));
@@ -849,14 +849,13 @@ test("the wait cap grows with the commit's changed browser specs, unless it is s
   git("add", ".");
   git("commit", "-qm", "hosts");
   const fourth = git("rev-parse", "HEAD");
-  // The heaviest file is 50 tests in two projects: 100, twice, 5 s each.
-  const grown = f.run(fourth, { SONDER_CI_HOST: "lisa" });
-  assert.equal(grown.status, 0, grown.output);
-  assert.match(grown.output, /Waiting for the check \(cap 4600s, 3600 \+ 1000 for 2 changed browser spec\(s\), poll every/);
-  // Through the dispatcher the host's cap arrives as SONDER_CI_HOST_MAX_WAIT, and grows the same way.
+  const plain = f.run(fourth, { SONDER_CI_HOST: "lisa" });
+  assert.equal(plain.status, 0, plain.output);
+  assert.match(plain.output, /Waiting for the check \(cap 3600s, poll every/);
+  // Through the dispatcher the host's cap arrives as SONDER_CI_HOST_MAX_WAIT, and is used as it is.
   const dispatched = f.run(fourth, { SONDER_CI_HOST: "lisa", SONDER_CI_HOST_MAX_WAIT: "2000" });
   assert.equal(dispatched.status, 0, dispatched.output);
-  assert.match(dispatched.output, /Waiting for the check \(cap 3000s, 2000 \+ 1000 for 2 changed browser spec\(s\), poll every/);
+  assert.match(dispatched.output, /Waiting for the check \(cap 2000s, poll every/);
   // Set by hand, the cap is what was set.
   const byHand = f.run(fourth, { SONDER_CI_HOST: "lisa", SONDER_CI_MAX_WAIT: "900" });
   assert.equal(byHand.status, 0, byHand.output);

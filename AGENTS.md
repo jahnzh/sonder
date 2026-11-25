@@ -61,6 +61,7 @@ Follow nearby TypeScript and React conventions: two-space indentation, `PascalCa
 The setup that severity is judged against: one owner using the app on a phone and a desktop, two alignment hosts with a known layout (WSL with a GPU, lisa on CPU; `docs/CTC_WORKER_POOL.md`), and full-length audiobooks from his own library. A reviewer rates a finding by whether it can happen there.
 
 - A new or changed browser test passes `scripts/stress-spec.sh <spec> --load` before it lands; see "Stress a browser test" in `docs/LOCAL_CHECKS.md`.
+- A browser test takes at most 30 seconds (Playwright's default timeout) and a spec file at most about 2 minutes of browser time. A loop over pages, parts or turns uses a fixed small sample (open the book next to what it checks), at most 100 steps, never "until the end"; a long soak runs only behind an opt-in flag (`SONDER_LONG_READS=1`), outside the check. `tests/browser-test-limits.test.mjs` enforces this. Report a new or changed spec's run time with it.
 - A test that needs a temp folder takes it from `tempDir()` in `tests/temp-dir.ts`, which removes it; `tests/temp-leftovers.test.mjs` guards this.
 
 ## Changes and Safety
