@@ -99,7 +99,7 @@ export function clearWorkMediaHoldsOfAcquisition(acquisitionId: string) {
        WHERE hold_reason IS NOT NULL AND (user_id,work_id) IN (
          SELECT u.user_id,a.work_id FROM user_acquisitions u
            JOIN acquisitions a ON a.id=u.acquisition_id
-         WHERE a.id=? AND a.work_id IS NOT NULL
+         WHERE a.id=? AND a.work_id IS NOT NULL AND a.kind IS NOT 'ebook'
          UNION
          SELECT u.user_id,e.work_id FROM user_acquisitions u
            JOIN acquisitions a ON a.id=u.acquisition_id

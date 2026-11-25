@@ -208,7 +208,7 @@ function doneLine(item: ActivityItem): string | null {
   const facts = item.facts;
   switch (facts.kind) {
     case "acquisition":
-      return finishedLine({ entry: "download", backend: facts.backend as DownloadFacts["backend"], cancelled: facts.status === "cancelled" });
+      return finishedLine({ entry: "download", backend: facts.backend as DownloadFacts["backend"], cancelled: facts.status === "cancelled", file: facts.file });
     case "server-copy":
       return finishedLine({ entry: "server-copy" });
     case "series-acquisition":

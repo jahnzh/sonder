@@ -499,7 +499,8 @@ export type ActivityItem = {
  */
 export type ActivityFacts =
   /** A download: where it is fetched (`local`, `torbox`, `copy`; null when the row has none). */
-  | { kind: "acquisition"; status: string; backend: string | null }
+  /** `file` is "ebook" for a torrent fetched for its EPUB or PDF (#901); absent for an audiobook. */
+  | { kind: "acquisition"; status: string; backend: string | null; file?: "ebook" }
   | { kind: "server-copy"; status: string }
   /** A series search for the audiobook or for the ebook of a work. */
   | {

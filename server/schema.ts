@@ -138,6 +138,8 @@ export const BACKUP_CLEANUP_STATUSES = ["done", "failed"] as const;
 export type BackupCleanupStatus = (typeof BACKUP_CLEANUP_STATUSES)[number];
 export const acquisitions = sqliteTable("acquisitions", {
   workId: text("work_id"),
+  /** "ebook" for a torrent fetched for its EPUB or PDF (#901); null for an audiobook. */
+  kind: text("kind"),
   language: text("language"),
   narrator: text("narrator"),
   id: text("id").primaryKey(),

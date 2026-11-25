@@ -70,13 +70,13 @@ import {
   torrentDownloadDir,
 } from "./storage.ts";
 import { serverStorage, type StorageProbe } from "./server-storage.ts";
-import { acquireReplacing, acquisitionsLoop, cancelAcquisition, controlAcquisition } from "./acquisitions.ts";
+import { acquire, acquireReplacing, acquisitionsLoop, cancelAcquisition, controlAcquisition } from "./acquisitions.ts";
 import { acquireForNewBook } from "./new-book.ts";
 import { registerPreviewRoutes, torboxPreviewLoop } from "./torbox-preview.ts";
 import { retrySeriesAcquisitionJob, seriesAcquisitionLoop } from "./series-acquisition.ts";
 import { getTorrentStates, transmission, transmissionConfigured } from "./transmission.ts";
 import { getTorrentHealth } from "./torrent-health.ts";
-import { searchEbooks, saveEbook, listEbooks, importEbook } from "./ebooks.ts";
+import { searchEbooks, saveEbook, listEbooks, importEbook, EBOOK_SOURCES, type EbookSource } from "./ebooks.ts";
 import { reevaluateEbookSetForWork } from "./ebook-set.ts";
 import { ebookSetEvaluationLoop, registerUploadedEbookSetMember, retryEbookSetMember } from "./ebook-set-evaluation.ts";
 import {
@@ -871,18 +871,19 @@ export async function createApp(options?: {
     magnetOf: ({ source, key }) => (source === "abb" ? abbMagnet(key) : prowlarrMagnet(key)),
     userOf: currentUserId,
   });
-  // Older clients may still send "annas"; refuse it with a readable message.
-  const libgenOnly = <T extends { source: "annas" | "libgen" }>(input: T) => {
+  // Older clients may still send "annas"; refuse it with a readable message. An older client sends "libgen" only.
+  const sourceSchema = z.enum(["annas", ...EBOOK_SOURCES]);
+  const withoutAnnas = <T extends { source: z.infer<typeof sourceSchema> }>(input: T) => {
     if (input.source === "annas")
       throw new Error(
         "Anna’s Archive is turned off. Search Library Genesis or import an EPUB or PDF.",
       );
-    return { ...input, source: "libgen" as const };
+    return input as T & { source: EbookSource };
   };
   app.get("/api/discover/ebooks", async (req) => {
-    const { source, q, page } = libgenOnly(z
+    const { source, q, page } = withoutAnnas(z
       .object({
-        source: z.enum(["annas", "libgen"]),
+        source: sourceSchema.default("libgen"),
         q: z.string().min(2).max(150),
         page: z.coerce.number().int().min(1).max(100).default(1),
       })
@@ -890,9 +891,9 @@ export async function createApp(options?: {
     return searchEbooks(source, q, page);
   });
   app.post("/api/ebooks", async (req) => {
-    const input = z
+    const input = withoutAnnas(z
       .object({
-        source: z.enum(["annas", "libgen"]),
+        source: sourceSchema,
         md5: z.string().regex(/^[a-f0-9]{32}$/i),
         title: z.string().min(1).max(300),
         authors: z.array(z.string().max(200)).max(30),
@@ -904,8 +905,22 @@ export async function createApp(options?: {
         url: z.string().max(2000),
         workId: z.string().optional(),
       })
-      .parse(req.body);
-    const saved = await saveEbook(libgenOnly(input));
+      .parse(req.body));
+    // A Prowlarr release is a torrent (#901): it goes through the download queue, and its EPUB or PDF joins the book
+    // when it is complete. The answer names the download instead of an edition.
+    if (input.source === "prowlarr") {
+      const work = input.workId ? db.select().from(s.works).where(eq(s.works.id, input.workId)).get() : undefined;
+      if (!work) throw new Error("Choose the book this ebook is for.");
+      const job = await acquire(await prowlarrMagnet(`prowlarr-${input.md5.toLowerCase()}`), {
+        kind: "ebook",
+        workId: work.id,
+        title: work.title,
+        author: work.author,
+        userId: currentUserId(req),
+      });
+      return { acquisition: { id: job.id, status: job.status } };
+    }
+    const saved = await saveEbook(input);
     // The ebook's work joins the library of the user who got it (#555).
     joinLibraryWithEbook(currentUserId(req), saved.id);
     // The set membership is recorded as pending and evaluated in the background (#325); `ebookSet` is additive.

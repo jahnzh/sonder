@@ -395,7 +395,7 @@ export function metadataMatchLine(status: string, reason: string | null): string
 
 /** What a finished entry of Now concerns, with the facts its line is written from. */
 export type FinishedFacts =
-  | { entry: "download"; backend?: "local" | "torbox" | "copy" | null; cancelled?: boolean }
+  | { entry: "download"; backend?: "local" | "torbox" | "copy" | null; cancelled?: boolean; file?: "ebook" }
   | { entry: "server-copy" }
   | { entry: "series-search"; search: "audiobook" | "ebook" }
   | { entry: "ebook-check"; status: "accepted" | "rejected" }
@@ -408,6 +408,8 @@ export function finishedLine(facts: FinishedFacts): string | null {
     case "download":
       // Cancelled from Activity (#716): nothing became of the file.
       if (facts.cancelled) return "Download cancelled";
+      // A torrent fetched for its ebook (#901): the file is imported into the book on the server.
+      if (facts.file === "ebook") return "Ebook on server";
       return facts.backend === "torbox" ? "Audiobook streams from TorBox" : "Audiobook on server";
     case "server-copy":
       return "Audiobook on server";

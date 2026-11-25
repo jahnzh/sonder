@@ -132,6 +132,90 @@ export function parseProwlarrResults(items: unknown): {
   return { releases, links };
 }
 
+/** Newznab's book categories (#901): 7000 Books, 7020 EBook. */
+export const PROWLARR_EBOOK_CATEGORIES = [7000, 7020];
+
+/** The ebook format a release names, EPUB before PDF; null when it names neither (a MOBI, a comic, an audiobook). */
+export function ebookReleaseFormat(title: string): "epub" | "pdf" | null {
+  if (/\bepub\b/i.test(title)) return "epub";
+  if (/\bpdf\b/i.test(title)) return "pdf";
+  return null;
+}
+
+/** One ebook release of a Prowlarr search, in the shape of server/ebooks.ts `EbookResult` (`md5` is its key). */
+export type ProwlarrEbook = {
+  md5: string;
+  source: "prowlarr";
+  title: string;
+  authors: string[];
+  extension: "epub" | "pdf";
+  language: string | null;
+  size: string | null;
+  year: string | null;
+  coverUrl: null;
+  url: string;
+  indexer: string;
+  seeders: number | null;
+  infoHash: string | null;
+};
+
+/**
+ * The EPUB and PDF torrents of a Prowlarr search (#901): a book category (7000–7999), the format named in the title,
+ * and not an audiobook. Their links stay on the server as the audio releases' do, keyed by the same `prowlarr-<key>`.
+ */
+export function parseProwlarrEbooks(items: unknown): { files: ProwlarrEbook[]; links: Map<string, ProwlarrLink> } {
+  const links = new Map<string, ProwlarrLink>();
+  if (!Array.isArray(items)) return { files: [], links };
+  const files = (items as ProwlarrItem[]).flatMap((item) => {
+    if (!item || typeof item !== "object" || typeof item.title !== "string") return [];
+    if (item.protocol && item.protocol !== "torrent") return [];
+    const categories = (item.categories || []).map((category) => category.id);
+    if (!categories.some((id) => id >= 7000 && id < 8000) || categories.includes(3030)) return [];
+    if (audioTitle.test(item.title)) return [];
+    const extension = ebookReleaseFormat(item.title);
+    if (!extension) return [];
+    const infoHash = /^[a-f0-9]{40}$/i.test(item.infoHash || "") ? item.infoHash!.toLowerCase() : null;
+    const magnetUrl =
+      typeof item.magnetUrl === "string" && /^(magnet:|https?:)/i.test(item.magnetUrl) ? item.magnetUrl : null;
+    const downloadUrl =
+      typeof item.downloadUrl === "string" && /^https?:/i.test(item.downloadUrl) ? item.downloadUrl : null;
+    if (!infoHash && !magnetUrl && !downloadUrl) return [];
+    const key = createHash("sha256")
+      .update(`${item.indexerId ?? item.indexer}:${item.guid || item.title}`)
+      .digest("hex")
+      .slice(0, 32);
+    links.set(`prowlarr-${key}`, { title: item.title, magnetUrl, downloadUrl, infoHash });
+    const size = Number.isFinite(item.size) && item.size! > 0 ? item.size! : null;
+    const published = item.publishDate ? new Date(item.publishDate) : null;
+    const infoUrl =
+      typeof item.infoUrl === "string" && /^https?:\/\//i.test(item.infoUrl)
+        ? item.infoUrl
+        : typeof item.guid === "string" && /^https?:\/\//i.test(item.guid)
+          ? item.guid
+          : "";
+    return [
+      {
+        md5: key,
+        source: "prowlarr" as const,
+        title: item.title.replace(/\s+/g, " ").trim(),
+        authors: [],
+        extension,
+        language: null,
+        size: size ? formatBytes(size) : null,
+        year: published && !Number.isNaN(published.getTime()) ? String(published.getUTCFullYear()) : null,
+        coverUrl: null,
+        url: infoUrl,
+        indexer: item.indexer || "Prowlarr",
+        seeders: Number.isFinite(item.seeders) ? item.seeders! : null,
+        infoHash,
+      },
+    ];
+  });
+  // EPUBs first, then by seeders, so the series search takes the likeliest EPUB.
+  files.sort((a, b) => (a.extension === b.extension ? (b.seeders ?? -1) - (a.seeders ?? -1) : a.extension === "epub" ? -1 : 1));
+  return { files, links };
+}
+
 export type ProwlarrConfig = { url: string; key: string };
 async function request(
   config: ProwlarrConfig,
@@ -183,6 +267,12 @@ export async function prowlarrSearch(config: ProwlarrConfig, query: string) {
     // Prowlarr waits for its slowest indexer; searches of 50 s have been seen on this server.
     await request(config, `/api/v1/search?${params}`, 90000),
   );
+}
+
+export async function prowlarrEbookSearchRaw(config: ProwlarrConfig, query: string) {
+  const params = new URLSearchParams({ query, type: "search", limit: "100" });
+  for (const category of PROWLARR_EBOOK_CATEGORIES) params.append("categories", String(category));
+  return parseProwlarrEbooks(await request(config, `/api/v1/search?${params}`, 90000));
 }
 
 // Only Prowlarr itself is contacted: the stored link's path and query are replayed against the configured address.

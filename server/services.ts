@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { retryDelayFromHeader } from "./media-response.ts";
 import {
   prowlarrSearch,
+  prowlarrEbookSearchRaw,
   resolveProwlarrLink,
   type ProwlarrLink,
 } from "./sources/prowlarr.ts";
@@ -329,11 +330,7 @@ export async function prowlarrReleaseSearch(q: string) {
   const config = prowlarrConfig();
   if (!config) throw new Error("Connect Prowlarr in Settings first.");
   const { releases, links } = await prowlarrSearch(config, q);
-  const expires = Date.now() + 6 * 3600_000;
-  for (const [id, link] of links) prowlarrLinks.set(id, { expires, link });
-  for (const [id, entry] of prowlarrLinks)
-    if (entry.expires <= Date.now() || prowlarrLinks.size > 5000)
-      prowlarrLinks.delete(id);
+  keepProwlarrLinks(links);
   const cached = await torboxCachedHashes(
     releases.flatMap((release) => (release.infoHash ? [release.infoHash] : [])),
   ).catch(() => new Set<string>());
@@ -345,6 +342,24 @@ export async function prowlarrReleaseSearch(q: string) {
     page: 1,
     nextPage: null,
   };
+}
+/** Prowlarr's EPUB and PDF torrents for the words (#901); their links are kept as the audio releases' are. */
+export async function prowlarrEbookSearch(q: string) {
+  const config = prowlarrConfig();
+  if (!config) throw new Error("Connect Prowlarr in Settings first.");
+  const { files, links } = await prowlarrEbookSearchRaw(config, q);
+  keepProwlarrLinks(links);
+  const cached = await torboxCachedHashes(files.flatMap((file) => (file.infoHash ? [file.infoHash] : []))).catch(
+    () => new Set<string>(),
+  );
+  return files.map(({ infoHash, ...file }) => ({ ...file, cached: !!infoHash && cached.has(infoHash) }));
+}
+function keepProwlarrLinks(links: Map<string, ProwlarrLink>) {
+  const expires = Date.now() + 6 * 3600_000;
+  for (const [id, link] of links) prowlarrLinks.set(id, { expires, link });
+  for (const [id, entry] of prowlarrLinks)
+    if (entry.expires <= Date.now() || prowlarrLinks.size > 5000)
+      prowlarrLinks.delete(id);
 }
 export function prowlarrRelease(id: string) {
   const entry = prowlarrLinks.get(id);

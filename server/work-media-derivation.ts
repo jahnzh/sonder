@@ -67,6 +67,8 @@ function latestUserAcquisitions(database: Database, userId: number, workIds: Ite
            ROW_NUMBER() OVER (PARTITION BY a.work_id ORDER BY a.updated_at DESC,a.rowid DESC) AS n
          FROM user_acquisitions u JOIN acquisitions a ON a.id=u.acquisition_id
          WHERE u.user_id=? AND a.work_id IN (SELECT value FROM json_each(?))
+           -- A torrent fetched for its ebook (#901) is not the work's audio on its way.
+           AND a.kind IS NOT 'ebook'
        ) WHERE n=1`,
     )
     .all(userId, ids(workIds)) as LatestAcquisition[];
@@ -152,6 +154,7 @@ export function materialiseWorkMediaStates(
            JOIN acquisitions a ON a.id=u.acquisition_id
            JOIN works w ON w.id=a.work_id
            JOIN users us ON us.id=u.user_id
+         WHERE a.kind IS NOT 'ebook'
          ORDER BY 1,2`,
       )
       .all() as { userId: number; workId: string }[];

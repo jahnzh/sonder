@@ -26,9 +26,33 @@ import { ebookSetMembersRemoved, removePendingMembersLeftBehind } from "./ebook-
 import { join, basename, extname } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-// Anna’s Archive was removed for now (#8); Library Genesis is the only source.
-export type EbookSource = "libgen";
+import {
+  createLibgenClient,
+  LibgenLimitedError,
+  type LibgenTiming,
+} from "./sources/libgen-client.ts";
+import {
+  gutenbergSearchUrl,
+  GUTENBERG,
+  parseGutenberg,
+  parseStandardEbooks,
+  publicDomainDownload,
+  STANDARD_EBOOKS,
+  standardEbooksSearchUrl,
+  type PublicDomainSource,
+} from "./sources/public-domain.ts";
+// Anna’s Archive was removed for now (#8). Library Genesis, Prowlarr's book indexers and the public-domain
+// Standard Ebooks and Project Gutenberg are the sources (#901).
+export type EbookSource = "libgen" | "prowlarr" | "standardebooks" | "gutenberg";
+export const EBOOK_SOURCES = ["libgen", "prowlarr", "standardebooks", "gutenberg"] as const satisfies readonly EbookSource[];
+export const EBOOK_SOURCE_NAMES: Record<EbookSource, string> = {
+  libgen: "Library Genesis",
+  prowlarr: "Prowlarr",
+  standardebooks: "Standard Ebooks",
+  gutenberg: "Project Gutenberg",
+};
 export type EbookResult = {
+  /** The file's md5 on Library Genesis; for another source a 32-hex key of the edition there. */
   md5: string;
   source: EbookSource;
   title: string;
@@ -39,45 +63,34 @@ export type EbookResult = {
   year: string | null;
   coverUrl: string | null;
   url: string;
+  /** A Prowlarr release's indexer and seeders, and whether TorBox has it cached; absent for the other sources. */
+  indexer?: string;
+  seeders?: number | null;
+  cached?: boolean;
 };
 const userAgent =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36";
-function baseUrl(_source: EbookSource) {
-  return getSetting("libgenUrl") || "https://libgen.li";
+// The test suites ask fake mirrors many times in a row: no spacing, no waits, no rest.
+const testTiming: LibgenTiming = { spacing: { search: 0, download: 0 }, waits: [0, 0], mirrorsPerRequest: 2, rests: [0] };
+/** The one Library Genesis client (#901): the Get sheet and the series queue share its spacing and rests. */
+export const libgen = createLibgenClient({
+  fetch: (url, init) => publicFetch(url, init),
+  mirror: () => getSetting("libgenUrl"),
+  timing: process.env.NODE_ENV === "test" ? testTiming : undefined,
+});
+export { LibgenLimitedError };
+/** When Library Genesis may be asked again after limiting requests; 0 when it is not resting. */
+export function ebookSourcesRestUntil() {
+  return Math.max(libgen.restingUntil("search"), libgen.restingUntil("download"));
 }
-async function page(url: string, source: EbookSource) {
-  let response;
-  try {
-    response = await publicFetch(url, {
-      headers: {
-        Accept: "text/html",
-        "User-Agent": userAgent,
-        Referer: baseUrl(source) + "/",
-      },
-      signal: AbortSignal.timeout(20000),
-    });
-  } catch {
-    throw new Error(
-      "Library Genesis could not be reached. Try another mirror in Settings or open the source website.",
-    );
-  }
-  if (!response.ok)
-    throw new Error(
-      `Library Genesis returned ${response.status}. This mirror may need browser verification.`,
-    );
-  const html = await response.text();
-  if (/<title>\s*Welcome to nginx!/i.test(html))
-    throw new Error(
-      "This mirror is unavailable. Try another mirror in Settings or open the source website.",
-    );
-  return html;
+async function libgenPage(kind: "search" | "download", path: string) {
+  const { body, mirror } = await libgen.request(kind, path, {
+    headers: { Accept: "text/html" },
+    timeoutMs: 20000,
+  });
+  return { html: body ?? "", mirror };
 }
-export async function searchEbooks(
-  source: EbookSource,
-  q: string,
-  pageNumber = 1,
-): Promise<{ files: EbookResult[]; website: string }> {
-  const base = baseUrl(source);
+async function searchLibgen(q: string, pageNumber: number) {
   const params = new URLSearchParams([
     ["req", q],
     ["columns[]", "t"],
@@ -90,8 +103,8 @@ export async function searchEbooks(
     ["filesuns", "all"],
     ["page", String(pageNumber)],
   ]);
-  const url = `${base}/index.php?${params}`;
-  const html = await page(url, source);
+  const path = `index.php?${params}`;
+  const { html, mirror } = await libgenPage("search", path);
   const files = parseLibgen(html).map((f) => ({ ...f, coverUrl: null }));
   if (
     !files.length &&
@@ -106,9 +119,54 @@ export async function searchEbooks(
     files: files
       .filter((f) => f.extension === "epub" || f.extension === "pdf")
       .slice(0, 50)
-      .map((f) => ({ ...f, source, url: `${base}/ads.php?md5=${f.md5}` })),
-    website: url,
+      .map((f) => ({ ...f, source: "libgen" as const, url: `${mirror}/ads.php?md5=${f.md5}` })),
+    website: `${mirror}/${path}`,
   };
+}
+const publicDomainSites: Record<PublicDomainSource, { name: string; search: (q: string) => string; website: (q: string) => string; parse: typeof parseGutenberg }> = {
+  standardebooks: {
+    name: "Standard Ebooks",
+    search: standardEbooksSearchUrl,
+    website: (q) => `${STANDARD_EBOOKS}/ebooks?${new URLSearchParams({ query: q })}`,
+    parse: parseStandardEbooks,
+  },
+  gutenberg: {
+    name: "Project Gutenberg",
+    search: gutenbergSearchUrl,
+    website: (q) => `${GUTENBERG}/ebooks/search/?${new URLSearchParams({ query: q })}`,
+    parse: parseGutenberg,
+  },
+};
+async function searchPublicDomain(source: PublicDomainSource, q: string) {
+  const site = publicDomainSites[source];
+  let response;
+  try {
+    response = await publicFetch(site.search(q), {
+      headers: { Accept: "application/atom+xml, application/xml;q=0.9", "User-Agent": "Sonder" },
+      signal: AbortSignal.timeout(20000),
+    });
+  } catch {
+    throw new Error(`${site.name} could not be reached.`);
+  }
+  // Project Gutenberg answers 503 with a maintenance page while it is down.
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error(`${site.name} is unavailable (${response.status}).`);
+  }
+  const files = site.parse(await response.text());
+  return { files: files.slice(0, 30), website: site.website(q) };
+}
+export async function searchEbooks(
+  source: EbookSource,
+  q: string,
+  pageNumber = 1,
+): Promise<{ files: EbookResult[]; website: string }> {
+  if (source === "libgen") return searchLibgen(q, pageNumber);
+  if (source === "prowlarr") {
+    const { prowlarrEbookSearch } = await import("./services.ts");
+    return { files: await prowlarrEbookSearch(q), website: "" };
+  }
+  return searchPublicDomain(source, q);
 }
 // Separate lists, because BlockList also matches IPv4 addresses against IPv6
 // rules as IPv4-mapped addresses, which ::ffff:0:0/96 would always match.
@@ -247,16 +305,31 @@ async function linkEbook(id: string, workId: string | undefined) {
   invalidateParsedBook(id);
   await ebookSetMembersRemoved(left);
 }
-async function resolveDownload(source: EbookSource, md5: string) {
-  const base = baseUrl(source);
-  const mirror = parseMirrorPage(
-    await page(`${base}/ads.php?md5=${md5}`, "libgen"),
-  );
-  if (!mirror.download)
+/** The file's address on a mirror: its download page (`ads.php`) names the keyed link (`get.php`). */
+async function resolveLibgenDownload(md5: string) {
+  const { html, mirror } = await libgenPage("download", `ads.php?md5=${md5}`);
+  const page = parseMirrorPage(html);
+  if (!page.download)
     throw new Error(
       "Library Genesis did not provide a direct link. Open the source website to download manually.",
     );
-  return new URL(mirror.download, base).href.replace(/^http:/i, "https:");
+  return { url: new URL(page.download, mirror).href.replace(/^http:/i, "https:"), mirror };
+}
+/** The file's response: through the Library Genesis client for its keyed link, straight from a public-domain source. */
+async function fetchEbookFile(input: EbookResult, signal: AbortSignal) {
+  const headers = { "User-Agent": userAgent, "Accept-Encoding": "identity" };
+  if (input.source === "libgen") {
+    const { url, mirror } = await resolveLibgenDownload(input.md5);
+    const { response } = await libgen.request("download", url, {
+      headers: { ...headers, Referer: `${mirror}/` },
+      read: false,
+      signal,
+    });
+    return response;
+  }
+  if (input.source === "standardebooks" || input.source === "gutenberg")
+    return publicFetch(publicDomainDownload(input.source, input.url), { headers, signal });
+  throw new Error("This source's editions are fetched as a download.");
 }
 /**
  * A new or replaced EPUB has its text prepared in the background (#827), so its first reader does not wait for it.
@@ -285,16 +358,8 @@ async function downloadEbook(input: EbookResult & { workId?: string }) {
   const ext = input.extension?.toLowerCase();
   if (!["epub", "pdf"].includes(ext || ""))
     throw new Error("Choose an EPUB or PDF ebook.");
-  const url = await resolveDownload(input.source, input.md5);
   const stalled = new AbortController();
-  const response = await publicFetch(url, {
-    headers: {
-      "User-Agent": userAgent,
-      Referer: baseUrl(input.source) + "/",
-      "Accept-Encoding": "identity",
-    },
-    signal: stalled.signal,
-  });
+  const response = await fetchEbookFile(input, stalled.signal);
   if (!response.ok || !response.body)
     throw new Error(
       "The ebook could not be downloaded. Open the source website to check availability.",
@@ -348,7 +413,8 @@ async function downloadEbook(input: EbookResult & { workId?: string }) {
     if (!size || (expected && expected !== size))
       throw new Error("The ebook download was interrupted.");
     const digest = hash.digest("hex");
-    if (digest !== input.md5.toLowerCase())
+    // Only Library Genesis names a file by its md5; another source's key is its edition's.
+    if (input.source === "libgen" && digest !== input.md5.toLowerCase())
       throw new Error(
         "The ebook checksum did not match. The incomplete download was discarded.",
       );
