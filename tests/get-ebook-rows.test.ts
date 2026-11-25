@@ -89,6 +89,10 @@ test("EPUBs come before PDFs, each in the order given; a file listed twice is on
   assert.deepEqual(rows.map((row) => row.id), [2, 4, 1, 3].map((n) => `libgen-${md5(n)}`));
   assert.deepEqual(rows.map((row) => row.second.split(" · ")[0]), ["EPUB", "EPUB", "PDF", "PDF"]);
   assert.equal(editionRows([result(1), result(1, { source: "gutenberg" })], new Set()).length, 2);
+  // Library Genesis, libgen.rs and Anna’s Archive name a file by its md5: one row, the first source's (#901).
+  const same = editionRows([result(1), result(1, { source: "libgenrs" }), result(1, { source: "annas" })], new Set());
+  assert.deepEqual(same.map((row) => [row.id, row.result.source]), [[`libgen-${md5(1)}`, "libgen"]]);
+  assert.equal(editionRow(result(2, { source: "annas" }), new Set([`libgen-${md5(2)}`])).disabled, true);
 });
 
 test("the line under Get this edition: nothing chosen, an EPUB with and without a recording, a PDF", () => {

@@ -255,3 +255,71 @@ test("Z-Library refusing the login, and asking for browser verification, are sai
   const profile = await app.inject({ method: "POST", url: "/api/zlib/test" });
   assert.equal(profile.json().error, shadow.ZLIB_REFUSED);
 });
+
+const { publicFetch } = await import("../server/public-fetch.ts");
+const { ebookEditionId } = await import("../server/ebooks.ts");
+const { fetchTopKIntoEbookSet, setEbookSetDeps, resetEbookSetDeps } = await import("../server/ebook-set.ts");
+
+test("a redirect to another site does not carry the account's cookies there; one on the same site does", async () => {
+  handler = (url) =>
+    url.hostname === "z-library.sk" && url.pathname === "/start"
+      ? new Response(null, { status: 302, headers: { Location: "/same" } })
+      : url.pathname === "/same"
+        ? new Response(null, { status: 302, headers: { Location: "https://elsewhere.example/landing" } })
+        : new Response("ok");
+  await publicFetch("https://z-library.sk/start", { headers: { Cookie: "remix_userid=1; remix_userkey=abc", Accept: "text/html" } });
+  const cookies = asked.map((entry) => [new URL(entry.url).hostname, new Headers(entry.init?.headers).get("Cookie")]);
+  assert.deepEqual(cookies, [
+    ["z-library.sk", "remix_userid=1; remix_userkey=abc"],
+    ["z-library.sk", "remix_userid=1; remix_userkey=abc"],
+    ["elsewhere.example", null],
+  ]);
+  assert.equal(new Headers(asked[2].init?.headers).get("Accept"), "text/html");
+});
+
+test("a 429 is limiting even where the caller reads 4xx answers itself (Anna's Archive's download API)", async () => {
+  await settings({ annas: FAKE_KEY });
+  handler = () => new Response("slow down", { status: 429 });
+  db.insert(s.works).values({ id: "work-429", title: "Limited", author: "Ada", description: "", genre: "", year: 2020 }).onConflictDoNothing().run();
+  const md5 = "1".repeat(32);
+  const saved = await app.inject({
+    method: "POST",
+    url: "/api/ebooks",
+    payload: { md5, source: "annas", title: "Limited", authors: [], extension: "epub", language: null, size: null, year: null, coverUrl: null, url: `https://annas-archive.gl/md5/${md5}`, workId: "work-429" },
+  });
+  assert.equal(saved.statusCode, 503, saved.body);
+  assert.equal(saved.json().error, "Anna’s Archive is limiting requests.");
+});
+
+test("a file named by its md5 is one edition from Library Genesis, libgen.rs and Anna's Archive", () => {
+  const md5 = "ABCDEF".padStart(32, "0");
+  for (const source of ["libgen", "libgenrs", "annas"]) assert.equal(ebookEditionId({ source, md5 }), `libgen-${md5.toLowerCase()}`);
+  assert.equal(ebookEditionId({ source: "zlib", md5: "f".repeat(32) }), `zlib-${"f".repeat(32)}`);
+});
+
+test("the libgen.rs family out of reach does not hold a series search; a limiting source names its time", async () => {
+  db.insert(s.works).values({ id: "work-order", title: "Some Book", author: "Ada Author", description: "", genre: "", year: 2020 }).onConflictDoNothing().run();
+  const at = Date.now() + 60_000;
+  setEbookSetDeps({
+    search: async (source) => {
+      if (source === "libgenrs") throw new Error("Library Genesis (libgen.rs) could not be reached.");
+      if (source === "annas") throw Object.assign(new Error("Anna’s Archive is limiting requests."), { retryAt: at });
+      return { files: [], website: "" };
+    },
+  });
+  try {
+    const result = await fetchTopKIntoEbookSet("work-order", "libgen", { sources: ["libgen", "annas", "libgenrs"] });
+    assert.deepEqual(result.failures, ["Anna’s Archive is limiting requests."]);
+    assert.equal(result.retryAt, at);
+    const none = await fetchTopKIntoEbookSet("work-order", "libgen", { sources: ["libgen", "libgenrs"] });
+    assert.deepEqual(none.failures, []);
+    assert.equal(none.retryAt, null);
+  } finally {
+    resetEbookSetDeps();
+  }
+});
+
+test("Settings says which Z-Library login is saved", async () => {
+  await settings({ zlibEmail: "", zlibPassword: "", zlibToken: "123:abc9f" });
+  assert.deepEqual((await app.inject("/api/settings")).json().zlibSaved, { email: false, password: false, token: true });
+});

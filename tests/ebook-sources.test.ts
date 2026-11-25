@@ -304,6 +304,8 @@ test("the series ebook search asks the sources in order: Library Genesis limited
   assert.deepEqual(started, ["Project Hail Mary by Andy Weir EPUB"]);
   assert.equal(result.started, "acquisition-1");
   assert.deepEqual(result.failures, [LIBGEN_LIMITED]);
+  // The time Library Genesis named goes with the fetch, for the series queue.
+  assert.ok(result.retryAt && result.retryAt > Date.now());
 });
 
 test("a series ebook job whose sources limited requests goes back in the queue for later, not done with an error", async () => {
@@ -316,16 +318,10 @@ test("a series ebook job whose sources limited requests goes back in the queue f
   setSeriesAcquisitionDeps({
     canAcquireMedia: () => true,
     // Library Genesis limited; an edition that did not match the narration does not end the search.
-    fetchEbooks: async () => ({ downloaded: [{ id: "libgen-x", status: "rejected" as const }], skipped: null, failures: [LIBGEN_LIMITED] }),
+    // It names when it may be asked again.
+    fetchEbooks: async () => ({ downloaded: [{ id: "libgen-x", status: "rejected" as const }], skipped: null, failures: [LIBGEN_LIMITED], retryAt: until }),
   });
-  const { libgen } = await import("../server/ebooks.ts");
-  const resting = libgen.restingUntil;
-  (libgen as { restingUntil: typeof resting }).restingUntil = () => until;
-  try {
-    await tickSeriesAcquisition();
-  } finally {
-    (libgen as { restingUntil: typeof resting }).restingUntil = resting;
-  }
+  await tickSeriesAcquisition();
   const job = db.select().from(s.seriesAcquisitionJobs).where(eq(s.seriesAcquisitionJobs.id, "job-dcc")).get()!;
   assert.equal(job.status, "pending");
   assert.equal(job.error, LIBGEN_LIMITED);

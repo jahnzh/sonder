@@ -90,25 +90,25 @@ async function annasCookie(force = false) {
 }
 
 export async function searchAnnas(q: string): Promise<{ files: ShadowResult[]; website: string }> {
-  const base = annasBase();
   const path = `search?${new URLSearchParams([["q", q], ["content", "book_any"], ["ext", "epub"], ["ext", "pdf"]])}`;
   const cached = !!annasSession;
-  const ask = async (cookie: string) =>
-    (
-      await annas.request("search", path, {
-        headers: { Cookie: cookie, Accept: "text/html" },
-        redirect: "manual",
-        timeoutMs: 20000,
-      })
-    ).body ?? "";
-  let html: string;
+  const ask = (cookie: string) =>
+    annas.request("search", path, {
+      headers: { Cookie: cookie, Accept: "text/html" },
+      redirect: "manual",
+      timeoutMs: 20000,
+    });
+  let answer: Awaited<ReturnType<typeof ask>>;
   try {
-    html = await ask(await annasCookie());
+    answer = await ask(await annasCookie());
   } catch (error) {
     // A member session may have expired: it is signed in again once.
     if (!(error instanceof SourceVerificationError) || !cached) throw error;
-    html = await ask(await annasCookie(true));
+    answer = await ask(await annasCookie(true));
   }
+  // The links name the mirror that answered.
+  const base = answer.mirror;
+  const html = answer.body ?? "";
   return {
     files: parseAnnas(html, base)
       .filter((file) => ebookOnly(file.extension))

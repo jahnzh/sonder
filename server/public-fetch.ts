@@ -69,8 +69,9 @@ const publicAgent = new Agent({
 // Waiting for a response and waiting between body chunks are limited separately,
 // so a large file on a slow mirror isn't cut off while it is still arriving.
 export const ebookTimeouts = { response: 60000, idle: 60000 };
-export async function publicFetch(input: string, init: RequestInit = {}) {
+export async function publicFetch(input: string, given: RequestInit = {}) {
   let url = new URL(input);
+  let init = given;
   for (let attempt = 0; attempt < 5; attempt++) {
     if (
       url.protocol !== "https:" ||
@@ -113,6 +114,13 @@ export async function publicFetch(input: string, init: RequestInit = {}) {
       await response.body?.cancel();
       if (!location)
         throw new Error("The ebook source returned an invalid redirect.");
+      // A redirect to another site does not carry the account's cookies or credentials there (#901).
+      const next = new URL(location, url);
+      if (next.origin !== url.origin) {
+        const headers = new Headers(init.headers);
+        for (const name of ["cookie", "authorization"]) headers.delete(name);
+        init = { ...init, headers };
+      }
       url = new URL(location, url);
       continue;
     }

@@ -557,6 +557,8 @@ export async function createApp(options?: {
     annasConfigured: annasConfigured(),
     zlibUrl: getSetting("zlibUrl") || ZLIB_DEFAULT_URL,
     zlibConfigured: zlibConfigured(),
+    // Which of Z-Library's logins is saved, so each field says so of itself.
+    zlibSaved: { email: !!getSetting("zlibEmail"), password: !!getSetting("zlibPassword"), token: !!getSetting("zlibToken") },
     prowlarrUrl: getSetting("prowlarrUrl") || "",
     prowlarrConfigured: !!prowlarrConfig(),
     localConfigured: transmissionConfigured(),

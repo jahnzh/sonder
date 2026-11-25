@@ -319,6 +319,7 @@ export type Settings = {
   annasConfigured?: boolean;
   zlibUrl?: string;
   zlibConfigured?: boolean;
+  zlibSaved?: { email: boolean; password: boolean; token: boolean };
   localConfigured: boolean;
   storageLabel: string;
   prowlarrUrl?: string;

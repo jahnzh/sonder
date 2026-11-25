@@ -11,7 +11,6 @@ import {
   type SeriesAudioSearchDeps,
 } from "./series-audio.ts";
 import { fetchTopKIntoEbookSet, seriesEbookSources } from "./ebook-set.ts";
-import { ebookSourcesRestUntil } from "./ebooks.ts";
 import { prowlarrConfig } from "./services.ts";
 import { annasConfigured, zlibConfigured } from "./sources/shadow-libraries.ts";
 import { retryWorkMediaAcquisition } from "./series-membership.ts";
@@ -817,7 +816,7 @@ async function runEbookJob(
   // in the queue for later, not before the sources' rests end (#901).
   const unreached = failures.find(isSourceReachFailure);
   if (unreached && !result.downloaded.some((member) => member.status !== "rejected"))
-    throw Object.assign(new Error(unreached), { retryAt: ebookSourcesRestUntil() });
+    throw Object.assign(new Error(unreached), { retryAt: "retryAt" in result ? result.retryAt : null });
   if (!result.downloaded.length && failures.length)
     throw new Error(failures[0]);
   if (failures.length) return failures.join("; ");

@@ -247,9 +247,9 @@ export function ConnectionsPage({ user, settings, onSaved, notify }: Props) {
           <Group caption="Z-Library">
             <Row label="Status" value={settings?.zlibConfigured ? "Account saved" : "Not set up"} />
             <FieldRow label="Address" name="Z-Library address" type="url" saved={settings?.zlibUrl ?? ""} placeholder="https://z-library.sk" onSave={saveField("zlibUrl")} />
-            <FieldRow label="Email" name="Z-Library email" type="text" secret isSet={settings?.zlibConfigured} onSave={saveField("zlibEmail", "Z-Library email saved.")} />
-            <FieldRow label="Password" name="Z-Library password" type="password" secret isSet={settings?.zlibConfigured} onSave={saveField("zlibPassword", "Z-Library password saved.")} />
-            <FieldRow label="Remember-me token" name="Z-Library remember-me token" type="password" secret isSet={settings?.zlibConfigured} onSave={saveField("zlibToken", "Z-Library token saved.")} />
+            <FieldRow label="Email" name="Z-Library email" type="text" secret isSet={settings?.zlibSaved?.email} onSave={saveField("zlibEmail", "Z-Library email saved.")} />
+            <FieldRow label="Password" name="Z-Library password" type="password" secret isSet={settings?.zlibSaved?.password} onSave={saveField("zlibPassword", "Z-Library password saved.")} />
+            <FieldRow label="Remember-me token" name="Z-Library remember-me token" type="password" secret isSet={settings?.zlibSaved?.token} onSave={saveField("zlibToken", "Z-Library token saved.")} />
             {checked.zlib && <Row label="Check" value={checked.zlib} />}
             {settings?.zlibConfigured && (
               <ActionsRow>

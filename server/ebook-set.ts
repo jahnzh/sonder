@@ -31,7 +31,7 @@ import {
   type ProbeSession,
 } from "./ebook-set-ctc-session.ts";
 import { normalizeReaderText } from "../src/reading-types.ts";
-import { searchEbooks, saveEbook, type EbookResult, type EbookSource } from "./ebooks.ts";
+import { ebookEditionId, searchEbooks, saveEbook, type EbookResult, type EbookSource } from "./ebooks.ts";
 import { publicDomainAge } from "./sources/public-domain.ts";
 import { iso3 } from "./language.ts";
 import { ebookSetCheckEnded, ebookSetCheckStarted } from "./ebook-set-activity.ts";
@@ -831,6 +831,8 @@ export type EbookSetFetch = {
   skipped: "limit" | null;
   failures?: string[];
   started?: string | null;
+  /** When a source that limited requests on the way may be asked again (the latest such); absent when none did. */
+  retryAt?: number | null;
 };
 
 export async function fetchTopKIntoEbookSet(
@@ -858,6 +860,13 @@ export async function fetchTopKIntoEbookSet(
   const failures: string[] = [];
   const downloaded: { id: string; status: EbookSetMemberStatus }[] = [];
   let started: string | null = null;
+  let retryAt: number | null = null;
+  // A source's failure, with the time it named to be asked again (one limiting requests).
+  const failed = (error: unknown) => {
+    failures.push((error as Error).message);
+    const at = Number((error as { retryAt?: unknown }).retryAt);
+    if (Number.isFinite(at) && at > 0) retryAt = Math.max(retryAt ?? 0, at);
+  };
   const found = () => downloaded.some((member) => member.status !== "rejected");
   try {
     for (const from of options.sources ?? [source]) {
@@ -868,7 +877,13 @@ export async function fetchTopKIntoEbookSet(
       } catch (searchError) {
         // Only the one source asked: its failure is the fetch's, as before.
         if (!options.sources) throw searchError;
-        failures.push((searchError as Error).message);
+        // The libgen.rs family is often out of reach for good (it did not answer while this was built): that alone does
+        // not hold a search in the queue; it is logged, and the next source is asked.
+        if (from === "libgenrs" && /could not be reached|did not respond/.test((searchError as Error).message)) {
+          console.warn(`ebook search ${workId}: ${(searchError as Error).message}`);
+          continue;
+        }
+        failed(searchError);
         continue;
       }
       const filtered = files.filter(
@@ -896,14 +911,13 @@ export async function fetchTopKIntoEbookSet(
         try {
           started = (await startTorrent(release, work, options.userId ?? 1)).id;
         } catch (startError) {
-          failures.push((startError as Error).message);
+          failed(startError);
         }
         continue;
       }
       for (const file of filtered) {
         if (downloaded.length >= remaining || found()) break;
-        // A libgen.rs file is kept as the libgen.li family's (saveEbook).
-        const ebookId = `${file.source === "libgenrs" ? "libgen" : file.source}-${file.md5}`;
+        const ebookId = ebookEditionId(file);
         const already = db
           .select()
           .from(s.workEbookSetMembers)
@@ -915,14 +929,13 @@ export async function fetchTopKIntoEbookSet(
         try {
           saved = await save({ ...file, workId });
         } catch (saveError) {
-          const message = (saveError as Error).message;
           const existingRow = db
             .select()
             .from(s.ebookEditions)
             .where(eq(s.ebookEditions.id, ebookId))
             .get();
           if (!existingRow || existingRow.workId !== workId) {
-            failures.push(message);
+            failed(saveError);
             continue;
           }
           saved = { id: ebookId };
@@ -955,7 +968,7 @@ export async function fetchTopKIntoEbookSet(
     const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
     await syncEbookSetConsensus(workId);
   }
-  return { downloaded, skipped: null, failures, started };
+  return { downloaded, skipped: null, failures, started, retryAt };
 }
 
 export function workHasRecording(workId: string) {

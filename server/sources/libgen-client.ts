@@ -250,7 +250,9 @@ export function createSourceClient(deps: SourceClientDeps) {
           log(`${name}: ${host} ${kind} page answered ${response.status} (browser check)`);
           throw check;
         }
-        const kindOfAnswer = accept?.(response.status) ? "ok" : verdict(response, body);
+        // A limiting answer (429, a 5xx, a challenge) is one even when the caller reads that status itself.
+        const judged = verdict(response, body);
+        const kindOfAnswer = judged !== "limited" && accept?.(response.status) ? "ok" : judged;
         if (kindOfAnswer === "ok") {
           resting[kind] = { until: 0, strikes: 0 };
           return { response, body, mirror };

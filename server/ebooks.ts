@@ -29,16 +29,7 @@ import {
   LIBGEN_USER_AGENT,
   sourceTiming,
 } from "./sources/libgen-client.ts";
-import {
-  annas,
-  annasDownload,
-  libgenRs,
-  searchAnnas,
-  searchLibgenRs,
-  searchZlib,
-  zlib,
-  zlibDownload,
-} from "./sources/shadow-libraries.ts";
+import { annasDownload, searchAnnas, searchLibgenRs, searchZlib, zlibDownload } from "./sources/shadow-libraries.ts";
 import {
   gutenbergSearchUrl,
   GUTENBERG,
@@ -63,6 +54,15 @@ export const EBOOK_SOURCES = [
   "standardebooks",
   "gutenberg",
 ] as const satisfies readonly EbookSource[];
+/**
+ * The edition id a source's file is kept under (#901). Library Genesis, the libgen.rs family and Anna’s Archive name a
+ * file by its own md5 (checked when it is saved), so the same file from any of them is one edition, `libgen-<md5>`; a
+ * file the book has from one is "Already added" from the others. Another source's key is its own edition's.
+ */
+export function ebookEditionId(result: { source: string; md5: string }) {
+  const md5 = result.md5.toLowerCase();
+  return ["libgen", "libgenrs", "annas"].includes(result.source) ? `libgen-${md5}` : `${result.source}-${result.md5}`;
+}
 export type EbookResult = {
   /** The file's md5 on Library Genesis; for another source a 32-hex key of the edition there. */
   md5: string;
@@ -89,10 +89,7 @@ export const libgen = createLibgenClient({
   timing: sourceTiming(),
 });
 export { LibgenLimitedError };
-/** When the sources may be asked again after limiting requests: the latest rest of any; 0 when none rests. */
-export function ebookSourcesRestUntil() {
-  return Math.max(...[libgen, annas, zlib, libgenRs].flatMap((client) => [client.restingUntil("search"), client.restingUntil("download")]));
-}
+
 async function libgenPage(kind: "search" | "download", path: string) {
   const { body, mirror } = await libgen.request(kind, path, {
     headers: { Accept: "text/html" },
@@ -249,7 +246,7 @@ function prepareAhead(id: string, format: string | undefined) {
 }
 async function downloadEbook(input: EbookResult & { workId?: string }) {
   ensureMediaStorage();
-  const id = `${input.source}-${input.md5}`;
+  const id = ebookEditionId(input);
   const saved = db
     .select()
     .from(s.ebookEditions)
@@ -526,7 +523,7 @@ const ebookDownloads = new Set<string>();
 export async function saveEbook(given: EbookResult & { workId?: string }) {
   // The libgen.rs family's file is the libgen.li family's, by its md5: fetched and kept as that one.
   const input = given.source === "libgenrs" ? { ...given, source: "libgen" as const } : given;
-  const key = `${input.source}-${input.md5}`;
+  const key = ebookEditionId(input);
   if (ebookDownloads.has(key))
     throw new Error("This ebook is already downloading. Give it a moment.");
   ebookDownloads.add(key);

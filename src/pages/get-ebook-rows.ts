@@ -44,12 +44,13 @@ export type EditionRow = {
 export const ALREADY_ADDED = "Already added";
 
 /**
- * The id the server stores a source's file under (server/ebooks.ts `saveEbook`); a Prowlarr row's is its release. A
- * libgen.rs file is the libgen.li family's file of that md5, so a file both list is one row.
+ * The id the server stores a source's file under (server/ebooks.ts `ebookEditionId`); a Prowlarr row's is its
+ * release. Library Genesis, the libgen.rs family and Anna’s Archive name a file by its md5: a file several of them list
+ * is one row (the first source's), and "Already added" from each.
  */
 export const editionId = (result: Pick<EbookResult, "source" | "md5">) => {
   const source = sourceOf(result);
-  return `${source === "libgenrs" ? "libgen" : source}-${result.md5.toLowerCase()}`;
+  return `${["libgen", "libgenrs", "annas"].includes(source) ? "libgen" : source}-${result.md5.toLowerCase()}`;
 };
 
 export function editionRow(result: EbookResult, added: ReadonlySet<string>): EditionRow {
