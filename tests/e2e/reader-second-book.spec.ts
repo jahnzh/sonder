@@ -6,11 +6,10 @@ import { longBookFixture } from "../long-book-fixture";
 import { installReaderWaitBudget, READER_WAIT_MS } from "./timing";
 import { highlightShown } from "./reader-view";
 import { gotoRead } from "./read-face";
-import { choosePreparedView } from "./prepared-view";
 // A mapped book opened in Read second in a tab (#862): with the first book paused in the player, Read loads the
 // second book's recording, paused at its own saved place, and follows and marks its narrated sentence, as a fresh tab
 // does; the first book keeps its own place. With the first book playing, it plays on and the second shows no
-// narrated sentence. Both reading views: today's reader (epub.js) and the new view of prepared text (#802).
+// narrated sentence.
 test.use({ serviceWorkers: "block" });
 installReaderWaitBudget(test);
 const imported: string[] = [];
@@ -70,47 +69,43 @@ async function openSecond(page: Page, second: Mapped, how: "address" | "library"
   await page.getByRole("region", { name: "Book", exact: true }).getByRole("button", { name: "Read", exact: true }).click();
 }
 
-for (const view of ["epub", "prepared"] as const) {
-  for (const how of ["address", "library"] as const) {
-    test(`${view === "prepared" ? "the new view" : "today's reader"}: a mapped book opened second (${how}) with the first paused follows its own narration`, async ({ page }) => {
-      test.setTimeout(120000);
-      if (view === "prepared") await choosePreparedView(page);
-      const first = await mappedBook(page, "First", 100, 20);
-      const second = await mappedBook(page, "Second", 110, 30);
-      await gotoRead(page, first.ebook);
-      await followed(page, first);
-      expect(await dockTitle(page)).toBe(first.title);
-      await expect(room(page).getByRole("button", { name: "Play narration", exact: true })).toBeVisible();
-
-      await openSecond(page, second, how);
-      await followed(page, second);
-      // The player holds the book being read, paused: the mini player names it.
-      await expect.poll(() => dockTitle(page)).toBe(second.title);
-      await expect(room(page).getByRole("button", { name: "Play narration", exact: true })).toBeVisible();
-      // Each recording keeps its own place.
-      expect((await placeOf(page, first.book.recordingId))?.position).toBeCloseTo(first.narrated.start + 0.5, 0);
-      expect((await placeOf(page, second.book.recordingId))?.position).toBeCloseTo(second.narrated.start + 0.5, 0);
-    });
-  }
-
-  test(`${view === "prepared" ? "the new view" : "today's reader"}: a mapped book opened second while the first plays leaves the first playing`, async ({ page }) => {
+for (const how of ["address", "library"] as const) {
+  test(`a mapped book opened second (${how}) with the first paused follows its own narration`, async ({ page }) => {
     test.setTimeout(120000);
-    if (view === "prepared") await choosePreparedView(page);
-    const first = await mappedBook(page, "Playing", 100, 20);
-    const second = await mappedBook(page, "Read meanwhile", 110, 30);
+    const first = await mappedBook(page, "First", 100, 20);
+    const second = await mappedBook(page, "Second", 110, 30);
     await gotoRead(page, first.ebook);
     await followed(page, first);
-    await room(page).getByRole("button", { name: "Play narration", exact: true }).click();
-    await expect(room(page).getByRole("button", { name: "Pause narration", exact: true })).toBeVisible();
-
-    await gotoRead(page, second.ebook, "hash");
-    await expect(room(page)).toHaveAttribute("data-ebook", second.ebook, { timeout: READER_WAIT_MS.followHighlight });
-    // Time for a switch to show, were there one.
-    await page.waitForTimeout(3000);
     expect(await dockTitle(page)).toBe(first.title);
-    await expect(room(page).getByRole("button", { name: "Pause narration", exact: true })).toBeVisible();
-    await expect(room(page)).not.toHaveAttribute("data-current-passage", /.+/);
-    expect(await highlightShown(room(page))).toBe(false);
-    await room(page).getByRole("button", { name: "Pause narration", exact: true }).click();
+    await expect(room(page).getByRole("button", { name: "Play narration", exact: true })).toBeVisible();
+
+    await openSecond(page, second, how);
+    await followed(page, second);
+    // The player holds the book being read, paused: the mini player names it.
+    await expect.poll(() => dockTitle(page)).toBe(second.title);
+    await expect(room(page).getByRole("button", { name: "Play narration", exact: true })).toBeVisible();
+    // Each recording keeps its own place.
+    expect((await placeOf(page, first.book.recordingId))?.position).toBeCloseTo(first.narrated.start + 0.5, 0);
+    expect((await placeOf(page, second.book.recordingId))?.position).toBeCloseTo(second.narrated.start + 0.5, 0);
   });
 }
+
+test("a mapped book opened second while the first plays leaves the first playing", async ({ page }) => {
+  test.setTimeout(120000);
+  const first = await mappedBook(page, "Playing", 100, 20);
+  const second = await mappedBook(page, "Read meanwhile", 110, 30);
+  await gotoRead(page, first.ebook);
+  await followed(page, first);
+  await room(page).getByRole("button", { name: "Play narration", exact: true }).click();
+  await expect(room(page).getByRole("button", { name: "Pause narration", exact: true })).toBeVisible();
+
+  await gotoRead(page, second.ebook, "hash");
+  await expect(room(page)).toHaveAttribute("data-ebook", second.ebook, { timeout: READER_WAIT_MS.followHighlight });
+  // Time for a switch to show, were there one.
+  await page.waitForTimeout(3000);
+  expect(await dockTitle(page)).toBe(first.title);
+  await expect(room(page).getByRole("button", { name: "Pause narration", exact: true })).toBeVisible();
+  await expect(room(page)).not.toHaveAttribute("data-current-passage", /.+/);
+  expect(await highlightShown(room(page))).toBe(false);
+  await room(page).getByRole("button", { name: "Pause narration", exact: true }).click();
+});

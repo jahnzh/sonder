@@ -142,3 +142,19 @@ test("storage: used out of what the browser allows, the bar's share, and protect
   assert.equal(protectedLine({ persisted: false, refused: false }), "Off");
   assert.equal(protectedLine({ persisted: false, refused: true }), "Off · Refused by the browser");
 });
+
+test("a kept book with its prepared text and no EPUB file (#806) is listed as audiobook and ebook, under its recording", () => {
+  const needs = (textDone: boolean) => ({
+    recordingId: "r1", tracks: [{ id: "r1-0" }, { id: "r1-1" }], ebook: null,
+    text: { id: "e1", complete: textDone, size: 50_000, counted: true },
+    filesTotal: 3, filesSaved: textDone ? 3 : 2, size: 20 * MB + (textDone ? 50_000 : 0), sections: 0, complete: textDone,
+  });
+  const shown = part({ books: [audioBook("b1", "w1", "r1", 2)], downloads: files("r1", 2), kept: [{ workId: "w1", needs: needs(true) }] });
+  assert.equal(shown.kept[0]?.status, deviceKeptLine({ audio: "complete", filesTotal: 3, filesSaved: 3, ebook: true, size: 20 * MB + 50_000 }));
+  assert.match(shown.kept[0]!.status, /^Audiobook and ebook/);
+  const before = part({ books: [audioBook("b1", "w1", "r1", 2)], downloads: files("r1", 2), kept: [{ workId: "w1", needs: needs(false) }] });
+  assert.match(before.kept[0]!.status, /^Not complete · 2 of 3 files/);
+  // A book with only an ebook is saved under its text's edition.
+  const only = deviceSaveEntries({ books: [], downloads: [], downloadParts: [], running: {}, records: [], kept: [{ workId: "w2", needs: { ...needs(true), recordingId: null, tracks: [], filesTotal: 1, filesSaved: 1, size: 50_000 } }] });
+  assert.equal(only[0]?.saveId, "ebook:e1");
+});

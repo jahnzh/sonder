@@ -1,8 +1,8 @@
 import { userStorageKey } from "./lib";
 import { alignmentJobNeedsPolling, warmMap } from "./alignment-map-lifecycle";
 import { alignmentMapDeps } from "./alignment-map-deps";
-import { ApiError, api, localDB, authDB, userId } from "./lib";
-import { EBOOK_DEVICE_EVENT, isKeptReaderFile, writesAsCache, type ReaderFileRecord } from "./ebook-keep";
+import { api, localDB, authDB, userId } from "./lib";
+import { EBOOK_DEVICE_EVENT, writesAsCache, type ReaderFileRecord } from "./ebook-keep";
 import type {
   AlignmentJob,
   ReaderBook,
@@ -11,7 +11,6 @@ import type {
 } from "./reading-types";
 import type { SavedEbook } from "./types";
 import { patiently, preparedBook, preparedChanged, type PreparedBook } from "./prepared-book";
-import { preparedView } from "./reader-view-switch";
 export type PendingReading = {
   checkpoint: ReadingCheckpoint;
   baseRevision: number;
@@ -385,88 +384,9 @@ export async function syncBookmarks(id: string) {
     bookmarkSyncs.delete(id);
   }
 }
-const epubMemoryCache = new Map<string, Blob>();
-const inFlightEpub = new Map<string, Promise<Blob>>();
-
 /** Told when a device copy of an ebook is added or removed, so every screen that shows one reads it again. */
 export { EBOOK_DEVICE_EVENT };
 
-/** Drops the reader's in-memory copy of an edition, so the next open reads it from this device's copy or the server. */
-export function forgetEpub(id: string) {
-  for (const key of epubMemoryCache.keys()) if (key.startsWith(`${id}:`)) epubMemoryCache.delete(key);
-}
-
-export async function cachedEpub(
-  id: string,
-  fingerprint: string,
-): Promise<Blob | null> {
-  const key = `${id}:${fingerprint}`;
-  const mem = epubMemoryCache.get(key);
-  if (mem) return mem;
-  const stored = (await authDB.preferences.get(`reader-file:${id}`))?.value as
-    { fingerprint: string; blob?: Blob; opfs?: boolean } | undefined;
-  if (stored?.fingerprint !== fingerprint) return null;
-  try {
-    if (stored.opfs) {
-      const folder = await (
-        await navigator.storage.getDirectory()
-      ).getDirectoryHandle("sonder-ebooks");
-      const file = await (await folder.getFileHandle(`${id}.epub`)).getFile();
-      epubMemoryCache.set(key, file);
-      return file;
-    }
-    if (stored.blob) {
-      epubMemoryCache.set(key, stored.blob);
-      return stored.blob;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-/** Whether this device keeps the edition's EPUB at this fingerprint because the user saved it (not as a cache). */
-export async function epubKept(id: string, fingerprint: string): Promise<boolean> {
-  const stored = (await authDB.preferences.get(`reader-file:${id}`).catch(() => undefined))?.value as ReaderFileRecord;
-  if (!isKeptReaderFile(stored) || stored?.fingerprint !== fingerprint) return false;
-  return !!(await cachedEpub(id, fingerprint));
-}
-export async function epubFile(id: string, fingerprint: string): Promise<Blob> {
-  const key = `${id}:${fingerprint}`;
-  const mem = epubMemoryCache.get(key);
-  if (mem) return mem;
-
-  const inFlight = inFlightEpub.get(key);
-  if (inFlight) return inFlight;
-
-  const promise = (async () => {
-    try {
-      const cached = await cachedEpub(id, fingerprint);
-      if (cached) {
-        epubMemoryCache.set(key, cached);
-        return cached;
-      }
-      const response = await fetch(`/api/ebooks/${encodeURIComponent(id)}/file`);
-      // A confirmed "not found": the ebook is gone, though its details may still be on this device.
-      if (response.status === 404) throw new ApiError("The EPUB could not be opened.", 404);
-      if (!response.ok)
-        throw new Error(
-          navigator.onLine
-            ? "The EPUB could not be opened."
-            : "Save this ebook on your device before reading offline.",
-        );
-      const blob = await response.blob();
-      epubMemoryCache.set(key, blob);
-      // A reading cache, so the book opens again without a connection; it is not kept (#671).
-      void saveEpubOffline({ id, fingerprint }, blob, { cache: true }).catch(() => {});
-      return blob;
-    } finally {
-      inFlightEpub.delete(key);
-    }
-  })();
-
-  inFlightEpub.set(key, promise);
-  return promise;
-}
 /**
  * Writes an EPUB to this device under `reader-file:<id>`. `cache` marks the reader's own copy of a book it opened,
  * which This device does not list as kept; an explicit save (the default) keeps it. A cache write never turns an
@@ -610,17 +530,12 @@ export function warmPlaybackReading(
       }
     } catch {}
 
-    // With the new view chosen on this device (#802) the reader opens the prepared text: neither the book's
-    // sentences nor its EPUB file are fetched, and the manifest asked for here is the one the reader opens with.
-    const readerBook: Promise<Pick<ReaderBook, "id" | "fingerprint"> | null> = preparedView()
-      ? preparedBook(ebookId).then((book) => ({ id: ebookId, fingerprint: book.manifest.fingerprint }), () => null)
-      : loadReader(ebookId).catch(() => null);
-    if (!preparedView())
-      void readerBook.then((readerBook) => {
-        if (!cancelled && readerBook?.fingerprint) {
-          void epubFile(readerBook.id, readerBook.fingerprint).catch(() => {});
-        }
-      });
+    // The reader opens the prepared text (#802, #806): neither the book's sentences nor its EPUB file are fetched,
+    // and the manifest asked for here is the one the reader opens with.
+    const readerBook: Promise<Pick<ReaderBook, "id" | "fingerprint"> | null> = preparedBook(ebookId).then(
+      (book) => ({ id: ebookId, fingerprint: book.manifest.fingerprint }),
+      () => null,
+    );
 
     if (!recordingId) return;
 

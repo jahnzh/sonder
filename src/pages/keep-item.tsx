@@ -13,6 +13,7 @@ import { bytes } from "../size-format";
 import { tip } from "../tooltip-texts";
 import type { Book, Download, DownloadPart, LibraryWork } from "../types";
 import { chosenRecording, deviceHold, keepState } from "./book-model";
+import { keptEdition } from "../keep";
 import "./book-page.css";
 
 /** Removing the book's files from this device keeps these (board KeepOff.dc.html). */
@@ -68,7 +69,8 @@ export function KeepItems(props: KeepItemsProps) {
   const epubSize = chosenEpub && epubCopy.known ? epubCopy.size : null;
   const needs = useKeptNeeds(work, downloads, downloadParts);
   // The save of the book: its recording's, or for a book with only an ebook its EPUB's (#551).
-  const saveId = recording ? recording.recordingId : needs?.ebook ? `ebook:${needs.ebook.id}` : null;
+  const edition = needs ? keptEdition(needs) : null;
+  const saveId = recording ? recording.recordingId : edition ? `ebook:${edition.id}` : null;
   const job = saveId ? running[saveId] : undefined;
   const saveRecord = saveId ? props.records?.find((r) => r.recordingId === saveId) : undefined;
   // How the kept book's last save stopped (#552): a failure waits for Retry, a pause (on any tab) for Resume.

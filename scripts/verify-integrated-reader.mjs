@@ -57,7 +57,7 @@ try {
   await openRead();
   await expect.poll(async()=>{const a=await actual();return a&&a.ready>=1&&a.paused;},{timeout:30000}).toBe(true);
   expect(Math.abs((await actual()).position-book.progress.position)).toBeLessThan(10);
-  await expect(page.locator('.inline-reader .reader-viewport iframe')).toBeVisible();
+  await expect(page.locator('.inline-reader .reader-viewport .prepared-text').first()).toBeVisible();
   report.checks.push({name:'Opening reader restores the saved position without starting playback'});
   await controls.click(room.locator('.reader-topbar').getByRole('button',{name:'Close reader',exact:true}),'Close reader');
  }
@@ -80,7 +80,7 @@ try {
  await openRead();
  const readWork=await page.evaluate(()=>decodeURIComponent(location.hash.slice('#read/'.length)));
  if(readWork!==book.workId)throw Error(`Now playing opened work ${readWork}, not ${book.workId} of the selected recording`);
- await expect(page.locator('.inline-reader .reader-viewport iframe')).toBeVisible();
+ await expect(page.locator('.inline-reader .reader-viewport .prepared-text').first()).toBeVisible();
  // Read opens the work's chosen edition (chosenEbook: a shared default before this device's choice), which the
  // selection computed (readEdition): the samples come from the map of the EPUB it shows, or every passage number
  // below is another edition's (#730 third round).
@@ -95,7 +95,10 @@ try {
  await expect(full.locator('.now-playing-listen')).toHaveCount(0);
  await expect(room.locator('.reader-topbar')).toBeHidden();
  const surface=await room.evaluate(el=>getComputedStyle(el).backgroundColor);
- await expect(page.frameLocator('.inline-reader .reader-viewport iframe').locator('body')).toHaveCSS('background-color',surface);
+ // The book's page is the room's own surface: the prepared text and the band under it paint nothing else (the first
+ // painted background from the text up to the band is the room's).
+ const textPaper=()=>room.locator('.reader-viewport .prepared-text').first().evaluate(text=>{for(let el=text;el;el=el.parentElement){const bg=getComputedStyle(el).backgroundColor;if(bg!=='rgba(0, 0, 0, 0)'&&bg!=='transparent')return bg;if(el.classList.contains('reader-viewport'))break;}return null;});
+ await expect.poll(textPaper,{message:'The book text has the reader surface behind it'}).toBe(surface);
  const readerBox=await waitForBox(room.locator('.reader-viewport'),{description:'reader viewport'});if(readerBox.height<844*.65)throw Error('Reader is too small on mobile');
  // The head has no More button (#592): what it held is the long-press, Back to narration, the Bookmarks page, the
  // Book page's Reading sync row and Appearance's Follow the narration.

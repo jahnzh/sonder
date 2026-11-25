@@ -145,19 +145,20 @@ test("turn taps the right edge for the next page and the left edge for the previ
   assert.equal(state.visible, false);
 });
 
-// A reader viewport at x 0–390 whose highlight rectangles are at the given left edges, 100 px wide.
+// A reader viewport at x 0–390 whose marked sentence has line boxes at the given left edges, 100 px wide: in pages
+// mode the part's columns run on beside the page shown.
 function pages(...lefts) {
   const rect = (left, top = 100, width = 100, height = 20) => ({ left, right: left + width, top, bottom: top + height });
   const host = {
     getBoundingClientRect: () => rect(0, 0, 390, 700),
-    querySelectorAll: (selector) => (selector === ".sonder-follow" ? [{ querySelectorAll: () => lefts.map((left) => ({ getBoundingClientRect: () => rect(left) })) }] : []),
+    querySelectorAll: (selector) => (selector === ".sonder-follow" ? [{ getClientRects: () => lefts.map((left) => rect(left)) }] : []),
   };
   return { locator: (selector) => ({ evaluate: async (fn) => (selector === ".reader-viewport" ? fn(host) : undefined) }) };
 }
 
 test("narratedOnPage says whether a highlight rectangle is on the page, not merely rendered beside it (#501 review)", async () => {
   assert.equal(await narratedOnPage(pages(40)), true);
-  // The sentence is on the next page of the chapter's columns, or ends at the page's edge.
+  // The sentence is on the next page of the part's columns, or ends at the page's edge.
   assert.equal(await narratedOnPage(pages(390, 780)), false);
   assert.equal(await narratedOnPage(pages(-100)), false);
   assert.equal(await narratedOnPage(pages(389)), false);
@@ -166,15 +167,15 @@ test("narratedOnPage says whether a highlight rectangle is on the page, not mere
   assert.equal(await narratedOnPage(pages()), false);
 });
 
-test("narratedOnPage reads the sentence's own line boxes where the highlight is the text itself (#802)", async () => {
-  // The view of prepared text marks the sentence's elements; they hold no SVG rectangles.
+test("narratedOnPage reads the sentence's own line boxes, scrolled in or out of the band (#802)", async () => {
+  // The reader marks the sentence's elements; their line boxes are the highlight.
   const rect = (left, top, width = 100, height = 20) => ({ left, right: left + width, top, bottom: top + height });
   const band = (...tops) => ({
     locator: () => ({
       evaluate: async (fn) =>
         fn({
           getBoundingClientRect: () => rect(0, 0, 390, 700),
-          querySelectorAll: (selector) => (selector === ".sonder-follow" ? tops.map((top) => ({ querySelectorAll: () => [], getClientRects: () => [rect(40, top)] })) : []),
+          querySelectorAll: (selector) => (selector === ".sonder-follow" ? tops.map((top) => ({ getClientRects: () => [rect(40, top)] })) : []),
         }),
     }),
   });

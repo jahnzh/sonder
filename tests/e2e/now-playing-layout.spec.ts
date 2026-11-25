@@ -16,7 +16,7 @@ const readerCentreSizes=[[360,740],[390,844],[412,915]] as const;
 const readerDesktopSizes=[[760,800],[900,800],[1280,800],[1600,800]] as const;
 // Smoke (#122): phone + one desktop width for Firefox/WebKit (Chromium runs the full sweep).
 const readerSmokeSizes=[[390,844],[1280,800]] as const;
-/** Geometry via getBoundingClientRect — Playwright's boundingBox waits for "stable", which WebKit never reaches while the EPUB keeps reflowing. */
+/** Geometry via getBoundingClientRect — Playwright's boundingBox waits for "stable", which WebKit may not reach while the text keeps reflowing. */
 const boxOf=async(l:Locator)=>{
  await expect(l).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
  return l.evaluate((el)=>{const r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};});
@@ -172,7 +172,7 @@ for(const size of sizes){
   skipOnMobile(size[0]>=760,"desktop layout (min-width: 760px) is not reachable on a phone profile");
   const [width,height]=size;
   const dialog=await open(page,browserName,"Layout reader",size,"read");
-  await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible();
+  await expect(page.locator(".inline-reader .reader-viewport .prepared-text")).toBeVisible();
   // On a phone the foot's transport row shows with the controls (#587); at rest the foot has a small Play only.
   if(width<760)await showReaderTopbar(page,dialog.locator(".inline-reader"));
   // With an ebook, Now Playing is the full-screen reader with one player bar (#22).
@@ -222,7 +222,15 @@ for(const size of sizes){
   expect(box.y).toBeGreaterThanOrEqual(0); expect(box.y+box.height).toBeLessThanOrEqual(height);
   expect((await boxOf(page.locator(".inline-reader .reader-viewport"))).height).toBeGreaterThan(height*.6);
   const surface=await page.locator(".inline-reader").evaluate(el=>getComputedStyle(el).backgroundColor);
-  await expect(page.frameLocator(".inline-reader .reader-viewport iframe").locator("body")).toHaveCSS("background-color",surface);
+  // The text lies on the reader's surface: nothing between the prepared text and the room paints another colour.
+  expect(await page.locator(".inline-reader .reader-viewport .prepared-text").evaluate((text,surface)=>{
+   const room=text.closest(".inline-reader")!,others:string[]=[];
+   for(let el:Element|null=text;el&&el!==room;el=el.parentElement){
+    const colour=getComputedStyle(el).backgroundColor;
+    if(colour!=="rgba(0, 0, 0, 0)"&&colour!=="transparent"&&colour!==surface)others.push(`${el.className}: ${colour}`);
+   }
+   return others;
+  },surface)).toEqual([]);
   // The controls shown above stay until the next tap (#587: no timer); this shows them if anything hid them.
   if(width<760)await showReaderTopbar(page,dialog.locator(".inline-reader"));
   // The bar is the narration's position; the page follows it.
@@ -243,7 +251,7 @@ for(const size of sizes){
   }
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBe(width);
   if(width>=760) await expect(page.getByLabel("Contents sidebar")).toBeVisible();
-  // A tap on the page leaves focus in the EPUB frame; Escape works from the reader's own controls.
+  // Escape works from the reader's own controls.
   await dialog.locator(".inline-reader").getByRole("button",{name:"Search this book",exact:true}).focus();
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
@@ -395,7 +403,7 @@ async function assertDesktopBackNarration(dialog:Locator,player:Locator,width:nu
 async function showReaderTopbar(page:Page,room:Locator){
  const topbar=room.locator(".reader-topbar");
  if(await topbar.isVisible())return;
- await expect(room.locator(".reader-viewport iframe")).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
+ await expect(room.locator(".reader-viewport .prepared-text")).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
  const box=await boxOf(room.locator(".reader-viewport"));
  await page.mouse.click(box.x+box.width/2,box.y+box.height/2);
  await expect(topbar).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
@@ -424,7 +432,7 @@ async function openAlignedReader(page:Page,browserName:string,request:APIRequest
  });
  const dialog=await open(page,browserName,title,size,"read");
  await expect.poll(()=>page.evaluate(()=>(window as any).__layoutPlaySettled),{timeout:READER_WAIT_MS.followHighlight}).toBe(true);
- await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible({timeout:READER_WAIT_MS.checkpointRestore});
+ await expect(page.locator(".inline-reader .reader-viewport .prepared-text")).toBeVisible({timeout:READER_WAIT_MS.checkpointRestore});
  const player=dialog.getByRole("region",{name:"Player",exact:true});
  await expect(player).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
  const pause=player.getByRole("button",{name:"Pause narration",exact:true});
@@ -452,7 +460,7 @@ async function ensureFollowingNarration(back:Locator){
 }
 async function resizeAlignedReader(page:Page,dialog:Locator,player:Locator,[width,height]:readonly [number,number]){
  await page.setViewportSize({width,height});
- await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
+ await expect(page.locator(".inline-reader .reader-viewport .prepared-text")).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
  await expect(player).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
  if(width>=760)await expect(page.getByLabel("Contents sidebar")).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
  else{
@@ -554,63 +562,6 @@ test.describe("#122 reader Back to narration layout",()=>{
    }else await assertDesktopBackNarration(dialog,player,width);
    await assertPlayerControlDomOrder(player);
    await assertPlayerControlTabOrder(page,player,true);
-  }
- });
- test("a controls tap does not turn a later relocation into a page turn",async({page,browserName,request})=>{
-  test.setTimeout(READER_SPEC_TIMEOUT_MS);
-  const title=`Layout controls tap ${randomUUID()}`;
-  await importBook(request,title,true);
-  const {dialog,player,ebookId}=await openAlignedReader(page,browserName,request,readerSmokeSizes[0],title);
-  const room=dialog.locator(".inline-reader");
-  const back=player.getByRole("button",{name:"Back to narration",exact:true});
-  await showReaderTopbar(page,room);
-  await ensureFollowingNarration(back);
-
-  const bookmark=room.locator(".reader-bookmark-toggle");
-  const bookmarkPath=`/api/reader/${ebookId}/bookmarks`;
-  let saved:ReturnType<Page["waitForResponse"]>|undefined;
-  try{
-   // The pressed state changes only after the reader processes a different location.
-   await expect(bookmark).toHaveAttribute("aria-pressed","false");
-   saved=page.waitForResponse(response=>response.url().endsWith(bookmarkPath)&&response.request().method()==="POST",{timeout:READER_WAIT_MS.followHighlight});
-   await bookmark.evaluate((button:HTMLButtonElement)=>button.click());
-   expect((await saved).ok()).toBe(true);
-   await expect(bookmark).toHaveAttribute("aria-pressed","true");
-   const viewport=await boxOf(room.locator(".reader-viewport"));
-   const x=viewport.x+viewport.width/2,y=viewport.y+viewport.height/2;
-   const scroller=room.locator(".reader-viewport .epub-container");
-
-   // A programmatic scroll makes epub.js report a real relocation without a
-   // new page gesture. Retry while initial layout work is still settling: a
-   // controls tap immediately precedes every attempted relocation.
-   let scrolled=false;
-   await expect.poll(async()=>{
-    if(scrolled&&await bookmark.getAttribute("aria-pressed")==="false")return true;
-    await page.mouse.click(x,y);
-    await expect(room).toHaveAttribute("data-controls-visible","false");
-    await page.mouse.click(x,y);
-    await expect(room).toHaveAttribute("data-controls-visible","true");
-    await scroller.evaluate((element:HTMLElement)=>{
-     const max=element.scrollWidth-element.clientWidth;
-     if(max<=0)throw new Error("Expected the fixture chapter to have multiple pages");
-     element.scrollLeft=element.scrollLeft<max/2?max:0;
-    });
-    scrolled=true;
-    return false;
-   },{timeout:READER_WAIT_MS.followHighlight}).toBe(true);
-   await expect(back).toBeDisabled();
-   await expect(room).toHaveAttribute("data-current-passage",/./);
-   await pageAwayFromNarration(page,dialog,back);
-  }finally{
-   // Wait for any queued POST before deleting, even when an assertion fails.
-   if(saved)await saved.catch(()=>{});
-   const response=await request.get(`/api/reader/${ebookId}`);
-   expect(response.ok()).toBe(true);
-   const {bookmarks}=await response.json();
-   for(const entry of bookmarks){
-    expect((await request.delete(`${bookmarkPath}/${entry.id}`)).ok()).toBe(true);
-   }
-   expect((await(await request.get(`/api/reader/${ebookId}`)).json()).bookmarks).toEqual([]);
   }
  });
 });

@@ -6,14 +6,14 @@
  */
 import { useEffect, useState } from "react";
 import type { DeviceSaveRecord } from "./device-saves";
-import { keepRecording, keepStored, keptNeeds, readerFileKey, readerMapKey, type KeptNeeds, type HeldEbook, type HeldMap, type KeepEntry, type KeepSend, type SaveStop, type ServerKeep, type StopCause } from "./keep";
+import { keepRecording, keepStored, keptNeeds, readerFileKey, readerMapKey, readerTextKey, type KeptNeeds, type HeldEbook, type HeldMap, type KeepEntry, type KeepSend, type SaveStop, type ServerKeep, type StopCause } from "./keep";
 import { warmMap } from "./alignment-map-lifecycle";
 import { alignmentMapDeps } from "./alignment-map-deps";
 import { deviceEbookChoice, ebookDeviceCopySize } from "./ebook-device-copy";
 import { isKeptReaderFile, type ReaderFileRecord } from "./ebook-keep";
 import { loadReader, saveEpubOffline } from "./reading";
 import { KeepSaver, type KeepJob, type KeepTrigger, type LockManager, type SaverMessage } from "./keep-saver";
-import { accountDatabase, api, authDB, deleteDownloads, downloadTrack, getDownloadedBlob, listDeviceSaveRecords, listOfflineEbookEditionIds, localDB, removeOfflineEbook, writeDeviceSaveRecord } from "./lib";
+import { accountDatabase, api, authDB, deleteDownloads, downloadTrack, getDownloadedBlob, listDeviceSaveRecords, listOfflineEbookCopies, listOfflineEbookEditionIds, localDB, removeOfflineEbook, writeDeviceSaveRecord } from "./lib";
 import { deviceBook, type DeviceBook } from "./keep-device";
 import { keepText, keptTextSize, listKeptTexts, removeKeptText } from "./keep-text-store";
 import { removeEbookFromDevice } from "./ebook-device-copy";
@@ -238,7 +238,22 @@ export function startKeepSaver(account: number): KeepSaver {
     channel?.close();
   };
   created.start();
+  void dropReadingCaches();
   return created;
+}
+
+/**
+ * The reader's own copies of the EPUBs it opened (its reading cache, #671) are read by nothing since the reader shows
+ * the prepared text only (#806), and nothing writes them any more: each is removed from this device. A copy the user
+ * kept is left to Keep, which removes it once its prepared text is complete (`dropEpub`).
+ */
+async function dropReadingCaches() {
+  const copies = await listOfflineEbookCopies().catch(() => []);
+  for (const copy of copies) {
+    if (copy.kept) continue;
+    await removeOfflineEbook(copy.id).catch(() => {});
+    window.dispatchEvent(new CustomEvent(EBOOK_DEVICE_EVENT, { detail: { id: copy.id } }));
+  }
 }
 
 /**
@@ -300,10 +315,14 @@ export async function keepEbook(ebookId: string, signal: AbortSignal): Promise<v
   await saveEpubOffline({ id: ebookId, fingerprint }, blob);
 }
 
-/** Keeps the reading sync map of a pair on this device (#551), by `warmMap`, against the kept EPUB's fingerprint. */
+/**
+ * Keeps the reading sync map of a pair on this device (#551), by `warmMap`, against the kept EPUB's fingerprint, or
+ * where no EPUB is kept (#806) the kept prepared text's, as `keptNeeds` matches it.
+ */
 export async function keepMap(ebookId: string, recordingId: string, signal: AbortSignal): Promise<void> {
   const fingerprint = async () =>
-    ((await authDB.preferences.get(readerFileKey(ebookId)).catch(() => undefined))?.value as ReaderFileRecord)?.fingerprint;
+    ((await authDB.preferences.get(readerFileKey(ebookId)).catch(() => undefined))?.value as ReaderFileRecord)?.fingerprint ??
+    ((await authDB.preferences.get(readerTextKey(ebookId)).catch(() => undefined))?.value as { fingerprint?: string } | undefined)?.fingerprint;
   const job = await warmMap(alignmentMapDeps(), { ebookId, recordingId, fingerprint, isCancelled: () => signal.aborted });
   signal.throwIfAborted();
   // warmMap answers null for any failure: a network failure here, tried again at the next run.

@@ -243,7 +243,7 @@ test("playback opens the reader and title page; downloaded sources can be switch
   await position(page,160);
   // Now playing opens the Read face (#593).
   await openRead(page);
-  await expect(page.frameLocator(".inline-reader .reader-viewport iframe").getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
+  await expect(page.locator(".inline-reader .reader-viewport .prepared-text").getByText("Alice was beginning to get very tired",{exact:false})).toBeVisible();
   await showReaderControls(page);
   // Listen, and its head's book button opens the Book page (#532), with Read; its This device switch saves the book.
   await page.locator(".inline-reader .reader-topbar").getByRole("radio",{name:"Listen",exact:true}).click();

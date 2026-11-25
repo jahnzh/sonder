@@ -1,4 +1,4 @@
-// @projects firefox, webkit-iphone-now-playing, prepared-view
+// @projects firefox, webkit-iphone-now-playing
 // Now playing as one screen with Listen and Read (#593, spec #586 "Now playing: one screen, two faces" and "The
 // Listen face"; board NowPlaying.dc.html), against the suite's own server at a phone's 390 by 844: the face rule,
 // the addresses and history, the head, and the Listen face's rows (Plays from, Earlier positions, Keep on this

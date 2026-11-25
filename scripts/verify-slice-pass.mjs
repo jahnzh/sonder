@@ -212,7 +212,7 @@ async function walkRead({page,size,book,ebook,sequence,middle,snap,step,report})
   await expect(full).toBeHidden();
   if(await openFromDock()==='#listen')await shown(page.locator('.now-playing-listen').getByRole('radio',{name:'Read',exact:true})).click();
   await expect.poll(hash).toBe(`#read/${book.workId}`);
-  await expect(room.locator('.reader-viewport iframe').first()).toBeVisible();
+  await expect(room.locator('.reader-viewport .prepared-text').first()).toBeVisible();
   await expect(room).toHaveAttribute('data-ebook',ebook.id);
   await seek(middle.middle);
   await onNarration();
@@ -221,8 +221,9 @@ async function walkRead({page,size,book,ebook,sequence,middle,snap,step,report})
  },{recordingId:book.recordingId,paragraphId:middle.paragraphId});
  if(!ready)return;
  await step('A tap that moves nothing shows the controls',async()=>{
-  // Where the text is: a page turn or a scroll moves the section's frame inside the viewport.
-  const state=()=>room.evaluate(el=>({hash:location.hash,passage:el.getAttribute('data-current-passage'),frames:[...el.querySelectorAll('.reader-viewport iframe')].map(f=>{const b=f.getBoundingClientRect();return [Math.round(b.left),Math.round(b.top)];})}));
+  // Where the text is: a page turn or a scroll moves the prepared text under the band (the scroller's offsets and the
+  // text's box).
+  const state=()=>room.evaluate(el=>{const scroller=el.querySelector('.reader-viewport .prepared-scroll'),text=el.querySelector('.reader-viewport .prepared-text')?.getBoundingClientRect();return {hash:location.hash,passage:el.getAttribute('data-current-passage'),scroll:scroller?[Math.round(scroller.scrollLeft),Math.round(scroller.scrollTop)]:null,text:text?[Math.round(text.left),Math.round(text.top)]:null};});
   if(size.width<760)await controls.hide();
   const before=await state();
   const box=await room.locator('.reader-viewport').boundingBox();
@@ -324,7 +325,7 @@ async function walkRead({page,size,book,ebook,sequence,middle,snap,step,report})
   await expect(full).toBeHidden();
   expect(await openFromDock()).toBe('#read');
   await expect.poll(hash).toBe(`#read/${book.workId}`);
-  await expect(room.locator('.reader-viewport iframe').first()).toBeVisible();
+  await expect(room.locator('.reader-viewport .prepared-text').first()).toBeVisible();
   await snap('read-reopened');
  });
  report.positionAfter=await audio().catch(()=>null);
@@ -342,7 +343,7 @@ async function walkEbookOnly({page,work,snap}){
  await shown(bookPage.getByRole('button',{name:'Read',exact:true})).click();
  await expect.poll(()=>page.evaluate(()=>decodeURIComponent(location.hash))).toBe(`#read/${work.workId}`);
  const room=page.locator('.now-playing-screen .reader-room'),foot=room.locator('.reader-player');
- await expect(room.locator('.reader-viewport iframe').first()).toBeVisible();
+ await expect(room.locator('.reader-viewport .prepared-text').first()).toBeVisible();
  await createReaderControls({page,room}).show();
  const slider=foot.getByRole('slider',{name:'Position in the book',exact:true});
  await expect(shown(slider)).toBeVisible();

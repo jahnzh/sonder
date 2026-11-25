@@ -5,7 +5,7 @@
 // narration, Font, Size, Line height, then Margins and Line width (not drawn on the board; kept because the
 // plan removes only the view and its two settings). The board's Theme row went with the reader on its own, the
 // only reader that had it (#613 part 2): the text takes the app's look. Each change is saved as before (`saveReader`, appearance.ts).
-// A reader with the text position rail (#804) lists Reading position after Follow the narration: the whole book or the chapter.
+// Reading position, after Follow the narration, says what the text position rail (#804) shows: the whole book or the chapter.
 // The panel is not in the address: Back with it open leaves the reader.
 import type { Appearance } from "../appearance";
 import { Row } from "../parts/Row";
@@ -44,12 +44,10 @@ export type ReaderAppearanceProps = {
   /** Following the narration: on, the narrated sentence is kept in view and highlighted. */
   follow: boolean;
   onFollow: (on: boolean) => void;
-  /** The reader has the text position rail (the new reading view): the row that says what it shows is listed. */
-  rail?: boolean;
   onClose: () => void;
 };
 
-export function ReaderAppearance({ preferences, onChange, follow, onFollow, rail, onClose }: ReaderAppearanceProps) {
+export function ReaderAppearance({ preferences, onChange, follow, onFollow, onClose }: ReaderAppearanceProps) {
   return (
     <section className="reader-appearance-dock" aria-label="Reader appearance">
       <div className="reader-appearance-heading">
@@ -81,24 +79,22 @@ export function ReaderAppearance({ preferences, onChange, follow, onFollow, rail
           info={<InfoMark name="Follow the narration" text={tip("follow")} />}
           control={<Switch label="Follow the narration" on={follow} onChange={onFollow} />}
         />
-        {rail && (
-          <Row
-            label="Reading position"
-            control={
-              <span className="reader-appearance-mode">
-                <Segmented
-                  label="Reading position shows"
-                  options={[
-                    { value: "book", label: "Book" },
-                    { value: "chapter", label: "Chapter" },
-                  ]}
-                  value={preferences.positionScope}
-                  onChange={(positionScope) => onChange({ positionScope })}
-                />
-              </span>
-            }
-          />
-        )}
+        <Row
+          label="Reading position"
+          control={
+            <span className="reader-appearance-mode">
+              <Segmented
+                label="Reading position shows"
+                options={[
+                  { value: "book", label: "Book" },
+                  { value: "chapter", label: "Chapter" },
+                ]}
+                value={preferences.positionScope}
+                onChange={(positionScope) => onChange({ positionScope })}
+              />
+            </span>
+          }
+        />
         <Row
           label="Font"
           control={

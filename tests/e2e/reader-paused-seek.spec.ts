@@ -1,4 +1,4 @@
-// @projects firefox, webkit-iphone-now-playing, prepared-view
+// @projects firefox, webkit-iphone-now-playing
 // A paused seek moves the reader's highlight (#730, a regression from #593's seek fix). The player holds a load's
 // seek target as the place until that seek is seen to land (src/seek-landing.ts). A seek made while the hold was
 // still waiting (on the live check's TorBox stream the load's own seek was still being read) kept the reader on the

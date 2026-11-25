@@ -13,12 +13,6 @@
   background: var(--background);
   border-radius: var(--corner-control);
 }
-.reader-viewport .epub-container {
-  overscroll-behavior: contain;
-}
-.reader-viewport[data-jumping] .epub-container {
-  opacity: 0;
-}
 .reader-loading {
   position: absolute;
   top: 50%;
@@ -495,7 +489,7 @@
     margin: 0;
   }
   /* Two pages side by side (#762): in Page mode, when the text area between the arrows has room for two pages of the
-     text's measure, the host spans both (its width set by the reader, src/reader-spread.ts) and epub.js lays out a
+     text's measure, the host spans both (its width set by the reader, src/reader-spread.ts) and the view lays out a
      spread. The dock and the footer keep their own widths. */
   .reader-room .reader-page-area > .reader-viewport[data-spread] {
     flex: 0 1 var(--reader-spread);
@@ -624,7 +618,7 @@
 
 /* The reader's page (#587, ADR 0019, spec #586 "The reader's page"): on a phone the room is a grid of a head, the
    text band, a dock row and a foot. The head and the foot keep their boxes whether the controls show or not, so
-   the text band, and with it the epub.js view, is sized once. They carry the safe areas as padding; the two
+   the text band, and with it the view of the text, is sized once. They carry the safe areas as padding; the two
    --sonder-safe-* variables are read before env() so a test can give Firefox and WebKit insets. The reader
    inside Now playing gets the same bands without the insets, which its dialog keeps clear. */
 .reader-foot-controls {
@@ -714,10 +708,6 @@
     grid-row: 3;
     grid-column: 1;
     min-width: 0;
-  }
-  .reader-dock > .inline-error {
-    margin: 0;
-    padding: var(--space-8) var(--space-16);
   }
   .reader-player {
     grid-row: 4;

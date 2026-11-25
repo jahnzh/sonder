@@ -1,15 +1,14 @@
-// @projects mobile-chrome, mobile-firefox
+// @projects mobile-chrome, mobile-firefox, webkit-iphone-now-playing
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { readFileSync, mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { longBookFixture } from "../long-book-fixture";
 import { installReaderWaitBudget, READER_WAIT_MS } from "./timing";
 import { gotoRead } from "./read-face";
-import { choosePreparedView } from "./prepared-view";
 import { expectRailBesideText, expectTextUncovered } from "./reader-bands";
 import { appearancePanel, closeAppearance, openAppearance } from "./reader-appearance";
 import { REST_MS } from "../../src/text-rail-model";
-// The text position rail of the new view (#804; boards RailB, RailBDrag, RailBZoom, RailTry): the thumb follows the
+// The text position rail of the reader (#804; boards RailB, RailBDrag, RailBZoom, RailTry): the thumb follows the
 // place in view, a drag moves the text as a move by hand does and never the audio, a touch takes the rail only once it
 // moves up or down, the zoom on the rail that eases out as the finger is pulled away, parts asked for only at rests,
 // and nothing over the text. Scroll mode first; pages mode (#803) at the end, where the rail is the same through the
@@ -109,7 +108,6 @@ async function openFollowing(page: Page, title: string, settle = true) {
   const opened = await longBook(page, title);
   const first = opened.map.intervals.slice().sort((a: any, b: any) => a.start - b.start);
   await narrateAt(page, opened.book, first[20].start + 0.5);
-  await choosePreparedView(page);
   await gotoRead(page, opened.ebook);
   await expect(room(page)).toHaveAttribute("data-current-passage", first[20].paragraphId, { timeout: READER_WAIT_MS.followHighlight });
   await expect(rail(page)).toBeVisible();
@@ -132,7 +130,7 @@ async function touchDrag(page: Page, browserName: string, points: { x: number; y
     await cdp.detach();
     return;
   }
-  // Firefox's driver has no held touch: the pointer events a touch makes, sent to the element under the finger.
+  // Firefox's and WebKit's drivers have no held touch: the pointer events a touch makes, sent to the element under the finger.
   await page.evaluate(async ({ points, pauseMs }) => {
     const target = document.elementFromPoint(points[0]!.x, points[0]!.y)!;
     const send = (type: string, point: { x: number; y: number }) =>
@@ -431,7 +429,7 @@ test("Reading position shows the chapter: its sentences are the cuts, a drag sta
     await rail(page).focus();
     await page.keyboard.press("Home");
     await expect(rail(page)).toHaveAttribute("aria-valuetext", new RegExp(`^${chapter}, 0% of the chapter\\.`));
-    // Settings › Playback lists the same choice on a device with the new view, and Whole book puts the chapters back.
+    // Settings › Playback lists the same choice, and Whole book puts the chapters back.
     await page.goto("/#settings/playback");
     const setting = page.getByRole("radiogroup", { name: "Reading position shows" });
     await expect(setting.getByRole("radio", { checked: true })).toHaveText("Current chapter");

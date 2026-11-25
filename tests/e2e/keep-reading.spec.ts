@@ -1,9 +1,10 @@
 // @projects firefox, webkit-iphone-now-playing, mobile-iphone-slice14
 // Keep on this device saves the ebook and the reading sync too (#551; spec #548 "On the device: what a kept book
-// needs"). A kept book with an audiobook, an EPUB and a ready reading sync is complete with all three; after a reload
-// without a connection the reader opens the EPUB and follows the narration with the kept map. An ebook arriving for a
-// kept audiobook and a map becoming ready (routed library answers) are saved without a tap. Opening an EPUB does not
-// call `persist()`.
+// needs"). A kept book with an audiobook, an EPUB and a ready reading sync is complete with all three: the ebook is
+// kept as the EPUB's prepared text, not as the EPUB file (#806), and the map is matched against the text's fingerprint.
+// After a reload without a connection the reader opens the book and follows the narration with the kept map. An ebook
+// arriving for a kept audiobook and a map becoming ready (routed library answers) are saved without a tap. Opening a
+// book in the reader does not call `persist()`.
 // Saves to this device: in WebKit each test needs a persistent context to store a Blob in IndexedDB (#523, #596).
 import { test, expect, type Page } from "./device-store";
 import { mkdirSync, readFileSync } from "node:fs";
@@ -84,7 +85,7 @@ const address = (workId: string) => `/#book/${encodeURIComponent(workId)}`;
 const KEPT_BOTH = /^Audiobook and ebook · [\d.]+ MB$/;
 
 /** A key of the `preferences` store of any of this origin's device databases, or undefined. */
-async function stored(page: Page, key: string): Promise<{ cache?: boolean; fingerprint?: string; id?: string } | undefined> {
+async function stored(page: Page, key: string): Promise<{ fingerprint?: string; id?: string; key?: string } | undefined> {
   return page.evaluate(async (key) => {
     const names = (await indexedDB.databases()).map((d) => d.name).filter((n): n is string => !!n && n.startsWith("sonder"));
     for (const name of names) {
@@ -99,7 +100,7 @@ async function stored(page: Page, key: string): Promise<{ cache?: boolean; finge
         };
         open.onerror = () => resolve(undefined);
       });
-      if (value !== undefined) return value as { cache?: boolean; fingerprint?: string; id?: string };
+      if (value !== undefined) return value as { fingerprint?: string; id?: string; key?: string };
     }
     return undefined;
   }, key);
@@ -132,16 +133,20 @@ test("a kept book with an audiobook, an EPUB and a ready reading sync is complet
   const book = await fixture(page, unique("Kept whole"));
   const interval = book.interval!;
   // Not the player's book yet: the hidden reader of Now playing would cache its map by itself.
+  const epubFile: string[] = [];
+  page.on("request", (request) => request.url().includes(`/api/ebooks/${book.ebookId}/file`) && epubFile.push(request.url()));
   await page.goto(address(book.workId));
   await expect(keep(page)).toHaveAttribute("aria-checked", "false");
   await keep(page).click();
   await expect(keep(page)).toHaveAttribute("aria-checked", "true");
   await expect(line(page)).toHaveText(KEPT_BOTH, { timeout: 60_000 });
-  // All three are on the device: the tracks, the EPUB kept (not the reader's cache) and the pair's map.
-  const file = await stored(page, `reader-file:${book.ebookId}`);
-  expect(file?.cache).not.toBe(true);
-  expect(file?.fingerprint).toEqual(expect.stringMatching(/^[0-9a-f]{64}$/));
-  expect((await (await page.request.get(`/api/reader/${book.ebookId}`)).json()).fingerprint).toBe(file?.fingerprint);
+  // All three are on the device: the tracks, the EPUB's prepared text (of the server's file) and the pair's map. The
+  // EPUB itself is neither asked for nor kept.
+  const kept = await stored(page, `reader-text:${book.ebookId}`);
+  expect(kept?.fingerprint).toEqual(expect.stringMatching(/^[0-9a-f]{64}$/));
+  expect((await (await page.request.get(`/api/reader/${book.ebookId}`)).json()).fingerprint).toBe(kept?.fingerprint);
+  expect(await stored(page, `reader-file:${book.ebookId}`)).toBeUndefined();
+  expect(epubFile).toEqual([]);
   await expect.poll(async () => (await stored(page, `reader-map:${book.ebookId}:${book.recordingId}`))?.id).toEqual(expect.any(String));
   // The server knows this device completed it.
   await expect
@@ -155,7 +160,7 @@ test("a kept book with an audiobook, an EPUB and a ready reading sync is complet
   await page.screenshot({ path: `${OUT}/keep-reading-complete-desktop.png` });
   await page.setViewportSize({ width: 390, height: 844 });
 
-  // Without a connection after a reload: the reader opens the EPUB at the player's place and follows the narration.
+  // Without a connection after a reload: the reader opens the kept text at the player's place and follows the narration.
   // The player's book becomes this one, at a narrated sentence, while there is a connection.
   const progress = await page.request.post("/api/progress", {
     data: { recordingId: book.recordingId, trackId: book.trackId, position: interval.start + 0.5, duration: 300, updatedAt: Date.now() },
@@ -168,8 +173,8 @@ test("a kept book with an audiobook, an EPUB and a ready reading sync is complet
   await context.setOffline(true);
   await page.goto("/");
   await openRead(page);
-  const frame = page.frameLocator(".inline-reader .reader-viewport iframe");
-  await expect(frame.getByText("The first paragraph opens here.", { exact: false })).toBeVisible({ timeout: 30_000 });
+  const text = page.locator(".inline-reader .reader-viewport .prepared-text");
+  await expect(text.getByText("The first paragraph opens here.", { exact: false })).toBeVisible({ timeout: 30_000 });
   await expect(page.locator(".inline-reader")).toHaveAttribute("data-current-passage", interval.paragraphId, { timeout: 30_000 });
   await settled(page);
   await page.screenshot({ path: `${OUT}/keep-reading-offline-phone.png` });
@@ -179,25 +184,31 @@ test.describe("routed library answers", () => {
   // Once the service worker controls the page its requests may pass by page.route; these tests route the library.
   test.use({ serviceWorkers: "block" });
 
-  test("an ebook arriving for a kept audiobook is saved without a tap", async ({ page }) => {
+  test("an ebook arriving for a kept audiobook has its text saved without a tap", async ({ page }) => {
     test.setTimeout(120_000);
     const book = await fixture(page, unique("Ebook later"), { map: false });
     let withoutEbook = true;
     await routeWork(page, book.workId, (work) => (withoutEbook ? { ...work, ebooks: [], chosenEbookId: null, readingSync: [] } : { ...work, readingSync: [] }));
-    const fetched: string[] = [];
-    page.on("request", (request) => request.url().includes(`/api/ebooks/${book.ebookId}/file`) && fetched.push(request.url()));
+    // What the saver asks for of the ebook: its prepared text (the manifest), never the EPUB file (#806).
+    const texts: string[] = [];
+    const epubFile: string[] = [];
+    page.on("request", (request) => {
+      if (request.url().includes(`/api/reader/${book.ebookId}/prepared`)) texts.push(request.url());
+      if (request.url().includes(`/api/ebooks/${book.ebookId}/file`)) epubFile.push(request.url());
+    });
     await page.goto(address(book.workId));
     await keep(page).click();
     await expect(line(page)).toHaveText(/^Audiobook · 5\.1 MB$/, { timeout: 30_000 });
-    expect(fetched).toEqual([]);
-    // The ebook arrives: the next library read lists it and the saver saves it, with no tap.
+    expect(texts).toEqual([]);
+    // The ebook arrives: the next library read lists it and the saver saves its text, with no tap.
     withoutEbook = false;
     await page.evaluate(() => window.dispatchEvent(new Event("sonder:library-changed")));
     await expect(line(page)).toHaveText(KEPT_BOTH, { timeout: 30_000 });
-    expect(fetched.length).toBeGreaterThanOrEqual(1);
-    const file = await stored(page, `reader-file:${book.ebookId}`);
-    expect(file?.cache).not.toBe(true);
-    expect(file?.fingerprint).toEqual(expect.stringMatching(/^[0-9a-f]{64}$/));
+    expect(texts.length).toBeGreaterThanOrEqual(1);
+    expect(epubFile).toEqual([]);
+    const text = await stored(page, `reader-text:${book.ebookId}`);
+    expect(text?.fingerprint).toEqual(expect.stringMatching(/^[0-9a-f]{64}$/));
+    expect(await stored(page, `reader-file:${book.ebookId}`)).toBeUndefined();
   });
 
   test("a map becoming ready is saved without a tap; until then the book is complete without it", async ({ page }) => {
@@ -228,7 +239,7 @@ test.describe("routed library answers", () => {
     await expect(line(page)).toHaveText(KEPT_BOTH);
   });
 
-  test("opening an EPUB does not call persist()", async ({ page }) => {
+  test("opening a book in the reader does not call persist()", async ({ page }) => {
     test.setTimeout(60_000);
     await page.addInitScript(() => {
       (window as any).__persistCalls = 0;
@@ -236,11 +247,12 @@ test.describe("routed library answers", () => {
     });
     const book = await fixture(page, unique("Opened"), { map: false });
     await gotoRead(page, book.ebookId);
-    await expect(page.frameLocator(".reader-room .reader-viewport iframe").getByText("The first paragraph opens here.", { exact: false })).toBeVisible({
+    await expect(page.locator(".reader-room .reader-viewport .prepared-text").getByText("The first paragraph opens here.", { exact: false })).toBeVisible({
       timeout: 30_000,
     });
-    // The reader's own copy of the EPUB was written: the write that used to ask.
-    await expect.poll(async () => (await stored(page, `reader-file:${book.ebookId}`))?.cache, { timeout: 20_000 }).toBe(true);
+    // The reader's writes to the device after the opening (its place, its saved state) have had time to happen; the
+    // reader's own copy of the EPUB, which once asked, is gone with the EPUB's frame (#806).
+    await page.waitForTimeout(2000);
     expect(await page.evaluate(() => (window as any).__persistCalls)).toBe(0);
   });
 });

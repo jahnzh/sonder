@@ -6,7 +6,7 @@
 // The server must not import this file: the production image copies only four files of `src/`.
 import { useCallback, useEffect, useState } from "react";
 import { authDB, userStorageKey } from "./lib";
-import { EBOOK_DEVICE_EVENT, forgetEpub } from "./reading";
+import { EBOOK_DEVICE_EVENT } from "./reading";
 import { deviceEbookChoiceKey } from "./ebook-choice";
 import { isKeptReaderFile, type ReaderFileRecord } from "./ebook-keep";
 
@@ -51,7 +51,6 @@ export async function removeEbookFromDevice(id: string): Promise<void> {
     }
   }
   await authDB.preferences.delete(fileKey(id));
-  forgetEpub(id);
   window.dispatchEvent(new CustomEvent(EBOOK_DEVICE_EVENT, { detail: { id } }));
 }
 

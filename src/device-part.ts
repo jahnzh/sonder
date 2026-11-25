@@ -108,7 +108,7 @@ export function buildDevicePart({
         entry.state === "nothing"
           ? deviceSaveLine({ keep: true, saving: false, filesTotal: 0, filesSaved: 0, size: 0 }) ?? ""
           : entry.state === "complete"
-            ? deviceKeptLine({ audio: entry.hasAudio ? "complete" : "none", filesTotal: entry.filesTotal, filesSaved: entry.filesDone, ebook: !!entry.ebook || !entry.hasAudio, size: entry.totalSize }) ?? ""
+            ? deviceKeptLine({ audio: entry.hasAudio ? "complete" : "none", filesTotal: entry.filesTotal, filesSaved: entry.filesDone, ebook: !!entry.ebook || !!entry.hasEbook || !entry.hasAudio, size: entry.totalSize }) ?? ""
             : deviceKeptLine({ audio: "partial", filesTotal: entry.filesTotal, filesSaved: entry.filesDone, ebook: false, size: entry.totalSize }) ?? "";
       kept.push({
         ...common,
