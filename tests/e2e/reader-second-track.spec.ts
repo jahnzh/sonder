@@ -1,4 +1,4 @@
-// @projects firefox, webkit-iphone-now-playing, prepared-view
+// @projects firefox, webkit-iphone-now-playing
 // #730 third round: the reader shows the passage of the place the player is at on the recording's second track.
 // Production's case is a TorBox recording whose tracks are listed '-1' then '-0' (by file name) while the element
 // plays '-0', the second: a paused seek there left the reader on another passage.

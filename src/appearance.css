@@ -68,9 +68,6 @@ textarea {
   color: var(--text);
   border-color: var(--border);
 }
-.inline-error {
-  color: var(--danger);
-}
 
 @media (prefers-reduced-motion: no-preference) {
   body {

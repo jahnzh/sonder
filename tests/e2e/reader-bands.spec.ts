@@ -1,4 +1,4 @@
-// @projects firefox, mobile-chrome, mobile-firefox, mobile-safari, webkit-iphone-now-playing, mobile-iphone-slice14, prepared-view
+// @projects firefox, mobile-chrome, mobile-firefox, mobile-safari, webkit-iphone-now-playing, mobile-iphone-slice14
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -7,9 +7,8 @@ import { skipOnMobile } from "./mobile";
 import { applyInsets, bandBoxes, expectTextUncovered, INSET_PROFILES, intersects, type Box } from "./reader-bands";
 import { openRead } from "./now-playing";
 import { gotoRead } from "./read-face";
-import {bookText,textFrame} from "./reader-view";
+import { bookText, textFrame } from "./reader-view";
 import { installReaderFrames } from "./reader-frames";
-import { notOnPreparedView } from "./prepared-view";
 installReaderFrames(test);
 // The reader's page (#587, ADR 0019; boards Reader.dc.html, ReaderControls.dc.html, ReaderScroll.dc.html): a head
 // of 44 and a foot of 72 that keep their boxes whether the controls show or not, plus the safe areas, and the
@@ -41,7 +40,7 @@ async function openStandalone(page: Page, ebook: string) {
   await settled(room);
   return room;
 }
-// The view's resize count and the bands' boxes stay the same across two reads apart: epub.js is done laying out.
+// The view's resize count and the bands' boxes stay the same across two reads apart: the view is done laying out.
 async function settled(room: Locator) {
   let previous = "";
   await expect.poll(async () => {
@@ -55,13 +54,13 @@ async function settled(room: Locator) {
 async function frameState(room: Locator) {
   const boxes = await bandBoxes(room);
   const scroll = await room.locator(".reader-viewport").evaluate((host) => {
-    const container = host.querySelector<HTMLElement>(":is(.epub-container,.prepared-scroll)");
+    const container = host.querySelector<HTMLElement>(".prepared-scroll");
     return { window: [window.scrollX, window.scrollY], view: container ? [container.scrollLeft, container.scrollTop] : null, resizes: host.getAttribute("data-view-resizes") };
   });
   return { boxes, scroll };
 }
 // Every line box of the text on the shown page, in the window's coordinates: rects of the text that lie in the
-// band's columns (in pages mode the frame is as wide as the chapter's columns; only the shown page counts).
+// band's columns (in pages mode the prepared text is as wide as its part's columns; only the shown page counts).
 async function shownLines(room: Locator) {
   return room.locator(".reader-viewport").evaluate((host) => {
     const band = host.getBoundingClientRect(), lines: { top: number; bottom: number }[] = [];
@@ -106,8 +105,8 @@ for (const [mode, label] of [["paginated", "pages"], ["scroll", "scroll"]] as co
         const topbar = (await room.locator(".reader-topbar").boundingBox())!;
         expect(topbar.y).toBeCloseTo(insets.top, 0);
         expect(topbar.height).toBeCloseTo(44, 0);
-        // The epub.js view is sized to the band.
-        const view = (await room.locator(".reader-viewport :is(.epub-container,.prepared-scroll)").boundingBox())!;
+        // The view's scroller is sized to the band.
+        const view = (await room.locator(".reader-viewport .prepared-scroll").boundingBox())!;
         expect(view.height).toBeCloseTo(text.height, 0);
         expect(intersects(view, head) || intersects(view, foot)).toBe(false);
         if (mode === "paginated") {
@@ -119,7 +118,7 @@ for (const [mode, label] of [["paginated", "pages"], ["scroll", "scroll"]] as co
         } else {
           // Scroll mode scrolls the column inside the band; the bands and the window stay where they are.
           const before = await frameState(room);
-          const scrolled = await room.locator(".reader-viewport :is(.epub-container,.prepared-scroll)").evaluate((container) => {
+          const scrolled = await room.locator(".reader-viewport .prepared-scroll").evaluate((container) => {
             const start = container.scrollTop;
             container.scrollTop = start + 240;
             return { moved: container.scrollTop - start, overflow: container.scrollHeight > container.clientHeight };
@@ -151,7 +150,7 @@ for (const [mode, label] of [["paginated", "pages"], ["scroll", "scroll"]] as co
         expect(await frameState(room)).toEqual(before);
         await expectTextUncovered(room);
       }
-      // Still nothing moved once epub.js had time to answer a resize it should not have got.
+      // Still nothing moved once the view had time to answer a resize it should not have got.
       await page.waitForTimeout(400);
       expect(await frameState(room)).toEqual(before);
     });

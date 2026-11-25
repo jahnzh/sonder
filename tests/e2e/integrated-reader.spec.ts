@@ -1,4 +1,4 @@
-// @projects firefox, mobile-chrome, mobile-firefox, mobile-safari, mobile-iphone-slice13, webkit-iphone-now-playing, mobile-iphone-slice14, prepared-view
+// @projects firefox, mobile-chrome, mobile-firefox, mobile-safari, mobile-iphone-slice13, webkit-iphone-now-playing, mobile-iphone-slice14
 import {test,expect,type Page} from "@playwright/test";
 import {readFileSync} from "node:fs";
 import {randomUUID} from "node:crypto";
@@ -321,23 +321,12 @@ async function sampleFrames(page:Page){
   const tick=()=>{
    const vp=document.querySelector(".inline-reader .reader-viewport")?.getBoundingClientRect();
    const shown:string[]=[];
-   // The view of prepared text (#802) has the paragraphs in the band itself, each chapter file in its section.
-   const prepared=document.querySelector(".inline-reader .reader-viewport[data-view='prepared'] .prepared-text");
+   // The prepared text (#802) has the paragraphs in the band itself, each chapter file in its section.
+   const prepared=document.querySelector(".inline-reader .reader-viewport .prepared-text");
    if(vp&&prepared)for(const p of Array.from(prepared.querySelectorAll<HTMLElement>("p[data-id]"))){
     const r=p.getBoundingClientRect(),section=p.closest("section[data-section]")?.getAttribute("data-section");
     const chapter=prepared.querySelector(`section[data-section="${section}"] h1`)?.textContent||"";
     if(r.right>vp.left+4&&r.left<vp.right-4&&r.bottom>vp.top&&r.top<vp.bottom)shown.push(`${chapter}/${p.dataset.id}`);
-   }
-   if(vp)for(const frame of Array.from(document.querySelectorAll<HTMLIFrameElement>(".inline-reader .reader-viewport iframe"))){
-    const doc=frame.contentDocument,box=frame.getBoundingClientRect();
-    let hidden=getComputedStyle(frame).visibility!=="visible";
-    for(let el:Element|null=frame;el&&!hidden;el=el.parentElement)hidden=getComputedStyle(el).opacity==="0";
-    if(!doc||hidden)continue;
-    const chapter=doc.querySelector("h1")?.textContent||"";
-    for(const p of Array.from(doc.querySelectorAll<HTMLElement>("p[id]"))){
-     const r=p.getBoundingClientRect();
-     if(r.right+box.left>vp.left+4&&r.left+box.left<vp.right-4&&r.bottom+box.top>vp.top&&r.top+box.top<vp.bottom)shown.push(`${chapter}/${p.id}`);
-    }
    }
    w.__frames.push({mark:w.__mark,shown});
    requestAnimationFrame(tick);

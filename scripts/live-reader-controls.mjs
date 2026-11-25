@@ -9,7 +9,7 @@
 // - There is no hide timer. A tap in the middle 30-70% of the page TOGGLES `controlsVisible`: tapping while the
 //   controls show hides them again. The state also resets to false whenever the reader remounts (opening it,
 //   closing it) and Close reader sets it false.
-// - A page tap only registers once the EPUB iframe has attached its pointer handlers; before that the
+// - A page tap only registers once the prepared text is in the band and the reader listens to it; before that the
 //   tap is swallowed and the controls stay hidden.
 // So a click on a control must (1) tap only while the controls are hidden, (2) confirm that they appeared, retrying
 // a swallowed tap, and (3) wait for the control to have a stable box before clicking.
@@ -141,18 +141,17 @@ export function createReaderControls({ page, room, timeout = 25000, settle = 150
 
 /**
  * Whether the narrated-sentence highlight is drawn on the page the reader shows (`room` is a `.reader-room`).
- * The EPUB frame is as wide as its chapter's columns and the reader's viewport clips it to one page, so the
- * highlight is rendered (Playwright's toBeVisible holds) on any page of the chapter: this measures each of its
- * rectangles against the viewport instead (#501 review). The browser specs use the same measure.
+ * In pages mode the prepared text is as wide as its part's columns and the reader's viewport clips it to one page (in
+ * scroll mode, as long as its parts), so the highlight is rendered (Playwright's toBeVisible holds) anywhere in a
+ * loaded part: this measures each of its line boxes against the viewport instead (#501 review). The browser specs use
+ * the same measure.
  */
 export function narratedOnPage(room) {
   return room.locator(".reader-viewport").evaluate((host) => {
     const bounds = host.getBoundingClientRect();
+    // The reader marks the sentence's own elements (#802); their line boxes are the highlight.
     for (const mark of host.querySelectorAll(".sonder-follow")) {
-      // epub.js draws the highlight as rects in an SVG; the view of prepared text (#802) marks the sentence's own
-      // elements, whose line boxes are the highlight.
-      const drawn = mark.querySelectorAll("rect");
-      for (const rect of drawn.length ? [...drawn].map((r) => r.getBoundingClientRect()) : mark.getClientRects?.() ?? []) {
+      for (const rect of mark.getClientRects?.() ?? []) {
         const width = Math.min(bounds.right, rect.right) - Math.max(bounds.left, rect.left);
         const height = Math.min(bounds.bottom, rect.bottom) - Math.max(bounds.top, rect.top);
         if (width > 2 && height > 2) return true;
@@ -183,27 +182,24 @@ export function narratedPressPoints(rects, bounds, { minWidth = 8, minHeight = 4
 }
 
 /**
- * A point on the narrated sentence where a press reaches the EPUB frame, or null (`room` is a `.reader-room`):
- * narratedPressPoints over the highlight's rectangles, the first whose spot on the page is the frame itself, not a
- * control drawn over it. The highlight is drawn over the frame and lets the pointer through.
+ * A point on the narrated sentence where a press reaches the book's text, or null (`room` is a `.reader-room`):
+ * narratedPressPoints over the highlight's rectangles, the first whose spot on the page is the prepared text itself,
+ * not a control drawn over it.
  */
 export async function narratedPressPoint(room) {
   const { rects, bounds } = await room.locator(".reader-viewport").evaluate((host) => {
     const box = host.getBoundingClientRect();
-    const mark = host.querySelector(".sonder-follow");
-    // The highlight's rectangles: epub.js's SVG rects, or, in the view of prepared text (#802), the line boxes of
-    // every element of the marked sentence.
-    const drawn = mark ? [...mark.querySelectorAll("rect")] : [];
-    const boxes = drawn.length ? drawn.map((r) => r.getBoundingClientRect()) : [...host.querySelectorAll(".sonder-follow")].flatMap((element) => [...(element.getClientRects?.() ?? [])]);
+    // The highlight's rectangles: the line boxes of every element of the marked sentence (#802).
+    const boxes = [...host.querySelectorAll(".sonder-follow")].flatMap((element) => [...(element.getClientRects?.() ?? [])]);
     const rects = boxes.map((b) => ({ left: b.left, top: b.top, right: b.right, bottom: b.bottom }));
     return { rects, bounds: { left: box.left, top: box.top, right: box.right, bottom: box.bottom } };
   });
   const points = narratedPressPoints(rects, bounds);
   if (!points.length) return null;
   const hits = await room.page().evaluate((points) => points.map(({ x, y }) => {
-    // The book's text is what is there: the EPUB's frame, or the prepared text itself.
+    // The book's text is what is there: the prepared text itself.
     const hit = document.elementFromPoint(x, y);
-    return hit?.tagName === "IFRAME" || !!hit?.closest?.(".prepared-text");
+    return !!hit?.closest?.(".prepared-text");
   }), points);
   return points.find((_, index) => hits[index]) ?? null;
 }

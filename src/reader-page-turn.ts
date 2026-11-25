@@ -1,7 +1,7 @@
 import { interpolateWordTimes } from "./word-timing";
 
 // The page turn inside a narrated sentence that crosses a page (#508, spec #503 "When the page turns").
-// No React and no epub.js: the reader measures the page each word of the narrated sentence starts on
+// No React: the reader measures the page each word of the narrated sentence starts on
 // and asks here which page to show at the narration's position.
 
 /**

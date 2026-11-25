@@ -24,7 +24,8 @@ import {
   textSaveRefused,
   type KeptTextRecord,
 } from "./keep-text";
-import { api, authDB, localDB } from "./lib";
+import { ApiError, api, authDB, localDB } from "./lib";
+import type { ReaderBook } from "./reading-types";
 
 const changed = (id: string) => window.dispatchEvent(new CustomEvent(EBOOK_DEVICE_EVENT, { detail: { id } }));
 
@@ -47,8 +48,10 @@ function refusal(message: string, status: number) {
 /**
  * Keeps an EPUB's prepared text on this device (#805): the manifest the server answers now, then every part and every
  * picture the parts show, each stored in the kept cache under its own address; a file already there from an
- * interrupted save is not asked for again. The record is written last, so a save that stopped leaves none, and the
- * files of an output it replaces are removed after it.
+ * interrupted save is not asked for again. Then the book's sentences, which Search reads on the device (#806): the
+ * prepared text names its sentences but Search lists them whole, so they are kept as the reader's book
+ * `reader-book:<id>` (`loadReaderText` reads them from there without a connection). The record is written last, so a
+ * save that stopped leaves none, and the files of an output it replaces are removed after it.
  */
 export async function keepText(ebookId: string, signal: AbortSignal): Promise<void> {
   const cache = await keptCache();
@@ -92,6 +95,15 @@ export async function keepText(ebookId: string, signal: AbortSignal): Promise<vo
     size += (await file(pictureAddress(base, name))).size;
   }
   signal.throwIfAborted();
+  // The sentences Search reads, cut from the same file as the parts: another file means the book changed while this
+  // save ran, and the next run saves it again.
+  const book = await api<ReaderBook>(`/reader/${encodeURIComponent(ebookId)}`, { signal }).catch((error) => {
+    throw error instanceof ApiError ? refusal("The book's text could not be saved on this device.", error.status) : error;
+  });
+  if (book.fingerprint !== manifest.fingerprint) throw new TypeError("The book's text changed while it was saved.");
+  signal.throwIfAborted();
+  await localDB.preferences.put({ key: `reader-book:${ebookId}`, value: book });
+  size += new Blob([JSON.stringify(book.sections)]).size;
   // What the user saved, so the book opens offline without the EPUB's details too (`loadPreparedReader`).
   const state = await api(`/reader/${encodeURIComponent(ebookId)}/state`, { signal }).catch(() => null);
   if (state) await localDB.preferences.put({ key: `reader-state:${ebookId}`, value: state }).catch(() => {});

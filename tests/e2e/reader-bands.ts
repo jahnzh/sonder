@@ -17,7 +17,7 @@ const box = async (locator: Locator) => {
   return value;
 };
 
-/** The boxes of the reader's bands: the head, the text (the epub.js view's host), the dock row and the foot. */
+/** The boxes of the reader's bands: the head, the text (the prepared text's band), the dock row and the foot. */
 export async function bandBoxes(room: Locator) {
   return {
     head: await box(room.locator(".reader-head")),
@@ -232,7 +232,7 @@ export async function applyInsets(page: Page, browserName: string, insets: Inset
 export async function showControls(page: Page, room: Locator) {
   const topbar = room.locator(".reader-topbar");
   if (await topbar.isVisible()) return;
-  await expect(room.locator(".reader-viewport :is(iframe, .prepared-text)").first()).toBeVisible();
+  await expect(room.locator(".reader-viewport .prepared-text").first()).toBeVisible();
   const text = await box(room.locator(".reader-viewport"));
   await page.mouse.click(text.x + text.width / 2, text.y + text.height / 2);
   await expect(topbar).toBeVisible();

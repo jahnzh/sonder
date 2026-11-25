@@ -1,8 +1,8 @@
-// The book's text as a spec measures it inside the page, on either reading view (#802). Today's reader has it in the
-// EPUB's frames; a spec walks `frame.contentDocument` and adds the frame's place to every rectangle. The view of
-// prepared text has it in the band itself. So that one measuring function serves both, `__readerFrames(host)` gives
-// the band's frames, or, on the view of prepared text, one stand-in whose "document" is the prepared text and whose
-// place is the window's own (its rectangles are already in the window's coordinates).
+// The book's text as a spec measures it inside the page. The reader once had it in the EPUB's frames, and the specs'
+// measuring functions walk `frame.contentDocument` and add the frame's place to every rectangle; the reader now has it
+// in the band itself (#802, #806). So that those functions stay as they are, `__readerFrames(host)` gives one stand-in
+// whose "document" is the prepared text and whose place is the window's own (its rectangles are already in the
+// window's coordinates).
 import type { Page } from "@playwright/test";
 
 type TestApi = { beforeEach: (run: (fixtures: { page: Page }) => Promise<void>) => void };
@@ -12,15 +12,14 @@ export function installReaderFrames(testApi: TestApi) {
   testApi.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
       (window as any).__readerFrames = (host: Element) => {
-        if (host.getAttribute("data-view") !== "prepared") return Array.from(host.querySelectorAll("iframe"));
         const root = host.querySelector<HTMLElement>(".prepared-text");
         const scroller = host.querySelector<HTMLElement>(".prepared-scroll");
         if (!root || !scroller) return [];
         const view = {
-          // The width the text's size follows: the band's, as the frame's was.
+          // The width the text's size follows: the band's.
           innerWidth: scroller.clientWidth,
           innerHeight: scroller.clientHeight,
-          // How far the text has moved under the band, as a frame's window tells it: a rectangle's left edge plus
+          // How far the text has moved under the band, as a window's scrollX would tell it: a rectangle's left edge plus
           // this is its place in the run of pages (pages mode turns by moving the columns to the left).
           get scrollX() {
             return scroller.scrollLeft - scroller.getBoundingClientRect().left;

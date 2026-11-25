@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import { readerFixture } from "../reader-fixture";
 import { skipOnMobile } from "./mobile";
 import { expectTextUncovered, intersects, type Box } from "./reader-bands";
+import { bookText } from "./reader-view";
 
 const SIZES = [
   { width: 1280, height: 800 },
@@ -49,9 +50,9 @@ async function book(page: Page, name: string) {
 const screen = (page: Page) => page.getByRole("dialog", { name: "Now playing", exact: true });
 const listen = (page: Page) => page.locator(".now-playing-listen");
 const room = (page: Page) => page.locator(".now-playing-screen .reader-room");
-const frameText = (page: Page) => page.frameLocator(".now-playing-screen .reader-viewport iframe").getByText("Alice was beginning", { exact: false });
+const frameText = (page: Page) => bookText(page, ".now-playing-screen .reader-room").getByText("Alice was beginning", { exact: false }).first();
 
-/** getBoundingClientRect: Playwright's boundingBox waits for "stable", which a reflowing EPUB may not reach. */
+/** getBoundingClientRect: Playwright's boundingBox waits for "stable", which a reflowing text may not reach. */
 const rect = async (locator: Locator): Promise<Box> => {
   await expect(locator).toBeVisible();
   return locator.evaluate((element) => {
@@ -75,7 +76,7 @@ async function openRead(page: Page, workId: string) {
   await expect(frameText(page)).toBeVisible();
   await settled(room(page));
 }
-/** The text band's box stays the same across two reads apart: epub.js is done laying out. */
+/** The text band's box stays the same across two reads apart: the prepared text is done laying out. */
 async function settled(reader: Locator) {
   let previous = "";
   await expect
@@ -124,20 +125,18 @@ async function sentencePoint(viewport: Locator) {
     .poll(async () => {
       const point = await viewport.evaluate((host) => {
         const bounds = host.getBoundingClientRect();
-        for (const frame of host.querySelectorAll("iframe")) {
-          const doc = frame.contentDocument, at = frame.getBoundingClientRect();
-          if (!doc || doc.fonts.status !== "loaded") continue;
-          for (const paragraph of doc.querySelectorAll("p")) {
-            const range = doc.createRange();
-            range.selectNodeContents(paragraph);
-            for (const r of range.getClientRects()) {
-              const left = Math.max(bounds.left, at.left + r.left), right = Math.min(bounds.right, at.left + r.right);
-              const top = Math.max(bounds.top, at.top + r.top), bottom = Math.min(bounds.bottom, at.top + r.bottom);
-              if (right - left < 4 || bottom - top < 4) continue;
-              const x = (left + right) / 2, y = (top + bottom) / 2;
-              const element = doc.elementFromPoint(x - at.left, y - at.top);
-              if (document.elementFromPoint(x, y) === frame && element && paragraph.contains(element)) return { x, y };
-            }
+        const text = host.querySelector(".prepared-text");
+        if (!text || document.fonts.status !== "loaded") return null;
+        for (const paragraph of text.querySelectorAll("p")) {
+          const range = document.createRange();
+          range.selectNodeContents(paragraph);
+          for (const r of range.getClientRects()) {
+            const left = Math.max(bounds.left, r.left), right = Math.min(bounds.right, r.right);
+            const top = Math.max(bounds.top, r.top), bottom = Math.min(bounds.bottom, r.bottom);
+            if (right - left < 4 || bottom - top < 4) continue;
+            const x = (left + right) / 2, y = (top + bottom) / 2;
+            const element = document.elementFromPoint(x, y);
+            if (element && paragraph.contains(element)) return { x, y };
           }
         }
         return null;

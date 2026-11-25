@@ -94,18 +94,8 @@ const slice14Iphone = process.env.SONDER_SLICE_WEBKIT === "1" && existsSync(webk
       { name: "mobile-iphone-slice14-sw", testMatch: specs("mobile-iphone-slice14-sw"), use: slice13Phone },
     ]
   : [];
-// The reader's specs also run on the new reading view (#802, step 3 of the reader plan): Chromium with the hidden switch
-// set on the device, as `?reader-view=prepared` leaves it (src/reader-view-switch.ts). A test that cannot apply to that
-// view (it tests the EPUB's frame, or pages mode, which is step 4) says so itself with `notOnPreparedView`
-// (tests/e2e/prepared-view.ts). The project goes when step 7 makes the view the default.
-const preparedView = {
-  name: "prepared-view",
-  testMatch: specs("prepared-view"),
-  use: { storageState: { cookies: [], origins: [{ origin: `http://127.0.0.1:${port}`, localStorage: [{ name: "sonder-reader-view", value: "prepared" }] }] } },
-};
 const desktopProjects = [
   { name: "chromium" },
-  preparedView,
   // Firefox (a browser the owner uses) and WebKit, when those browsers are installed, run the specs that name them; other
   // spec files are skipped for these projects without an error in a multi-project run.
   ...[firefox, webkit]

@@ -1,4 +1,4 @@
-// @projects firefox
+// @projects firefox, webkit-iphone-now-playing
 import { test, expect, type Page, type Request } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -7,12 +7,11 @@ import { readerFixture } from "../reader-fixture";
 import { preparedFixture, tinyPng } from "../prepared-text-fixture";
 import { installReaderWaitBudget, READER_WAIT_MS } from "./timing";
 import { highlightShown, textShown } from "./reader-view";
-import { gotoRead, readAddressOf } from "./read-face";
-import { choosePreparedView } from "./prepared-view";
-// The new reading view in scroll mode behind its hidden switch (#802, step 3 of the reader plan #799; ADR 0025):
-// the server's prepared text in the application's own page. What is new in it is checked here: the switch, what an
-// open asks the server for, the guard on a part's HTML, the text's length against the manifest, and that a place
-// saved in one view opens in the other. The reader's own specs run on this view in their project of its own.
+import { gotoRead } from "./read-face";
+// The reading view in scroll mode (#802, step 3 of the reader plan #799; ADR 0025; the only view since #806): the
+// server's prepared text in the application's own page. What is its own is checked here: what an open asks the
+// server for, the guard on a part's HTML, the text's length against the manifest, and that places and bookmarks,
+// also those the earlier EPUB reader saved with a CFI, open on their sentence.
 test.use({ serviceWorkers: "block" });
 installReaderWaitBudget(test);
 const imported: string[] = [];
@@ -77,32 +76,6 @@ function counted(page: Page) {
   };
 }
 
-test("the address parameter chooses the view and is remembered; without it the reader is today's", async ({ page }) => {
-  const { ebook } = await bookWith(page, `Switch ${randomUUID()}`, await readerFixture({ title: `Switch ${randomUUID()}` }));
-  const address = await readAddressOf(page, ebook);
-  // Today's reader: the EPUB in a frame.
-  await gotoRead(page, ebook);
-  await expect(page.frameLocator(".reader-room .reader-viewport iframe").locator("p").first()).toBeVisible();
-  await expect(band(page)).not.toHaveAttribute("data-view", "prepared");
-  // The parameter chooses the new view and leaves the address.
-  await page.goto(`/?reader-view=prepared${address}`);
-  await expect(band(page)).toHaveAttribute("data-view", "prepared");
-  await expect(band(page).locator(".prepared-text p").first()).toBeVisible();
-  await expect(band(page).locator("iframe")).toHaveCount(0);
-  expect(new URL(page.url()).search).toBe("");
-  expect(new URL(page.url()).hash).toBe(address);
-  // Remembered on the device: a plain load shows the new view again.
-  await page.goto("/api/health");
-  await page.goto(`/${address}`);
-  await expect(band(page)).toHaveAttribute("data-view", "prepared");
-  await expect(band(page).locator(".prepared-text p").first()).toBeVisible();
-  // And the parameter takes it away again.
-  await page.goto("/api/health");
-  await page.goto(`/?reader-view=epub${address}`);
-  await expect(page.frameLocator(".reader-room .reader-viewport iframe").locator("p").first()).toBeVisible();
-  expect(await page.evaluate(() => localStorage.getItem("sonder-reader-view"))).toBe(null);
-});
-
 test("an open asks for each resource once, loads only the part it shows, and neither the sentences, the EPUB, epub.js nor DOMPurify", async ({ page }) => {
   test.setTimeout(120000);
   const { book, ebook, map } = await longBook(page, `Requests ${randomUUID()}`);
@@ -111,7 +84,6 @@ test("an open asks for each resource once, loads only the part it shows, and nei
   // The narration is in the last chapter: the place being opened is far into the book.
   const last = map.intervals.filter((interval: any) => interval.section === manifest.sections.at(-1).index).sort((a: any, b: any) => a.start - b.start);
   await narrateAt(page, book, last[20].start + 0.5);
-  await choosePreparedView(page);
   const requests = counted(page);
   await gotoRead(page, ebook);
   const room = page.locator(".reader-room");
@@ -135,7 +107,7 @@ test("an open asks for each resource once, loads only the part it shows, and nei
   const loaded = ((await band(page).getAttribute("data-parts")) || "").split(",").map(Number);
   expect(loaded.length).toBeLessThanOrEqual(3);
   expect(Math.min(...loaded)).toBeGreaterThan(manifest.parts.length - 5);
-  // The scripts of today's reader are not loaded: the build names their chunks after what they hold.
+  // Neither epub.js nor DOMPurify is loaded (#806 removed them): the build names their chunks after what they hold.
   const scripts = requests.of(/^\/assets\/.*\.js$/);
   expect(scripts.length).toBeGreaterThan(0);
   for (const script of scripts) {
@@ -157,7 +129,6 @@ test("a second open of an unchanged book transfers neither the manifest, its par
     `Warm ${randomUUID()}`,
     await preparedFixture({ files: { "pic.png": tinyPng }, chapters: { "one.xhtml": `<h1>Warm ${randomUUID()}</h1><p>A first sentence. A second one.</p><p><img src="pic.png" alt=""/></p>` } }),
   );
-  await choosePreparedView(page);
   const session = await page.context().newCDPSession(page);
   await session.send("Network.enable");
   const urls = new Map<string, string>();
@@ -230,7 +201,6 @@ test("a hostile part runs nothing in the application: its nodes are made from th
   page.on("request", (request) => {
     if (request.method() === "POST" && pathOf(request) === `/api/reader/${ebook}/prepared-refused`) reports.push(request.postDataJSON());
   });
-  await choosePreparedView(page);
   await gotoRead(page, ebook);
   const text = band(page).locator(".prepared-text");
   await expect(text.getByText("The honest sentence.")).toBeVisible();
@@ -284,7 +254,6 @@ test("each part's text in the page is as long as the manifest says", async ({ pa
     await bookWith(page, `Counts ${randomUUID()}`, await readerFixture({ title: `Counts ${randomUUID()}`, variant: "text-before-head" })),
     await bookWith(page, `Counts ${randomUUID()}`, await longBookFixture({ chapters: 6, sentences: 500, title: `Counts ${randomUUID()}` })),
   ];
-  await choosePreparedView(page);
   for (const { ebook, sentences } of books) {
     const manifest = await (await page.request.get(`/api/reader/${ebook}/prepared`)).json();
     expect(manifest.problems).toEqual([]);
@@ -322,10 +291,9 @@ test("each part's text in the page is as long as the manifest says", async ({ pa
 
 test("the narrated sentence is marked and followed, a long press listens from there, and a scroll by hand pages away and saves the place", async ({ page }) => {
   test.setTimeout(150000);
-  const { book, ebook, sentences, map } = await longBook(page, `Both views ${randomUUID()}`);
+  const { book, ebook, sentences, map } = await longBook(page, `Followed ${randomUUID()}`);
   const first = map.intervals.filter((interval: any) => interval.section === sentences.sections[0].index).sort((a: any, b: any) => a.start - b.start);
   await narrateAt(page, book, first[20].start + 0.5);
-  await choosePreparedView(page);
   await gotoRead(page, ebook);
   const room = page.locator(".reader-room");
   // Following: the narrated sentence is marked and in view.
@@ -361,21 +329,20 @@ test("the narrated sentence is marked and followed, a long press listens from th
   expect(await textShown(room, placeText)).toBe(true);
 });
 
-test("a place and a bookmark saved in one view open in the other", async ({ page }) => {
+test("a place and a bookmark saved here open again, and so does a bookmark the earlier reader saved with a CFI", async ({ page }) => {
   test.setTimeout(150000);
   // With "Follow the narration" off (Settings › Playback) the reader opens at the saved place, not at the narration.
   await page.addInitScript(() => localStorage.setItem("sonder-follow-narration", "off"));
-  const { ebook, sentences } = await bookWith(page, `Both views ${randomUUID()}`, await longBookFixture({ chapters: 8, sentences: 300, title: `Both views ${randomUUID()}` }));
+  const { ebook, sentences } = await bookWith(page, `Places ${randomUUID()}`, await longBookFixture({ chapters: 8, sentences: 300, title: `Places ${randomUUID()}` }));
   const paragraphs = sentences.sections.flatMap((section: any) => section.paragraphs);
   const textOf = (id: string) => paragraphs.find((paragraph: any) => paragraph.id === id).text;
   const state = async () => (await page.request.get(`/api/reader/${ebook}/state`)).json();
   const address = await gotoRead(page, ebook);
   const room = page.locator(".reader-room");
-  const open = async (view: "prepared" | "epub") => {
+  const open = async () => {
     await page.goto("/api/health");
-    await page.goto(`/?reader-view=${view}${address}`);
-    if (view === "prepared") await expect(band(page).locator(".prepared-text p").first()).toBeVisible();
-    else await expect(page.frameLocator(".reader-room .reader-viewport iframe").locator("p").first()).toBeVisible();
+    await page.goto(`/${address}`);
+    await expect(band(page).locator(".prepared-text p").first()).toBeVisible();
   };
   const showControls = async () => {
     if (await room.locator(".reader-topbar").isVisible()) return;
@@ -390,48 +357,47 @@ test("a place and a bookmark saved in one view open in the other", async ({ page
     await page.locator(".reader-pages-bookmark-open", { hasText: text.slice(0, 40) }).click();
   };
 
-  // The new view: scrolled by hand, the place is saved as a sentence, with no CFI.
-  await open("prepared");
+  // Scrolled by hand, the place is saved as a sentence, with no CFI.
+  await open();
   await band(page).hover();
   await page.waitForTimeout(1500);
   await page.mouse.wheel(0, 5000);
   await expect.poll(async () => (await state()).checkpoint?.origin, { timeout: 15000 }).toBe("reading");
-  const fromNew = (await state()).checkpoint.locator;
-  expect(fromNew.cfi).toBeUndefined();
-  expect(fromNew.paragraphId).not.toBe(paragraphs[0].id);
-  expect(await textShown(room, textOf(fromNew.paragraphId))).toBe(true);
-  // A bookmark made in the new view, on the sentence at the top of the band.
+  const scrolled = (await state()).checkpoint.locator;
+  expect(scrolled.cfi).toBeUndefined();
+  expect(scrolled.paragraphId).not.toBe(paragraphs[0].id);
+  expect(await textShown(room, textOf(scrolled.paragraphId))).toBe(true);
+  // A bookmark, on the sentence at the top of the band.
   await showControls();
   await room.locator(".reader-bookmark-toggle").click();
   await expect.poll(async () => (await state()).bookmarks.length).toBe(1);
-  const madeInNew = (await state()).bookmarks[0];
-  expect(madeInNew.locator.paragraphId).toBe(fromNew.paragraphId);
-  expect(madeInNew.label).toBe(textOf(fromNew.paragraphId).slice(0, 90));
+  const made = (await state()).bookmarks[0];
+  expect(made.locator.paragraphId).toBe(scrolled.paragraphId);
+  expect(made.label).toBe(textOf(scrolled.paragraphId).slice(0, 90));
 
-  // Today's reader opens at that place, and opens that bookmark from its page.
-  await open("epub");
-  await expect.poll(() => textShown(room, textOf(fromNew.paragraphId)), { timeout: READER_WAIT_MS.followHighlight }).toBe(true);
-  // It goes to another chapter by its Chapters page: a place of its own, saved with a CFI.
+  // Opened again, the reader is at that place; it goes to another chapter by its Chapters page, a place of its own.
+  await open();
+  await expect.poll(() => textShown(room, textOf(scrolled.paragraphId)), { timeout: READER_WAIT_MS.followHighlight }).toBe(true);
   await showControls();
   await room.locator(".reader-player").getByRole("button", { name: "Chapters", exact: true }).click();
   await page.locator(".reader-pages-chapter").nth(5).click();
   const sixth = sentences.sections[5];
   await expect.poll(async () => (await state()).checkpoint?.locator.section, { timeout: 15000 }).toBe(sixth.index);
-  const fromOld = (await state()).checkpoint.locator;
-  expect(fromOld.cfi).toBeTruthy();
-  await openBookmark(textOf(madeInNew.locator.paragraphId));
-  await expect.poll(() => textShown(room, textOf(madeInNew.locator.paragraphId)), { timeout: READER_WAIT_MS.followHighlight }).toBe(true);
-  // A bookmark made in today's reader, far from both places.
+  const chapter = (await state()).checkpoint.locator;
+  expect(chapter.cfi).toBeUndefined();
+  await openBookmark(textOf(made.locator.paragraphId));
+  await expect.poll(() => textShown(room, textOf(made.locator.paragraphId)), { timeout: READER_WAIT_MS.followHighlight }).toBe(true);
+  // A bookmark the earlier EPUB reader saved, far from both places: its locator has a CFI as well as the sentence.
   const far = sentences.sections[7].paragraphs[200];
   expect((await page.request.post(`/api/reader/${ebook}/bookmarks`, { data: { id: `old-${randomUUID()}`, label: far.text.slice(0, 90), locator: { cfi: "epubcfi(/6/2!/4/2)", section: sentences.sections[7].index, paragraphId: far.id, progression: 0.9 } } })).ok()).toBe(true);
 
-  // The new view opens at the place today's reader saved, and opens today's bookmark from its page.
-  await open("prepared");
-  await expect.poll(() => textShown(room, textOf(fromOld.paragraphId)), { timeout: READER_WAIT_MS.followHighlight }).toBe(true);
+  // Opened again, the reader is at the chapter's place, and opens the earlier reader's bookmark on its sentence.
+  await open();
+  await expect.poll(() => textShown(room, textOf(chapter.paragraphId)), { timeout: READER_WAIT_MS.followHighlight }).toBe(true);
   expect(await textShown(room, far.text)).toBe(false);
   await openBookmark(far.text);
   await expect.poll(() => textShown(room, far.text), { timeout: READER_WAIT_MS.followHighlight }).toBe(true);
-  // Chapters and Search are pages of the new view too: a chapter's start, then a sentence found by its words.
+  // Chapters and Search: a chapter's start, then a sentence found by its words.
   await showControls();
   await room.locator(".reader-player").getByRole("button", { name: "Chapters", exact: true }).click();
   await page.locator(".reader-pages-chapter").nth(2).click();
@@ -451,7 +417,7 @@ const footError = (page: Page) => page.locator(".reader-room .reader-player > .r
 const toEnd = (page: Page) => band(page).locator(".prepared-scroll").evaluate((scroller) => scroller.scrollTo(0, scroller.scrollHeight));
 /**
  * Forgets what this device stored of the user's state of a book at its last open (`reader-state:<id>`, and the
- * details today's reader stores, `reader-book:<id>`): since #805 the reader opens with them when the server does not
+ * details the earlier reader stored, `reader-book:<id>`): since #805 the reader opens with them when the server does not
  * answer, so a device that has them never says the book could not be loaded for that. Run on a page of the app's
  * origin with no app open, which would store them again.
  */
@@ -486,7 +452,6 @@ test("a part that always fails is asked for three times, then the foot says so a
   expect(manifest.parts.length).toBeGreaterThan(3);
   let failing = true;
   await page.route(/\/prepared\/[0-9a-f]+\/parts\/1$/, (route) => (failing ? route.fulfill({ status: 500, json: { error: "The server's own sentence." } }) : route.continue()));
-  await choosePreparedView(page);
   const requests = counted(page);
   await gotoRead(page, ebook);
   await expect(band(page).locator(".prepared-part").first()).toBeVisible();
@@ -520,7 +485,6 @@ test("a part answered with 429 is not asked for again by itself", async ({ page 
   await page.addInitScript(() => localStorage.setItem("sonder-follow-narration", "off"));
   const { ebook } = await bookWith(page, `Limited part ${randomUUID()}`, await longBookFixture({ chapters: 12, sentences: 400, title: `Limited part ${randomUUID()}` }));
   await page.route(/\/prepared\/[0-9a-f]+\/parts\/1$/, (route) => route.fulfill({ status: 429, headers: { "Retry-After": "60" }, json: { error: "Rate limit exceeded, retry in 1 minute" } }));
-  await choosePreparedView(page);
   const requests = counted(page);
   await gotoRead(page, ebook);
   await expect(band(page).locator(".prepared-part").first()).toBeVisible();
@@ -534,7 +498,6 @@ test("a part answered with 429 is not asked for again by itself", async ({ page 
 test("a book whose manifest, saved place or first part cannot be loaded says so in the foot after three tries, in the reader's words", async ({ page }) => {
   test.setTimeout(150000);
   const { ebook } = await bookWith(page, `Failing book ${randomUUID()}`, await readerFixture({ title: `Failing book ${randomUUID()}` }));
-  await choosePreparedView(page);
   for (const [what, pattern] of [
     ["the manifest", new RegExp(`/api/reader/${ebook}/prepared$`)],
     ["the saved place", new RegExp(`/api/reader/${ebook}/state$`)],
@@ -576,7 +539,6 @@ test("a book whose manifest, saved place or first part cannot be loaded says so 
 
 test("without a connection the reader says in its own words that this view needs one", async ({ page, context }) => {
   const { book, ebook } = await bookWith(page, `Offline ${randomUUID()}`, await readerFixture({ title: `Offline ${randomUUID()}` }));
-  await choosePreparedView(page);
   // The app is loaded and the book chosen; then the connection goes and Read is opened.
   await gotoRead(page, ebook);
   await expect(band(page).locator(".prepared-text p").first()).toBeVisible();
@@ -599,7 +561,7 @@ test("without a connection the reader says in its own words that this view needs
     await expect(page.locator("nav[aria-label='Main']").first()).toBeVisible();
     await context.setOffline(true);
     await page.evaluate((workId) => { location.hash = `#read/${encodeURIComponent(workId)}`; }, book.workId);
-    await expect(footError(page)).toHaveText("This book needs a connection to be read in this view.", { timeout: 20000 });
+    await expect(footError(page)).toHaveText("This book needs a connection to be read.", { timeout: 20000 });
     await expect(page.locator(".reader-room")).not.toContainText(/Failed to fetch|NetworkError/);
     // Back online, Retry opens the book.
     await context.setOffline(false);
@@ -616,7 +578,6 @@ test("reading far: a part is asked for once however often it comes back, and nev
   const manifest = await (await page.request.get(`/api/reader/${ebook}/prepared`)).json();
   expect(manifest.parts.length).toBeGreaterThan(10);
   await page.addInitScript(() => localStorage.setItem("sonder-follow-narration", "off"));
-  await choosePreparedView(page);
   const requests = counted(page);
   await gotoRead(page, ebook);
   await expect(band(page).locator(".prepared-part").first()).toBeVisible();
@@ -650,7 +611,6 @@ test("a scroll that no wheel or touch made (a scrollbar, a key) pages away and s
   const { book, ebook, map, sentences } = await longBook(page, `Scrollbar ${randomUUID()}`);
   const first = map.intervals.filter((interval: any) => interval.section === sentences.sections[0].index).sort((a: any, b: any) => a.start - b.start);
   await narrateAt(page, book, first[20].start + 0.5);
-  await choosePreparedView(page);
   await gotoRead(page, ebook);
   const room = page.locator(".reader-room");
   await expect(room).toHaveAttribute("data-current-passage", first[20].paragraphId, { timeout: READER_WAIT_MS.followHighlight });
@@ -662,21 +622,20 @@ test("a scroll that no wheel or touch made (a scrollbar, a key) pages away and s
   await expect.poll(async () => (await (await page.request.get(`/api/reader/${ebook}/state`)).json()).checkpoint?.origin, { timeout: 15000 }).toBe("reading");
 });
 
-test("today's reader, without the switch, opens a place that names only a sentence on that sentence, also when its first display is slow", async ({ page, browserName }) => {
+test("a place saved on another device, also one the earlier reader saved with a CFI, opens on its sentence when the first display is slow", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "the slow first display is made by slowing the processor through Chromium's protocol");
   test.setTimeout(180000);
-  // The new view saves places without a CFI (#802). Today's reader is not changed for them: it already opens such a
-  // place by its sentence, and this holds it to that, with the processor slowed so that its first display is late.
+  // Places are sentences (#802); the earlier EPUB reader saved a CFI beside the sentence, and the live library holds
+  // such places. The reader opens one by its sentence, with the processor slowed so that its first display is late.
   await page.addInitScript(() => localStorage.setItem("sonder-follow-narration", "off"));
   const { ebook, sentences } = await bookWith(page, `Sentence place ${randomUUID()}`, await longBookFixture({ chapters: 8, sentences: 300, title: `Sentence place ${randomUUID()}` }));
   const section = sentences.sections[5];
   const sentence = section.paragraphs[120];
-  expect((await page.request.put(`/api/reader/${ebook}/progress`, { data: { locator: { section: section.index, paragraphId: sentence.id, quote: sentence.text, progression: 0.7 }, baseRevision: 0, eventId: `place-${randomUUID()}`, deviceId: "another-device", updatedAt: Date.now(), origin: "reading" } })).ok()).toBe(true);
+  expect((await page.request.put(`/api/reader/${ebook}/progress`, { data: { locator: { cfi: "epubcfi(/6/14!/4/2)", section: section.index, paragraphId: sentence.id, quote: sentence.text, progression: 0.7 }, baseRevision: 0, eventId: `place-${randomUUID()}`, deviceId: "another-device", updatedAt: Date.now(), origin: "reading" } })).ok()).toBe(true);
   const session = await page.context().newCDPSession(page);
   await session.send("Emulation.setCPUThrottlingRate", { rate: 6 });
   await gotoRead(page, ebook);
   const room = page.locator(".reader-room");
-  await expect(band(page)).not.toHaveAttribute("data-view", "prepared");
   await expect.poll(() => textShown(room, sentence.text), { timeout: 90000 }).toBe(true);
   await session.send("Emulation.setCPUThrottlingRate", { rate: 1 });
   // It is still the saved place: the head names its chapter, and nothing was saved over it.

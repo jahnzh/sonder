@@ -9,11 +9,11 @@
  * before Keep existed, then saves the missing files of each kept book, one book after another: the recording's
  * tracks first, then the chosen EPUB, then the pair's reading sync map (#551). An EPUB, a text or a map that arrives
  * later (a new chosen EPUB, a map that became ready, a map or a text prepared again) is missing at the next run and
- * saved then. The EPUB's prepared text (#805) is fetched quietly after the run's saves, for each complete book, while
- * Keep keeps EPUB files (`KEEP_EPUB_FILE`): the book reads from its EPUB, so the text never makes it Not complete and
- * a failure is only logged and tried again at the next run. Once Keep no longer keeps EPUB files (step 7 of #799)
- * the text is the book's file, saved last in its save, and a kept EPUB from before is removed at the run that finds
- * its prepared text complete.
+ * saved then. The EPUB's prepared text (#805) is the book's file since Keep keeps no EPUB files (`KEEP_EPUB_FILE`
+ * off, step 7 of #799): it is saved last in its save, and a kept EPUB from before is removed at the run that finds its
+ * prepared text complete. With `KEEP_EPUB_FILE` on, the text would be fetched quietly after the run's saves, for each
+ * complete book: the book read from its EPUB, so the text never made it Not complete and a failure was only logged
+ * and tried again at the next run.
  *
  * Network failures and a closed or frozen tab interrupt a save; it resumes by itself at the next run. A failed save
  * (the source refused, the account is signed out, the device is full) waits for Retry and is tried again by itself

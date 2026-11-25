@@ -18,7 +18,6 @@ import ts from "typescript";
  * They stay styled although no file of the app names them.
  */
 export const LIBRARY_CLASSES = {
-  "epub-container": "epub.js (its stage puts the view container in this class)",
   "lucide-pause": "lucide-react (every icon carries `lucide-<icon name>`)",
 };
 

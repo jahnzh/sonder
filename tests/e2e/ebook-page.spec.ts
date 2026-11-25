@@ -82,7 +82,7 @@ async function openFromLibrary(page: Page, title: string) {
 }
 async function closeReader(page: Page) {
   const room = page.locator(".reader-room");
-  await expect(room.locator(".reader-viewport iframe")).toBeVisible();
+  await expect(room.locator(".reader-viewport .prepared-text")).toBeVisible();
   if (!(await room.locator(".reader-topbar").isVisible())) {
     const box = (await room.locator(".reader-viewport").boundingBox())!;
     await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
@@ -176,8 +176,8 @@ test("the administrator's Ebook page: editions and checks, shared default and Re
     test.info().annotations.push({ type: "part skipped", description: NO_BLOB_STORE });
     return;
   }
-  // A copy of the edition on this device, as the reader's offline save writes it where there is no private file
-  // system (Firefox's headless profile never finishes the reader's own save: its storage.persist() does not settle).
+  // A copy of the edition's EPUB on this device, as Keep and the reader wrote it before #806 where there is no private
+  // file system: neither writes one now, but a copy from before stays until it is removed.
   const { fingerprint } = (await (await page.request.get(`/api/reader/${encodeURIComponent(matching)}`)).json()) as { fingerprint: string };
   await page.evaluate(
     async ({ id, fingerprint }) => {
@@ -218,8 +218,8 @@ test("the administrator's Ebook page: editions and checks, shared default and Re
     };
   }), matching)).toBe(false);
 
-  // The reader then reads the edition from the server.
-  const fetched = page.waitForRequest((request) => request.url().endsWith(`/api/ebooks/${encodeURIComponent(matching)}/file`));
+  // The reader then reads the edition from the server: its prepared text (#806).
+  const fetched = page.waitForRequest((request) => new URL(request.url()).pathname === `/api/reader/${encodeURIComponent(matching)}/prepared`);
   await page.getByRole("button", { name: "Back to the book", exact: true }).click();
   await details(page).getByRole("button", { name: "Read", exact: true }).click();
   await fetched;

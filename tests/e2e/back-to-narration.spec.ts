@@ -1,4 +1,4 @@
-// @projects firefox, webkit-iphone-now-playing, prepared-view
+// @projects firefox, webkit-iphone-now-playing
 import {test,expect,type Page} from "@playwright/test";
 import {readFileSync} from "node:fs";
 import {randomUUID} from "node:crypto";
@@ -66,7 +66,7 @@ async function openAt(page:Page,book:any,position:number,track=0){
  expect((await response.json()).progress.position).toBe(position);
  await page.goto("/");
  await openRead(page);
- // The book's pages are in the frame: before that, Contents has no view to move.
+ // The book's text is in the band: before that, Contents has no view to move.
  await expect(bookText(page,".inline-reader").locator("p").first()).toBeAttached({timeout:READER_WAIT_MS.followHighlight});
 }
 // Opened on a narrated sentence: the reader follows it.
@@ -256,7 +256,6 @@ test("sequence 2: F inside the pause after a Contents choice keeps the listening
   await openFollowing(page,book,interval);
   const room=page.locator(".inline-reader");
   await expectHighlightDrawn(room);
-  await expect(pagesOf(page)).not.toHaveAttribute("data-jumping",/.*/);
   const before=await manualSaves(page);
   // Chapter one by hand, then F well inside the pause after which it would be saved.
   expect(await contentsThen(page,0,"F")).toBeLessThan(400);
@@ -265,13 +264,11 @@ test("sequence 2: F inside the pause after a Contents choice keeps the listening
  });
 });
 
-// The saved place (a sentence without a CFI) is restored by a display of our own, which opens its chapter with
-// the pages hidden: it landed once the sentence is in the frame and the pages are shown again. A Contents
-// choice before that can be undone by the restore's last step.
+// The saved place (a sentence) is restored by a display of our own: it landed once the sentence is in the band. A
+// Contents choice before that can be undone by the restore's last step.
 async function restored(page:Page,manifest:any,paragraphId:string){
  const text=manifest.sections.flatMap((section:any)=>section.paragraphs).find((p:any)=>p.id===paragraphId).text.trim();
  await expect(bookText(page,".inline-reader").getByText(text.slice(0,24))).toBeVisible();
- await expect(pagesOf(page)).not.toHaveAttribute("data-jumping",/.*/);
 }
 // Sequence 6: the audio scrubber decides from where the scrub ends. Desktop width: the player bar and the
 // Contents sidebar are always shown. The map starts 40 s into the file: before that there is no narrated
@@ -348,7 +345,6 @@ test("sequence 6: the audio scrubber from a narrated sentence to before the firs
   // The opening follow jump has shown its sentence: a Contents choice now is not undone by its last display.
   const room=page.locator(".inline-reader");
   await expectHighlightDrawn(room);
-  await expect(room.locator(".reader-viewport")).not.toHaveAttribute("data-jumping",/.*/);
   expect(await contentsThenScrub(page,gap,"mouse")).toBeLessThan(400);
   // The narration is before the map's first sentence now: nothing replaces the chapter chosen by hand.
   const slider=room.locator(".reader-audio-timeline input[type=range]");
@@ -393,7 +389,6 @@ test("sequence 6: the audio scrubber from a narrated sentence into a gap follows
   await openFollowing(page,book,interval);
   const room=page.locator(".inline-reader");
   await expectHighlightDrawn(room);
-  await expect(pagesOf(page)).not.toHaveAttribute("data-jumping",/.*/);
   const before=await manualSaves(page);
   expect(await contentsThenScrub(page,gap,"mouse")).toBeLessThan(400);
   const slider=room.locator(".reader-audio-timeline input[type=range]");
@@ -416,7 +411,6 @@ test("gap case: Back to narration in a gap is offered and returns to the last na
   const room=page.locator(".inline-reader");
   await timedWait("follow-highlight",()=>expect(room).toHaveAttribute("data-current-passage",last.paragraphId,{timeout:READER_WAIT_MS.followHighlight}),{testName:test.info().title});
   await expectHighlightDrawn(room);
-  await expect(pagesOf(page)).not.toHaveAttribute("data-jumping",/.*/);
   const back=room.getByRole("button",{name:"Back to narration",exact:true});
   await expect(back).toBeDisabled();
   const sidebar=room.getByLabel("Contents sidebar");
@@ -461,7 +455,6 @@ test("review: the audio scrubber released before the first sentence of another f
   await openFollowing(page,book,interval,1);
   const room=page.locator(".inline-reader");
   await expectHighlightDrawn(room);
-  await expect(pagesOf(page)).not.toHaveAttribute("data-jumping",/.*/);
   // Chapter one by hand, then the scrubber released before the first sentence of the first file.
   const target=before;
   expect(await contentsThenScrub(page,target,"mouse",0)).toBeLessThan(400);
@@ -522,7 +515,6 @@ test("review: F on a cached map the server has not confirmed yet keeps a Content
    await expect.poll(()=>asked).toBeGreaterThan(0);
    const room=page.locator(".inline-reader");
    await expectHighlightDrawn(room);
-   await expect(pagesOf(page)).not.toHaveAttribute("data-jumping",/.*/);
    // Chapter one by hand, then F inside its pause.
    expect(await contentsThen(page,0,"F")).toBeLessThan(400);
    // Following the cached map is unchanged; the chapter chosen is still saved.

@@ -120,7 +120,7 @@ const errorTexts: Record<ReaderError, string> = {
   "no-recording": "Choose this recording and prepare its reading sync first.",
   "text-load": "This part of the book could not be loaded.",
   "book-load": "This book could not be loaded.",
-  "book-offline": "This book needs a connection to be read in this view.",
+  "book-offline": "This book needs a connection to be read.",
 };
 
 const noticeTexts: Record<ReaderNotice, string> = {

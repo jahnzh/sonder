@@ -17,13 +17,14 @@ export function cspMode(value = process.env.CSP_MODE): CspMode {
 
 // What the app really needs, found in the built shell and src/:
 // - script-src 'self' only: the Vite build emits no inline script (the build id is compiled into the bundle).
-// - style-src 'unsafe-inline': Radix injects <style> elements. blob: and data: let a reader frame, which inherits this
-//   policy, load the stylesheets epub.js rewrites to blob: URLs.
+// - style-src 'unsafe-inline': Radix injects <style> elements, and the reader sets its look as style attributes. blob:
+//   and data: are what the removed epub.js reader frame needed (#806); they go once production's reports show no
+//   other use.
 // - img-src https:: Hardcover and torrent-site cover URLs are stored as https:// links and shown directly.
 // - connect-src 'self': the client only calls its own origin; Hardcover, TorBox and the sources are server-side.
-// - base-uri 'self': epub.js sets a same-origin <base> in the documents it parses for the reader, and the browser applies
-//   this policy to them. The app's own shell has none.
-// - frame-src blob:: reader frames and documents the page builds from Blobs; srcdoc frames are not subject to it.
+// - base-uri 'self': the app's own shell has no <base>. (The removed epub.js reader set one in its frames, #806.)
+// - frame-src blob:: what the removed epub.js reader frames needed (#806); it goes once production's reports show no
+//   other use.
 const DIRECTIVES = [
   "default-src 'self'",
   "script-src 'self'",

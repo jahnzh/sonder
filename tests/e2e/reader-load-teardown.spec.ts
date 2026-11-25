@@ -1,13 +1,11 @@
-// @projects firefox, mobile-chrome, mobile-firefox, mobile-safari, webkit-iphone-now-playing, mobile-iphone-slice14, prepared-view
+// @projects firefox, mobile-chrome, mobile-firefox, mobile-safari, webkit-iphone-now-playing, mobile-iphone-slice14
 import {test,expect,type Page} from "@playwright/test";
 import JSZip from "jszip";
 import { gotoRead } from "./read-face";
 import {textFrame} from "./reader-view";
-import {onPreparedView} from "./prepared-view";
-// The reader torn down while epub.js is still opening its book (#427). Destroying an epub.js book whose
-// navigation or opening is still pending made epub.js's own later callbacks throw page errors such as
-// "Cannot read properties of undefined (reading 'navigation')", "(reading 'package')" or "(reading 'displayOptions')".
-// A large book (about 12,000 sentences) keeps the opening window wide enough to land in. Switching the reading
+// The reader torn down while it is still opening its book (#427): its saved state has arrived and the prepared text
+// (#802) is still being prepared or loaded. The reader of the EPUB's frame once threw page errors from its own later
+// callbacks here; a teardown must leave nothing running that does. A large book (about 12,000 sentences) keeps the opening window wide enough to land in. Switching the reading
 // mode and crossing the 900 px breakpoint do not remount the reader, so only closing and reopening does here.
 // The book is a standalone ebook: it has no library row and never becomes the player's book.
 test.use({serviceWorkers:"block"});
@@ -42,15 +40,14 @@ function recordErrors(page:Page){
 }
 const reader=(page:Page)=>page.getByRole("dialog", { name: "Now playing", exact: true });
 const pages=(page:Page)=>textFrame(reader(page));
-// The reader's manifest has arrived, so the next render starts opening the EPUB.
-// (On the new view, #802, the reader's own data is its saved state; the prepared text opens next.)
-const manifestLoaded=(page:Page,id:string)=>page.waitForResponse(response=>response.url().endsWith(`/api/reader/${encodeURIComponent(id)}${onPreparedView()?"/state":""}`)&&response.request().method()==="GET");
-// Each cycle tears the reader down a little later into the opening (0 to 360 ms after its manifest arrived),
-// sweeping the window where epub.js is still loading the book. On main, 62 of 200 such cycles threw.
+// The reader's own data, its saved state, has arrived; the prepared text opens next.
+const manifestLoaded=(page:Page,id:string)=>page.waitForResponse(response=>response.url().endsWith(`/api/reader/${encodeURIComponent(id)}/state`)&&response.request().method()==="GET");
+// Each cycle tears the reader down a little later into the opening (0 to 360 ms after its state arrived),
+// sweeping the window where the reader is still loading the book. With the EPUB's frame, 62 of 200 such cycles threw.
 const delay=(cycle:number)=>cycle*40;
 async function settle(page:Page){
  await expect(pages(page)).toBeVisible({timeout:60_000});
- // epub.js callbacks of a destroyed book run after its view is gone; give them time to fire.
+ // Callbacks of a torn-down reader would run after its view is gone; give them time to fire.
  await page.waitForTimeout(1500);
 }
 

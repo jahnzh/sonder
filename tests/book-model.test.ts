@@ -317,6 +317,21 @@ test("the Keep row counts the tracks, the EPUB and the map, and names what is ke
   assert.equal(keepState({ keep: false, hold: complete, saving: null, ebookSize: null, hasRecording: true, needs: needs(3, 5, null) }).line, "Audiobook · 3 MB");
 });
 
+test("without EPUB files (#806) the kept prepared text is the book's ebook: its line and its size", () => {
+  const r = recording("r1");
+  const complete = deviceHold(r, [file("r1", 1), file("r1", 2), file("r1", 3)], []);
+  const text = (complete: boolean) => ({ id: "e1", complete, size: 50_000, counted: true });
+  const needs = (filesSaved: number, filesTotal: number, done: boolean, withTracks = true) => ({
+    filesSaved, filesTotal, complete: filesSaved === filesTotal, tracks: withTracks ? r.tracks : [], ebook: null, text: text(done),
+  });
+  assert.equal(keepState({ keep: true, hold: complete, saving: null, ebookSize: null, hasRecording: true, needs: needs(4, 4, true) }).line, "Audiobook and ebook · 3 MB");
+  assert.equal(keepState({ keep: true, hold: complete, saving: null, ebookSize: null, hasRecording: true, needs: needs(3, 4, false) }).line, "Not complete · 3 of 4 files");
+  const none = deviceHold(null, [], []);
+  assert.equal(keepState({ keep: true, hold: none, saving: null, ebookSize: null, hasRecording: false, needs: needs(1, 1, true, false) }).line, "Ebook · 50 KB");
+  // A text fetched beside a kept EPUB (`counted` false) is not the book's ebook.
+  assert.equal(keepState({ keep: true, hold: none, saving: null, ebookSize: null, hasRecording: false, needs: { ...needs(1, 1, true, false), text: { ...text(true), counted: false } } }).line, null);
+});
+
 // #533: the three states of boards BookNotInLibrary, BookNothing and BookPdf, each read as a whole: the place line,
 // which rows have Get and which Get is the main action, Listen and Read, the Reading sync line and the hold reasons.
 const rows = (model: ReturnType<typeof bookModel>) => ({

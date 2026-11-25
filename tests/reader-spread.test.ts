@@ -43,7 +43,7 @@ test("the threshold follows the measure: a larger font falls back to one page so
   assert.equal(spreadHostWidth(840, { ...text, width: 500 }, "paginated"), 840);
 });
 
-test("a spread's host is never narrower than epub.js's minimum, so epub.js always lays out the two pages", () => {
+test("a spread's host is never narrower than the minimum, so the view always lays out the two pages", () => {
   for (const size of [14, 19, 36])
     for (const margin of [8, 20, 80])
       for (const width of [350, 720, 1100])

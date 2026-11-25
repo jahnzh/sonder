@@ -153,7 +153,7 @@ const LATE_CLOSE_MS = 350;
 /**
  * Over the text band while a setting pop-up is open: draws nothing, and takes the tap meant for the text, so that the
  * tap only closes the pop-up. It must not also show or hide the controls, turn a page, follow a link, start Listen
- * from here or move the rail. The epub.js frame and the view of prepared text never see it. The reader mounts one per
+ * from here or move the rail. The view of prepared text never sees it. The reader mounts one per
  * open setting (keyed by it), so a late close left by one setting's catcher never closes the next.
  */
 export function TextCatcher({ viewport, onClose }: { viewport: RefObject<HTMLElement | null>; onClose: () => void }) {

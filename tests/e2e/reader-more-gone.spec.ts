@@ -1,4 +1,4 @@
-// @projects firefox, webkit-iphone-now-playing, prepared-view
+// @projects firefox, webkit-iphone-now-playing
 import { test, expect, type Page, type Route } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";

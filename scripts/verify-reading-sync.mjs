@@ -123,15 +123,14 @@ try {
   const controls = createReaderControls({ page, room });
   // Long-press the sentence that starts with `text` where it is on the page the reader shows.
   const pressSentence = async (text) => {
-    const frameElement = room.locator(".reader-viewport iframe");
-    await expect(frameElement).toBeVisible();
+    const bookText = room.locator(".reader-viewport .prepared-text").first();
+    await expect(bookText).toBeVisible();
     const viewport = await room.locator(".reader-viewport").boundingBox();
-    const frameBox = await frameElement.boundingBox();
-    if (!viewport || !frameBox) throw new Error("The reader viewport has no bounds.");
-    const frame = await (await frameElement.elementHandle()).contentFrame();
+    if (!viewport) throw new Error("The reader viewport has no bounds.");
     const probe = text.trim().split(/\s+/).slice(0, 4).join(" ");
-    const rects = await frame.evaluate((probe) => {
-      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    // The book's text is in the band itself (the prepared text), so its rectangles are already in the page's coordinates.
+    const rects = await bookText.evaluate((root, probe) => {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
       for (let node = walker.nextNode(); node; node = walker.nextNode()) {
         const at = node.data.replace(/\s+/g, " ").indexOf(probe);
         if (at < 0) continue;
@@ -143,7 +142,7 @@ try {
       return [];
     }, probe);
     const point = rects
-      .map((r) => ({ x: frameBox.x + r.x + Math.min(r.width / 2, 20), y: frameBox.y + r.y + r.height / 2 }))
+      .map((r) => ({ x: r.x + Math.min(r.width / 2, 20), y: r.y + r.height / 2 }))
       .find((p) => p.x > viewport.x && p.x < viewport.x + viewport.width && p.y > viewport.y && p.y < viewport.y + viewport.height);
     if (!point) throw new Error(`The sentence "${probe}…" is not on the page the reader shows`);
     await controls.hide();
@@ -154,7 +153,7 @@ try {
     await expect(room.getByRole("status").filter({ hasText: "Listening from here" })).toBeVisible();
   };
   for (const chosen of samples) {
-    await expect(room.locator(".reader-viewport iframe")).toBeVisible();
+    await expect(room.locator(".reader-viewport .prepared-text").first()).toBeVisible();
     await controls.click(room.locator(".reader-topbar").getByRole("button", { name: "Search this book", exact: true }), "Search this book");
     // Search is a page of the book (#590): a result opens the reader there.
     await page.getByRole("searchbox", { name: "Search this book" }).fill(chosen.text);

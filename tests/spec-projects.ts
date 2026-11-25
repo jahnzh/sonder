@@ -22,7 +22,6 @@ export const SPEC_PROJECTS = [
   "mobile-iphone-series-sw",
   "mobile-iphone-slice14",
   "mobile-iphone-slice14-sw",
-  "prepared-view",
 ] as const;
 export type SpecProject = (typeof SPEC_PROJECTS)[number];
 

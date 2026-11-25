@@ -184,14 +184,22 @@ export const readerFileKey = (ebookId: string) => `reader-file:${ebookId}`;
 export const readerTextKey = (ebookId: string) => `reader-text:${ebookId}`;
 
 /**
- * Whether Keep on this device keeps a kept book's EPUB file beside its prepared text (#805). On until step 7 of the
- * reader plan (#806) makes the new reading view the default and removes epub.js, which reads the file. While on, the
- * book reads from the EPUB and the text is no file that decides complete: it is fetched beside it quietly. Turned off,
- * a kept book needs its prepared text only, and a kept EPUB from before is removed once the text that replaces it
- * is complete (`KeptNeeds.dropEpub`); a book kept before that has the EPUB and no text gets its text first.
+ * Whether Keep on this device keeps a kept book's EPUB file beside its prepared text (#805). Off since the reader
+ * reads only the prepared text (step 7 of the reader plan, #806): a kept book needs its prepared text only, and a kept
+ * EPUB from before is removed once the text that replaces it is complete (`KeptNeeds.dropEpub`); a book kept before
+ * that has the EPUB and no text gets its text first. On, the book's EPUB would be kept and the text fetched beside it
+ * quietly, as it was while epub.js read the file.
  */
-export const KEEP_EPUB_FILE = true;
+export const KEEP_EPUB_FILE = false;
 export const readerMapKey = (ebookId: string, recordingId: string) => `reader-map:${ebookId}:${recordingId}`;
+
+/**
+ * The ebook file a kept book keeps, whichever it is: its EPUB while Keep keeps EPUB files, otherwise its prepared text
+ * (#806). What the book's line calls its ebook and what a book with only an ebook is saved under (`ebook:<id>`).
+ */
+export function keptEdition(needs: Pick<KeptNeeds, "ebook"> & Partial<Pick<KeptNeeds, "text">>): { id: string; complete: boolean; size: number } | null {
+  return needs.ebook ?? (needs.text?.counted ? needs.text : null);
+}
 
 /**
  * What a kept book needs on this device (spec #548 "On the device: what a kept book needs"):

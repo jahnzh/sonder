@@ -1,4 +1,4 @@
-// @projects firefox, webkit-iphone-now-playing, prepared-view
+// @projects firefox, webkit-iphone-now-playing
 // #742: on a partly mapped edition (Consider Phlebas), the live reader check's long-press got no "Listening from here".
 // It pressed near the left edge of the narrated sentence's highlight box; a sentence that starts in the middle of a
 // line and runs on has a box from the text's left edge, so the press landed on the sentence before, which the map
@@ -14,7 +14,6 @@ import {playFromLibrary} from "./library-play";
 import {narratedPressPoint} from "../../scripts/live-reader-controls.mjs";
 import {textFrame} from "./reader-view";
 import { installReaderFrames } from "./reader-frames";
-import {onPreparedView} from "./prepared-view";
 
 test.use({viewport:{width:390,height:844}});
 installReaderWaitBudget(test);
@@ -75,12 +74,8 @@ async function seek(page:Page,to:number){
 async function longPressAt(page:Page,point:{x:number;y:number}){
  await page.mouse.move(point.x,point.y);await page.mouse.down();await page.waitForTimeout(800);await page.mouse.up();
 }
-// The live check's earlier point: near the left edge and top of the highlight's bounding box.
-async function boxPoint(room:Locator){
- const box=(await room.locator(".reader-viewport .sonder-follow").first().boundingBox())!;
- return {x:box.x+Math.min(box.width/2,80),y:box.y+Math.min(box.height/2,10)};
-}
-// A point on the first line of the sentence before the narrated one, in the view of prepared text.
+// A point on the first line of the sentence before the narrated one: where the live check's earlier point, near the
+// left edge of a highlight's bounding box, landed.
 async function openingPoint(room:Locator){
  return room.locator(".reader-viewport").evaluate(host=>{
   const span=[...host.querySelectorAll("[data-s]")].find(element=>element.textContent?.includes("The opening sentence"))!;
@@ -88,7 +83,7 @@ async function openingPoint(room:Locator){
   return {x:line.left+Math.min(line.width/2,40),y:line.top+line.height/2};
  });
 }
-// The sentence a press at `point` reaches, by the frame's own caret: the text it starts in.
+// The sentence a press at `point` reaches, by the caret there: the text it starts in.
 async function textAt(room:Locator,point:{x:number;y:number}){
  return room.locator(".reader-viewport").evaluate((host,point)=>{
   for(const frame of (window as any).__readerFrames(host)){
@@ -124,14 +119,14 @@ test("the live check's long-press lands on the narrated sentence of a partly map
  await seek(page,middle);
  await expect(room).toHaveAttribute("data-current-passage",NARRATED,{timeout:READER_WAIT_MS.followHighlight});
  await expect(room).toHaveAttribute("data-controls-visible","false");
- // The narrated sentence starts mid-line: the highlight's box reaches back to the text's left edge, onto the opening sentence.
+ // The narrated sentence starts mid-line: a press must land inside one of its own lines, not before it on that line.
  let point:{x:number;y:number}|null=null,last:{x:number;y:number}|null=null;
  await expect.poll(async()=>{const p=await narratedPressPoint(room);const same=!!p&&!!last&&Math.abs(p.x-last.x)<0.5&&Math.abs(p.y-last.y)<0.5;last=p;if(same)point=p;return same;}).toBe(true);
- // (In the view of prepared text, #802, the highlight is the sentence's own elements and its box starts on the
- // sentence; the point on the unmapped sentence before it is taken from that sentence's own first line.)
- const unmapped=()=>onPreparedView()?openingPoint(room):boxPoint(room);
+ // The highlight is the sentence's own elements (#802); the point on the unmapped sentence before it is taken from
+ // that sentence's own first line.
+ const unmapped=()=>openingPoint(room);
  const old=await unmapped();
- expect(await textAt(room,old),"the box point is on the sentence before the narrated one").toBe("opening");
+ expect(await textAt(room,old),"the opening point is on the sentence before the narrated one").toBe("opening");
  expect(await textAt(room,point!),"the check's point is on the narrated sentence").toBe("narrated");
  // The press the check makes: Listening from here, and the narration moves to the narrated sentence's start.
  await longPressAt(page,point!);
@@ -144,7 +139,7 @@ test("the live check's long-press lands on the narrated sentence of a partly map
  await page.evaluate(()=>((window as any).__audio as HTMLAudioElement[]).forEach(a=>a.pause()));
  await seek(page,middle);
  await expect(room).toHaveAttribute("data-current-passage",NARRATED);
- // A press on the sentence the map does not cover (where the box point was) says so in the foot, and plays nothing.
+ // A press on the sentence the map does not cover says so in the foot, and plays nothing.
  const before=await position(page);
  await longPressAt(page,await unmapped());
  await expect(message.getByRole("alert")).toHaveText("Prepare a matching audiobook map for this passage first.");

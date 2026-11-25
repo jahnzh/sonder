@@ -213,7 +213,8 @@ test("a paused save waits with Resume after a reload and resumes on Resume; a bo
   await page.goto(address(done.workId));
   await keep(page).click();
   await expect(line(page)).toHaveText(/^Audiobook · 5\.1 MB$/, { timeout: 30_000 });
-  // A kept book whose audio is all here but whose EPUB the server refuses: it is missing a file.
+  // A kept book whose audio is all here but whose ebook's text the server refuses: it is missing a file. Keep keeps the
+  // EPUB's prepared text, not the EPUB (#806), so the refusal is the text's manifest.
   const partial = await importBook(page, unique("No ebook"));
   const epub = await readerFixture({ title: partial.title, bodies: ["<p>One sentence opens the book.</p>", "<p>A second chapter follows.</p>"] });
   const uploaded = await page.request.post(`/api/ebooks/import?workId=${encodeURIComponent(partial.workId)}`, {
@@ -221,7 +222,7 @@ test("a paused save waits with Resume after a reload and resumes on Resume; a bo
   });
   expect(uploaded.ok()).toBe(true);
   const ebookId = (await uploaded.json()).id as string;
-  await page.route(`**/api/ebooks/${encodeURIComponent(ebookId)}/file`, (route) => route.fulfill({ status: 403, body: "" }));
+  await page.route(new RegExp(`/api/reader/${ebookId}/prepared(/|$)`), (route) => route.fulfill({ status: 403, json: { error: "Forbidden" } }));
   // A reload reads the library again, as the app does after its own import: the device's stored library has the book.
   await page.goto(address(partial.workId));
   await page.reload();
@@ -247,7 +248,7 @@ test("a paused save waits with Resume after a reload and resumes on Resume; a bo
   await expect(waitingGroup).toContainText(book.title);
   await expect(waitingGroup).toContainText("Not complete · 0 of 1 files");
   await expect(waitingGroup.getByRole("button", { name: `Resume ${book.title}` })).toBeVisible();
-  // A pause asks for nothing: the book is not under Needs attention (the refused EPUB of the other book is).
+  // A pause asks for nothing: the book is not under Needs attention (the refused text of the other book is).
   await expect(group(page, "Needs attention")).toContainText(partial.title);
   await expect(group(page, "Needs attention")).not.toContainText(book.title);
   await page.evaluate(() => window.dispatchEvent(new Event("online")));

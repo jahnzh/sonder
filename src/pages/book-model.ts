@@ -18,7 +18,7 @@ import {
   type ReadingSyncJobFacts,
 } from "../status-lines";
 import type { Download, DownloadPart, LibraryWork, ReadingSyncSummary, WorkRecording } from "../types";
-import type { KeptNeeds } from "../keep";
+import { keptEdition, type KeptNeeds } from "../keep";
 import { workProgress } from "../work-progress";
 import { audiobookRowLine, lengthLine } from "./audiobook-model";
 
@@ -251,7 +251,7 @@ export function keepState(facts: {
    * What the kept book needs (`keptNeeds`, #551): its files are the tracks, the chosen EPUB and the pair's map, so a
    * kept book reads "Not complete · 11 of 12 files" while its map is missing and "Ebook · 0.6 MB" with only an EPUB.
    */
-  needs?: (Pick<KeptNeeds, "filesTotal" | "filesSaved" | "complete" | "tracks" | "ebook"> & { missing?: readonly unknown[] }) | null;
+  needs?: (Pick<KeptNeeds, "filesTotal" | "filesSaved" | "complete" | "tracks" | "ebook"> & Partial<Pick<KeptNeeds, "text">> & { missing?: readonly unknown[] }) | null;
   /**
    * How the kept book's last save stopped (#552), from its save record and its Keep record: failed (with which
    * failure), paused, or interrupted; null while nothing stopped it.
@@ -275,9 +275,11 @@ export function keepState(facts: {
   if (!keep) return { on: false, line: hasRecording ? kept(hold.audio) : kept("none"), resumable: hasRecording && hold.audio === "partial", ...plain };
   if (needs && needs.filesTotal > 0) {
     const audio = needs.tracks.length > 0;
-    const size = hold.audioSize + (needs.ebook?.complete ? needs.ebook.size : ebookSize ?? 0);
+    // The kept ebook: its EPUB, or where no EPUB file is kept its prepared text (#806).
+    const edition = keptEdition(needs);
+    const size = hold.audioSize + (edition?.complete ? edition.size : ebookSize ?? 0);
     if (needs.complete)
-      return { on: true, line: deviceKeptLine({ audio: audio ? "complete" : "none", filesTotal: needs.filesTotal, filesSaved: needs.filesSaved, ebook: !!needs.ebook, size }), resumable: false, ...plain };
+      return { on: true, line: deviceKeptLine({ audio: audio ? "complete" : "none", filesTotal: needs.filesTotal, filesSaved: needs.filesSaved, ebook: !!edition, size }), resumable: false, ...plain };
     const line = deviceKeptLine({ audio: "partial", filesTotal: needs.filesTotal, filesSaved: needs.filesSaved, ebook: false, size });
     if (stop?.why === "failed") {
       // The audio files are among the missing ones when fewer tracks are here than the recording has.
