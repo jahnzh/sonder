@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
-import { changedStageShardCount, cutOffSummary, dealChangedSpecs, gainedProjects, parseCliArgs, partitionSpecs, processesUnder, selectBrowserScope, specWeight, stopProcessesUnder } from "../scripts/check-local-support.mjs";
+import { browserLevelArgs, changedStageShardCount, checkLevel, cutOffSummary, dealChangedSpecs, gainedProjects, parseCliArgs, partitionSpecs, processesUnder, selectBrowserScope, specWeight, stopProcessesUnder } from "../scripts/check-local-support.mjs";
 import { changedBrowserStages } from "../scripts/check-local.mjs";
 import { formatSummary } from "../scripts/ci-summary.mjs";
 
@@ -68,6 +68,10 @@ test("an unlisted file, an empty change list and --full all run everything", () 
 test("--full is a check-local option and defaults to off", () => {
   assert.equal(parseCliArgs([]).options.full, false);
   assert.equal(parseCliArgs(["--full"]).options.full, true);
+  assert.equal(parseCliArgs(["--level", "full"]).options.level, "full");
+  assert.equal(parseCliArgs(["--level=land"]).options.level, "land");
+  assert.equal(parseCliArgs(["--level", "nightly"]).ok, false);
+  assert.equal(parseCliArgs(["--level"]).ok, false);
   assert.equal(parseCliArgs(["--bail", "--full"]).options.bail, true);
 });
 
@@ -229,4 +233,17 @@ test("stopProcessesUnder stops every process whose working directory is inside t
     }
     fs.rmSync(base, { recursive: true, force: true });
   }
+});
+
+test("the level is --level, else --full or SONDER_CHECK_FULL=1 for full, else SONDER_CHECK_LEVEL, else land (#905)", () => {
+  assert.equal(checkLevel({}, {}), "land");
+  assert.equal(checkLevel({ level: "full" }, {}), "full");
+  assert.equal(checkLevel({ full: true }, {}), "full");
+  assert.equal(checkLevel({}, { SONDER_CHECK_FULL: "1" }), "full");
+  assert.equal(checkLevel({}, { SONDER_CHECK_LEVEL: "full" }), "full");
+  assert.equal(checkLevel({}, { SONDER_CHECK_LEVEL: "everything" }), "land");
+  assert.equal(checkLevel({ level: "land" }, { SONDER_CHECK_FULL: "1" }), "land");
+  assert.deepEqual(browserLevelArgs("land", "full"), ["--project=chromium", "--grep=@smoke"]);
+  assert.deepEqual(browserLevelArgs("full", "full"), []);
+  assert.deepEqual(browserLevelArgs("full", "chromium"), ["--project=chromium"]);
 });

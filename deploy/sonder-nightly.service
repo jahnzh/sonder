@@ -1,0 +1,9 @@
+[Unit]
+Description=Sonder nightly full check of origin/main (scripts/ci-nightly.mjs, #905)
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+ExecStart=@NODE@ @REPO@/scripts/ci-nightly.mjs
+Environment=PATH=@PATH@
+TimeoutStartSec=4h

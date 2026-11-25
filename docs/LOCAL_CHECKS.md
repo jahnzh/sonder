@@ -11,6 +11,10 @@ npm run check -- --bail
 
 `--output-dir` must be a directory that does not exist yet (the runner refuses one that holds another run's files and prints why), with one exception: a directory holding only `ci-ssh.pid`, which `scripts/ci-ssh.sh` makes for its own run and hands to its local fallback; one run takes it (it writes `check-local.claim` in it) and a second is refused. Just before its first stage the runner writes `stage-started` into the report directory: a failed run without that file ended in setup and judged nothing, and `scripts/ci-ssh.sh` / `ci-deck.sh` record such a fallback as `result=local_setup_failed` instead of `failed` (#887).
 
+**Levels (#905).** `--level land`, the default and what lands a change on main: install, build, the unit suite and the browser tests tagged `@smoke` (`{ tag: "@smoke" }`, some fifteen core flows) in Chromium, held to the bar, about 10 minutes. `--level full` (or `--full`, `SONDER_CHECK_FULL=1`, `SONDER_CHECK_LEVEL=full`): the whole browser suite in every project, the nightly, held to no bar. `npm run ci:run -- --level full <sha>` passes the level to the host.
+
+**The nightly (#905).** `scripts/install-nightly.sh` installs a systemd user timer on the coordinator host that runs `scripts/ci-nightly.mjs` at 02:30: `ci-run.sh --level full` on `origin/main`, its output in `artifacts/ci/nightly/<date>-<sha7>.log` and a summary in `artifacts/ci/nightly/latest.json`. It files one `needs-triage` issue per failing test, titled `Nightly: <spec> fails in <project>: <title>`, unless `artifacts/ci/nightly/filed.json` or an open issue already has that title. It never blocks a landing; its failures are fixed forward.
+
 The runner snapshots a committed revision into a disposable directory and runs dependency installation, build/typecheck, unit tests, and browser tests in order. The build runs in production mode so service-worker behavior matches a release; test stages run in test mode. Install or build failures stop the run, but a unit failure still runs the browser stage so the report captures both results. The overall result remains failed and retains the unit exit code even if the browser stage also fails. Use `--bail` to stop after the first failed stage. The runner preserves stage logs and a machine-readable result. The report identifies the source revision and whether the calling checkout has pending changes. Commit changes before using this command to validate them.
 
 The runner compares the selected commit with its merge base with the calling checkout's `origin/main` and selects added, modified, or renamed `tests/e2e/**/*.spec.*` files. Deleted specs, other files, and uncommitted changes are excluded. Only when asked, with `--repeat-changed` or `SONDER_CHECK_REPEAT_CHANGED=1` (off by default since #904; a dispatched check never asks), it runs those specs after the full browser suite with `--repeat-each=2 --workers=1` on a browser-test server of their own, reported as `browser-changed-repeat` with its own stage log: a tool for chasing a flaky test, not a gate. It must pass even when a known-failures list is used. If no spec changed, the stage does not run.
@@ -94,7 +98,7 @@ This command performs local validation. CI triggers, staging and image promotion
 
 ## Stress a browser test
 
-A browser test that passes once can still fail in the full suite on a loaded host. On 2026-11-15 four new tests landed that way, and three tests written off as unreliable turned out to be defects in the app. Before a new or changed browser test lands, run it repeatedly under load:
+A tool for chasing a flaky test, not a step before landing (#905): it runs a test repeatedly under load.
 
 ```bash
 scripts/stress-spec.sh tests/e2e/<file>.spec.ts -g "<title>" --runs 20 --load

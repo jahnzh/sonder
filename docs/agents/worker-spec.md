@@ -15,7 +15,7 @@ Dependencies: `npm ci` runs in the background in a new worktree (log: `.npm-ci.l
 Rules:
 - Do not push, merge or open a PR. Do not run `docker compose`, and do not touch `.env`, `data/` or production media.
 - The WSL host is `192.168.1.119`. Work there only under `~/sonder-replication/`, and never touch `~/sonder-replication/issue6-1793194927`. Live verification scripts (`scripts/verify-*.mjs`) never run on the host.
-- Verify with typecheck and unit tests: `npx tsc --noEmit`, `npx tsx --test <file>` and `npm test`. Run before reporting. Do not run the browser tests or `npm run check`; the coordinator runs them.
+- Verify with the typecheck and the unit files you touch: `npx tsc --noEmit` and `npx tsx --test <file>`. Run before reporting. Do not run the browser tests, `npm test` in full or `npm run check`: the land check and the nightly run them (#905). A browser test takes at most 30 s and loops at most 100 steps (`tests/browser-test-limits.test.mjs`).
 - Make unit tests build every repository, file and directory they need in a temporary directory. `npm run check` runs them in a `git archive` snapshot that has no `.git`, so a test that reads the surrounding checkout passes locally and fails there.
 - Commands that take longer than 90 seconds go in the background with output in a log file that you poll, so you can read coordinator messages between polls: `orca orchestration check --terminal <your_handle> --json`.
 - Check every command flag, option and environment variable with `--help` or grep before you use it or write it into a file. Do not assume one exists.
@@ -28,17 +28,13 @@ Completion: your report lists every bullet of the issue's Proposal, and next to 
 
 ## Coordinator verification
 
-Verification steps run by the coordinator before landing:
+Steps the coordinator runs to land a run's work (#905), without asking the owner:
 
-1. Merge `main`.
-   - After reverting a merge, revert the revert before re-merging the branch; a plain merge brings in only the commits made since.
-2. `tsc` and `npm test`.
-3. `npm run build`.
-4. Run the worker's specs with a distinct `PLAYWRIGHT_PORT`.
-5. Run new or changed e2e specs also with `--repeat-each 2` (tests that reuse a book title break under repeats and combined runs: use a unique title per test).
-6. Mutation proofs via `scripts/mutate.mjs`.
-7. Start committed checks with `npm run ci:run` read with `scripts/ci-result.sh`, never a rerun to get a pass. A plain `git push` of a branch starts its check by itself once the push has landed (#504); do not start a second one for the same commit.
-8. Landing with `scripts/orca-land.sh`.
+1. Merge `main` into each branch, then merge the run's branches into `main` (after reverting a merge, revert the revert before re-merging the branch; a plain merge brings in only the commits made since).
+2. One land check of the merged tip: `npm run ci:run <sha>` (build, unit suite, browser smoke set in Chromium), read with `scripts/ci-result.sh`. A failure is judged at once: fix it, or, for a test that passes when rerun alone, note it as flaky and land. A check cut off by time with no failure does not hold landing.
+3. Land with `scripts/orca-land.sh`, deploy at once with `scripts/deploy-prod.sh <commit>`, and close the issues the run delivered.
+
+The full browser suite runs nightly (`scripts/ci-nightly.mjs`); its failures arrive as issues and are fixed forward. Ask the owner only for an account or a product choice he would notice.
 
 ## Template
 
@@ -139,7 +135,7 @@ Record state and decision notes using `scripts/orca/note.sh state "<text>"` and 
 
 Wakeups: the prompt is one line, `Read artifacts/orca/STATE.md and do its next action`, and the coordinator updates the file whenever it schedules one; never paste the run state into the prompt (stale wakeups re-fired after work was done about 12 times this session).
 
-Active deploy-or-land goals: either block on `node scripts/orca-check.mjs --wait` (or a background wait job) until the next actionable result, or post a progress line and continue immediately — never treat a status question as a stop. Start every committed check with `npm run ci:run` (central resource admission and FIFO queue across WSL and lisa; Deck only as fallback); a plain `git push` of a branch has already started one for its tip (#504). Do not fire parallel `ci:ssh` / `ci:deck` yourself — those bypass the dispatcher. When the dispatcher admits more than one check on the same host it assigns each a distinct `SONDER_CI_LOOPBACK_PORT` (from 4400) so Playwright readiness probes do not collide. An orchestrator that finishes a task starts the next one at once; a coordinator reads its orchestrator's terminal at least every 10 minutes (an idle agent sends no message).
+Active deploy-or-land goals: either block on `node scripts/orca-check.mjs --wait` (or a background wait job) until the next actionable result, or post a progress line and continue immediately — never treat a status question as a stop. Start every committed check with `npm run ci:run` (central resource admission and FIFO queue across WSL and lisa; Deck only as fallback); a push starts none (#905). Do not fire parallel `ci:ssh` / `ci:deck` yourself — those bypass the dispatcher. When the dispatcher admits more than one check on the same host it assigns each a distinct `SONDER_CI_LOOPBACK_PORT` (from 4400) so Playwright readiness probes do not collide. An orchestrator that finishes a task starts the next one at once; a coordinator reads its orchestrator's terminal at least every 10 minutes (an idle agent sends no message).
 
 ## Worker prompt delivery (send-agent)
 

@@ -654,12 +654,14 @@ REMOTE
   # check.exit, or the wait loop can only conclude that the run died. The base
   # directory is mounted at /pilot; no .env, no data/ and no production media exist in it.
   # Never --cap-drop ALL: it makes Firefox crash under rootless Podman on SteamOS.
-  remote_bash start "$REMOTE_RUN_DIR" "$FULL_SHA" "$CONTAINER_NAME" "$IMAGE" "$KNOWN_FAILURES" <<'REMOTE'
-run_dir=$2 sha=$3 name=$4 image=$5 known_failures=$6
+  # The check's level (#905), from ci-run.sh: land unless full was asked for.
+  [[ ${SONDER_CHECK_LEVEL:-land} == full ]] && CHECK_LEVEL=full || CHECK_LEVEL=land
+  remote_bash start "$REMOTE_RUN_DIR" "$FULL_SHA" "$CONTAINER_NAME" "$IMAGE" "$KNOWN_FAILURES" "$CHECK_LEVEL" <<'REMOTE'
+run_dir=$2 sha=$3 name=$4 image=$5 known_failures=$6 level=${7:-land}
 base=$(dirname "$(dirname "$run_dir")")
 id=$(basename "$run_dir")
 rm -f "$run_dir/check.exit" "$run_dir/check.pid"
-cmd="cd /pilot/runs/$id/checkout && npm ci && npm run check -- --ref $sha --known-failures $known_failures --output-dir /pilot/runs/$id/report"
+cmd="cd /pilot/runs/$id/checkout && npm ci && npm run check -- --ref $sha --known-failures $known_failures --output-dir /pilot/runs/$id/report --level $level"
 # systemd-run --user, not setsid/nohup: on SteamOS a process started over SSH is killed when the session ends
 # (podman and its wrapper with it). A transient user unit survives because lingering is enabled for the user.
 # The wrapper is a file, not an inline `bash -c`: systemd expands `$` on a unit command line (`$$` becomes `$`).

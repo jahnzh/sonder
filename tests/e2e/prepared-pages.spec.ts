@@ -79,7 +79,7 @@ test("a swipe, the arrow keys and the desktop's page arrows turn the page too", 
   expect((await changed(next)).lines).toEqual(spread.lines);
 });
 
-test("Reading mode switches the view between pages and scroll, and the sentence at the top stays at the top", async ({ page }) => {
+test("Reading mode switches the view between pages and scroll, and the sentence at the top stays at the top", { tag: "@smoke" }, async ({ page }) => {
   const { ebook } = await longBook(page);
   await opened(page, ebook);
   let shown = await pageOf(page);

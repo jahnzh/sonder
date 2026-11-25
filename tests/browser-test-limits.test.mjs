@@ -2,7 +2,7 @@
 // 100 steps (scripts/check-test-limits.mjs). The last test holds the repository's own specs to them.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { breachesOf, checkTestLimits, numericConstants } from "../scripts/check-test-limits.mjs";
@@ -73,4 +73,21 @@ test("the repository's specs keep the limits, save the listed ones, and the defa
   assert.deepEqual(breaches.map((entry) => `${entry.file}:${entry.line}: ${entry.what}`), [], "raise no test over 30 s, loop no more than 100 steps (tests/e2e/slow-tests.json lists the files not cut yet)");
   assert.deepEqual(stale, [], "take these files off tests/e2e/slow-tests.json: they keep the limits now");
   assert.equal(configTimeout, 30000);
+});
+
+test("the smoke set (#905): some fifteen tests tagged @smoke, each within the limits itself", () => {
+  const dir = path.join(repository, "tests", "e2e");
+  const tagged = [];
+  for (const name of readdirSync(dir).filter((entry) => entry.endsWith(".spec.ts"))) {
+    const lines = readFileSync(path.join(dir, name), "utf8").split("\n");
+    lines.forEach((line, at) => {
+      if (!line.includes('tag: "@smoke"')) return;
+      // The test's own lines: up to the next test.
+      let end = at + 1;
+      while (end < lines.length && !/^\s*test\(/.test(lines[end])) end++;
+      tagged.push({ file: `tests/e2e/${name}`, line: at + 1, breaches: breachesOf(lines.slice(at, end).join("\n")) });
+    });
+  }
+  assert.ok(tagged.length >= 10 && tagged.length <= 25, `${tagged.length} smoke tests`);
+  assert.deepEqual(tagged.filter((entry) => entry.breaches.length).map((entry) => `${entry.file}:${entry.line}`), [], "a smoke test keeps the limits");
 });

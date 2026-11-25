@@ -19,12 +19,14 @@ Every change moves through `/grill-with-docs` → `/to-spec` → `/to-tickets` �
 | `/grill-with-docs` | Terms in `GLOSSARY.md`; hard-to-reverse decisions as ADRs in `docs/adr/` | The plan is settled |
 | `/to-spec` | The spec, published as a GitHub issue | The spec issue exists |
 | `/to-tickets` | Tracer-bullet tickets as GitHub issues with native blocking links, labelled `needs-triage` and listed on roadmap #11 | `/triage` has set a ticket to `ready-for-agent` |
-| `/implement` | One worktree and branch per ticket, built by a worker chosen under "Spawning subagents" | `npm run check -- --ref <commit>` passes on the committed revision |
+| `/implement` | One worktree and branch per ticket, built by a worker chosen under "Spawning subagents" | The worker's typecheck and the unit files it touched pass |
 | `/code-review` | Standards and spec findings for the branch | Every finding is fixed or answered |
 | `/retro` | Improvements filed as `needs-triage` issues | — |
 
-- A change small enough to build at once goes straight to `/implement`. It still has an issue, still passes the check, and still gets `/code-review`.
-- Merge a branch and open its PR only after every `/code-review` finding is fixed or answered. Fix a finding that can happen in the setup under "Style and Testing"; answer any other in one line in the PR with why it cannot happen there, without another fix-and-review round. The standards axis reads that section.
+- A change small enough to build at once goes straight to `/implement`. It still has an issue and still gets `/code-review`.
+- The pipeline (#905): commit (typecheck), push (`npm run build`), land on main after one land check of the merged tip (`npm run ci:run <sha>`: build, unit suite, browser smoke set in Chromium, ≤ 10 min), deploy at once (`scripts/deploy-prod.sh`), and a nightly full check that never blocks. A failing test is rerun alone once; one that passes alone is flaky, is noted, and does not hold landing. A check cut off by time with no failure does not hold landing either.
+- The coordinator lands a run's work after the land check, deploys at once and closes the issues it delivers, without asking the owner. It asks him only for an account or a product choice he would notice.
+- Merge a branch only after every `/code-review` finding is fixed or answered. Fix a finding that can happen in the setup under "Style and Testing"; answer any other in one line in the PR with why it cannot happen there, without another fix-and-review round. The standards axis reads that section.
 - An effort too large for one session starts with `/wayfinder`.
 - A PR closes its issue only when it does every bullet of the issue's Proposal. Otherwise write `Refs #N`, keep the issue open and say what remains.
 - Look at every running CI check yourself: a hung check never reports its own end. See `docs/agents/coordinator-checks.md`.
@@ -36,18 +38,18 @@ Use Node 24 and install dependencies with `npm ci`.
 - `npm run dev` starts the API on port 3001 and Vite on 5173. Stop the production container first if it occupies port 3001.
 - `npm run build` typechecks, builds the client and generates the service worker.
 - `npm test` runs Node tests through `tsx`; `npm run test:browser` runs Playwright. Build first: browser tests serve `dist/`.
-- `npm run check -- --ref <commit>` runs install, build and both test suites in an isolated snapshot of a committed revision. See `docs/LOCAL_CHECKS.md` for reports and options.
+- `npm run check -- --ref <commit>` runs install, build, the unit suite and the browser smoke set (`--level full`: the whole browser suite) in an isolated snapshot of a committed revision. See `docs/LOCAL_CHECKS.md` for reports and options.
 - `scripts/deploy-prod.sh <commit>` checks out the revision in the production bare work tree and runs `scripts/deploy.sh` in a subshell (no leaked `GIT_*` env). `scripts/deploy.sh <commit>` deploys a committed revision to the production container (backup, rollback tag, build, markers, health, live checks). See `docs/LOCAL_CHECKS.md` (Production deployment).
 
 ## CI over SSH
 
 `npm run ci:run <sha>` (`scripts/ci-run.sh`) is the only entry point for committed checks (issue #365). It joins a central FIFO queue, probes WSL and lisa over SSH, and admits the check on the host with the most headroom while that host's admission rule holds (`scripts/ci-hosts.json`). The Deck is a fallback when neither WSL nor lisa has room (or when listed explicitly in `SONDER_CI_HOSTS`). `npm run ci:ssh` / `npm run ci:deck` stay as the low-level runners the dispatcher calls — use them only when debugging those scripts. Check host access with `ssh -o BatchMode=yes -o ConnectTimeout=5 192.168.1.119 true`. Status: `npm run ci:run -- --status`.
 
-A push of a branch starts its committed check by itself (#504). For a plain `git push` the pre-push hook leaves a job behind for each pushed branch whose commits change a file, documentation included: it waits until the commit is on the remote and then starts the check, so a dry run or a rejected push starts none. `scripts/ci-push.sh` (or `npm run ci:push`, same arguments as `git push`) starts it after the push, for every branch that changed on the remote, and its push tells the hook to leave that to the wrapper. Either way the check starts in the background via `ci-run.sh` (resource admission, queued when both hosts are full) and logs to `artifacts/ci/<sha>/push-dispatch-*.log` in the pushing checkout. A commit with a finished run there is skipped (a run recorded `local_setup_failed` checked nothing and does not count), and so is one whose check the hook has already started. Do not also start by hand what a push has just started: `npm run ci:run -- --status` shows it. `SONDER_SKIP_PUSH_CI=1` starts no check; use it for a push that should not be checked, such as a WIP branch. A push with `SONDER_SKIP_PREPUSH=1`, as `scripts/orca-ship.sh` makes, skips the hook and so starts none either: dispatch that one by hand with `npm run ci:run <sha>`.
+A push starts no check (#905). `npm run ci:run <sha>` runs at level `land` by default: install, build, the unit suite and the browser tests tagged `@smoke` in Chromium, held to the bar. `npm run ci:run -- --level full <sha>` runs the whole browser suite in every project and is held to no bar; the nightly timer (`scripts/install-nightly.sh`, `scripts/ci-nightly.mjs`) runs it on `origin/main` once a night, writes `artifacts/ci/nightly/latest.json` and files one `needs-triage` issue per failing test it has not filed before. `npm run ci:push` pushes and starts a land check, when wanted.
 
 Use `npm run ci:deck <sha>` only when debugging `scripts/ci-deck.sh` itself — it refuses a second concurrent run and posts `ci/deck`. Read `docs/agents/ci-host.md` and `docs/agents/ci-deck.md` first.
 
-- Send a Git bundle of the committed revision to a unique temporary checkout on the host. Install dependencies and run `nice -n 10 npm run check -- --ref <commit>` there.
+- Send a Git bundle of the committed revision to a unique temporary checkout on the host. Install dependencies and run `nice -n 10 npm run check -- --ref <commit>` there, at the level asked for.
 - Keep browsers headless and muted. Check that the host's Playwright browsers match the lockfile before the first run.
 - Retrieve the report and logs, post the commit status, then clean up only that run's files and processes.
 - Live verification scripts (`verify-*.mjs`) never run on the host. They target production and stay on the production machine.
@@ -60,13 +62,13 @@ Follow nearby TypeScript and React conventions: two-space indentation, `PascalCa
 
 The setup that severity is judged against: one owner using the app on a phone and a desktop, two alignment hosts with a known layout (WSL with a GPU, lisa on CPU; `docs/CTC_WORKER_POOL.md`), and full-length audiobooks from his own library. A reviewer rates a finding by whether it can happen there.
 
-- A new or changed browser test passes `scripts/stress-spec.sh <spec> --load` before it lands; see "Stress a browser test" in `docs/LOCAL_CHECKS.md`.
+- Workers run the typecheck and the unit files they touch, no browser tests. A browser spec a worker writes or changes runs in the land check (if tagged `@smoke`) and the nightly. `scripts/stress-spec.sh` stays a tool for chasing a flaky test, never a step before landing.
 - A browser test takes at most 30 seconds (Playwright's default timeout) and a spec file at most about 2 minutes of browser time. A loop over pages, parts or turns uses a fixed small sample (open the book next to what it checks), at most 100 steps, never "until the end"; a long soak runs only behind an opt-in flag (`SONDER_LONG_READS=1`), outside the check. `tests/browser-test-limits.test.mjs` enforces this. Report a new or changed spec's run time with it.
 - A test that needs a temp folder takes it from `tempDir()` in `tests/temp-dir.ts`, which removes it; `tests/temp-leftovers.test.mjs` guards this.
 
 ## Changes and Safety
 
-Use concise, imperative commit subjects; history also uses scopes such as `fix(ci):` and issue references. PR descriptions should explain the change, link the issue, list checks and include screenshots for visual changes. Keep `.env`, `data/` and `artifacts/` private. Database schema changes must remain additive and update both `server/db.ts` and `server/schema.ts`. Read `docs/LOCAL_CHECKS.md` before backups or live verification. `git commit` runs the pre-commit hook: a typecheck, unless the commit stages only `docs/` or markdown files. `git push` runs the pre-push hook: `npm run build` (under a minute) unless the push carries only `docs/` or markdown files, and then it arranges the committed check for when the push has landed (see "CI over SSH"). It never runs the test suites itself; the committed check runs them on the pushed commit (#498, #504). Verify the push landed with `git status -sb`; `SONDER_SKIP_PREPUSH=1 git push` skips the hook once for an already-checked revision.
+Use concise, imperative commit subjects; history also uses scopes such as `fix(ci):` and issue references. PR descriptions should explain the change, link the issue, list checks and include screenshots for visual changes. Keep `.env`, `data/` and `artifacts/` private. Database schema changes must remain additive and update both `server/db.ts` and `server/schema.ts`. Read `docs/LOCAL_CHECKS.md` before backups or live verification. `git commit` runs the pre-commit hook: a typecheck, unless the commit stages only `docs/` or markdown files. `git push` runs the pre-push hook: `npm run build` (under a minute) unless the push carries only `docs/` or markdown files. It starts no check and never runs the test suites (#905). Verify the push landed with `git status -sb`; `SONDER_SKIP_PREPUSH=1 git push` skips the hook once.
 
 ## Agent skills
 

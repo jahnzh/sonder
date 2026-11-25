@@ -112,7 +112,7 @@ const link = (item: ReturnType<typeof row>, title: string) => item.getByRole("bu
 const box = async (locator: ReturnType<Page["locator"]>) => (await locator.boundingBox())!;
 const settled = (page: Page) => page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
 
-test("the saved series opens from the Library; its rows; a book opens its Book page and Back returns to where it was; Add; the play button", async ({ page }) => {
+test("the saved series opens from the Library; its rows; a book opens its Book page and Back returns to where it was; Add; the play button", { tag: "@smoke" }, async ({ page }) => {
   restore = await saveCrossing(page, ["503", "504"]);
   const title = `Crossing Audio ${randomUUID().slice(0, 8)}`;
   const audio = await importBook(page, title);

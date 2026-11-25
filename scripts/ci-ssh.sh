@@ -684,8 +684,8 @@ REMOTE
   # check.exit, or the wait loop can only conclude that the run died.
   # The host's shard count (its `estimate.shards`), unless the caller set one for this run.
   # The dispatcher's estimate of the browser stage (ci-run.sh): past 1.5 times it the check stops that stage as too slow (#904).
-  remote_bash start "$REMOTE_RUN_DIR" "$FULL_SHA" "$KNOWN_FAILURES" "${REMOTE_TMPDIR:-}" "${SONDER_BROWSER_SHARDS:-$CONFIG_SHARDS}" "${SONDER_WORKER_PYTHON:-$CONFIG_WORKER_PYTHON}" "${SONDER_WORKER_TORCH:-$CONFIG_WORKER_TORCH}" "${SONDER_BROWSER_ESTIMATE_SECONDS:-}" <<'REMOTE'
-run_dir=$2 sha=$3 known_failures=$4 remote_tmpdir=${5:-} shards=${6:-} worker_python=${7:-} worker_torch=${8:-} browser_estimate=${9:-}
+  remote_bash start "$REMOTE_RUN_DIR" "$FULL_SHA" "$KNOWN_FAILURES" "${REMOTE_TMPDIR:-}" "${SONDER_BROWSER_SHARDS:-$CONFIG_SHARDS}" "${SONDER_WORKER_PYTHON:-$CONFIG_WORKER_PYTHON}" "${SONDER_WORKER_TORCH:-$CONFIG_WORKER_TORCH}" "${SONDER_BROWSER_ESTIMATE_SECONDS:-}" "${SONDER_CHECK_LEVEL:-}" <<'REMOTE'
+run_dir=$2 sha=$3 known_failures=$4 remote_tmpdir=${5:-} shards=${6:-} worker_python=${7:-} worker_torch=${8:-} browser_estimate=${9:-} level=${10:-}
 cd "$run_dir/checkout" || exit 1
 rm -f "$run_dir/check.exit" "$run_dir/check.pid"
 setsid nohup bash -c '
@@ -694,10 +694,11 @@ setsid nohup bash -c '
   if [ -n "$7" ]; then export SONDER_WORKER_PYTHON="$7"; fi
   if [ -n "$8" ]; then export SONDER_WORKER_TORCH="$8"; fi
   if [ -n "$9" ]; then export SONDER_BROWSER_ESTIMATE_SECONDS="$9"; fi
+  if [ -n "${10}" ]; then export SONDER_CHECK_LEVEL="${10}"; fi
   nice -n 10 npm run check -- --ref "$1" --known-failures "$4" --output-dir "$2"
   rc=$?
   echo "$rc" >"$3.tmp" && mv "$3.tmp" "$3"
-' _ "$sha" "$run_dir/report" "$run_dir/check.exit" "$known_failures" "$remote_tmpdir" "$shards" "$worker_python" "$worker_torch" "$browser_estimate" >"$run_dir/check.log" 2>&1 </dev/null &
+' _ "$sha" "$run_dir/report" "$run_dir/check.exit" "$known_failures" "$remote_tmpdir" "$shards" "$worker_python" "$worker_torch" "$browser_estimate" "$level" >"$run_dir/check.log" 2>&1 </dev/null &
 echo $! >"$run_dir/check.pid"
 REMOTE
   rc=$?

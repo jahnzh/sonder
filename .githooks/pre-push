@@ -1,24 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# What a push carries decides what runs here (#498, #504).
+# What a push carries decides what runs here (#498, #905).
 #
-#   On this machine, before the push:
 #     only documentation (docs/ or a markdown file)   nothing
 #     anything else, or when it cannot be told          npm run build
 #
-#   On the CI hosts, once the push has landed: the committed check (scripts/ci-run.sh) for each
-#   pushed branch whose commits change a file, documentation included. It runs the unit and browser
-#   suites on the pushed commit itself; they are never run here.
+#   A push starts no committed check (#905): the check that lands a change runs on the merged tip
+#   (scripts/ci-run.sh, level land), and the whole suite runs nightly. The unit and browser suites
+#   are never run here.
 #
 #   SONDER_SKIP_PREPUSH=1   skip this hook altogether
-#   SONDER_SKIP_PUSH_CI=1   do not start the committed check
 
 # shellcheck source=.githooks/lib.sh
 source "$(dirname "$0")/lib.sh"
-
-# Git calls the hook with the remote's name and its address.
-remote="${1:-origin}"
 
 # Git sends one line per ref update on stdin: <local ref> <local sha> <remote ref> <remote sha>.
 # Read them all first, so the push does not hang. The last line counts also without a newline.
@@ -39,10 +34,9 @@ pushed=0    # a ref update carries commits
 unknown=0   # what a ref update changes could not be listed
 changed=0   # the pushed commits change a file
 has_code=0  # a changed file is not documentation
-to_check=() # "<sha> <remote ref>" of every pushed branch that needs the committed check
 
 for line in ${updates[@]+"${updates[@]}"}; do
-  read -r _local_ref local_sha remote_ref remote_sha <<<"$line" || true
+  read -r _local_ref local_sha _remote_ref remote_sha <<<"$line" || true
   [[ -n "${local_sha:-}" ]] || continue
   # Deleting a branch pushes nothing.
   if is_zero "$local_sha"; then continue; fi
@@ -53,25 +47,17 @@ for line in ${updates[@]+"${updates[@]}"}; do
   else
     base="$remote_sha"
   fi
-  ref_needs_check=0
   # --no-renames: a file moved into docs/ is also a file removed from where it was. Without it git
   # lists only the new name, and moving code into docs/ would pass as documentation.
   # core.quotepath=off: a name with other than ASCII letters is listed as it is, not quoted.
   if [[ -z "$base" ]] || ! files="$(git -c core.quotepath=off diff --no-renames --name-only "$base" "$local_sha" -- 2>/dev/null)"; then
     unknown=1
-    ref_needs_check=1
   else
     while IFS= read -r file; do
       [[ -n "$file" ]] || continue
       changed=1
-      # The unit suite reads documentation too, so any changed file is worth the committed check.
-      ref_needs_check=1
       if ! is_documentation "$file"; then has_code=1; fi
     done <<<"$files"
-  fi
-  # Only a branch gets a committed check: a tag names a commit some branch carries.
-  if [[ $ref_needs_check -eq 1 && "${remote_ref:-}" == refs/heads/* ]]; then
-    to_check+=("$local_sha $remote_ref")
   fi
 done
 
@@ -96,42 +82,3 @@ else
     exit 1
   fi
 fi
-
-# Leave a job behind for each pushed branch: it starts the committed check when the push has landed,
-# and nothing when it has not (a dry run, a rejected push). Nothing here can fail or delay the push.
-start_committed_checks() {
-  local root helper runner artifacts item sha remote_ref branch
-  local -A seen=()
-  [[ ${#to_check[@]} -gt 0 ]] || return 0
-  if [[ "${SONDER_SKIP_PUSH_CI:-}" == "1" ]]; then
-    echo "Pre-push hook: the committed check is not started (SONDER_SKIP_PUSH_CI=1)."
-    return 0
-  fi
-  # A push made through scripts/ci-push.sh: the wrapper starts the check after the push.
-  [[ "${SONDER_PUSH_CI_WRAPPER:-}" != "1" ]] || return 0
-  # Git runs this hook in the root of the working tree.
-  root="$(pwd)"
-  helper="$root/scripts/lib/push-dispatch.sh"
-  runner="${SONDER_PUSH_CI_RUNNER:-$root/scripts/ci-run.sh}"
-  artifacts="${SONDER_PUSH_CI_ARTIFACTS:-$root/artifacts/ci}"
-  if [[ ! -f "$helper" || ! -f "$runner" ]]; then
-    echo "Pre-push hook: the committed check is not started (this checkout has no runner); run: npm run ci:run <sha>"
-    return 0
-  fi
-  # shellcheck source=scripts/lib/push-dispatch.sh
-  source "$helper"
-  for item in "${to_check[@]}"; do
-    sha="${item%% *}"
-    remote_ref="${item#* }"
-    branch="${remote_ref#refs/heads/}"
-    # Ids that are no commit of this repository cannot be checked.
-    git rev-parse --verify --quiet "${sha}^{commit}" >/dev/null 2>&1 || continue
-    if [[ -n "${seen[$sha]:-}" ]]; then
-      echo "skipped $sha $branch (same commit as ${seen[$sha]})"
-      continue
-    fi
-    seen[$sha]="$branch"
-    push_dispatch_when_landed "$runner" "$artifacts" "$sha" "$branch" "$remote" "$remote_ref" || true
-  done
-}
-start_committed_checks || true

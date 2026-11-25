@@ -202,7 +202,7 @@ test("from a link: the magnet sheet over Get, and Close lands on Get", async ({ 
   await expect(magnetSheet(page)).toHaveCount(0);
 });
 
-test("a pasted link is sent with the book's workId, and both sheets close to the Book page with the download's line", async ({ page }) => {
+test("a pasted link is sent with the book's workId, and both sheets close to the Book page with the download's line", { tag: "@smoke" }, async ({ page }) => {
   // A book outside the library: the PUT goes first.
   expect((await page.request.delete(`/api/works/${WAR.workId}/library`)).ok()).toBe(true);
   const asked = await serve(page);

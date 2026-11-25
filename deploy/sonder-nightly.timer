@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Sonder nightly full check once a night
+
+[Timer]
+OnCalendar=*-*-* 02:30
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

@@ -169,7 +169,7 @@ test("the first opening is Listen; Read is remembered; a face switch replaces th
   await expect.poll(() => hashOf(page)).toBe(`#listen/${encodeURIComponent(workId)}`);
 });
 
-test("the head's book button opens the Book page; a reload keeps the face", async ({ page }) => {
+test("the head's book button opens the Book page; a reload keeps the face", { tag: "@smoke" }, async ({ page }) => {
   await instrument(page);
   const { title, workId } = await book(page, "Head story");
   await page.goto("/");

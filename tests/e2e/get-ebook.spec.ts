@@ -180,7 +180,7 @@ async function withLibgenEdition(page: Page, workId: string, n: number) {
   });
 }
 
-test("from the Book page: title and author searched, EPUBs before PDFs, a tap sends nothing, Get this edition closes to the Book page with the edition", async ({ page }) => {
+test("from the Book page: title and author searched, EPUBs before PDFs, a tap sends nothing, Get this edition closes to the Book page with the edition", { tag: "@smoke" }, async ({ page }) => {
   const title = unique("Get ebook book");
   const book = await bookWithRecording(page, title);
   const asked = await libgen(page);

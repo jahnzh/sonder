@@ -92,20 +92,20 @@ test("3. Review policy section in worker-spec.md", () => {
   assert.match(content, /final head only/, "Deck run must run on final head only");
 });
 
-test("4. Coordinator verification section in worker-spec.md", () => {
+test("4. Coordinator verification section in worker-spec.md: one land check, then land and deploy (#905)", () => {
   const content = readFileSync(join(repoRoot, "docs", "agents", "worker-spec.md"), "utf8");
-  assert.match(content, /## Coordinator verification/, "worker-spec.md must have Coordinator verification section");
-  assert.match(content, /merge `main`/i, "must mention merging main");
-  assert.match(content, /tsc/i, "must mention tsc");
-  assert.match(content, /npm test/i, "must mention npm test");
-  assert.match(content, /npm run build/i, "must mention npm run build");
-  assert.match(content, /PLAYWRIGHT_PORT/, "must mention PLAYWRIGHT_PORT");
-  assert.match(content, /--repeat-each 2/, "must mention --repeat-each 2");
-  assert.match(content, /unique title per test/, "must mention unique title per test");
-  assert.match(content, /scripts\/mutate\.mjs/, "must mention scripts/mutate.mjs");
-  assert.match(content, /scripts\/ci-result\.sh/, "must mention scripts/ci-result.sh");
-  assert.match(content, /Start committed checks with `npm run ci:run`/, "must use the dispatcher for committed checks");
-  assert.match(content, /scripts\/orca-land\.sh/, "must mention scripts/orca-land.sh");
+  const section = content.slice(content.indexOf("## Coordinator verification"), content.indexOf("## Template"));
+  assert.match(section, /## Coordinator verification/, "worker-spec.md must have Coordinator verification section");
+  assert.match(section, /merge `main`/i, "must mention merging main");
+  assert.match(section, /`npm run ci:run <sha>`/, "the one land check goes through the dispatcher");
+  assert.match(section, /scripts\/ci-result\.sh/, "must mention scripts/ci-result.sh");
+  assert.match(section, /scripts\/orca-land\.sh/, "must mention scripts/orca-land.sh");
+  assert.match(section, /scripts\/deploy-prod\.sh/, "deploys at once after landing");
+  assert.match(section, /nightly/i, "the full browser suite runs nightly");
+  // The heavy steps removed by #905 stay out of the landing path.
+  assert.doesNotMatch(section, /--repeat-each/, "no repeat runs before landing");
+  assert.doesNotMatch(section, /scripts\/mutate\.mjs/, "no mutation proofs before landing");
+  assert.doesNotMatch(section, /stress-spec/, "no stress runs before landing");
 });
 
 test("5. Gotchas documented in worker-spec.md and issue-tracker.md", () => {

@@ -139,7 +139,7 @@ test("dark mobile library, browsing, filters, favorites and ebook sources", asyn
   await expect(page.getByText("Anna’s Archive")).toHaveCount(0);
   expect(errors).toEqual([]);
 });
-test("real audio playback, speed, seek, pause and recording-specific resume after reload", async ({
+test("real audio playback, speed, seek, pause and recording-specific resume after reload", { tag: "@smoke" }, async ({
   page,
 }) => {
   const own = await importOwnBook(page, "Playback resume");
@@ -225,7 +225,7 @@ test("real audio playback, speed, seek, pause and recording-specific resume afte
   await expect(listenFace(page).getByRole("spinbutton", { name: "Playback speed", exact: true })).toHaveAttribute("aria-valuetext", "2.4×");
   await page.getByRole("button", { name: "Close now playing", exact: true }).click();
 });
-test("import, complete device download, service-worker ranges and offline relaunch", async ({
+test("import, complete device download, service-worker ranges and offline relaunch", { tag: "@smoke" }, async ({
   page,
   context,
 }) => {

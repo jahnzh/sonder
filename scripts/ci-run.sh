@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The one entry point for committed checks (issues #119, #365).
 #
-# Usage: scripts/ci-run.sh [--dispatch <id>] <commit-sha>
+# Usage: scripts/ci-run.sh [--level land|full] [--dispatch <id>] <commit-sha>
 #        scripts/ci-run.sh --status
 #
 # Every committed check starts here (npm run ci:run, scripts/ci-push.sh, and the
@@ -67,7 +67,7 @@ set -uo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/ci-run.sh [--dispatch <id>] <commit-sha>
+Usage: scripts/ci-run.sh [--level land|full] [--dispatch <id>] <commit-sha>
        scripts/ci-run.sh --status
 
 Start the committed check on the CI host with the most headroom, or queue it
@@ -75,6 +75,10 @@ Start the committed check on the CI host with the most headroom, or queue it
 finished lines with host, sha and log path, and forwards the runner exit code.
 
 Options:
+  --level land|full the check's level (#905): land (default) is install, build,
+                    unit and the browser smoke set in Chromium, held to the
+                    bar; full is the whole browser suite in every project, the
+                    nightly, estimated but held to no bar
   --dispatch <id>   record the finished check on that worker history dispatch
                     (sets SONDER_CI_DISPATCH for the downstream runner)
   --status          list running and queued checks (host, sha, age) and each
@@ -97,6 +101,7 @@ EOF
 }
 
 DISPATCH=${SONDER_CI_DISPATCH:-}
+LEVEL=land
 REQUESTED_REF=""
 STATUS=0
 while [[ $# -gt 0 ]]; do
@@ -107,6 +112,10 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { echo "missing value for --dispatch" >&2; exit 2; }
       DISPATCH=$2; shift 2 ;;
     --dispatch=*) DISPATCH=${1#--dispatch=}; shift ;;
+    --level)
+      [[ $# -ge 2 ]] || { echo "missing value for --level" >&2; exit 2; }
+      LEVEL=$2; shift 2 ;;
+    --level=*) LEVEL=${1#--level=}; shift ;;
     -*)
       echo "unknown option: $1" >&2
       usage >&2
@@ -121,6 +130,10 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 DISPATCHER="$ROOT/scripts/ci-dispatch.mjs"
 # shellcheck source=lib/ci-disk.sh
 source "$ROOT/scripts/lib/ci-disk.sh" || { echo "[ci-run] cannot read scripts/lib/ci-disk.sh" >&2; exit 2; }
+
+[[ $LEVEL == land || $LEVEL == full ]] || { echo "invalid --level: ${LEVEL} (land or full)" >&2; exit 2; }
+# The check on the host runs at this level (scripts/check-local.mjs reads SONDER_CHECK_LEVEL).
+export SONDER_CHECK_LEVEL=$LEVEL
 
 # Same allowlist as scripts/lib/ci-history.sh: reject invalid IDs before doing work.
 [[ -z $DISPATCH || $DISPATCH =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
@@ -171,11 +184,29 @@ node "$DISPATCHER" prune --artifacts "$ROOT/artifacts/ci" --keep "$FULL_SHA" || 
 # retrieve the report on those paths too, so a report left beside one is not
 # evidence and does not block. A report that does not parse is not evidence
 # either.
+# The level a finished run checked at, from its report (#905): "land", "full", or "" when it has no report that
+# names one.
+run_level() {
+  local rep
+  for rep in "$1/report.json" "$1/check-report.json"; do
+    [[ -f $rep ]] || continue
+    node -e '
+      const r = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+      if (r.level === "land" || r.level === "full") process.stdout.write(r.level);
+    ' "$rep" 2>/dev/null && return 0
+  done
+  return 0
+}
+
 blocking_runs() {
-  local dir file host result rep verdict
+  local dir file host result rep verdict level
   for dir in "$ARTIFACT_ROOT"/*/; do
     [[ -d $dir ]] || continue
     dir=${dir%/}
+    # A failed run blocks a check of its own level only: the nightly's full check of a tip does not hold the land
+    # check of it, nor the other way. A run whose level cannot be told blocks both.
+    level=$(run_level "$dir")
+    [[ -z $level || $level == "$LEVEL" ]] || continue
     if [[ -f $dir/ci-deck-result.txt ]]; then
       file=$dir/ci-deck-result.txt; host=deck
     elif [[ -f $dir/ci-ssh-result.txt ]]; then
@@ -228,7 +259,7 @@ fi
 # with the figures. SONDER_CI_OVER_BAR=1, set by whoever decides that, runs it all the same.
 CI_OVER_BAR_EXIT=9
 ESTIMATE_HOSTS=${SONDER_CI_HOSTS:-}
-if ESTIMATE=$(cd "$ROOT" && node "$ROOT/scripts/check-estimate.mjs" "$FULL_SHA" "$ESTIMATE_HOSTS" 2>/dev/null) && [[ -n $ESTIMATE ]]; then
+if ESTIMATE=$(cd "$ROOT" && node "$ROOT/scripts/check-estimate.mjs" "$FULL_SHA" "$ESTIMATE_HOSTS" --level "$LEVEL" 2>/dev/null) && [[ -n $ESTIMATE ]]; then
   while IFS= read -r line; do echo "$line ${FULL_SHA:0:7}"; done <<<"$ESTIMATE"
   verdict=$(grep '^bar ' <<<"$ESTIMATE" | tail -n 1)
   if [[ $verdict =~ judged=([^ ]+)\ over=([^ ]+) ]]; then

@@ -115,7 +115,7 @@ for (const [size, viewport] of [["phone", { width: 390, height: 844 }], ["deskto
       await expect(settingsList(page)).toBeVisible();
     });
 
-    test("a stepper and a switch are saved at once and kept after a reload", async ({ page }) => {
+    test("a stepper and a switch are saved at once and kept after a reload", { tag: "@smoke" }, async ({ page }) => {
       const saves: { scale: number }[] = [];
       page.on("request", (request) => {
         if (request.method() === "PUT" && request.url().endsWith("/api/appearance")) saves.push(request.postDataJSON());

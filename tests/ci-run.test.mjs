@@ -49,7 +49,7 @@ exec bash -c "$*"
 function runnerStubFor(name) {
   return `#!/usr/bin/env bash
 echo "stub-runner ${name} host=\${SONDER_CI_HOST:-} sha=$1"
-echo "invoked runner=${name} host=\${SONDER_CI_HOST:-} sha=$1 dispatch=\${SONDER_CI_DISPATCH:-} loopback=\${SONDER_CI_LOOPBACK_PORT:-} remoteBase=\${SONDER_CI_REMOTE_BASE:-} tmpdir=\${SONDER_CI_TMPDIR:-} maxWait=\${SONDER_CI_MAX_WAIT:-} hostMaxWait=\${SONDER_CI_HOST_MAX_WAIT:-} browserEstimate=\${SONDER_BROWSER_ESTIMATE_SECONDS:-}" >>"$STUB_RUNNER_LOG"
+echo "invoked runner=${name} host=\${SONDER_CI_HOST:-} sha=$1 dispatch=\${SONDER_CI_DISPATCH:-} loopback=\${SONDER_CI_LOOPBACK_PORT:-} remoteBase=\${SONDER_CI_REMOTE_BASE:-} tmpdir=\${SONDER_CI_TMPDIR:-} maxWait=\${SONDER_CI_MAX_WAIT:-} hostMaxWait=\${SONDER_CI_HOST_MAX_WAIT:-} browserEstimate=\${SONDER_BROWSER_ESTIMATE_SECONDS:-} level=\${SONDER_CHECK_LEVEL:-}" >>"$STUB_RUNNER_LOG"
 secs=\${STUB_RUNNER_SLEEP:-}
 [[ -f "\${STUB_SLEEP_DIR:-/nonexistent}/\${SONDER_CI_HOST:-}" ]] && secs=$(cat "$STUB_SLEEP_DIR/$SONDER_CI_HOST")
 [[ -n $secs ]] && sleep "$secs"
@@ -303,7 +303,7 @@ test("--help prints the usage and exits 0", () => {
   try {
     const result = plainRun(f, ["--help"]);
     assert.equal(result.status, 0);
-    assert.match(result.stdout, /Usage: scripts\/ci-run\.sh \[--dispatch <id>\] <commit-sha>/);
+    assert.match(result.stdout, /Usage: scripts\/ci-run\.sh \[--level land\|full\] \[--dispatch <id>\] <commit-sha>/);
     assert.match(result.stdout, /--status/);
     assert.match(result.stdout, /SONDER_CI_HOSTS/);
   } finally {
@@ -735,6 +735,22 @@ test("a finished failed run on another host refuses the run", () => {
     assert.doesNotMatch(out.stdout, /^started /m);
     assert.ok(fs.existsSync(path.join(dir, "ci-deck-result.txt")));
     assert.equal(f.read(f.logs.ssh), "", "refused before any probe");
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("a failed check blocks a check of its own level only: a failed nightly does not hold the land check, nor the other way (#905)", () => {
+  const f = fixture();
+  try {
+    const dir = writeResult(f.repo, f.second, "wsl", "failed", { exit_code: "1" });
+    fs.writeFileSync(path.join(dir, "check-report.json"), JSON.stringify({ result: "failed", level: "full" }));
+    const land = f.run([], f.second);
+    assert.equal(land.status, 0, land.output);
+    assert.equal(f.invocations().length, 1);
+    const full = f.run(["--level", "full"], f.second);
+    assert.equal(full.status, 1, full.output);
+    assert.match(full.output, /a finished check already failed/);
   } finally {
     f.cleanup();
   }
@@ -1271,6 +1287,8 @@ function barFixture() {
   // The hosts' figures are the fixture's own, so a change to the real ones does not move these tests.
   const hosts = JSON.parse(fs.readFileSync(path.join(f.repo, "scripts", "ci-hosts.json"), "utf8"));
   hosts.dispatch.barSeconds = 1800;
+  // The land check's smoke set: 1,500 s on lisa here, so that it runs over the bar on lisa.
+  hosts.dispatch.smokeSeconds = 1500;
   hosts.lisa.estimate = { fixedSeconds: 300, speed: 1, shards: 2, startSeconds: 100 };
   hosts.wsl.estimate = { fixedSeconds: 100, speed: 0.5, shards: 2, startSeconds: 50 };
   delete hosts["192.168.1.119"].estimate;
@@ -1284,7 +1302,7 @@ function barFixture() {
 test("a check says at dispatch how long it will take on each host, and runs when it fits the bar", () => {
   const f = barFixture();
   try {
-    // lisa: 300 + one shard of 1,500 s + 100 to start; the changed specs are not repeated (#904).
+    // lisa: 300 + the smoke set's 1,500 s + 100 to start; the changed specs are not repeated (#904).
     const out = f.run([], f.sha);
     assert.equal(out.status, 0, out.output);
     const short = f.sha.slice(0, 7);
@@ -1296,6 +1314,21 @@ test("a check says at dispatch how long it will take on each host, and runs when
     assert.deepEqual(f.invocations().map((run) => run.host), [WSL]);
     // The admitted host's browser estimate goes to the check, which stops that stage as too slow past 1.5 times it (#904).
     assert.deepEqual(f.invocations().map((run) => run.browserEstimate), ["800"]);
+    assert.deepEqual(f.invocations().map((run) => run.level), ["land"], "a check lands at level land unless asked otherwise (#905)");
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("a full check (the nightly) is estimated with the whole suite and held to no bar; its level reaches the runner (#905)", () => {
+  const f = barFixture();
+  try {
+    const out = f.run(["--level", "full"], f.sha, { SONDER_CI_BAR_SECONDS: "60" });
+    assert.equal(out.status, 0, out.output);
+    assert.match(out.stdout, /^estimate lisa \S+ fixed=300s browser=1600s /m);
+    assert.match(out.stdout, /^bar 1\.0min fits=wsl,lisa,deck judged=wsl,lisa over=none /m);
+    assert.deepEqual(f.invocations().map((run) => run.level), ["full"]);
+    assert.equal(f.run(["--level", "nightly"], f.sha).status, 2);
   } finally {
     f.cleanup();
   }

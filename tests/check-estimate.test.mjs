@@ -8,6 +8,12 @@ const lisa = { fixedSeconds: 308, speed: 1, shards: 6, startSeconds: 80 };
 const wsl = { fixedSeconds: 85, speed: 0.46, shards: 5, startSeconds: 60 };
 const suite = Array.from({ length: 12 }, (_item, index) => ({ file: `tests/e2e/s${String(index).padStart(2, "0")}.spec.ts`, seconds: 600 }));
 
+test("a land check's browser stage is the smoke set in Chromium, once; none when the browser tests cannot see the change (#905)", () => {
+  assert.equal(estimateOnHost({ suite, changed: [], scope: "full", level: "land", smokeSeconds: 300 }, lisa).browser, 300 + 80);
+  assert.equal(estimateOnHost({ suite, changed: [], scope: "chromium", level: "land", smokeSeconds: 300 }, wsl).browser, Math.round(300 * 0.46 + 60));
+  assert.equal(estimateOnHost({ suite, changed: [], scope: "skip", level: "land" }, lisa).browser, 0);
+});
+
 test("an ordinary check: the fixed stages and the browser stage's longest shard", () => {
   // Twelve files of 600 s: two a shard on lisa's six, and 3, 3, 2, 2, 2 on WSL's five.
   assert.deepEqual(estimateOnHost({ suite, changed: [], scope: "full" }, lisa), { seconds: 308 + 1200 + 80, fixed: 308, browser: 1280, repeat: 0 });
@@ -30,11 +36,12 @@ test("changed specs add the repeat stage: two passes, the longest part, only the
 });
 
 test("the lines name each host's figures, the hosts that fit the bar and those over it", () => {
-  const config = { dispatch: { barSeconds: 1800 }, lisa: { estimate: lisa }, wsl: { estimate: wsl }, deck: {} };
+  // A land check (the default): the browser stage is the smoke set, here 1,200 s on lisa.
+  const config = { dispatch: { barSeconds: 1800, smokeSeconds: 1200 }, lisa: { estimate: lisa }, wsl: { estimate: wsl }, deck: {} };
   const commit = { suite, changed: suite.slice(0, 6).map((entry) => ({ ...entry, share: 1 })), scope: "full", repeatChanged: true };
   const result = estimateLines(commit, ["wsl", "lisa", "deck"], config, {});
   assert.deepEqual(result.lines, [
-    "estimate wsl 35.1min fixed=85s browser=888s repeat=1134s changed_specs=6",
+    "estimate wsl 30.5min fixed=85s browser=612s repeat=1134s changed_specs=6",
     "estimate lisa 47.1min fixed=308s browser=1280s repeat=1240s changed_specs=6",
     "estimate deck none: no estimate entry for this host",
     "bar 30.0min fits=deck judged=none over=wsl,lisa",
@@ -42,6 +49,13 @@ test("the lines name each host's figures, the hosts that fit the bar and those o
   assert.deepEqual([result.fits, result.judged, result.over], [["deck"], [], ["wsl", "lisa"]]);
   const ordinary = estimateLines({ suite, changed: [], scope: "full" }, ["wsl", "lisa"], config, {});
   assert.equal(ordinary.lines.at(-1), "bar 30.0min fits=wsl,lisa judged=wsl,lisa over=none");
+  // A full check (the nightly) is estimated with the whole suite and held to no bar (#905).
+  const full = estimateLines({ ...commit, level: "full" }, ["wsl", "lisa", "deck"], config, {});
+  assert.deepEqual(full.lines.slice(0, 2), [
+    "estimate wsl 35.1min fixed=85s browser=888s repeat=1134s changed_specs=6",
+    "estimate lisa 47.1min fixed=308s browser=1280s repeat=1240s changed_specs=6",
+  ]);
+  assert.equal(full.lines.at(-1), "bar 30.0min fits=wsl,lisa,deck judged=wsl,lisa over=none");
   // An estimate that cannot be made judges no host.
   const none = estimateLines({ error: "the commit has no table of times (tests/e2e/spec-seconds.json)" }, ["wsl", "lisa"], config, {});
   assert.deepEqual([none.lines, none.fits, none.over], [["estimate none: the commit has no table of times (tests/e2e/spec-seconds.json); no host is judged"], ["wsl", "lisa"], []]);
@@ -62,7 +76,7 @@ test("a finished check says which stage was more than a tenth off its estimate, 
   const config = { lisa: { estimate: lisa }, wsl: { estimate: wsl }, deck: {} };
   const commit = { suite, changed: [], scope: "full" };
   const report = (browserSeconds, unitSeconds = 245, result = "passed") => ({
-    result, sha: "70c08ca5d6befd9797817cf3da38a0757fa45a23",
+    result, sha: "70c08ca5d6befd9797817cf3da38a0757fa45a23", level: "full",
     stages: [{ name: "install", status: "passed", durationMs: 10_000 }, { name: "build", status: "passed", durationMs: 53_000 }, { name: "unit", status: "passed", durationMs: unitSeconds * 1000 }, { name: "browser", status: "passed", durationMs: browserSeconds * 1000 }],
   });
   // lisa's estimate here: fixed 308, browser 1,280.
@@ -78,4 +92,7 @@ test("a finished check says which stage was more than a tenth off its estimate, 
   assert.deepEqual(compareWithReport(commit, "lisa", config, report(1603, 245, "passed_with_flaky")).length, 1);
   assert.deepEqual(compareWithReport(commit, "deck", config, report(1603)), []);
   assert.deepEqual(compareWithReport(commit, "lisa", config, null), []);
+  // A land check is held to the smoke set's figure.
+  const land = { ...report(1300), level: "land" };
+  assert.match(compareWithReport(commit, "lisa", config, land)[0], /^estimate off on lisa: the browser stage estimated 380 s, took 1300 s \(\+242 %\)\. Set dispatch\.smokeSeconds in scripts\/ci-hosts\.json/);
 });

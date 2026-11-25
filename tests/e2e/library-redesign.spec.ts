@@ -347,7 +347,7 @@ test("an empty library says No books yet with Find a book", async ({ page }) => 
   await expect(page).toHaveURL(/#discover$/);
 });
 
-test("Favorite on the Book page puts the work under Favorites, one tile for its two recordings, also after a reload", async ({ page }) => {
+test("Favorite on the Book page puts the work under Favorites, one tile for its two recordings, also after a reload", { tag: "@smoke" }, async ({ page }) => {
   const run = randomUUID().slice(0, 6);
   const left = await importRecording(page, `Favourite two recordings ${run}`);
   await secondRecording(page, left);
