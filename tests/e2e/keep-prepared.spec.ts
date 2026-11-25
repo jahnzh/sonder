@@ -1,6 +1,6 @@
 // @projects firefox
 // Keep on this device keeps the prepared text (#805, step 6 of the reader plan #799): a kept book is complete with its
-// EPUB and the EPUB's prepared text (manifest, parts, pictures), and without a connection it reads in the new view at
+// EPUB, the EPUB's prepared text (manifest, parts, pictures) is fetched beside it, and without a connection it reads in the new view at
 // its place, its picture shown, though it was never opened there before. Off removes the kept text with the book's
 // other files. The EPUB file stays kept beside the text until step 7 (#806), as today's reader still reads it.
 // Saves to this device: in WebKit each test needs a persistent context to store a Blob in IndexedDB (#523, #596).
@@ -85,7 +85,9 @@ test("a kept book reads offline in the new view at its place, with its pictures;
   await keep(page).click();
   await expect(line(page)).toHaveText(/^Ebook · \d+ KB$/, { timeout: 30_000 });
   // The EPUB file and its prepared text are kept: the record names the server's output, and every file of it is in.
+  // The text is fetched after the book is complete (while Keep keeps EPUB files it decides nothing of the line).
   expect((await stored(page, `reader-file:${ebookId}`))?.cache).not.toBe(true);
+  await expect.poll(() => stored(page, `reader-text:${ebookId}`), { timeout: 30_000 }).toBeTruthy();
   const record = await stored(page, `reader-text:${ebookId}`);
   expect(record).toMatchObject({ id: ebookId, key: manifest.key, fingerprint: manifest.fingerprint, parts: manifest.parts.length, pictures: [expect.stringMatching(/^\d+\.png$/)] });
   const base = `/api/reader/${encodeURIComponent(ebookId)}/prepared`;

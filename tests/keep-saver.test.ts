@@ -579,7 +579,7 @@ test("a book complete before its text was kept stays complete while its text is 
   assert.deepEqual(d.fileSaves, ["1:text:e1", "1:text:e1"]);
 });
 
-test("a text the server cannot prepare leaves the book complete, asks for no Retry, and is tried again at each run", async () => {
+test("a text the server cannot prepare leaves the book complete and asks for no Retry; it is tried again after a library read that changed", async () => {
   const d = keptBefore805();
   let refuse = true;
   const a = d.tab(1, {
@@ -593,19 +593,57 @@ test("a text the server cannot prepare leaves the book complete, asks for no Ret
   const logged = await warnings(async () => {
     a.saver.start();
     await settle();
-    // No library read changed: a refused text is still tried again, as nothing waits for Retry.
+    // Another run: the server would prepare the book anew for nothing, so it is not asked again yet.
     await a.saver.trigger("foreground");
     await settle();
   });
-  assert.deepEqual(d.fileSaves, ["1:text:e1", "1:text:e1"]);
-  assert.equal(logged.length, 2);
+  assert.deepEqual(d.fileSaves, ["1:text:e1"]);
+  assert.equal(logged.length, 1);
   assert.equal(d.records.get("r1"), undefined, "no failed record: the book is not Not complete");
   assert.equal(d.server.get("w1")?.completeAt, 900);
+  // A library read that changed asks again, with no tap.
   refuse = false;
-  await a.saver.trigger("foreground");
+  await a.saver.trigger("library");
   await settle();
-  assert.deepEqual(d.fileSaves, ["1:text:e1", "1:text:e1", "1:text:e1"]);
+  assert.deepEqual(d.fileSaves, ["1:text:e1", "1:text:e1"]);
   assert.deepEqual(d.heldTexts.map((t) => t.id), ["e1"]);
+  // Sonder opened again (a new saver) asks again too.
+  const fresh = keptBefore805();
+  const b = fresh.tab(1, { saveText: async (ebookId) => void fresh.fileSaves.push(`1:text:${ebookId}`) });
+  b.saver.start();
+  await settle();
+  assert.deepEqual(fresh.fileSaves, ["1:text:e1"]);
+});
+
+test("Pause of one book while its text is fetched quietly stops that one only: the next book's text is fetched", async () => {
+  const d = device({ works: [{ workId: "w1", inLibrary: true, recordingId: "r1", ebookId: "e1" }, { workId: "w2", inLibrary: true, recordingId: "r2", ebookId: "e2" }] });
+  for (const workId of ["w1", "w2"]) {
+    keptOn(d, workId);
+    d.keep.set(workId, { workId, on: true, at: 5, completeAt: 900, pending: false });
+    d.server.set(workId, { workId, on: true, at: 5, completeAt: 900 });
+  }
+  for (const r of ["r1", "r2"]) d.downloads.push({ trackId: `${r}-0`, recordingId: r, size: 10 }, { trackId: `${r}-1`, recordingId: r, size: 10 });
+  d.heldEbooks.push({ id: "e1", fingerprint: "fp-e1", size: 600 }, { id: "e2", fingerprint: "fp-e2", size: 600 });
+  let saver: KeepSaver | null = null;
+  const a = d.tab(1, {
+    saveText: async (ebookId, signal) => {
+      d.fileSaves.push(`1:text:${ebookId}`);
+      if (ebookId === "e1") {
+        saver!.pause("r1");
+        signal.throwIfAborted();
+      }
+      d.heldTexts.push({ id: ebookId, key: "0123456789abcdef", fingerprint: `fp-${ebookId}`, size: 50 });
+    },
+  });
+  saver = a.saver;
+  const logged = await warnings(async () => {
+    a.saver.start();
+    await settle();
+  });
+  assert.deepEqual(d.fileSaves, ["1:text:e1", "1:text:e2"]);
+  assert.deepEqual(d.heldTexts.map((t) => t.id), ["e2"]);
+  assert.equal(logged.length, 0, "a pause is no failure");
+  assert.equal(d.records.get("r1"), undefined);
 });
 
 test("without EPUB files the text is the book's file: a text the server cannot prepare fails the save and waits for Retry", async () => {

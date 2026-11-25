@@ -196,6 +196,11 @@ export class KeepSaver {
   private forced = new Set<string>();
   /** A library read that changed asked for a run: a failed save is tried again by itself then (#552). */
   private libraryChanged = false;
+  /**
+   * Editions whose prepared text the server refused in a quiet save (`saveTexts`): asked for again after a library
+   * read that changed or when Sonder opens again, not at every run, as the server prepares the book anew each time.
+   */
+  private textRefused = new Set<string>();
   private unlisten: (() => void) | null = null;
   private readonly now: () => number;
 
@@ -396,11 +401,12 @@ export class KeepSaver {
     const pausedAt = new Map(state.keep.map((entry) => [entry.workId, entry.pausedAt ?? null]));
     const libraryChanged = this.libraryChanged;
     this.libraryChanged = false;
+    if (libraryChanged) this.textRefused.clear();
     /** The complete books whose prepared text is fetched after the run's saves, quietly (#805, `saveTexts`). */
     const texts: QuietText[] = [];
     const quietText = (entry: KeepEntry, saveId: string, needs: KeptNeeds) => {
       if (entry.pausedAt || pausedAt.get(entry.workId)) return;
-      if (needs.text && !needs.text.counted && !needs.text.complete) texts.push({ workId: entry.workId, saveId, ebookId: needs.text.id });
+      if (needs.text && !needs.text.counted && !needs.text.complete && !this.textRefused.has(needs.text.id)) texts.push({ workId: entry.workId, saveId, ebookId: needs.text.id });
     };
     for (const entry of keep) {
       if (this.stopped || !this.leader) return;
@@ -474,9 +480,10 @@ export class KeepSaver {
 
   /**
    * Fetches the prepared texts of complete kept books beside their EPUB files (#805, while `KEEP_EPUB_FILE`): no save
-   * record, no progress, no Retry. The book stays complete and reads from its EPUB; a text that could not be saved (the
-   * server cannot prepare it, the network failed) is logged and tried again at the next run. Off and Pause stop it as
-   * they stop a save: it runs under the book's save id.
+   * record, no progress, no Retry. The book stays complete and reads from its EPUB; a text that could not be saved is
+   * logged and tried again: after a network failure at the next run, after a refusal (the server cannot prepare it)
+   * at the run after a library read that changed or when Sonder opens again. Off and Pause stop it as they stop a
+   * save: it runs under the book's save id.
    */
   private async saveTexts(texts: readonly QuietText[]) {
     if (!this.deps.saveText) return;
@@ -491,10 +498,15 @@ export class KeepSaver {
         await this.deps.saveText(ebookId, controller.signal);
         this.changed();
       } catch (error) {
-        if (controller.signal.aborted) return;
-        console.warn(`Keep on this device: the text of ebook ${ebookId} was not saved; it is tried again at the next run.`, error);
-        // The others would fail as well: the network failed, or the account is signed out.
+        // Off or Pause of this book: the others' texts go on. A closed tab or a stopped saver ends the pass.
+        if (controller.signal.aborted) {
+          if (controller.cause === "off" || controller.cause === "pause") continue;
+          return;
+        }
+        console.warn(`Keep on this device: the text of ebook ${ebookId} was not saved; it is tried again later.`, error);
         const stop = classifyStop({ cause: null, error });
+        if (stop.state === "failed") this.textRefused.add(ebookId);
+        // The others would fail as well: the network failed, or the account is signed out.
         if (stop.state === "interrupted" || (stop.state === "failed" && stop.failure === "signed-out")) return;
       } finally {
         if (this.deps.running.get(saveId) === controller) this.deps.running.delete(saveId);
