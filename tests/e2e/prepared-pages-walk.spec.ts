@@ -17,8 +17,9 @@ import { choosePreparedView } from "./prepared-view";
 //   turning back to a page shows that page again, line for line, however long ago it was read.
 //
 // A walk is legs of turns one way and then the other, each some parts long, with a few turns against the leg and
-// back now and then. It reports every fault it met, with its seed and turn. A seed that fails is kept with its book
-// as a case of its own.
+// back now and then; it goes on past the turns it was given, leg by leg, until it has crossed joints both ways and
+// had parts taken out on both sides. It reports every fault it met, with its seed and turn. A seed that fails is kept
+// with its book as a case of its own.
 //
 // In the suite it is four short walks (one page and two, a book of each kind) in a very tall band, where a part is a
 // few pages, so that some eighty turns cross several joints each way: about two minutes a browser. The long walk is
@@ -225,11 +226,18 @@ for (const book of BOOKS)
         if (seed) await turn(1);
         // Seed 0: two legs, each as long as the book.
         const turns = seed ? PARTS_WALKED * perPart : 100000;
+        // A walk goes on past its turns, leg by leg, until it is one: until it crossed joints both ways and had parts
+        // taken out on both sides (the checks at its end), and at most to three times its turns. Its turns alone do
+        // not make sure of that: every part begins on a new page (#803), so a part takes a turn more than its text
+        // fills when it ends on a short page, and whether a leg back is long enough for a part to be taken out beyond
+        // the reader depends on the band and the style. A walk that has done that ends where its turns end.
+        const one = () => joints.back > 1 && joints.forward > 1 && dropped.behind > 0 && dropped.beyond > 0;
+        const walking = () => made < turns || (!!seed && !one() && made < 3 * turns);
         let direction: 1 | -1 = !seed || next() < 0.5 ? -1 : 1;
-        for (let legs = 0; made < turns && (seed || legs < 2); legs++) {
+        for (let legs = 0; walking() && (seed || legs < 2); legs++) {
           const leg = seed ? Math.round(perPart * (2.5 + next() * 4)) : 100000;
           let step = 0;
-          for (; step < leg && made < turns; step++) {
+          for (; step < leg && walking(); step++) {
             if (!(await turn(direction))) break;
             if (aside() < 0.03) {
               const far = 1 + Math.floor(aside() * 3);

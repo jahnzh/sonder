@@ -152,9 +152,11 @@ test("a note reference in a calibre page is followed, not taken for a tap on the
   const viewport = (await room.locator(".reader-viewport").boundingBox())!;
   const shown = async () => {
     const box = await note.boundingBox();
-    // On the page shown: across in the EPUB's columns, down the one column of the new view.
-    if (prepared()) return !!box && box.y >= viewport.y - 1 && box.y + Math.min(box.height, 20) <= viewport.y + viewport.height + 1;
-    return !!box && box.x >= viewport.x - 1 && box.x + Math.min(box.width, 40) <= viewport.x + viewport.width + 1;
+    // On the page shown: across in the EPUB's columns; in the new view down its one column in scroll mode and
+    // across its columns in pages mode (#803), so both ways there.
+    const across = !!box && box.x >= viewport.x - 1 && box.x + Math.min(box.width, 40) <= viewport.x + viewport.width + 1;
+    if (prepared()) return across && box!.y >= viewport.y - 1 && box!.y + Math.min(box!.height, 20) <= viewport.y + viewport.height + 1;
+    return across;
   };
   // The note is pages further on.
   expect(await shown()).toBe(false);
