@@ -60,7 +60,21 @@ export function fillBookCover(bookId: string, cover: string | null): void {
  * Nothing is left to do once every cover is filled, so a later start reads nothing. A provider out of key or units
  * stops the round (the next start tries again).
  */
+/**
+ * Covers stored before AudiobookDB's image folders were read as files (an address that answers 404, `audiobookDbImage`):
+ * the placeholders' and the series rows' become the folder's `medium.webp`. Returns the rows changed.
+ */
+export function repairAudiobookDbCoverAddresses(): number {
+  const folder = "cover LIKE 'https://cdn.audiobookdb.org/%' AND cover NOT LIKE 'https://cdn.audiobookdb.org/%/%'";
+  let changed = 0;
+  for (const table of ["audio_editions", "series_catalogue_works"])
+    changed += sqlite.prepare(`UPDATE ${table} SET cover=cover||'/medium.webp' WHERE ${folder}`).run().changes;
+  return changed;
+}
+
 export async function backfillPlaceholderCovers(log: (message: string) => void = () => {}): Promise<number> {
+  const repaired = repairAudiobookDbCoverAddresses();
+  if (repaired) log(`AudiobookDB covers: ${repaired} stored address(es) now name the medium image`);
   const bare = (sql: string) =>
     (sqlite.prepare(sql).all() as { workId: string; cover: string | null; id: string; bookId: string; seriesId: string | null }[]).filter((row) => !ownCover(row.cover, row.id));
   const placeholders = bare(

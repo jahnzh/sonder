@@ -79,7 +79,7 @@ settle_interval=${SONDER_DEPLOY_SETTLE_INTERVAL:-2}
 for value in "$settle_seconds" "$settle_ceiling"; do
   case $value in ''|*[!0-9]*) echo "SONDER_DEPLOY_SETTLE_SECONDS and SONDER_DEPLOY_SETTLE_CEILING are whole seconds, got: $value" >&2; exit 2 ;; esac
 done
-live_checks=${SONDER_DEPLOY_LIVE_CHECKS:-scripts/verify-integrated-reader.mjs scripts/verify-multi-user.mjs}
+live_checks=${SONDER_DEPLOY_LIVE_CHECKS:-scripts/verify-integrated-reader.mjs scripts/verify-multi-user.mjs scripts/verify-covers.mjs}
 # The command that prepares the library's text after the checks (#827); set but empty leaves the step out.
 prepare_library=${SONDER_DEPLOY_PREPARE_LIBRARY-scripts/prepare-library.sh}
 # The slice pass (#794): the slice finals' lists, walked at a phone's and a desktop's size. Optional: only with
