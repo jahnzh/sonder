@@ -185,22 +185,6 @@ if ! FULL_SHA=$(git rev-parse --verify "${REQUESTED_REF}^{commit}" 2>/dev/null);
   exit 1
 fi
 
-# The cap is set for a check without changed browser specs. The two stages that run a change's own specs grow with
-# it (#845: 26 changed reader specs are half an hour more even in parts), so the cap grows by what they may take,
-# unless it was set by hand for this run. Nothing is added when no spec changed or the estimate cannot be made.
-CAP_NOTE=""
-if [[ ! -v SONDER_CI_MAX_WAIT ]]; then
-  if allowance=$(node --input-type=module -e '
-      const { changedSpecsAllowance } = await import(process.argv[1]);
-      const { seconds, specs } = changedSpecsAllowance(process.argv[2], process.argv[3]);
-      console.log(`${seconds} ${specs}`);
-    ' "$ROOT/scripts/check-local-support.mjs" "$ROOT" "$FULL_SHA" 2>/dev/null) \
-    && [[ $allowance =~ ^([0-9]+)\ ([0-9]+)$ ]] && [[ ${BASH_REMATCH[1]} -gt 0 ]]; then
-    CAP_NOTE=", $MAX_WAIT + ${BASH_REMATCH[1]} for ${BASH_REMATCH[2]} changed browser spec(s)"
-    MAX_WAIT=$((MAX_WAIT + BASH_REMATCH[1]))
-  fi
-fi
-
 # This runner executes the checkout's own scripts, not the target commit's. When
 # they differ (a worktree behind or ahead of the commit) the run could fail in
 # seconds or test the wrong thing, so refuse with a clear message instead.
@@ -699,8 +683,9 @@ REMOTE
   # The wrapper must not run under `set -e`: a failing check still has to write
   # check.exit, or the wait loop can only conclude that the run died.
   # The host's shard count (its `estimate.shards`), unless the caller set one for this run.
-  remote_bash start "$REMOTE_RUN_DIR" "$FULL_SHA" "$KNOWN_FAILURES" "${REMOTE_TMPDIR:-}" "${SONDER_BROWSER_SHARDS:-$CONFIG_SHARDS}" "${SONDER_WORKER_PYTHON:-$CONFIG_WORKER_PYTHON}" "${SONDER_WORKER_TORCH:-$CONFIG_WORKER_TORCH}" <<'REMOTE'
-run_dir=$2 sha=$3 known_failures=$4 remote_tmpdir=${5:-} shards=${6:-} worker_python=${7:-} worker_torch=${8:-}
+  # The dispatcher's estimate of the browser stage (ci-run.sh): past 1.5 times it the check stops that stage as too slow (#904).
+  remote_bash start "$REMOTE_RUN_DIR" "$FULL_SHA" "$KNOWN_FAILURES" "${REMOTE_TMPDIR:-}" "${SONDER_BROWSER_SHARDS:-$CONFIG_SHARDS}" "${SONDER_WORKER_PYTHON:-$CONFIG_WORKER_PYTHON}" "${SONDER_WORKER_TORCH:-$CONFIG_WORKER_TORCH}" "${SONDER_BROWSER_ESTIMATE_SECONDS:-}" <<'REMOTE'
+run_dir=$2 sha=$3 known_failures=$4 remote_tmpdir=${5:-} shards=${6:-} worker_python=${7:-} worker_torch=${8:-} browser_estimate=${9:-}
 cd "$run_dir/checkout" || exit 1
 rm -f "$run_dir/check.exit" "$run_dir/check.pid"
 setsid nohup bash -c '
@@ -708,10 +693,11 @@ setsid nohup bash -c '
   if [ -n "$6" ]; then export SONDER_BROWSER_SHARDS="$6"; fi
   if [ -n "$7" ]; then export SONDER_WORKER_PYTHON="$7"; fi
   if [ -n "$8" ]; then export SONDER_WORKER_TORCH="$8"; fi
+  if [ -n "$9" ]; then export SONDER_BROWSER_ESTIMATE_SECONDS="$9"; fi
   nice -n 10 npm run check -- --ref "$1" --known-failures "$4" --output-dir "$2"
   rc=$?
   echo "$rc" >"$3.tmp" && mv "$3.tmp" "$3"
-' _ "$sha" "$run_dir/report" "$run_dir/check.exit" "$known_failures" "$remote_tmpdir" "$shards" "$worker_python" "$worker_torch" >"$run_dir/check.log" 2>&1 </dev/null &
+' _ "$sha" "$run_dir/report" "$run_dir/check.exit" "$known_failures" "$remote_tmpdir" "$shards" "$worker_python" "$worker_torch" "$browser_estimate" >"$run_dir/check.log" 2>&1 </dev/null &
 echo $! >"$run_dir/check.pid"
 REMOTE
   rc=$?
@@ -723,7 +709,7 @@ REMOTE
     return 4
   fi
 
-  log "Waiting for the check (cap ${MAX_WAIT}s${CAP_NOTE}, poll every ${POLL_INTERVAL}s)"
+  log "Waiting for the check (cap ${MAX_WAIT}s, poll every ${POLL_INTERVAL}s)"
   wait_for_remote
 
   case "$WAIT_RESULT" in

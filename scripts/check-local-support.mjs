@@ -19,6 +19,7 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
     bail: false,
     full: false,
     maxReruns: null,
+    repeatChanged: false,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -31,6 +32,8 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
       options.bail = true;
     } else if (arg === "--full") {
       options.full = true;
+    } else if (arg === "--repeat-changed") {
+      options.repeatChanged = true;
     } else if (arg === "--ref") {
       if (i + 1 >= argv.length || argv[i + 1].startsWith("--")) {
         return { ok: false, error: "Missing required value for --ref option" };
@@ -252,32 +255,6 @@ export function partitionSpecs(files, count, weightOf = () => 1) {
     .filter((part) => part.files.length)
     .map((part) => part.files.sort((a, b) => order.get(a) - order.get(b)))
     .sort((a, b) => order.get(a[0]) - order.get(b[0]));
-}
-
-/**
- * The seconds the changed-spec stage may take for `sha`, which a runner adds to its wait cap (#845): the cap is
- * set for a check without it, and it grows with the change. The longest part's work (the total dealt into
- * `parts`, or the heaviest file when that is more) runs twice in the repeat stage, at `secondsPerRun` for one unit
- * of weight (measured on lisa: 7.3 s a test run, and a weight counts about 1.75 runs because not every named
- * project runs everywhere). Nothing when no spec changed or it cannot be told.
- */
-export function changedSpecsAllowance(cwd, sha, { parts = 6, secondsPerRun = 5 } = {}) {
-  let files;
-  try {
-    ({ files } = findChangedE2eSpecs(cwd, sha));
-  } catch {
-    return { seconds: 0, specs: 0 };
-  }
-  const weights = files.map((file) => {
-    try {
-      return specWeight(execFileSync("git", ["show", `${sha}:${file}`], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 16 * 1024 * 1024 }));
-    } catch {
-      return 1;
-    }
-  });
-  if (!weights.length) return { seconds: 0, specs: 0 };
-  const longest = Math.max(Math.ceil(weights.reduce((sum, weight) => sum + weight, 0) / parts), ...weights);
-  return { seconds: longest * 2 * secondsPerRun, specs: files.length };
 }
 
 /** Every file changed between origin/main and `sha` (added, copied, modified, deleted, type changes). */
@@ -926,6 +903,7 @@ export function runStageProcess({
   logFilePath,
   silent = false,
   onSpawn,
+  limitMs = 0,
 }) {
   return new Promise((resolve, reject) => {
     const startedAt = new Date().toISOString();
@@ -956,6 +934,12 @@ export function runStageProcess({
 
     let stdout = "";
     let stderr = "";
+    // A stage that runs past its limit is stopped and reported too slow (#904), instead of running to the cap.
+    let tooSlow = false;
+    const limit = limitMs > 0 ? setTimeout(() => {
+      tooSlow = true;
+      void terminateProcessTree(child);
+    }, limitMs) : null;
     logStream?.on("error", (error) => {
       logError = error;
       void terminateProcessTree(child);
@@ -985,6 +969,7 @@ export function runStageProcess({
     });
 
     child.on("close", (code, signal) => {
+      if (limit) clearTimeout(limit);
       const completedAt = new Date().toISOString();
       const durationMs = Date.now() - startTime;
       const finish = () => resolve({
@@ -995,11 +980,40 @@ export function runStageProcess({
         durationMs,
         stdout,
         stderr: logError ? `${stderr}\nLog write failed: ${logError.message}` : stderr,
+        tooSlow,
       });
       if (logStream && !logStream.destroyed) logStream.end(finish);
       else finish();
     });
   });
+}
+
+/** The browser stage's time limit (#904): 1.5 times the estimate given (SONDER_BROWSER_ESTIMATE_SECONDS), else 40 minutes. */
+export function browserStageLimitMs(env = process.env) {
+  const estimate = Number(env.SONDER_BROWSER_ESTIMATE_SECONDS);
+  return Number.isFinite(estimate) && estimate > 0 ? Math.round(estimate * 1.5 * 1000) : 40 * 60 * 1000;
+}
+
+const LIST_LINE = /(?:✓|✘|ok|x)\s+\d+\s+(?:\[[^\]]+\]\s+›\s+)?(\S+?\.(?:spec|test)\.[cm]?[jt]s):\d+:\d+\s+›\s+(.*?)\s+\((\d+(?:\.\d+)?)(ms|s|m)\)\s*$/;
+
+/**
+ * The slowest tests and spec files of a browser stage's list output so far, slowest first: what a stage stopped as
+ * too slow says it was spending its time on. A test's seconds are its own; a file's are its tests' together.
+ */
+export function slowestSoFar(output, limit = 10) {
+  const tests = [];
+  for (const line of output.split("\n")) {
+    const match = LIST_LINE.exec(line);
+    if (!match) continue;
+    const seconds = Number(match[3]) * (match[4] === "ms" ? 0.001 : match[4] === "m" ? 60 : 1);
+    tests.push({ file: match[1], title: match[2], seconds: Math.round(seconds * 10) / 10 });
+  }
+  const files = new Map();
+  for (const entry of tests) files.set(entry.file, (files.get(entry.file) ?? 0) + entry.seconds);
+  return {
+    tests: [...tests].sort((a, b) => b.seconds - a.seconds).slice(0, limit),
+    files: [...files].map(([file, seconds]) => ({ file, seconds: Math.round(seconds * 10) / 10 })).sort((a, b) => b.seconds - a.seconds).slice(0, limit),
+  };
 }
 
 /**

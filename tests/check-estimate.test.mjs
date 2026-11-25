@@ -19,18 +19,19 @@ test("an ordinary check: the fixed stages and the browser stage's longest shard"
 test("changed specs add the repeat stage: two passes, the longest part, only the projects a spec is repeated in", () => {
   const changed = (share) => suite.slice(0, 6).map((entry) => ({ ...entry, share }));
   // Six changed specs in six parts on lisa: one each, 600 s twice.
-  assert.equal(estimateOnHost({ suite, changed: changed(1), scope: "full" }, lisa).repeat, 1200 + 40);
+  assert.equal(estimateOnHost({ suite, changed: changed(1), scope: "full" }, lisa).repeat, 0, "not repeated unless asked (#904)");
+  assert.equal(estimateOnHost({ suite, changed: changed(1), scope: "full", repeatChanged: true }, lisa).repeat, 1200 + 40);
   // In five parts on WSL the longest has two.
-  assert.equal(estimateOnHost({ suite, changed: changed(1), scope: "full" }, wsl).repeat, Math.round(2400 * 0.46 + 30));
+  assert.equal(estimateOnHost({ suite, changed: changed(1), scope: "full", repeatChanged: true }, wsl).repeat, Math.round(2400 * 0.46 + 30));
   // A spec that only gained one of three projects costs a third.
-  assert.equal(estimateOnHost({ suite, changed: changed(1 / 3), scope: "full" }, lisa).repeat, 400 + 40);
+  assert.equal(estimateOnHost({ suite, changed: changed(1 / 3), scope: "full", repeatChanged: true }, lisa).repeat, 400 + 40);
   // One heavy file bounds its part however many parts there are.
-  assert.equal(estimateOnHost({ suite, changed: [{ file: suite[0].file, seconds: 600, share: 1 }], scope: "full" }, lisa).repeat, 1240);
+  assert.equal(estimateOnHost({ suite, changed: [{ file: suite[0].file, seconds: 600, share: 1 }], scope: "full", repeatChanged: true }, lisa).repeat, 1240);
 });
 
 test("the lines name each host's figures, the hosts that fit the bar and those over it", () => {
   const config = { dispatch: { barSeconds: 1800 }, lisa: { estimate: lisa }, wsl: { estimate: wsl }, deck: {} };
-  const commit = { suite, changed: suite.slice(0, 6).map((entry) => ({ ...entry, share: 1 })), scope: "full" };
+  const commit = { suite, changed: suite.slice(0, 6).map((entry) => ({ ...entry, share: 1 })), scope: "full", repeatChanged: true };
   const result = estimateLines(commit, ["wsl", "lisa", "deck"], config, {});
   assert.deepEqual(result.lines, [
     "estimate wsl 35.1min fixed=85s browser=888s repeat=1134s changed_specs=6",

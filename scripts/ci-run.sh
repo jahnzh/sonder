@@ -320,9 +320,13 @@ rc=0
 # Preserve caller overrides, including explicitly empty values.
 [[ ${SONDER_CI_REMOTE_BASE+x} ]] || { [[ -z $DISPATCH_REMOTE_BASE ]] || export SONDER_CI_REMOTE_BASE="$DISPATCH_REMOTE_BASE"; }
 [[ ${SONDER_CI_TMPDIR+x} ]] || { [[ -z $DISPATCH_TMPDIR ]] || export SONDER_CI_TMPDIR="$DISPATCH_TMPDIR"; }
-# The host's own cap is passed on as that, not as a cap set by hand: the runner may add to it for the commit's
-# changed browser specs (#845), which it never does to a cap the caller chose.
+# The host's own cap is passed on as that, not as a cap set by hand.
 [[ ${SONDER_CI_MAX_WAIT+x} ]] || { [[ -z $DISPATCH_MAX_WAIT ]] || export SONDER_CI_HOST_MAX_WAIT="$DISPATCH_MAX_WAIT"; }
+# The admitted host's estimate of the browser stage goes to the check, which stops that stage as too slow past 1.5
+# times it (#904); without one the check stops it at 40 minutes.
+if [[ -z ${SONDER_BROWSER_ESTIMATE_SECONDS:-} && ${ESTIMATE:-} =~ (^|$'\n')estimate\ ${ADMITTED}\ [^$'\n']*browser=([0-9]+)s ]]; then
+  export SONDER_BROWSER_ESTIMATE_SECONDS="${BASH_REMATCH[2]}"
+fi
 # Distinct loopback ports so two checks admitted on one host do not share
 # Playwright's readiness probe (prototype used 4400+).
 if [[ -n $DISPATCH ]]; then

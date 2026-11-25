@@ -9,6 +9,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { runCheckLocal, STAGE_STARTED_FILE, workerTestsSummary } from "../scripts/check-local.mjs";
 import {
   acquirePortLease,
+  browserStageLimitMs,
   contenderPrecedes,
   findChangedE2eSpecs,
   releasePortLease,
@@ -142,6 +143,13 @@ if (sleepMs > 0 && currentStage === 'ci') {
   while (Date.now() < end) {}
 }
 
+// A browser stage that prints two finished tests and then hangs, for the too-slow stop (#904).
+if (process.env.STUB_NPM_BROWSER_HANG === '1' && currentStage === 'browser') {
+  process.stdout.write('  ✓   1 [chromium] › tests/e2e/a.spec.ts:3:1 › quick (2.1s)\\n');
+  process.stdout.write('  ✓   2 [firefox] › tests/e2e/b.spec.ts:9:1 › slow one (1.2m)\\n');
+  setInterval(() => {}, 1000);
+} else {
+
 const failIndex = failStages.indexOf(currentStage);
 if (failIndex !== -1) {
   const failCode = parseInt(failCodes[failIndex] || failCodes[0], 10);
@@ -151,6 +159,7 @@ if (failIndex !== -1) {
 
 process.stdout.write(\`Stub npm: \${argv.join(' ')} completed successfully\\n\`);
 process.exit(0);
+}
 `;
     const stubNpmPath = path.join(binDir, "npm");
     fs.writeFileSync(stubNpmPath, stubNpmScript, { encoding: "utf8", mode: 0o755 });
@@ -397,13 +406,13 @@ test("the changed specs are dealt into parts by the browser stage's times, by th
         const filter = (name) => `tests/e2e/${name}\\.spec\\.ts$`;
         const partsOf = (runs) => runs.slice(4).map((run) => JSON.parse(run.env.SONDER_BROWSER_PARTS));
         try {
-            const timed = await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, STUB_NPM_JSON_REPORT: reportFile}});
+            const timed = await runCheckLocal(["--silent", "--repeat-changed"], {cwd: fixture.repoDir, env: {...env, STUB_NPM_JSON_REPORT: reportFile}});
             assert.equal(timed.ok, true);
             assert.deepEqual(partsOf(readNpmLogs(fixture.npmLogPath)), [[[filter("a"), filter("c")], [filter("b")]]]);
             assert.match(timed.report.stages[4].command, /\(in 2 parts\)$/);
             fs.rmSync(fixture.npmLogPath);
             // No report (or one that lacks a changed file): the count of tests stays the weight.
-            const counted = await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env});
+            const counted = await runCheckLocal(["--silent", "--repeat-changed"], {cwd: fixture.repoDir, env});
             assert.equal(counted.ok, true);
             assert.deepEqual(partsOf(readNpmLogs(fixture.npmLogPath)), [[[filter("a")], [filter("b"), filter("c")]]]);
         } finally {
@@ -419,7 +428,7 @@ test("changed specs run repeated, as a report stage of their own, and no ordered
     try {
         writeFixtureFile(fixture, "tests/e2e/new [x].spec.ts", "fixture\n");
         commitFixture(fixture, "add spec");
-        const result = await runCheckLocal(["--silent"], {
+        const result = await runCheckLocal(["--silent", "--repeat-changed"], {
             cwd: fixture.repoDir,
             env: {PATH: `${fixture.binDir}:${process.env.PATH}`, STUB_NPM_LOG: fixture.npmLogPath, STUB_NPM_CREATE_TRACES: "1"},
         });
@@ -447,6 +456,50 @@ test("changed specs run repeated, as a report stage of their own, and no ordered
     }
 });
 
+test("the changed specs are repeated only when asked: --repeat-changed or SONDER_CHECK_REPEAT_CHANGED=1 (#904)", async () => {
+    const fixture = setupGitFixture();
+    try {
+        writeFixtureFile(fixture, "tests/e2e/changed.spec.ts", "fixture\n");
+        commitFixture(fixture, "add spec");
+        const env = {PATH: `${fixture.binDir}:${process.env.PATH}`, STUB_NPM_LOG: fixture.npmLogPath};
+        const plain = await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env});
+        assert.equal(plain.ok, true);
+        assert.deepEqual(plain.report.stages.map((stage) => stage.name), ["install", "build", "unit", "browser"]);
+        const asked = await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, SONDER_CHECK_REPEAT_CHANGED: "1"}});
+        assert.deepEqual(asked.report.stages.map((stage) => stage.name), ["install", "build", "unit", "browser", "browser-changed-repeat"]);
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+test("a browser stage past 1.5 times its estimate is stopped as failed, too slow, naming the slowest tests and files so far (#904)", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const env = {PATH: `${fixture.binDir}:${process.env.PATH}`, STUB_NPM_LOG: fixture.npmLogPath, STUB_NPM_BROWSER_HANG: "1", SONDER_BROWSER_ESTIMATE_SECONDS: "1"};
+        const started = Date.now();
+        const result = await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env});
+        assert.ok(Date.now() - started < 20000, "stopped at its limit, not run to the end");
+        assert.equal(result.ok, false);
+        assert.equal(result.report.failedStage, "browser");
+        const browser = result.report.stages.find((stage) => stage.name === "browser");
+        assert.equal(browser.status, "failed");
+        assert.equal(browser.tooSlow.limitSeconds, 2);
+        assert.deepEqual(browser.tooSlow.tests.map((entry) => [entry.file, entry.seconds]), [["tests/e2e/b.spec.ts", 72], ["tests/e2e/a.spec.ts", 2.1]]);
+        assert.deepEqual(browser.tooSlow.files.map((entry) => entry.file), ["tests/e2e/b.spec.ts", "tests/e2e/a.spec.ts"]);
+        assert.match(browser.stderr, /stopped as too slow: past 2 s/);
+        // No test is rerun alone: the stage did not end, it was stopped.
+        assert.equal(readNpmLogs(fixture.npmLogPath).length, 4);
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+test("the browser stage's limit is 1.5 times the estimate it is given, else 40 minutes", () => {
+    assert.equal(browserStageLimitMs({SONDER_BROWSER_ESTIMATE_SECONDS: "600"}), 900000);
+    assert.equal(browserStageLimitMs({}), 2400000);
+    assert.equal(browserStageLimitMs({SONDER_BROWSER_ESTIMATE_SECONDS: "soon"}), 2400000);
+});
+
 test("a state-leaking fixture passes once but fails the repeated changed-spec stage", async () => {
     const fixture = setupGitFixture();
     try {
@@ -463,7 +516,7 @@ test('leaves state behind', () => {
 });
 `);
         commitFixture(fixture, "add state-leaking spec");
-        const result = await runCheckLocal(["--silent"], {
+        const result = await runCheckLocal(["--silent", "--repeat-changed"], {
             cwd: fixture.repoDir,
             env: {
                 PATH: `${fixture.binDir}:${process.env.PATH}`,
@@ -496,7 +549,7 @@ test("a spec whose only change is its @projects line is repeated in the projects
         writeFixtureFile(fixture, "tests/e2e/edited.spec.ts", `// @projects firefox, prepared-view\n${body}test("three", async () => {});\n`);
         writeFixtureFile(fixture, "tests/e2e/new.spec.ts", `// @projects firefox, prepared-view\n${body}`);
         commitFixture(fixture, "a project more");
-        const result = await runCheckLocal(["--silent"], {
+        const result = await runCheckLocal(["--silent", "--repeat-changed"], {
             cwd: fixture.repoDir,
             env: {PATH: `${fixture.binDir}:${process.env.PATH}`, STUB_NPM_LOG: fixture.npmLogPath, SONDER_BROWSER_CHANGED_SHARDS: "1"},
         });
@@ -568,7 +621,7 @@ for (const title of ['first', 'second']) test(title, ({}, info) => fs.appendFile
         }
         commitFixture(fixture, "add two specs");
         const stateFile = path.join(fixture.tempBase, "test-order");
-        const result = await runCheckLocal(["--silent"], {
+        const result = await runCheckLocal(["--silent", "--repeat-changed"], {
             cwd: fixture.repoDir,
             env: {
                 PATH: `${fixture.binDir}:${process.env.PATH}`,
@@ -1450,7 +1503,7 @@ test("known failures in the full suite do not skip changed-spec stages", async (
         const {listFile, reportFile} = writeKnownFailuresFixture(fixture, [
             status("webkit", SPEC, "reset refreshes the app shell", "unexpected"),
         ]);
-        const result = await runCheckLocal(["--silent", "--known-failures", listFile], {
+        const result = await runCheckLocal(["--silent", "--repeat-changed", "--known-failures", listFile], {
             cwd: fixture.repoDir, env: knownFailuresEnv(fixture, reportFile),
         });
         assert.equal(result.report.result, "passed_with_known_failures");
@@ -1471,7 +1524,7 @@ test("known-failures list never tolerates a failed repeated changed-spec stage",
             status("webkit", SPEC, "reset refreshes the app shell", "expected"),
         ]);
         const env = {...knownFailuresEnv(fixture, reportFile), STUB_NPM_FAIL_STAGE: "browser-changed-repeat"};
-        const result = await runCheckLocal(["--silent", "--known-failures", listFile], {cwd: fixture.repoDir, env});
+        const result = await runCheckLocal(["--silent", "--repeat-changed", "--known-failures", listFile], {cwd: fixture.repoDir, env});
         assert.equal(result.ok, false);
         assert.equal(result.report.failedStage, "browser-changed-repeat");
         assert.equal(result.report.stages[4].status, "failed");
