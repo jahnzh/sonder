@@ -87,7 +87,6 @@ async function shownLines(room: Locator) {
 for (const [mode, label] of [["paginated", "pages"], ["scroll", "scroll"]] as const)
   for (const insets of INSET_PROFILES)
     test(`the head, the text band and the foot in ${label} mode with insets ${insets.name}`, async ({ page, browserName }) => {
-      if (mode === "paginated") notOnPreparedView("it measures pages mode, where no line may be cut by the band's edge; the new view is scroll mode only (pages mode is step 4), and its scroll mode variants run");
       const { ebook } = await fixture(page, `Bands ${label} ${insets.name}`);
       await applyInsets(page, browserName, insets);
       await withReader(page, { mode }, async () => {

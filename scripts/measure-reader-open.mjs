@@ -8,7 +8,7 @@
 //
 //   SONDER_VERIFY_URL=http://127.0.0.1:3106 node scripts/measure-reader-open.mjs \
 //     [--books short=<ebook id>,average=<ebook id>,long=<ebook id>] [--runs 5] [--profiles desktop,phone] [--out <file.json>]
-//     [--view prepared]
+//     [--view prepared] [--mode pages|scroll]
 //
 // --view prepared measures the new reading view (#802): the browser has the hidden switch set, as
 // `?reader-view=prepared` leaves it, and the report adds what making a part's nodes cost in the page. Without it the
@@ -35,6 +35,10 @@ const option = (name, fallback) => {
 const RUNS = Math.max(1, Number(option("runs", 5)) || 5);
 const PROFILE_NAMES = option("profiles", "desktop,phone").split(",").filter(Boolean);
 const VIEW = option("view", "default");
+// --mode pages|scroll: the reading mode the reader opens in, whatever the copy has saved. The copy is not written:
+// the page is answered the saved appearance with this mode in it.
+const MODE = option("mode", "saved");
+if (!["saved", "pages", "scroll"].includes(MODE)) throw new Error("--mode takes pages or scroll; leave it out for the saved reading mode");
 if (VIEW !== "default" && VIEW !== "prepared") throw new Error("--view takes prepared; leave it out for the reader a device gets without the switch");
 const OPEN_TIMEOUT = Number(option("open-timeout", 180)) * 1000;
 const FOLLOW_TIMEOUT = 20_000;
@@ -123,7 +127,7 @@ const characters = (text) => text.sections.reduce((sum, section) => sum + sectio
 // ---- In the page -----------------------------------------------------------------------------------------------
 
 /** Runs in the page before the app: keeps writes off the server, finds the audio element and times the reader. */
-function instrument({ origin, choices, view }) {
+function instrument({ origin, choices, view, mode }) {
   if (window.top !== window) return;
   for (const [workId, ebookId] of Object.entries(choices)) localStorage.setItem(`reader-ebook:${workId}`, ebookId);
   // The hidden switch of the reading view (src/reader-view-switch.ts), and the view's own record of what each part cost.
@@ -145,6 +149,14 @@ function instrument({ origin, choices, view }) {
   const nativeFetch = window.fetch.bind(window);
   window.fetch = async (input, init) => {
     const request = new Request(input, init);
+    const asked = new URL(request.url);
+    // The reading mode asked for (--mode), put into the appearance the server answers.
+    if (mode !== "saved" && request.method === "GET" && asked.origin === origin && asked.pathname === "/api/appearance") {
+      const answered = await nativeFetch(input, init);
+      const saved = await answered.clone().json().catch(() => null);
+      if (!answered.ok || !saved?.reader) return answered;
+      return new Response(JSON.stringify({ ...saved, reader: { ...saved.reader, mode: mode === "pages" ? "paginated" : "scroll" } }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
     if (["GET", "HEAD", "OPTIONS"].includes(request.method)) return nativeFetch(input, init);
     const url = new URL(request.url);
     const body = await request.text().catch(() => "");
@@ -361,9 +373,12 @@ async function openOnce(page, network, book, phase) {
     ebook: document.querySelector(".inline-reader")?.getAttribute("data-ebook") ?? null,
     frames: document.querySelectorAll(".inline-reader .reader-viewport iframe").length,
     view: document.querySelector(".inline-reader .reader-viewport")?.getAttribute("data-view") ?? "epub",
+    // The new view names its layout on the band; today's reader does not.
+    mode: document.querySelector(".inline-reader .reader-viewport")?.getAttribute("data-mode") ?? null,
     // What the new view spent making each part's nodes since the page loaded (parse, allow-list walk, nodes).
     parts: (window.__sonderPartTimings ?? []).map((entry) => ({ ...entry })),
   }));
+  if (MODE !== "saved" && opened.mode && opened.mode !== MODE) throw new Error(`Read opened in ${opened.mode} mode, not the one asked for (--mode ${MODE})`);
   if ((VIEW === "prepared") !== (opened.view === "prepared")) throw new Error(`Read opened the ${opened.view} view, not the one asked for (--view ${VIEW})`);
   if (opened.ebook !== book.ebook.id) throw new Error(`Read opened EPUB ${opened.ebook}, not ${book.ebook.id}`);
   network.phase("after");
@@ -395,7 +410,7 @@ async function run(browser, cookies, profileName, book) {
   const errors = [];
   try {
     await context.addCookies(cookies);
-    await context.addInitScript(instrument, { origin, choices: { [book.ebook.workId]: book.ebook.id }, view: VIEW });
+    await context.addInitScript(instrument, { origin, choices: { [book.ebook.workId]: book.ebook.id }, view: VIEW, mode: MODE });
     const page = await context.newPage();
     page.on("pageerror", (error) => errors.push(error.message));
     const session = await context.newCDPSession(page);
@@ -422,7 +437,7 @@ const kb = (bytes) => (bytes == null ? "–" : `${Math.round(bytes / 1024).toLoc
 const ms = (value) => (value == null ? "–" : `${Math.round(value).toLocaleString("en-US")} ms`);
 
 const browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || "/home/jahn/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome" });
-const report = { measuredAt: new Date().toISOString(), target: origin, build: null, view: VIEW, runs: RUNS, profiles: PROFILE_NAMES, books: [], results: [] };
+const report = { measuredAt: new Date().toISOString(), target: origin, build: null, view: VIEW, mode: MODE, runs: RUNS, profiles: PROFILE_NAMES, books: [], results: [] };
 // The report is written after every row, so a run that is stopped keeps what it measured.
 const out = option("out", path.join("artifacts", `reader-open-${report.measuredAt.replace(/[:.]/g, "-")}.json`));
 const write = () => {
