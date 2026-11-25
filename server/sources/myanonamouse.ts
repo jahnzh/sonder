@@ -104,31 +104,33 @@ export type MamSearch = { results: MamRelease[]; found: number; total: number };
 const text = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : null);
 const count = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : typeof value === "string" && /^\d+$/.test(value) ? Number(value) : null);
 
+/** A field MAM sends as a JSON string: its value, or undefined when it is not JSON. Any other error is a bug and throws. */
+function jsonField(value: string): unknown {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch (error) {
+    if (error instanceof SyntaxError) return undefined;
+    throw error;
+  }
+}
+
 /** A field MAM sends as a JSON string of `{ id: name }` (`author_info`, `narrator_info`): the names. */
 function names(value: unknown): string[] {
   if (typeof value !== "string" || !value.trim()) return [];
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
-    return Object.values(parsed as Record<string, unknown>).flatMap((name) => (text(name) ? [text(name)!] : []));
-  } catch {
-    return [];
-  }
+  const parsed = jsonField(value);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+  return Object.values(parsed as Record<string, unknown>).flatMap((name) => (text(name) ? [text(name)!] : []));
 }
 
 /** `series_info`: `{ id: [name, "1", 1.0] }`. */
 function series(value: unknown): MamRelease["series"] {
   if (typeof value !== "string" || !value.trim()) return [];
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
-    return Object.values(parsed as Record<string, unknown>).flatMap((entry) => {
-      if (!Array.isArray(entry) || !text(entry[0])) return [];
-      return [{ name: text(entry[0])!, position: text(entry[1]) }];
-    });
-  } catch {
-    return [];
-  }
+  const parsed = jsonField(value);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+  return Object.values(parsed as Record<string, unknown>).flatMap((entry) => {
+    if (!Array.isArray(entry) || !text(entry[0])) return [];
+    return [{ name: text(entry[0])!, position: text(entry[1]) }];
+  });
 }
 
 const UNITS: Record<string, number> = { b: 0, k: 1, m: 2, g: 3, t: 4 };
@@ -142,14 +144,10 @@ function bytes(size: string | null) {
 /** The length in `mediainfo` (`General.Duration`, "13:31:33"), in milliseconds. */
 function lengthOf(mediainfo: unknown): number | null {
   if (typeof mediainfo !== "string" || !mediainfo.includes("Duration")) return null;
-  try {
-    const duration = (JSON.parse(mediainfo) as { General?: { Duration?: unknown } })?.General?.Duration;
-    const match = typeof duration === "string" ? /^(\d+):(\d{2}):(\d{2})$/.exec(duration.trim()) : null;
-    if (!match) return null;
-    return ((Number(match[1]) * 60 + Number(match[2])) * 60 + Number(match[3])) * 1000;
-  } catch {
-    return null;
-  }
+  const duration = (jsonField(mediainfo) as { General?: { Duration?: unknown } } | undefined)?.General?.Duration;
+  const match = typeof duration === "string" ? /^(\d+):(\d{2}):(\d{2})$/.exec(duration.trim()) : null;
+  if (!match) return null;
+  return ((Number(match[1]) * 60 + Number(match[2])) * 60 + Number(match[3])) * 1000;
 }
 
 /** MAM's three-letter code ("ENG", "GER", "POL") as the language's name; a code no table knows stays as it is. */
@@ -204,8 +202,8 @@ export function parseMamSearch(body: string): MamSearch & { tokens: Map<number, 
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
-  } catch {
-    throw new LibgenAnswerError(`${MAM_NAME} did not answer with search results.`);
+  } catch (error) {
+    throw new LibgenAnswerError(`${MAM_NAME} did not answer with search results.`, { cause: error });
   }
   const value = (parsed ?? {}) as Record<string, unknown>;
   if (typeof value.error === "string" && /^nothing returned/i.test(value.error.trim()))
