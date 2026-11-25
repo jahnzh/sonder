@@ -291,9 +291,9 @@ test("SONDER_DEPLOY_SLICE_PASS=1 adds the slice pass after the other live checks
     assert.deepEqual(f.ran(), ["verify-a.mjs", "verify-a.mjs", "verify-slice-pass.mjs"]);
     // Any other value is not the opt-in.
     r = f.run(["--no-marker", "--dry-run"], { SONDER_DEPLOY_LIVE_CHECKS: "", SONDER_DEPLOY_SLICE_PASS: "yes" });
-    assert.match(r.stdout, /live checks: scripts\/verify-integrated-reader\.mjs scripts\/verify-multi-user\.mjs\n/);
+    assert.match(r.stdout, /live checks: scripts\/verify-integrated-reader\.mjs scripts\/verify-multi-user\.mjs scripts\/verify-covers\.mjs\n/);
     r = f.run(["--no-marker", "--dry-run"], { SONDER_DEPLOY_LIVE_CHECKS: "", SONDER_DEPLOY_SLICE_PASS: "1" });
-    assert.match(r.stdout, /live checks: scripts\/verify-integrated-reader\.mjs scripts\/verify-multi-user\.mjs scripts\/verify-slice-pass\.mjs\n/);
+    assert.match(r.stdout, /live checks: scripts\/verify-integrated-reader\.mjs scripts\/verify-multi-user\.mjs scripts\/verify-covers\.mjs scripts\/verify-slice-pass\.mjs\n/);
   } finally {
     rmSync(f.dir, { recursive: true, force: true });
   }

@@ -90,7 +90,7 @@ test("the live checks in this checkout name only screens, classes and controls t
   const tree = readTree(root);
   assert.deepEqual(
     Object.keys(tree.scripts).sort(),
-    ["live-reader-controls.mjs", "verify-integrated-reader.mjs", "verify-multi-user-snapshot.mjs", "verify-multi-user.mjs", "verify-playback-workflow.mjs", "verify-reading-sync.mjs", "verify-slice-pass.mjs"],
+    ["live-reader-controls.mjs", "verify-covers.mjs", "verify-integrated-reader.mjs", "verify-multi-user-snapshot.mjs", "verify-multi-user.mjs", "verify-playback-workflow.mjs", "verify-reading-sync.mjs", "verify-slice-pass.mjs"],
   );
   assert.deepEqual(staleLocators(tree), []);
 });
