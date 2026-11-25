@@ -7,6 +7,7 @@ import * as s from "./schema.ts";
 import { acquire as defaultAcquire } from "./acquisitions.ts";
 import {
   autoAcquireSeriesVolume,
+  seriesAudioLanguage,
   seriesVolumeRefs,
   type SeriesAudioSearchDeps,
 } from "./series-audio.ts";
@@ -369,7 +370,7 @@ export function resetStrandedSeriesAcquisitionClaims(now = Date.now()) {
 function catalogueVolumes(seriesId: string) {
   return sqlite
     .prepare(
-      `SELECT book_id AS bookId, title, position, unreleased, cover, narrators, length_ms AS lengthMs
+      `SELECT book_id AS bookId, title, position, unreleased, cover, narrators, length_ms AS lengthMs, language
        FROM series_catalogue_works WHERE series_id=? ORDER BY position IS NULL, position, book_id`,
     )
     .all(seriesId) as {
@@ -381,6 +382,8 @@ function catalogueVolumes(seriesId: string) {
     /** The narrators and length of the book's English releases on AudiobookDB (#721), for the ranking. */
     narrators: string;
     lengthMs: number | null;
+    /** The language the catalogue names for the book ("en" for an English one); null when it names none. */
+    language: string | null;
   }[];
 }
 
@@ -777,6 +780,8 @@ async function runAudioJob(
       title: volume.title,
       cover: volume.cover ?? edition?.cover,
       expected: { narrators: parseNarrators(volume.narrators), lengthMs: volume.lengthMs },
+      seriesLanguage: seriesAudioLanguage(job.userId, job.seriesId, volume.language),
+      bookId: volume.bookId,
     },
     wrappedAcquire,
     deps.seriesAudioDeps,

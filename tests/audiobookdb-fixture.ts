@@ -38,7 +38,7 @@ const release = (id: string, bookId: string, narrator: string, ms: number, langu
   runtimeLengthMs: ms,
   isbn: "9781000000001",
   publisher: { name: "Recorded Books" },
-  language: { code: language === "English" ? "en" : "de", name: language },
+  language: { code: ({ English: "en", French: "fr" } as Record<string, string>)[language] ?? "de", name: language },
   disambiguation: "Unabridged",
   external: asin ? [{ source: "audible", id: asin }] : [],
   chapterDetail: { chapters: Array.from({ length: chapters }, (_, i) => ({ title: `Chapter ${i + 1}`, startOffsetMs: i * 600_000, lengthMs: 600_000 })) },
@@ -166,6 +166,8 @@ const RELEASES: Record<string, ReturnType<typeof release>> = {
   "rl-wasp": release("rl-wasp", "bk-wasp", "Peter Kenny", 28_800_000, "English", null, 12),
   "rl-wespen": release("rl-wespen", "bk-wespen", "Frank Arnold", 28_000_000, "German", null, 12),
   "rl-dcc-1": release("rl-dcc-1", "bk-dcc-1", "Jeff Hays", 49_000_000, "English", null, 20),
+  // The French recording of book 1 the series queue once downloaded (#897): its ASIN is the one in its file name.
+  "rl-dcc-1-fr": release("rl-dcc-1-fr", "bk-dcc-1", "Jean Dupont", 51_000_000, "French", "B0DM67WR2V", 20),
   "rl-dcc-2": release("rl-dcc-2", "bk-dcc-2", "Jeff Hays", 50_000_000, "English", null, 20),
   "rl-xwing": release("rl-xwing", "bk-xwing", "Marc Thompson", 30_000_000, "English", null, 12),
   "rl-beautiful-1": release("rl-beautiful-1", "bk-beautiful-a", "Jeff Hays", 20_000_000, "English", null, 10),
@@ -181,6 +183,10 @@ const BOOKS: Record<string, ReturnType<typeof book> & { releases?: unknown }> = 
 const ASINS: Record<string, { bookId: string; releaseId: string }> = {
   B004GJ4ZPU: { bookId: "bk-leviathan", releaseId: "rl-lw-en" },
   B0ASINFIX1: { bookId: "bk-asin", releaseId: "rl-asin" },
+  // Dungeon Crawler Carl: the French release of book 1, an English one, and an ASIN of book 2 (#897).
+  B0DM67WR2V: { bookId: "bk-dcc-1", releaseId: "rl-dcc-1-fr" },
+  B0DCCENG01: { bookId: "bk-dcc-1", releaseId: "rl-dcc-1" },
+  B0DCCBOOK2: { bookId: "bk-dcc-2", releaseId: "rl-dcc-2" },
 };
 const fold = (text: string) => text.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "");
 function searchBooks(q: string) {

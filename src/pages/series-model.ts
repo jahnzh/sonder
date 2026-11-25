@@ -12,6 +12,7 @@ import {
   NO_CONNECTION_LINE,
   NOT_IN_LIBRARY_LINE,
   NOT_RELEASED_LINE,
+  ANOTHER_LANGUAGE_LINE,
   SERIES_SEARCH_FAILED_LINE,
   seriesSearchLine,
   SEVERAL_MATCHES_LINE,
@@ -185,6 +186,9 @@ function libraryLine(work: SeriesPageWork, entry: LibraryWork): Line {
   const media = entry.mediaState;
   if (media?.state === "failed" && !hasAudio(entry))
     return { line: downloadLine({ status: "error" })!, failed: true, action: { kind: "retry-download" }, progress: null };
+  // A recording in another language than the series' is not shown as done: the book page offers another release (#897).
+  if (media?.holdReason === "another_language" && hasAudio(entry) && workProgress(entry) === "not-started")
+    return { line: ANOTHER_LANGUAGE_LINE, failed: false, action: null, progress: null };
   if (workProgress(entry) !== "not-started") return { line: placeLine(entry, null), failed: false, action: null, progress: null };
   if (media?.state === "queued" && !hasAudio(entry)) {
     const status = (media.acquisition?.status ?? "checking") as DownloadFacts["status"];

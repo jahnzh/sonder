@@ -517,7 +517,7 @@ export function bookSyncLine({ hasRecording, audioComing, hasEbook, hasEpub, job
 /** A work's media state, as the Audiobook row of a work without a recording reads it. */
 export type MediaStateFacts = {
   state: "missing" | "queued" | "failed" | "available";
-  holdReason: "unreleased" | "empty_search" | null;
+  holdReason: "unreleased" | "empty_search" | "another_language" | null;
 };
 
 /**
@@ -642,6 +642,8 @@ export const NO_AUDIOBOOK_LINE = "No audiobook yet";
 export const NOT_RELEASED_LINE = "Not released yet";
 /** A series search for the book's audiobook or ebook failed (`series_acquisition_jobs`, `failed`). */
 export const SERIES_SEARCH_FAILED_LINE = failedLine({ entry: "series-search" });
+/** A downloaded book of a series whose release is in another language than the series' (#897): the user chooses another. */
+export const ANOTHER_LANGUAGE_LINE = "Another language";
 /** A book a member cannot add: it matches a book on the server that only the administrator can link. */
 export const NEEDS_ADMIN_LINE = "Needs the administrator to link it";
 /** The same hold for the administrator: the book matches several books on the server. */

@@ -126,13 +126,13 @@ test("the switches are the administrator's; the note while one is on; the reques
   assert.deepEqual(on.switches, { audio: true, ebooks: true });
   assert.equal(on.note, GET_NOTE);
   assert.equal(GET_NOTE, "What is found downloads to your server.");
-  assert.deepEqual(on.body, { id: "77", bookIds: ["21", "5"], searchAudio: true, searchEbooks: true });
+  assert.deepEqual(on.body, { id: "77", bookIds: ["21", "5"], searchAudio: true, searchEbooks: true, language: "en" });
   assert.equal(seriesAddModel(culture, facts({ getEbooks: true })).note, GET_NOTE);
   // Someone who is not the administrator: no switches, and the request asks for no search even if the device has them on.
   const member = seriesAddModel(culture, facts({ admin: false, getAudio: true, getEbooks: true }));
   assert.equal(member.switches, null);
   assert.equal(member.note, null);
-  assert.deepEqual(member.body, { id: "77", bookIds: ["21", "5"], searchAudio: false, searchEbooks: false });
+  assert.deepEqual(member.body, { id: "77", bookIds: ["21", "5"], searchAudio: false, searchEbooks: false, language: "en" });
 });
 
 test("a book in the library is not offered; a number whose book is held offers nothing", () => {

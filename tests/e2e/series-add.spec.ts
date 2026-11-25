@@ -143,7 +143,7 @@ test("Add on a row opens the sheet with that book chosen; Close and Back change 
   await sheet(page).getByRole("button", { name: "Add 1 book", exact: true }).click();
   await expect(sheet(page)).toHaveCount(0);
   await expect(page).toHaveURL(/#series\/701$/);
-  expect(sent).toEqual([{ id: "701", bookIds: ["506"], searchAudio: false, searchEbooks: false }]);
+  expect(sent).toEqual([{ id: "701", bookIds: ["506"], searchAudio: false, searchEbooks: false, language: "en" }]);
   // Added once; the book already in the library stays single; the page reads the series again: it is a library book.
   const after = await libraryBooks(page);
   expect(after.filter((book) => book.title === "Crossing Three")).toHaveLength(1);
@@ -178,7 +178,7 @@ test("the administrator's Get switches search for the chosen books and skip one 
   await sheet(page).getByRole("button", { name: "Add 2 books", exact: true }).click();
   await expect(sheet(page)).toHaveCount(0);
   await expect(page).toHaveURL(/#series\/701$/);
-  expect(sent).toEqual([{ id: "701", bookIds: ["501", "503"], searchAudio: true, searchEbooks: true }]);
+  expect(sent).toEqual([{ id: "701", bookIds: ["501", "503"], searchAudio: true, searchEbooks: true, language: "en" }]);
   await expect.poll(async () => (await crossing(page)).works.find((work) => work.id === "501")?.acquisition?.audio?.skipReason ?? null).toBe("has_audio");
   await expect.poll(async () => (await crossing(page)).works.find((work) => work.id === "503")?.acquisition?.audio?.status ?? null).not.toBeNull();
   expect((await libraryBooks(page)).filter((book) => book.title === ALICE)).toHaveLength(1);
@@ -234,8 +234,8 @@ test("someone who is not the administrator gets no switches; a refusal shows the
   await sheet(page).getByRole("button", { name: "Add 1 book", exact: true }).click();
   await expect(sheet(page)).toHaveCount(0);
   expect(bodies).toEqual([
-    { id: "701", bookIds: ["504"], searchAudio: false, searchEbooks: false },
-    { id: "701", bookIds: ["504"], searchAudio: false, searchEbooks: false },
+    { id: "701", bookIds: ["504"], searchAudio: false, searchEbooks: false, language: "en" },
+    { id: "701", bookIds: ["504"], searchAudio: false, searchEbooks: false, language: "en" },
   ]);
 });
 

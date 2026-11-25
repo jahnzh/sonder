@@ -15,6 +15,7 @@ import { addTorrent, getTorrent, removeTorrent, transmission } from "./transmiss
 import { getTorrentHealth } from "./torrent-health.ts";
 import { audioPattern } from "./preview-file.ts";
 import { getWorkMediaState, trackWorkMediaState } from "./work-media-state.ts";
+import { checkDownloadedLanguage } from "./series-language-check.ts";
 import {
   ACTIVE_ACQUISITION_STATUSES,
   isActiveAcquisitionStatus,
@@ -285,6 +286,8 @@ function createBook(
       updatedAt: Date.now(),
     });
   })();
+  // A series book whose files carry an ASIN of another language is marked once the download is done (#897).
+  void checkDownloadedLanguage(job.id).catch((error) => console.warn(`series language check: ${(error as Error).message}`));
 }
 const processing = new Set<string>();
 // Completed files that fail validation won't change on the next refresh, so these end the job.

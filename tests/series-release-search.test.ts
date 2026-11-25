@@ -70,7 +70,7 @@ const { encrypt } = await import("../server/security.ts");
 const app = await createApp({ background: { manual: ["series-acquisition"] } });
 
 const releasesUrl = `/api/series/${SERIES}/works/${FIRST}/releases`;
-const AUTO_RESULT = { id: "abb-auto", title: "First volume M4B", format: "M4B", narrator: "Reader" };
+const AUTO_RESULT = { id: "abb-auto", title: "First volume M4B", format: "M4B", narrator: "Reader", language: "English" };
 // The series search's own AudioBookBay search waits on this gate (opened after each test), so a job a save starts
 // stays "searching" while the test runs; once open it offers one candidate for the first volume.
 let openAutoSearch!: () => void;
