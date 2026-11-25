@@ -130,6 +130,10 @@ test("packRange and packCoverage read the books a title names, for this series o
   assert.deepEqual(packRange("Dungeon Crawler Carl 1-4 [M4B]", SERIES), { from: 1, to: 4 });
   assert.deepEqual(packRange("Dungeon Crawler Carl #2-3", SERIES), { from: 2, to: 3 });
   assert.deepEqual(packRange("Dungeon Crawler Carl Book 1 to 3", SERIES), { from: 1, to: 3 });
+  assert.deepEqual(packRange("Dungeon Crawler Carl Vol. 1 & 2", SERIES), { from: 1, to: 2 });
+  // A length or a size after the second number is no range of books.
+  assert.equal(packRange("Dungeon Crawler Carl Book 1 - 3 Hours", SERIES), null);
+  assert.equal(packRange("Dungeon Crawler Carl 1 - 64 kbps", SERIES), null);
   assert.equal(packRange("Dungeon Crawler Carl - Complete Series", SERIES), null);
   assert.equal(packRange("Dungeon Crawler Carl, Book 2", SERIES), null);
   assert.deepEqual(packCoverage("Dungeon Crawler Carl Books 1-8 · M4B", VOLUMES, SERIES), [1, 2, 3, 4, 5]);

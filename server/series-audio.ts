@@ -669,8 +669,12 @@ export async function autoAcquireSeriesVolumes(
  * its books is `server/series-pack.ts`.
  */
 
-const PACK_RANGE =
-  /(?:\bbooks?|\bbks?|\bvols?|\bvolumes?|\bparts?|#)\s*0*(\d{1,3})\s*(?:-|–|—|to|thru|through|&|and)\s*(?:#|books?\s*)?0*(\d{1,3})\b/i;
+// The second number is no book's when a length or a size follows it ("Book 1 - 3 Hours").
+const NOT_A_BOOK = String.raw`(?!\s*(?:hours?|hrs?|h\b|minutes?|mins?|kbps|mb|gb)\b)`;
+const PACK_RANGE = new RegExp(
+  String.raw`(?:\bbooks?|\bbks?\.?|\bvols?\.?|\bvolumes?|\bparts?|#)\s*0*(\d{1,3})\s*(?:-|–|—|to|thru|through|&|and)\s*(?:#|books?\s*)?0*(\d{1,3})\b` + NOT_A_BOOK,
+  "i",
+);
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
@@ -681,7 +685,7 @@ export function packRange(title: string, seriesName: string): { from: number; to
   const plain = stripApostrophes(title);
   const words = normalizeSeriesAudioTitle(seriesName).split(" ").filter(Boolean);
   const afterSeries = words.length
-    ? new RegExp(`${words.map(escapeRegExp).join("\\W+")}\\W*0*(\\d{1,3})\\s*(?:-|–|—|to)\\s*0*(\\d{1,3})\\b`, "i")
+    ? new RegExp(`${words.map(escapeRegExp).join("\\W+")}\\W*0*(\\d{1,3})\\s*(?:-|–|—|to)\\s*0*(\\d{1,3})\\b${NOT_A_BOOK}`, "i")
     : null;
   const match = PACK_RANGE.exec(plain) ?? afterSeries?.exec(plain);
   if (!match) return null;

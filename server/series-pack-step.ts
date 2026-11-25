@@ -5,7 +5,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { sqlite } from "./db.ts";
 import type { acquire as acquireFn } from "./acquisitions.ts";
-import { choosePackFiles, joinPack, packChoicesForWork, packCovering, type PackBook, type PackRequest } from "./acquisition-packs.ts";
+import { choosePackFiles, joinPack, packChoicesForWork, packCovering, packWorks, type PackBook, type PackRequest } from "./acquisition-packs.ts";
 import {
   packCandidateMagnet,
   packCoverage,
@@ -109,8 +109,9 @@ export async function seriesPackStep(
     works: books.map((row) => ({ workId: row.workId, position: row.position, title: row.title, cover: row.cover })),
   };
   if (!mayAcquire()) throw new Error("cancelled");
+  let job: { id: string } | null = null;
   try {
-    await acquire(magnet, {
+    job = (await acquire(magnet, {
       title: choice.candidate.title,
       author: input.author,
       cover: primary.cover ?? undefined,
@@ -118,7 +119,7 @@ export async function seriesPackStep(
       narrator: choice.candidate.narrator,
       userId: input.userId,
       pack,
-    });
+    })) as { id: string } | null;
   } catch (error) {
     // As a book's own pick: an acquire that failed leaves its acquisition failed for the books (their Retry), and one
     // that failed before recording any still tracks the book. The other books keep their own searches.
@@ -126,8 +127,10 @@ export async function seriesPackStep(
     trackWorkMediaState(input.userId, input.workId);
     return books.some((row) => row.workId === input.workId);
   }
-  // The other books the pack holds need no search of their own.
-  const others = books.filter((row) => row.workId !== input.workId).map((row) => row.jobId);
+  // The books the pack now serves need no search of their own. A torrent imported whole before, as one book's, did
+  // not become a pack: its books keep their own searches.
+  const served = new Set(job?.id ? packWorks(job.id).map((row) => row.workId) : []);
+  const others = books.filter((row) => row.workId !== input.workId && served.has(row.workId)).map((row) => row.jobId);
   if (others.length)
     sqlite
       .prepare(
@@ -135,7 +138,7 @@ export async function seriesPackStep(
           WHERE id IN (SELECT value FROM json_each(?)) AND status = 'pending'`,
       )
       .run(Date.now(), JSON.stringify(others));
-  return books.some((row) => row.workId === input.workId);
+  return served.has(input.workId);
 }
 
 /** A book of a pack as the Get sheet names it. */
@@ -162,20 +165,28 @@ function workSeries(userId: number, workId: string) {
   }));
 }
 
+/** The work's series as `describePack` reads them, each volume with whether its work has playable audio: read once. */
+export function packSeriesOf(userId: number, workId: string) {
+  return workSeries(userId, workId).map((series) => ({
+    ...series,
+    volumes: series.volumes.map((volume) => ({ ...volume, hasAudio: !!volume.workId && workHasPlayableAudio(volume.workId) })),
+  }));
+}
+
 /**
  * Whether a release is a pack of a series the work is in that holds the work (ADR 0027): the books it holds, and
  * which of them it gets (the work itself, and the user's other books of the series in it without audio that are
  * out). Null for any other release.
  */
-export function describePack(userId: number, workId: string, title: string) {
-  for (const series of workSeries(userId, workId)) {
+export function describePack(userId: number, workId: string, title: string, seriesList = packSeriesOf(userId, workId)) {
+  for (const series of seriesList) {
     const covered = packCoverage(title, series.volumes, series.name);
     const own = series.volumes.find((volume) => volume.workId === workId);
     if (!covered || !own || !covered.includes(own.position)) continue;
     const books = series.volumes
       .filter((volume) => covered.includes(volume.position))
       .map((volume) => {
-        const hasAudio = !!volume.workId && workHasPlayableAudio(volume.workId);
+        const hasAudio = volume.hasAudio;
         return {
           view: {
             position: volume.position,
@@ -216,8 +227,9 @@ export function registerPackRoutes(app: FastifyInstance) {
     const { titles } = z.object({ titles: z.array(z.string().max(500)).max(200).default([]) }).parse(req.body ?? {});
     const userId = currentUserId(req);
     const packs: Record<string, PackView> = {};
+    const series = packSeriesOf(userId, id);
     for (const title of new Set(titles)) {
-      const described = describePack(userId, id, title);
+      const described = describePack(userId, id, title, series);
       if (described) packs[title] = described.view;
     }
     return { packs };

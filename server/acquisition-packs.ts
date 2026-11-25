@@ -316,8 +316,21 @@ export async function joinPack(acquisitionId: string, userId: number, book: Pack
   if (!pack) throw new Error("This download is not a pack.");
   recordPack(acquisitionId, { seriesId: pack.seriesId, seriesName: pack.seriesName, volumes: [], works: [book] });
   db.insert(s.userAcquisitions).values({ userId, acquisitionId }).onConflictDoNothing().run();
+  return settleJoinedBooks(acquisitionId, userId, [book.workId]);
+}
+
+/**
+ * After books joined a pack: a done pack makes the recordings of the books still waiting, and a book whose recording
+ * the pack made already is put (back) in the user's library, out of its hidden list, as a plain download's is.
+ */
+export async function settleJoinedBooks(acquisitionId: string, userId: number, workIds: string[]) {
   const job = db.select().from(s.acquisitions).where(eq(s.acquisitions.id, acquisitionId)).get();
   if (job?.status === "ready") await assignWaitingPackWorks(acquisitionId);
+  for (const row of packWorks(acquisitionId)) {
+    if (!row.bookId || !workIds.includes(row.workId)) continue;
+    db.delete(s.userHiddenLibrary).where(and(eq(s.userHiddenLibrary.userId, userId), eq(s.userHiddenLibrary.bookId, row.bookId))).run();
+    db.insert(s.userLibrary).values({ userId, bookId: row.bookId, status: "unread", addedAt: Date.now() }).onConflictDoNothing().run();
+  }
   return job;
 }
 

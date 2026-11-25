@@ -379,3 +379,42 @@ test("replacing a pack on its way from one book's Get sheet lets only that book 
   assert.equal(getWorkMediaState(1, book(2))?.state, "queued");
   assert.notEqual(getWorkMediaState(1, book(1))?.state, "queued");
 });
+
+test("a pack that is a torrent imported whole before, as one book's, does not end the other books' searches", async () => {
+  const { seriesPackStep } = await import("../server/series-pack-step.ts");
+  const WHOLE = "sr-whole-saga";
+  const book = (n: number) => `w-whole-${n}`;
+  seedSeries(WHOLE, "Whole Saga", 3, book);
+  const hash = "7".repeat(40);
+  db.insert(s.acquisitions)
+    .values({ id: "whole-acquisition", hash, magnet: magnet(hash, "Whole"), backend: "torbox", remoteId: "70", title: "Whole Saga Books 1-3", author: "Ada Author", cover: "", workId: book(1), status: "ready", progress: 1, createdAt: Date.now(), updatedAt: Date.now() })
+    .run();
+  for (const n of [2, 3])
+    db.insert(s.seriesAcquisitionJobs)
+      .values({ id: `whole-job-${n}`, userId: 1, seriesId: WHOLE, bookId: `${WHOLE}-bk-${n}`, workId: book(n), kind: "audio", status: n === 2 ? "searching" : "pending", updatedAt: Date.now() })
+      .run();
+  const { acquire } = await import("../server/acquisitions.ts");
+  const served = await seriesPackStep(
+    { userId: 1, seriesId: WHOLE, seriesName: "Whole Saga", author: "Ada Author", jobId: "whole-job-2", workId: book(2), position: 2, title: TITLES[1] },
+    acquire,
+    {
+      ...seriesAudioDeps,
+      abbSearch: async () => ({ results: [{ id: "whole", title: "Whole Saga Books 1-3", language: "English" }], page: 1, nextPage: null }),
+      abbMagnetLink: async () => magnet(hash, "Whole"),
+    },
+  );
+  assert.equal(served, false);
+  assert.equal(jobOf(book(3))?.status, "pending");
+  assert.equal(db.select().from(s.acquisitionPacks).where(eq(s.acquisitionPacks.acquisitionId, "whole-acquisition")).get(), undefined);
+});
+
+test("Get on a pack for a book it made already puts that book back in the library", async () => {
+  const pack = acquisitionOf(PACK_HASH)!;
+  const edition = packEditionId(pack, work(1));
+  db.delete(s.userLibrary).where(eq(s.userLibrary.bookId, edition)).run();
+  db.insert(s.userHiddenLibrary).values({ userId: 1, bookId: edition }).run();
+  const pack1 = packRequestFor(1, work(1), "Pack Saga Books 1-4 [M4B]")!;
+  await acquireReplacing(magnet(PACK_HASH, "Pack"), { workId: work(1), title: "Pack Saga Books 1-4 [M4B]", pack: pack1, userId: 1 });
+  assert.ok(db.select().from(s.userLibrary).where(eq(s.userLibrary.bookId, edition)).get());
+  assert.equal(db.select().from(s.userHiddenLibrary).where(eq(s.userHiddenLibrary.bookId, edition)).get(), undefined);
+});

@@ -15,7 +15,7 @@ import { addTorrent, getTorrent, removeTorrent, transmission } from "./transmiss
 import { getTorrentHealth } from "./torrent-health.ts";
 import { audioPattern } from "./preview-file.ts";
 import { getWorkMediaState, trackWorkMediaState } from "./work-media-state.ts";
-import { assignWaitingPackWorks, importPack, isPackAcquisition, leavePack, packOf, recordPack, type PackRequest } from "./acquisition-packs.ts";
+import { assignWaitingPackWorks, importPack, isPackAcquisition, leavePack, packOf, recordPack, settleJoinedBooks, type PackRequest } from "./acquisition-packs.ts";
 import { checkDownloadedLanguage } from "./series-language-check.ts";
 import {
   ACTIVE_ACQUISITION_STATUSES,
@@ -125,7 +125,7 @@ export async function acquire(
       if (!wasPack && existing.workId && !request.works.some((entry) => entry.workId === existing.workId))
         request.works = [...request.works, book(existing.workId)];
       recordPack(existing.id, request);
-      if (existing.status === "ready") await assignWaitingPackWorks(existing.id);
+      await settleJoinedBooks(existing.id, metadata.userId ?? 1, request.works.map((entry) => entry.workId));
       return db.select().from(s.acquisitions).where(eq(s.acquisitions.id, existing.id)).get()!;
     }
     if (existing.bookId) {
@@ -161,6 +161,12 @@ export async function acquire(
   };
   startAcquisitionRecord(entry);
   if (metadata.pack) recordPack(id, metadata.pack);
+  else if (metadata.workId && isPackAcquisition(id)) {
+    // A failed pack got again for one book: that book is one of the pack's too.
+    const known = packOf(id)!;
+    const work = db.select().from(s.works).where(eq(s.works.id, metadata.workId)).get()!;
+    recordPack(id, { seriesId: known.seriesId, seriesName: known.seriesName, volumes: [], works: [{ workId: work.id, position: null, title: work.title }] });
+  }
   db.insert(s.userAcquisitions).values({userId: metadata.userId ?? 1, acquisitionId: id}).onConflictDoNothing().run();
   try {
     const route = await chooseBackend(hash, !!getSecret("torbox"), (h) =>
@@ -314,6 +320,8 @@ function createBook(
 async function finishPack(job: Acquisition, files: Parameters<typeof importPack>[1]) {
   const bookId = await importPack(job, files);
   setAcquisitionStatus(job.id, "ready", { progress: 1, error: null, bookId, updatedAt: Date.now() });
+  // A book that joined while the files were read waits no longer.
+  await assignWaitingPackWorks(job.id);
   void checkDownloadedLanguage(job.id).catch((error) => console.warn(`series language check: ${(error as Error).message}`));
 }
 const processing = new Set<string>();

@@ -163,7 +163,8 @@ export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarr
   const [refusal, setRefusal] = useState("");
   const [getting, setGetting] = useState(false);
   // The rows that are packs of a series the book is in (ADR 0027), by the release's title; asked once per title.
-  const [packs, setPacks] = useState<Record<string, PackView>>({});
+  const [packsOf, setPacksOf] = useState<{ workId: string; packs: Record<string, PackView> }>({ workId: "", packs: {} });
+  const packs = packsOf.workId === workId ? packsOf.packs : {};
   const described = useRef(new Set<string>());
   const live = useRef(true);
   const searchRef = useRef(search);
@@ -260,20 +261,33 @@ export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarr
   };
   const chosenRow = view.rows.find((row) => row.id === chosen) ?? null;
   const chosenPack = chosenRow ? packs[chosenRow.release.title] ?? null : null;
+  // Another book's sheet starts with none described.
+  const describedFor = useRef(workId);
+  if (describedFor.current !== workId) {
+    describedFor.current = workId;
+    described.current = new Set();
+  }
   useEffect(() => {
     if (newBook || !online) return;
-    const titles = [...new Set(loaded.map((release) => release.title))].filter((title) => !described.current.has(title));
+    const titles = [...new Set(loaded.map((release) => release.title))].filter((title) => !described.current.has(title)).slice(0, 200);
     if (!titles.length) return;
     for (const title of titles) described.current.add(title);
+    const asked = workId;
     void api<{ packs?: Record<string, PackView> }>(`/works/${encodeURIComponent(workId)}/packs/describe`, {
       method: "POST",
-      body: JSON.stringify({ titles: titles.slice(0, 200) }),
+      body: JSON.stringify({ titles }),
     }).then(
-      (answer) => live.current && answer?.packs && setPacks((known) => ({ ...known, ...answer.packs })),
-      // Not known as packs: the rows stay plain recordings (an older server has no such route).
-      () => {},
+      (answer) =>
+        live.current &&
+        answer?.packs &&
+        setPacksOf((known) => ({ workId: asked, packs: { ...(known.workId === asked ? known.packs : {}), ...answer.packs } })),
+      // Not answered: asked again with the next rows or when the device is back online; an older server has no such
+      // route, and its rows stay plain recordings.
+      () => {
+        if (asked === describedFor.current) for (const title of titles) described.current.delete(title);
+      },
     );
-  }, [loaded.map((release) => release.title).join("\n"), newBook, online]);
+  }, [loaded.map((release) => release.title).join("\n"), newBook, online, workId]);
   const line = getLine({ chosen: chosenRow?.release ?? null, mediaState: work?.mediaState, torboxConnected: torboxConfigured, health });
   // A preview of the chosen row when it says "Plays now" (#889): its own audio element, off while the book plays.
   const { playing: bookPlaying } = usePlayer();
