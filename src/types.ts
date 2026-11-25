@@ -569,6 +569,8 @@ export type ActivityFacts =
       stage: string | null;
       /** The worker's file counts for a stage that counts files (decoding, encoding); null otherwise. */
       files: { done: number; total: number } | null;
+      /** While encoding, the seconds of the recording's audio encoded, where the worker reports them; absent from older servers. */
+      audio?: { done: number; total: number } | null;
       /** The job's EPUB is a spare edition: not the work's chosen one and nobody has a place in it (#718). */
       spare?: boolean;
       /** Queued by itself (the backfill, an ebook-set check, new audio), not by a Prepare (#718). */

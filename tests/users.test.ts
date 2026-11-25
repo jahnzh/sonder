@@ -112,6 +112,8 @@ test("password changes revoke other sessions, admin resets revoke all, IDs never
 
 test("login rate limiting ignores arbitrary cookies and separates forwarded client IPs", async () => {
  for(let i=0;i<11;i++) { const r=await app.inject({method:"POST",url:"/api/auth/login",headers:{"x-forwarded-for":"192.0.2.50"},cookies:{sonder_session:`invalid${i}`},payload:{password:"bad"}}); assert.equal(r.statusCode,i<10?401:429); }
+ // A sign-in made on the server itself (no proxy, a loopback address) is not counted: the coordinator's and the live checks' scripts.
+ for(let i=0;i<12;i++) { const r=await app.inject({method:"POST",url:"/api/auth/login",remoteAddress:"127.0.0.1",cookies:{sonder_session:`local${i}`},payload:{password:"bad"}}); assert.equal(r.statusCode,401); }
  const other=await app.inject({method:"POST",url:"/api/auth/login",headers:{"x-forwarded-for":"192.0.2.51"},payload:{password:"bad"}}); assert.equal(other.statusCode,401);
 });
 

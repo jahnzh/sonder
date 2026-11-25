@@ -26,6 +26,8 @@ export const bookProgress = z.object({
     tracksEncoded: count.optional(),
     groupsTotal: count.optional(),
     groupsDone: count.optional(),
+    audioSecondsEncoded: count.optional(),
+    audioSecondsTotal: count.optional(),
   }).passthrough().nullable().optional(),
   stageTimings: z.record(z.string(), z.unknown()).nullable().optional(),
   error: z.string().nullable().optional(),

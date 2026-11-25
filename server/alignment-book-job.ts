@@ -402,7 +402,9 @@ export function bookJobProgress(progress: Pick<BookProgress, "state" | "progress
   const share = (done?: number, total?: number) => (total ? Math.min(1, (done ?? 0) / total) : 0);
   switch (progress.state) {
     case "decoding": return 0.05 + 0.15 * share(counts.tracksDecoded, counts.tracksTotal);
-    case "encoding": return 0.2 + 0.5 * share(counts.tracksEncoded, counts.tracksTotal);
+    // By the audio encoded where the worker reports it (one long file is one track), else by finished tracks.
+    case "encoding": return 0.2 + 0.5 * (counts.audioSecondsTotal
+      ? share(counts.audioSecondsEncoded, counts.audioSecondsTotal) : share(counts.tracksEncoded, counts.tracksTotal));
     case "anchoring": return 0.7;
     case "aligning": return 0.75 + 0.2 * share(counts.groupsDone, counts.groupsTotal);
     case "finishing":
@@ -412,7 +414,7 @@ export function bookJobProgress(progress: Pick<BookProgress, "state" | "progress
 }
 
 const COUNT_FIELDS = ["tracksTotal", "tracksDecoded", "tracksEncoded", "groupsTotal", "groupsDone", "encodeQueuePosition",
-  "resumeQueuePosition"] as const satisfies readonly (keyof BookJobCounts)[];
+  "resumeQueuePosition", "audioSecondsEncoded", "audioSecondsTotal"] as const satisfies readonly (keyof BookJobCounts)[];
 
 /**
  * The counts of the worker's progress the Reading sync card shows, read leniently: a field that is missing or not a
@@ -426,6 +428,7 @@ export function bookJobCounts(progress: { progress?: Record<string, unknown> | n
     if (typeof value === "number" && Number.isInteger(value) && value >= 0) counts[field] = value;
   }
   if (typeof reported.waitingForWindowRequests === "boolean") counts.waitingForWindowRequests = reported.waitingForWindowRequests;
+  if (typeof reported.waitingForDisk === "boolean") counts.waitingForDisk = reported.waitingForDisk;
   return counts;
 }
 

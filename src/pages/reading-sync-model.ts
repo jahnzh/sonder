@@ -147,6 +147,11 @@ export function runPoint(run: { id: string; generation?: string; status: string;
       if (counts.waitingForWindowRequests) return { step: "encoding", value: "Waiting" };
       if (counts.encodeQueuePosition)
         return { step: "encoding", value: `${counts.encodeQueuePosition} ${counts.encodeQueuePosition === 1 ? "book" : "books"} ahead` };
+      // By the audio encoded where the worker reports it: a book of one long file is "0 of 1 files" for hours.
+      if (counts.audioSecondsTotal) {
+        const encoded = share(counts.audioSecondsEncoded, counts.audioSecondsTotal)!;
+        return { step: "encoding", value: `${Math.floor(encoded * 100)}%`, progress: encoded };
+      }
       return { step: "encoding", value: of(counts.tracksEncoded, counts.tracksTotal, "file"), progress: share(counts.tracksEncoded, counts.tracksTotal) };
     case "anchoring":
       return { step: "anchoring" };

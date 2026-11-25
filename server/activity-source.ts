@@ -93,6 +93,12 @@ export type ActivityDraft = Omit<ActivityItem, "stuck" | "blockedBy" | "permanen
   permanent?: boolean;
   /** When the item last changed, for the "no change for" rule. */
   changedAt: number;
+  /**
+   * How long this running item may go without a change before the "no change for" rule calls it stuck, when the
+   * source knows better than its `stuckAfterMs` (scaled by the settings multiplier like it). Null: never stuck by
+   * that rule, as the item waits for other work. Undefined: the source's threshold.
+   */
+  quietLimitMs?: number | null;
   /** The service this item waits on while running or queued; when that service is down the item is blocked. */
   dependsOn?: string | null;
   actions?: ActivityItem["actions"];
@@ -233,6 +239,12 @@ export function stateFrom<Status extends string>(
 
 export const clamp01 = (value: number | null | undefined) =>
   typeof value === "number" && Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : null;
+
+/** The settings multiplier of every stuck threshold (`activityStuckMultiplier`), 0.25 to 10, else 1. */
+export function stuckMultiplier(raw: string | undefined | null) {
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0.25 && value <= 10 ? value : 1;
+}
 
 export function formatAge(ms: number) {
   const minutes = Math.max(1, Math.round(ms / MINUTE));

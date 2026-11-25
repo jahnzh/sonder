@@ -116,6 +116,72 @@ test("alignment: every status of the job record maps to its Activity state", () 
   assert.deepEqual(job({ status: "exploded" }).actions, [], "a status outside the vocabulary offers nothing");
 });
 
+test("alignment: a whole-book job is stuck only when its stage goes quiet for longer than it should, then offers Retry", async () => {
+  const BOOK_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-book-v2";
+  const { bookWorkerJobId } = await import("../src/reading-types.ts");
+  const { alignmentSource: source, QUIET_STAGE_MS } = await import("../server/alignment-activity.ts");
+  const running = (state: string, counts: Record<string, unknown>, quietMs: number, audioSeconds: number | null = null) => {
+    const data = { id: "job-1", generation: "g1", status: "processing", progress: 0.2, engine: BOOK_ENGINE, pool: { hostId: "lisa" },
+      bookJob: { id: bookWorkerJobId({ id: "job-1", generation: "g1" }), hostId: "lisa", state, resumed: 0, startedAt: NOW - 3 * 60 * MIN, counts } };
+    return itemFor(source, { ...alignmentRow("job-1"), data: JSON.stringify(data), updated_at: NOW - quietMs, audio_seconds: audioSeconds });
+  };
+  // The 25 Nov job: one M4B of 23.6 h, encoding on lisa's CPU. The worker now reports the audio it has encoded.
+  const encoding = { tracksTotal: 1, tracksDecoded: 1, tracksEncoded: 0, encodeQueuePosition: 0, audioSecondsEncoded: 17300, audioSecondsTotal: 84845 };
+  const moving = running("encoding", encoding, 2 * MIN);
+  assert.equal(moving.stuck, null, "an encode that reports its audio is not stuck");
+  assert.deepEqual(moving.facts.kind === "alignment" && moving.facts.audio, { done: 17300, total: 84845 });
+  assert.deepEqual(moving.actions, []);
+  const stalled = running("encoding", encoding, 50 * MIN);
+  assert.deepEqual(stalled.stuck, { reason: "No progress on lisa for 50 min", known: true }, "the encoded audio stopped moving; the line leads with it");
+  assert.deepEqual(stalled.actions, ["retry"], "Retry starts it again");
+  assert.equal(stalled.attention, true);
+  // A worker without the audio counts reports nothing until the file is done: the long bound of a quiet stage.
+  const { audioSecondsEncoded: _done, audioSecondsTotal: _total, ...oldWorker } = encoding;
+  assert.equal(running("encoding", oldWorker, 50 * MIN).stuck, null, "an older worker's one-file encode is not called stuck after 50 min");
+  assert.deepEqual(running("encoding", oldWorker, QUIET_STAGE_MS + MIN).stuck, { reason: "No progress on lisa for 2 h", known: true });
+  // With the recording's length known, an older worker's encode of it may take half of it (lisa: 3.6x realtime).
+  assert.equal(running("encoding", oldWorker, 6 * 60 * MIN, 84845).stuck, null, "the live job of 25 Nov, 6 h into its encode");
+  assert.deepEqual(running("encoding", oldWorker, 12 * 60 * MIN, 84845).actions, ["retry"], "past half the recording's length");
+  for (const state of ["anchoring", "finishing"]) {
+    assert.equal(running(state, {}, 50 * MIN).stuck, null, `${state} reports nothing until it ends`);
+    assert.deepEqual(running(state, {}, QUIET_STAGE_MS + MIN).actions, ["retry"], `${state} quiet for far too long`);
+  }
+  assert.equal(running("encoding", { ...encoding, audioSecondsEncoded: 84845 }, 50 * MIN).stuck, null,
+    "after the encode the text check reports nothing until it ends");
+  assert.equal(running("aligning", { groupsTotal: 80, groupsDone: 3 }, 21 * MIN).stuck?.reason, "No progress on lisa for 21 min");
+  // Waiting for another book's encode or a turn to resume is not stuck, however long it lasts.
+  assert.equal(running("encoding", { ...encoding, encodeQueuePosition: 1 }, 10 * QUIET_STAGE_MS).stuck, null);
+  assert.equal(running("encoding", { ...encoding, waitingForWindowRequests: true }, 10 * QUIET_STAGE_MS).stuck, null);
+  assert.equal(running("queued", { resumeQueuePosition: 2 }, 10 * QUIET_STAGE_MS).stuck, null);
+  assert.equal(running("decoding", { tracksTotal: 1, tracksDecoded: 1, waitingForDisk: true }, 10 * QUIET_STAGE_MS).stuck, null,
+    "waiting while other books hold the worker's disk budget");
+  // The older engine keeps the plain rule: no change for the source's threshold, no Retry while it runs.
+  const older = itemFor(source, { ...alignmentRow("job-2"), data: JSON.stringify({ status: "processing", progress: 0.4 }), updated_at: NOW - 50 * MIN });
+  assert.deepEqual(older.stuck, { reason: "No change for 50 min" });
+  assert.deepEqual(older.actions, []);
+});
+
+test("alignment: Retry of a running whole-book job is accepted only while it is stuck", async () => {
+  const BOOK_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-book-v2";
+  const { bookWorkerJobId } = await import("../src/reading-types.ts");
+  const data = JSON.stringify({ id: "job-1", generation: "g1", status: "processing", progress: 0.3, engine: BOOK_ENGINE, pool: { hostId: "lisa" },
+    bookJob: { id: bookWorkerJobId({ id: "job-1", generation: "g1" }), hostId: "lisa", state: "encoding", resumed: 0, startedAt: NOW,
+      counts: { tracksTotal: 1, tracksEncoded: 0, audioSecondsEncoded: 600, audioSecondsTotal: 84845 } } });
+  let updatedAt = NOW - 5 * MIN;
+  const resumed: string[] = [];
+  const deps = {
+    sqlite: { prepare: () => ({ get: () => ({ data, updated_at: updatedAt }) }) },
+    now: () => NOW, getSetting: () => undefined,
+    resumeAlignment: async (id: string) => { resumed.push(id); return { id }; },
+  } as unknown as ActivityDeps;
+  const context = { deps, log: { info: () => {} }, userId: 1 } as unknown as Parameters<NonNullable<typeof alignmentSource.retry>>[1];
+  await assert.rejects(alignmentSource.retry!("alignment:job-1", context), (error: { statusCode?: number }) => error.statusCode === 409,
+    "a job that moves is not retried");
+  updatedAt = NOW - 25 * MIN;
+  assert.deepEqual(await alignmentSource.retry!("alignment:job-1", context), { ok: true, result: { id: "job-1" } });
+  assert.deepEqual(resumed, ["job-1"]);
+});
+
 test("ebook-set checks: every member status and every hold the loop works on maps to its Activity state (#325)", () => {
   const expected = {
     pending: "running", awaiting_worker: "queued", evaluation_failed: "failed", accepted: "done", rejected: "done",
