@@ -6,7 +6,7 @@ import {
   torboxCachedHashes,
 } from "./services.ts";
 import { sqlite } from "./db.ts";
-import { MAM_NAME, mam, mamAudiobookRelease, mamConfigured, mamLink, type MamRelease } from "./sources/myanonamouse.ts";
+import { MAM_NAME, mam, mamAudiobookRelease, mamLink, mamUsable, type MamRelease } from "./sources/myanonamouse.ts";
 import { audiobookDbBook, audiobookDbByAsin, audiobookDbRelease } from "./audiobookdb.ts";
 import { findAsin } from "./catalogue-links.ts";
 import { DEFAULT_SERIES_LANGUAGE } from "../src/series-selection.ts";
@@ -257,8 +257,15 @@ export function pickAutoAcquireCandidate(
       const verdict = candidateLanguageFits(candidate, language, ownTitles);
       return verdict === "fits" || (verdict === "unnamed" && candidateIsWantedEdition(candidate, expected));
     })
+    // The owner's order of sources (#911): TorBox's cached copy first; then, of the others, one with the release's
+    // narrator, length or ASIN before one without, and only then MyAnonamouse's before the rest, so an upload of MAM
+    // with no such evidence never wins over another source's that has it.
     .sort(
-      (a, b) => sourceTier(a) - sourceTier(b) || rankSeriesAudioCandidate(b, expected) - rankSeriesAudioCandidate(a, expected),
+      (a, b) =>
+        Number(!!b.cached) - Number(!!a.cached) ||
+        Number(candidateIsWantedEdition(b, expected)) - Number(candidateIsWantedEdition(a, expected)) ||
+        sourceTier(a) - sourceTier(b) ||
+        rankSeriesAudioCandidate(b, expected) - rankSeriesAudioCandidate(a, expected),
     );
   return list[0] || null;
 }
@@ -478,7 +485,8 @@ export const defaultDeps = (): SeriesAudioSearchDeps => ({
   abbMagnetLink: abbMagnet,
   prowlarrMagnetLink: prowlarrMagnet,
   cachedHashes: torboxCachedHashes,
-  ...(mamConfigured() ? { mamSearch: mamSeriesSearch } : {}),
+  // Not while MAM refuses the saved session: the queue does not ask it again until a new one is saved or tested.
+  ...(mamUsable() ? { mamSearch: mamSeriesSearch } : {}),
 });
 
 /** A MAM row as a candidate of the series search. */

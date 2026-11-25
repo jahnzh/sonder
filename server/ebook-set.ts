@@ -891,7 +891,6 @@ export async function fetchTopKIntoEbookSet(
     for (const from of order) {
       if (found() || started || downloaded.length >= remaining) break;
       const onlyCached = cachedPass && from === "prowlarr";
-      if (!onlyCached && from === "prowlarr") cachedPass = false;
       let files: EbookResult[];
       try {
         files = asked.get(from) ?? (await search(from, `${work.title} ${work.author}`)).files;

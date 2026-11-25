@@ -175,7 +175,8 @@ test("a refused session (the recorded 403) is said once, not retried, and noted 
 });
 
 test("a renewed session is read from MAM's Set-Cookie", () => {
-  assert.equal(renewedSession(["mam_id=abc%2Bdef; expires=Thu, 10 Dec 2026 22:55:36 GMT; path=/"]), "abc+def");
+  // As it came: sent back as a browser would, never decoded.
+  assert.equal(renewedSession(["mam_id=abc%2Bdef; expires=Thu, 10 Dec 2026 22:55:36 GMT; path=/"]), "abc%2Bdef");
   assert.equal(renewedSession(["other=1"]), null);
   assert.equal(renewedSession(["mam_id=deleted; path=/"]), null);
 });

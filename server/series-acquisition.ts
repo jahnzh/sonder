@@ -26,7 +26,7 @@ import {
 import { seriesQueueOrder } from "./series-queue-order.ts";
 import { fetchTopKIntoEbookSet, seriesEbookSources } from "./ebook-set.ts";
 import { prowlarrConfig } from "./services.ts";
-import { mamConfigured } from "./sources/myanonamouse.ts";
+import { mamUsable } from "./sources/myanonamouse.ts";
 import { annasConfigured, zlibConfigured } from "./sources/shadow-libraries.ts";
 import { packServesWork, resetPackSearches, seriesPackStep } from "./series-pack-step.ts";
 import { retryWorkMediaAcquisition } from "./series-membership.ts";
@@ -980,7 +980,7 @@ async function runEbookJob(
   const work = db.select({ year: s.works.year }).from(s.works).where(eq(s.works.id, job.workId)).get();
   // Library Genesis, Prowlarr, then the public-domain sources for an old book (#901).
   const result = await fetch(job.workId, "libgen", {
-    sources: seriesEbookSources({ year: work?.year ?? null }, { annas: annasConfigured(), zlib: zlibConfigured(), prowlarr: !!prowlarrConfig(), mam: mamConfigured() }),
+    sources: seriesEbookSources({ year: work?.year ?? null }, { annas: annasConfigured(), zlib: zlibConfigured(), prowlarr: !!prowlarrConfig(), mam: mamUsable() }),
     userId: job.userId,
   });
   const failures = "failures" in result ? result.failures ?? [] : [];

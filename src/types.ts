@@ -617,6 +617,18 @@ export type ActivityWorkerHost = {
   restarting: boolean;
   lastRestart: ActivityHostRestart | null;
 };
+/** A MyAnonamouse torrent on Activity › Server (#911), as `GET /api/mam/seeding` answers it (`server/mam-routes.ts`). */
+export type MamSeeding = {
+  id: string;
+  title: string;
+  /** "seeding", "downloading", "stopped" (a torrent stopped in the client by hand), "missing" (not in the client). */
+  state: "seeding" | "downloading" | "stopped" | "missing";
+  progress: number;
+  secondsSeeding: number | null;
+  ratio: number | null;
+  /** The torrent has seeded its 72 hours (the owner's least, MAM's rule). */
+  seededEnough: boolean;
+};
 export type ActivityResponse = {
   checkedAt: number;
   stuckMultiplier: number;

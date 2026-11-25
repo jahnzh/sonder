@@ -6,7 +6,8 @@ import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
-import { acquireReplacing } from "./acquisitions.ts";
+import { acquireReplacing, mamTorrentMayBeRemoved } from "./acquisitions.ts";
+import type { MamSeeding } from "../src/types.ts";
 import { acquireForNewBook } from "./new-book.ts";
 import { packRequestFor } from "./series-pack-step.ts";
 import { getSeedingStates, type SeedingState } from "./transmission.ts";
@@ -37,18 +38,6 @@ async function rowOf(id: number): Promise<Row> {
   return row;
 }
 
-/** One MAM torrent as Activity shows it (#911): how long it has seeded and its ratio, as the torrent client counts them. */
-export type MamSeeding = {
-  id: string;
-  title: string;
-  /** "seeding", "downloading", "stopped" (a torrent stopped in the client by hand), "missing" (not in the client). */
-  state: "seeding" | "downloading" | "stopped" | "missing";
-  progress: number;
-  secondsSeeding: number | null;
-  ratio: number | null;
-  /** The torrent has seeded its 72 hours (the owner's least, MAM's rule). */
-  seededEnough: boolean;
-};
 
 /** Transmission's status 0 stopped, 1-4 checking or downloading, 5 waiting to seed, 6 seeding. */
 export function mamSeedingOf(row: { id: string; title: string; hash: string }, state: SeedingState | undefined): MamSeeding {
@@ -63,7 +52,7 @@ export function mamSeedingOf(row: { id: string; title: string; hash: string }, s
     secondsSeeding: seconds,
     // -1: nothing downloaded yet; -2: an infinite ratio (uploaded without downloading).
     ratio: Number.isFinite(state.uploadRatio) && state.uploadRatio >= 0 ? state.uploadRatio : null,
-    seededEnough: (seconds ?? 0) >= 72 * 3600,
+    seededEnough: mamTorrentMayBeRemoved(seconds),
   };
 }
 
@@ -123,7 +112,8 @@ export function registerMamRoutes(app: FastifyInstance) {
   // Activity's list of MAM torrents (#911): every one Sonder added, with its seeding time and ratio from the client.
   app.get("/api/mam/seeding", async () => {
     const list = sqlite
-      .prepare("SELECT id, title, hash FROM acquisitions WHERE mam_torrent_id IS NOT NULL AND status <> 'checking' ORDER BY created_at DESC LIMIT 200")
+      // Only torrents the client got (`remote_id`): one that failed before it was added is no torrent to seed.
+      .prepare("SELECT id, title, hash FROM acquisitions WHERE mam_torrent_id IS NOT NULL AND remote_id IS NOT NULL ORDER BY created_at DESC LIMIT 200")
       .all() as { id: string; title: string; hash: string }[];
     if (!list.length) return { torrents: [] as MamSeeding[], error: null };
     try {

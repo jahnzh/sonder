@@ -3,7 +3,7 @@
 // answer. Pure: no React, no fetch. The screen is activity-server.tsx.
 //
 // A page module: the server imports none of it.
-import type { ActivityItem, ActivityProcess, ActivityResponse } from "../types";
+import type { ActivityItem, ActivityProcess, ActivityResponse, MamSeeding } from "../types";
 import { QUEUE_OFF_LINE, WORKER_OFF_LINE } from "../status-lines";
 import { processNeedsAttention } from "../activity-now";
 
@@ -69,18 +69,9 @@ export function torrentLine(process: ActivityProcess): string {
   return process.health === "ok" ? TORRENT_RUNNING_LINE : process.reason || "Not checked yet";
 }
 
-/** A MyAnonamouse torrent as `GET /api/mam/seeding` answers it (#911, `server/mam-routes.ts`). */
-export type MamSeeding = {
-  id: string;
-  title: string;
-  state: "seeding" | "downloading" | "stopped" | "missing";
-  progress: number;
-  secondsSeeding: number | null;
-  ratio: number | null;
-  seededEnough: boolean;
-};
+export type { MamSeeding };
 
-/** The least a MAM torrent seeds (the owner's rule, #911): 72 hours. */
+/** The least a MAM torrent seeds (the owner's rule, #911): 72 hours, as `MAM_MIN_SEED_SECONDS` on the server. */
 export const MAM_SEED_HOURS = 72;
 
 /** A seeding time: "40 min", "31 h", "3 d 4 h". */

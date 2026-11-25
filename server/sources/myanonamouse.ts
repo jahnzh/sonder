@@ -223,11 +223,14 @@ export function parseMamSearch(body: string): MamSearch & { tokens: Map<number, 
   return { results, found: count(value.found) ?? results.length, total: count(value.total) ?? results.length, tokens };
 }
 
-/** The `mam_id` a `Set-Cookie` of MAM's answer carries: MAM hands back a renewed session with each answer. */
+/**
+ * The `mam_id` a `Set-Cookie` of MAM's answer carries: MAM hands back a renewed session with each answer. Kept as it
+ * came (not decoded), as a browser sends a cookie back: decoding "%2B" to "+" would make it another value to PHP.
+ */
 export function renewedSession(setCookies: readonly string[]): string | null {
   for (const cookie of setCookies) {
     const match = /^\s*mam_id=([^;\s]+)/.exec(cookie);
-    if (match && match[1] && match[1] !== "deleted") return decodeURIComponent(match[1]);
+    if (match && match[1] && match[1] !== "deleted") return match[1];
   }
   return null;
 }
@@ -376,6 +379,8 @@ function readSetting(key: string) {
 
 /** Whether a MAM session is saved in Settings. */
 export const mamConfigured = () => !!readSetting(SESSION_KEY);
+/** A session is saved and MAM has not refused it: the series queue asks MAM only then. */
+export const mamUsable = () => mamConfigured() && mamRefusedAt() === null;
 /** When MAM last refused the saved session; null when it has not since the session was saved or last accepted. */
 export function mamRefusedAt(): number | null {
   const value = Number(readSetting(REFUSED_KEY));

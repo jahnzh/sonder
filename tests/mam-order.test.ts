@@ -42,6 +42,10 @@ test("the queue's pick: TorBox's cached copy first, then MyAnonamouse's, then th
   const abb = candidate({ source: "abb", id: "abb-1", hash: "b".repeat(40), narrator: "Jeff Hays", format: "M4B" });
   assert.equal(audio.pickAutoAcquireCandidate([abb, mam, cached], expected)?.id, "p1");
   assert.equal(audio.pickAutoAcquireCandidate([abb, mam], expected)?.id, "1097985");
+  // A MAM upload with no evidence of the wanted edition (another narrator) never wins over one that has it.
+  assert.equal(audio.pickAutoAcquireCandidate([abb, { ...mam, narrator: "Someone Else" }], expected)?.id, "abb-1");
+  // With nothing known of the edition, MAM's comes before the others'.
+  assert.equal(audio.pickAutoAcquireCandidate([abb, { ...mam, narrator: "Someone Else" }], null)?.id, "1097985");
   // MAM's names the series' language: another language is never picked (#897).
   assert.equal(audio.pickAutoAcquireCandidate([candidate({ source: "mam", id: "1222742", language: "German" }), abb], expected)?.id, "abb-1");
   assert.equal(audio.sourceTier(cached), 0);

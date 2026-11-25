@@ -159,6 +159,15 @@ test("a torrent client that adds another torrent than MAM's is refused", async (
   await assert.rejects(acquire(mamLink(892987), { workId: "work-dcc", title: "Dungeon Crawler Carl" }), /another torrent than MyAnonamouse/);
 });
 
+test("the series queue does not ask MAM while it refuses the saved session", async () => {
+  const { mamUsable } = await import("../server/sources/myanonamouse.ts");
+  assert.equal(mamUsable(), false);
+  db.insert(s.settings).values({ key: "mam", value: encrypt("a-session-of-twenty-chars") }).run();
+  assert.equal(mamUsable(), true);
+  db.insert(s.settings).values({ key: "mamRefusedAt", value: String(Date.now()) }).run();
+  assert.equal(mamUsable(), false);
+});
+
 test("Activity's MAM row: seeding time and ratio from the client; a torrent the client lost or stopped says so", async () => {
   const { mamSeedingOf } = await import("../server/mam-routes.ts");
   const torrent = { id: "a", title: "Dungeon Crawler Carl", hash: HASH };
