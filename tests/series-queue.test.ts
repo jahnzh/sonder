@@ -58,6 +58,8 @@ type SeriesAcquisitionDeps = import("../server/series-acquisition.ts").SeriesAcq
 const { getWorkMediaState } = await import("../server/work-media-state.ts");
 const { magnetHash } = await import("../server/acquisitions.ts");
 const catalogue = await import("../server/series-catalogue.ts");
+const { recordPack } = await import("../server/acquisition-packs.ts");
+const { resetPackSearches } = await import("../server/series-pack-step.ts");
 
 // No background loop ticks on its own here; the tests call tickSeriesAcquisition themselves.
 const app = await createApp({ background: { manual: true } });
@@ -69,15 +71,20 @@ const { setSeriesReleaseSearchDeps, resetSeriesReleaseSearchDeps } = await impor
 const { seriesAcquisitionSource } = await import("../server/series-acquisition-activity.ts");
 const { collectActivity } = await import("../server/activity.ts");
 
-const HASH = { one: "1".repeat(40), french: "2".repeat(40), set: "3".repeat(40), other: "4".repeat(40) };
-/** AudioBookBay's answer for the book's queries: the English single book, a French one, a box set, another English one. */
+const HASH = { one: "1".repeat(40), french: "2".repeat(40), set: "3".repeat(40), other: "4".repeat(40), pack: "7".repeat(40) };
+/**
+ * AudioBookBay's answer for the book's queries: the English single book, a French one, a box set, another English one.
+ * The box set names no range of books, so the pack step (ADR 0027) does not take it: these are the book's own search.
+ */
 const RESULTS = [
   { id: "first-en", title: "First volume", format: "M4B", narrator: "Reader", language: "English", url: "https://abb.test/abss/first-en/", size: "400 MB" },
   { id: "first-fr", title: "First volume (Premier tome)", format: "MP3", narrator: "Lecteur", language: "French", url: "https://abb.test/abss/first-fr/", size: "380 MB" },
-  { id: "saga-set", title: "Test Saga Books 1-2 Collection", format: "MP3", narrator: "Reader", language: "English", url: "https://abb.test/abss/saga-set/" },
+  { id: "saga-set", title: "Test Saga Box Set", format: "MP3", narrator: "Reader", language: "English", url: "https://abb.test/abss/saga-set/" },
   { id: "first-en-2", title: "First volume Unabridged", format: "MP3", narrator: "Someone", language: "English", url: "https://abb.test/abss/first-en-2/" },
 ];
-const HASHES: Record<string, string> = { "first-en": HASH.one, "first-fr": HASH.french, "saga-set": HASH.set, "first-en-2": HASH.other };
+/** A pack of both books out (ADR 0027): its title names the series and their range. */
+const PACK = { id: "saga-pack", title: "Test Saga Books 1-2", format: "M4B", narrator: "Reader", language: "English", url: "https://abb.test/abss/saga-pack/", size: "800 MB" };
+const HASHES: Record<string, string> = { "first-en": HASH.one, "first-fr": HASH.french, "saga-set": HASH.set, "first-en-2": HASH.other, "saga-pack": HASH.pack };
 
 let results = RESULTS;
 let cached = new Set<string>();
@@ -96,7 +103,7 @@ function holdSearch(title: string) {
   };
 }
 
-const fakeAcquire = (async (magnet: string, metadata?: { workId?: string; userId?: number; title?: string }) => {
+const fakeAcquire = (async (magnet: string, metadata?: { workId?: string; userId?: number; title?: string; pack?: Parameters<typeof recordPack>[1] }) => {
   acquired.push({ magnet, workId: metadata?.workId });
   const id = randomUUID();
   const row = {
@@ -106,6 +113,8 @@ const fakeAcquire = (async (magnet: string, metadata?: { workId?: string; userId
   };
   db.insert(schema.acquisitions).values(row).run();
   db.insert(schema.userAcquisitions).values({ userId: metadata?.userId ?? 1, acquisitionId: id }).onConflictDoNothing().run();
+  // As the real acquire: a series pack's download serves its books.
+  if (metadata?.pack) recordPack(id, metadata.pack);
   return row;
 }) as unknown as NonNullable<SeriesAcquisitionDeps["acquire"]>;
 
@@ -118,7 +127,8 @@ beforeEach(() => {
   acquired = [];
   resetSeriesAcquisitionDeps();
   resetSeriesReleaseSearchDeps();
-  for (const table of ["series_acquisition_jobs", "user_series_seen_works", "user_saved_series_works", "user_saved_series", "series_catalogue_works",
+  resetPackSearches();
+  for (const table of ["acquisition_works", "acquisition_packs", "series_acquisition_jobs", "user_series_seen_works", "user_saved_series_works", "user_saved_series", "series_catalogue_works",
     "series_catalogue", "work_media_states", "user_acquisitions", "acquisitions"])
     sqlite.exec(`DELETE FROM ${table}`);
   setSeriesAcquisitionDeps({
@@ -329,22 +339,42 @@ test("Skip: a waiting search never runs, a running one downloads nothing; Search
 });
 
 test("Choose this one instead downloads another found release through the manual select, chosen by the owner", async () => {
-  cached = new Set([HASH.french]);
+  cached = new Set([HASH.other]);
   await saveSeries(["bk-201"], { searchAudio: true });
   await tickSeriesAcquisition();
-  // The queue chose the French release TorBox has (the language rule is #897's).
-  assert.equal((await detail("bk-201")).choice.chosen, HASH.french);
+  // The queue chose the other English release, the one TorBox has (a French one is never picked: #897's rule).
+  assert.equal((await detail("bk-201")).choice.chosen, HASH.other);
   const chosen = await post("/works/bk-201/acquisition/choose", { key: HASH.one });
   assert.equal(chosen.search.choice.chosen, HASH.one);
   assert.equal(chosen.search.choice.by, "owner");
   assert.match(acquired.at(-1)!.magnet, new RegExp(HASH.one));
   assert.equal(chosen.search.audio.status, "done");
   // Older clients name it by its source and id.
-  const again = await post("/works/bk-201/acquisition/choose", { source: "abb", id: "first-en-2" });
-  assert.equal(again.search.choice.chosen, HASH.other);
+  const again = await post("/works/bk-201/acquisition/choose", { source: "abb", id: "first-fr" });
+  assert.equal(again.search.choice.chosen, HASH.french);
   // A release the search did not find is refused.
   const refused = await app.inject({ method: "POST", url: `/api/series/${SERIES_ID}/works/bk-201/acquisition/choose`, payload: { key: "nothing" } });
   assert.equal(refused.statusCode, 404);
+});
+
+test("a pack the queue takes for two waiting books is the chosen release of each, with what the pack search found", async () => {
+  results = [...RESULTS, PACK];
+  await saveSeries(["bk-201", "bk-202"], { searchAudio: true });
+  await tickSeriesAcquisition();
+  // One download for both books (ADR 0027), and no search of their own.
+  assert.equal(acquired.length, 1);
+  assert.match(acquired[0].magnet, new RegExp(HASH.pack));
+  for (const bookId of ["bk-201", "bk-202"]) {
+    const search = await detail(bookId);
+    assert.equal(search.audio.status, "done", bookId);
+    assert.deepEqual([search.choice.chosen, search.choice.by], [HASH.pack, "queue"], bookId);
+    // The packs the search found, with their source's facts: the box set names no range and is none.
+    assert.deepEqual(search.choice.candidates.map((candidate: { id: string }) => candidate.id), ["saga-pack"], bookId);
+    const chosen = search.choice.candidates[0];
+    assert.deepEqual([chosen.url, chosen.language, chosen.kind], [PACK.url, "English", "compilation"], bookId);
+    const row = await bookOf(bookId);
+    assert.deepEqual([row.acquisition?.audio?.found, row.acquisition?.audio?.chosen], [1, true], bookId);
+  }
 });
 
 test("Search again for a book with its audiobook on its way finds the releases again and downloads nothing", async () => {

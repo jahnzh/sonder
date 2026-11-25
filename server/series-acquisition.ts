@@ -864,9 +864,24 @@ async function runAudioJob(
       position: ref.position,
       title: volume.title,
       cover: volume.cover ?? edition?.cover,
+      // The pack is the search of every book it serves (#898): what the pack search found, and the pack chosen.
+      onPackChosen: (candidates, chosen, jobIds) => {
+        for (const jobId of jobIds) {
+          try {
+            writeSeriesChoice(jobId, {
+              at: Date.now(),
+              chosen: candidateKey(chosen),
+              by: "queue",
+              candidates: candidates.map((candidate) => storedCandidate(candidate, facts.get(`${candidate.source}:${candidate.id}`))),
+            });
+          } catch (error) {
+            console.warn(`series queue: could not keep the pack chosen for ${jobId}: ${(error as Error).message}`);
+          }
+        }
+      },
     },
     wrappedAcquire,
-    deps.seriesAudioDeps,
+    searchDeps,
     deps.now,
     () => seriesAudioJobStillSearching(job.id),
   );

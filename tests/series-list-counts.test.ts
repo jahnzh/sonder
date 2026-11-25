@@ -119,7 +119,8 @@ function stable(value: unknown) {
     if (Array.isArray(node)) return node.map((item) => visit(item, key));
     if (node && typeof node === "object")
       return Object.fromEntries(Object.entries(node).map(([name, child]) => [name, visit(child, name)]));
-    if (typeof node === "number" && /At$/.test(key)) return "<time>";
+    // The series queue's clock (#898) is a time too.
+    if (typeof node === "number" && (/At$/.test(key) || key === "now")) return "<time>";
     if (typeof node === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(node)) return label(node);
     if (typeof node === "string" && /(^|[-:])[0-9a-f]{8}-[0-9a-f]{4}-/i.test(node))
       return node.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, (id) => label(id));

@@ -1023,7 +1023,9 @@
           "status": "pending",
           "search": "audiobook",
           "place": 2,
-          "retryAt": null
+          "retryAt": null,
+          "seriesId": "7",
+          "seriesBookId": "100.0"
         },
         "error": null,
         "permanent": false,
@@ -1264,7 +1266,9 @@
           "status": "done",
           "search": "ebook",
           "place": null,
-          "retryAt": null
+          "retryAt": null,
+          "seriesId": "7",
+          "seriesBookId": "102.0"
         },
         "error": "has_ebook",
         "permanent": false,
@@ -2517,7 +2521,9 @@
           "status": "pending",
           "search": "audiobook",
           "place": 2,
-          "retryAt": null
+          "retryAt": null,
+          "seriesId": "7",
+          "seriesBookId": "100.0"
         },
         "error": null,
         "permanent": false,
@@ -2758,7 +2764,9 @@
           "status": "done",
           "search": "ebook",
           "place": null,
-          "retryAt": null
+          "retryAt": null,
+          "seriesId": "7",
+          "seriesBookId": "102.0"
         },
         "error": "has_ebook",
         "permanent": false,
@@ -3992,7 +4000,9 @@
           "status": "pending",
           "search": "audiobook",
           "place": 2,
-          "retryAt": null
+          "retryAt": null,
+          "seriesId": "7",
+          "seriesBookId": "100.0"
         },
         "error": null,
         "permanent": false,
@@ -4233,7 +4243,9 @@
           "status": "done",
           "search": "ebook",
           "place": null,
-          "retryAt": null
+          "retryAt": null,
+          "seriesId": "7",
+          "seriesBookId": "102.0"
         },
         "error": "has_ebook",
         "permanent": false,

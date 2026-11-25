@@ -12,6 +12,7 @@ import {
   pickSeriesPack,
   searchSeriesPackCandidates,
   seriesAudioLanguage,
+  type SeriesAudioCandidate,
   type SeriesAudioSearchDeps,
 } from "./series-audio.ts";
 import { currentUserId, requireAdmin } from "./users.ts";
@@ -64,6 +65,11 @@ export type SeriesPackStepInput = {
   position: number;
   title: string;
   cover?: string | null;
+  /**
+   * The pack search's candidates and the pack whose download was asked for, with the queue jobs of the books it now
+   * serves, this one's included when it is: the series queue keeps them as those books' search (#898).
+   */
+  onPackChosen?: (candidates: SeriesAudioCandidate[], chosen: SeriesAudioCandidate, jobIds: string[]) => void;
 };
 
 /**
@@ -125,7 +131,10 @@ export async function seriesPackStep(
     // that failed before recording any still tracks the book. The other books keep their own searches.
     (deps?.log ?? console.warn)(`pack acquire: ${(error as Error).message}`);
     trackWorkMediaState(input.userId, input.workId);
-    return books.some((row) => row.workId === input.workId);
+    const mine = books.some((row) => row.workId === input.workId);
+    // Its download was asked for this book, as a book's own pick that failed is still its chosen one.
+    if (mine) input.onPackChosen?.(candidates, choice.candidate, [input.jobId]);
+    return mine;
   }
   // The books the pack now serves need no search of their own. A torrent imported whole before, as one book's, did
   // not become a pack: its books keep their own searches.
@@ -138,7 +147,10 @@ export async function seriesPackStep(
           WHERE id IN (SELECT value FROM json_each(?)) AND status = 'pending'`,
       )
       .run(Date.now(), JSON.stringify(others));
-  return served.has(input.workId);
+  const mine = served.has(input.workId);
+  const jobIds = [...(mine ? [input.jobId] : []), ...others];
+  if (jobIds.length) input.onPackChosen?.(candidates, choice.candidate, jobIds);
+  return mine;
 }
 
 /** A book of a pack as the Get sheet names it. */
