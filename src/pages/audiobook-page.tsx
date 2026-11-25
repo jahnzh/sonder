@@ -350,7 +350,7 @@ export function AudiobookPage({ workId, books, downloads, admin, online, onFindA
     );
   }
 
-  const choices = recordingChoices(recordings).map((choice) =>
+  const choices = recordingChoices(recordings, work.mediaState?.holdReason === "another_language" ? chosenId : null).map((choice) =>
     choice.value === chosenId && faults.recording && !choice.detail.endsWith("Marked faulty")
       ? { ...choice, detail: [choice.detail, "Marked faulty"].filter(Boolean).join(" · ") }
       : choice,

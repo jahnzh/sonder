@@ -157,7 +157,7 @@ export function bookModel(work: LibraryWork, facts: { admin: boolean; deviceChoi
   const coming = !recording && media?.state === "queued";
 
   let audiobook: BookModel["audiobook"];
-  if (recording) audiobook = { line: audiobookRowLine(recording), progress: null, opens: "audiobook", action: null };
+  if (recording) audiobook = { line: audiobookRowLine(recording, media?.holdReason === "another_language"), progress: null, opens: "audiobook", action: null };
   else if (coming) {
     const acquisition = media?.acquisition;
     const status = (acquisition?.status ?? "checking") as DownloadFacts["status"];

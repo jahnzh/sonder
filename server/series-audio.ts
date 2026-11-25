@@ -8,7 +8,8 @@ import {
 import { sqlite } from "./db.ts";
 import { audiobookDbBook, audiobookDbByAsin, audiobookDbRelease } from "./audiobookdb.ts";
 import { findAsin } from "./catalogue-links.ts";
-import { languageCode, languagesNamed, releaseLanguageFits, type LanguageVerdict } from "./release-language.ts";
+import { DEFAULT_SERIES_LANGUAGE } from "../src/series-selection.ts";
+import { languageCode, namesLanguage, releaseLanguageFits, type LanguageVerdict } from "./release-language.ts";
 import {
   getWorkMediaState,
   markWorkEmptySearch,
@@ -177,9 +178,6 @@ export function buildVolumeSearchQueries(input: {
   ].filter((value): value is string => !!value && value.trim().length > 0);
   return [...new Set(base.map((query) => query.trim()))];
 }
-
-/** The wanted language when the series names none: English, as the series page's own default. */
-export const DEFAULT_SERIES_LANGUAGE = "en";
 
 /**
  * The language the automatic pick takes (#897): the one the user chose for the series when saving it, else the
@@ -376,20 +374,19 @@ export async function resolveCandidateAsins(
   deps: Pick<SeriesAudioSearchDeps, "asinRelease" | "log">,
 ) {
   const lookup = deps.asinRelease ?? audiobookDbAsinRelease;
-  const wanted = languageCode(options.language) ?? DEFAULT_SERIES_LANGUAGE;
   let lookups = 0;
   for (const candidate of candidates) {
     if (!isAutoAcquireKind(candidate.kind) || !candidate.hash) continue;
     candidate.asin = findAsin([candidate.title]);
     if (!candidate.asin) continue;
     candidate.asinCheck = "unknown";
-    if (candidateLanguageFits(candidate, wanted, options.ownTitles) === "other" || lookups >= MAX_ASIN_LOOKUPS) continue;
+    if (candidateLanguageFits(candidate, options.language, options.ownTitles) === "other" || lookups >= MAX_ASIN_LOOKUPS) continue;
     lookups++;
     const found = await withProviderRetry(`AudiobookDB ASIN ${candidate.asin}`, () => lookup(candidate.asin!), deps.log, 2);
     if (!found) continue;
     if (options.bookId && found.bookId && found.bookId !== options.bookId) candidate.asinCheck = "other_book";
     else if (!found.language) candidate.asinCheck = "unknown";
-    else if (languagesNamed(found.language).includes(wanted)) candidate.asinCheck = "same";
+    else if (namesLanguage(found.language, options.language)) candidate.asinCheck = "same";
     else {
       candidate.asinCheck = "other_language";
       candidate.language = found.language;

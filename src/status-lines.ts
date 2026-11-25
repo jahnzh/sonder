@@ -526,6 +526,7 @@ export type MediaStateFacts = {
  * state, whose line is the download's.
  */
 export function mediaStateLine({ state, holdReason }: MediaStateFacts): string | null {
+  if (holdReason === "another_language") return ANOTHER_LANGUAGE_LINE;
   if (state === "failed") return downloadLine({ status: "error" });
   if (state !== "missing") return null;
   return holdReason === "unreleased" ? `${downloadLine({ status: null })}${DOT}not released yet` : downloadLine({ status: null });

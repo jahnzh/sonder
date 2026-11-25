@@ -6,6 +6,8 @@
 // say. A title marks a language by a tag (`[FR]`, `(German)`), by the language's own name (Français, Deutsch, Español,
 // Nederlands) or, weakest, by its English name in plain words ("Dungeon Crawler Carl French edition").
 
+import { DEFAULT_SERIES_LANGUAGE } from "../src/series-selection.ts";
+
 type LanguageEntry = {
   code: string;
   /** The name the app shows. */
@@ -79,6 +81,11 @@ export function languagesNamed(field: string | null | undefined): string[] {
   return [...new Set(codes)];
 }
 
+/** Whether a source's language field names the wanted language (a name or a code; English when none is wanted). */
+export function namesLanguage(field: string | null | undefined, wanted: string | null | undefined): boolean {
+  return languagesNamed(field).includes(languageCode(wanted) ?? DEFAULT_SERIES_LANGUAGE);
+}
+
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** The title with the given titles taken out: a language word that is the work's own title is not a mark. */
@@ -141,7 +148,7 @@ export function releaseLanguageFits(
   wanted: string | null | undefined,
   ownTitles: readonly string[] = [],
 ): LanguageVerdict {
-  const code = languageCode(wanted) ?? "en";
+  const code = languageCode(wanted) ?? DEFAULT_SERIES_LANGUAGE;
   const named = languagesNamed(release.language);
   if (named.length) return named.includes(code) ? "fits" : "other";
   const marked = titleLanguages(release.title, { ownTitles });

@@ -18,6 +18,9 @@ export function compareSeriesIds(a: string, b: string) {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+/** The language of a series when nothing says another: the one constant the pick, the Add sheet and the server share. */
+export const DEFAULT_SERIES_LANGUAGE = "en";
+
 export function normalizeSeriesLanguage(language: string) {
   return language.trim().toLowerCase().split(/[-_]/)[0];
 }
