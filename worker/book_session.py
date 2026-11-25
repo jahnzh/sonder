@@ -279,10 +279,12 @@ class BookSession:
         if self.ended is not None:
             raise SessionEnded(self.ended)
 
-    def reserve_disk(self, nbytes, should_wait=None, poll=1.0):
+    def reserve_disk(self, nbytes, should_wait=None, poll=1.0, on_wait=None):
         """Reserve the book's disk estimate, waiting (in turn, oldest first) while other sessions hold the
-        budget. Raises BudgetExceeded when the book can never fit (see DiskBudget)."""
+        budget. Raises BudgetExceeded when the book can never fit (see DiskBudget). `on_wait(True)` is called
+        when the book starts to wait for other books and `on_wait(False)` when that wait ends."""
         self.budget.wait_turn(self.key)
+        waited = False
         try:
             while True:
                 self.check()
@@ -290,9 +292,14 @@ class BookSession:
                     return
                 if should_wait is not None and not should_wait():
                     raise SessionEnded("cancelled")
+                if not waited and on_wait is not None:
+                    waited = True
+                    on_wait(True)
                 time.sleep(poll)
         finally:
             self.budget.leave_turn(self.key)
+            if waited:
+                on_wait(False)
 
     def claim_disk(self, nbytes):
         """The files this session's folder already holds, counted before anything else is admitted."""

@@ -120,10 +120,10 @@ test("alignment: a whole-book job is stuck only when its stage goes quiet for lo
   const BOOK_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-book-v2";
   const { bookWorkerJobId } = await import("../src/reading-types.ts");
   const { alignmentSource: source, QUIET_STAGE_MS } = await import("../server/alignment-activity.ts");
-  const running = (state: string, counts: Record<string, unknown>, quietMs: number) => {
+  const running = (state: string, counts: Record<string, unknown>, quietMs: number, audioSeconds: number | null = null) => {
     const data = { id: "job-1", generation: "g1", status: "processing", progress: 0.2, engine: BOOK_ENGINE, pool: { hostId: "lisa" },
       bookJob: { id: bookWorkerJobId({ id: "job-1", generation: "g1" }), hostId: "lisa", state, resumed: 0, startedAt: NOW - 3 * 60 * MIN, counts } };
-    return itemFor(source, { ...alignmentRow("job-1"), data: JSON.stringify(data), updated_at: NOW - quietMs });
+    return itemFor(source, { ...alignmentRow("job-1"), data: JSON.stringify(data), updated_at: NOW - quietMs, audio_seconds: audioSeconds });
   };
   // The 25 Nov job: one M4B of 23.6 h, encoding on lisa's CPU. The worker now reports the audio it has encoded.
   const encoding = { tracksTotal: 1, tracksDecoded: 1, tracksEncoded: 0, encodeQueuePosition: 0, audioSecondsEncoded: 17300, audioSecondsTotal: 84845 };
@@ -139,6 +139,9 @@ test("alignment: a whole-book job is stuck only when its stage goes quiet for lo
   const { audioSecondsEncoded: _done, audioSecondsTotal: _total, ...oldWorker } = encoding;
   assert.equal(running("encoding", oldWorker, 50 * MIN).stuck, null, "an older worker's one-file encode is not called stuck after 50 min");
   assert.deepEqual(running("encoding", oldWorker, QUIET_STAGE_MS + MIN).stuck, { reason: "No progress on lisa for 2 h", known: true });
+  // With the recording's length known, an older worker's encode of it may take half of it (lisa: 3.6x realtime).
+  assert.equal(running("encoding", oldWorker, 6 * 60 * MIN, 84845).stuck, null, "the live job of 25 Nov, 6 h into its encode");
+  assert.deepEqual(running("encoding", oldWorker, 12 * 60 * MIN, 84845).actions, ["retry"], "past half the recording's length");
   for (const state of ["anchoring", "finishing"]) {
     assert.equal(running(state, {}, 50 * MIN).stuck, null, `${state} reports nothing until it ends`);
     assert.deepEqual(running(state, {}, QUIET_STAGE_MS + MIN).actions, ["retry"], `${state} quiet for far too long`);
@@ -150,6 +153,8 @@ test("alignment: a whole-book job is stuck only when its stage goes quiet for lo
   assert.equal(running("encoding", { ...encoding, encodeQueuePosition: 1 }, 10 * QUIET_STAGE_MS).stuck, null);
   assert.equal(running("encoding", { ...encoding, waitingForWindowRequests: true }, 10 * QUIET_STAGE_MS).stuck, null);
   assert.equal(running("queued", { resumeQueuePosition: 2 }, 10 * QUIET_STAGE_MS).stuck, null);
+  assert.equal(running("decoding", { tracksTotal: 1, tracksDecoded: 1, waitingForDisk: true }, 10 * QUIET_STAGE_MS).stuck, null,
+    "waiting while other books hold the worker's disk budget");
   // The older engine keeps the plain rule: no change for the source's threshold, no Retry while it runs.
   const older = itemFor(source, { ...alignmentRow("job-2"), data: JSON.stringify({ status: "processing", progress: 0.4 }), updated_at: NOW - 50 * MIN });
   assert.deepEqual(older.stuck, { reason: "No change for 50 min" });

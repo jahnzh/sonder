@@ -473,7 +473,7 @@ export function failedLine(facts: FailedFacts): string {
  * worker reports it ("Encoding audio · 21%", so a book of one long file moves), else the file count ("Encoding audio ·
  * 24 of 43 files").
  */
-export function withFileCount(
+export function withStepCount(
   line: string, files: { done: number; total: number } | null | undefined, audio?: { done: number; total: number } | null,
 ): string {
   if (audio && audio.total > 0) return `${line}${DOT}${Math.floor(Math.min(1, Math.max(0, audio.done / audio.total)) * 100)}%`;

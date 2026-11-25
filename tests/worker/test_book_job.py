@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "worker"))
 from unittest import mock
+import book_audio
 import book_job
 import book_report
 import book_session
@@ -976,7 +977,7 @@ class EncodeProgress(unittest.TestCase):
 
     def test_seconds_encoded_are_written_at_most_every_interval_and_at_the_end(self):
         job, clock = self.Recorder(), Clock()
-        rate = book_job.SAMPLE_RATE
+        rate = book_audio.SAMPLE_RATE
         # 600 s already encoded by an earlier run, then one track of 84,845 s (The Butcher's Masquerade's M4B).
         on_progress = book_job.encode_progress(job, 600 * rate, [{"samples": 84845 * rate}], every=15, clock=clock)
         self.assertEqual(job.writes, [{"audioSecondsEncoded": 600, "audioSecondsTotal": 85445}])
@@ -993,7 +994,7 @@ class EncodeProgress(unittest.TestCase):
 
     def test_positions_count_from_the_start_of_their_track(self):
         job, clock = self.Recorder(), Clock()
-        rate = book_job.SAMPLE_RATE
+        rate = book_audio.SAMPLE_RATE
         on_progress = book_job.encode_progress(job, 0, [{"samples": 100 * rate}, {"samples": 50 * rate}], every=0,
                                                clock=clock)
         on_progress(1, 20 * rate)

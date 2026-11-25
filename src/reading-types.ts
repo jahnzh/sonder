@@ -309,6 +309,8 @@ export type BookJobCounts = {
   resumeQueuePosition?: number;
   /** The encode waits for the worker's window requests. */
   waitingForWindowRequests?: boolean;
+  /** The job waits while other books hold the worker's disk budget. */
+  waitingForDisk?: boolean;
   /**
    * While encoding: whole seconds of the recording's audio encoded so far, of `audioSecondsTotal`. A track's count
    * moves only when the whole track is done, so a book of one long file reports its encode by these.

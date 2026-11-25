@@ -54,7 +54,6 @@ STATES = ("queued", "decoding", "encoding", "anchoring", "aligning", "finishing"
 # How often the encode writes how much audio it has encoded (`audioSecondsEncoded`). A track's count moves only
 # when the whole track is done, and one M4B of 23.6 h takes hours on lisa's CPU: without this the job looks stuck.
 ENCODE_PROGRESS_S = 15.0
-SAMPLE_RATE = 16000
 
 
 def encode_progress(job, done_samples, work, every=None, clock=time.monotonic):
@@ -62,6 +61,7 @@ def encode_progress(job, done_samples, work, every=None, clock=time.monotonic):
     recording (`audioSecondsEncoded` of `audioSecondsTotal`), at most every `every` seconds. `done_samples` are
     the samples of the tracks whose emissions were complete before this encode; `work` the tracks it encodes,
     in order. The totals are written at once."""
+    from book_audio import SAMPLE_RATE
     every = ENCODE_PROGRESS_S if every is None else every
     starts = []
     total = done_samples
@@ -69,15 +69,16 @@ def encode_progress(job, done_samples, work, every=None, clock=time.monotonic):
         starts.append(total)
         total += track["samples"]
     total_seconds = int(total // SAMPLE_RATE)
-    last = {"at": clock(), "seconds": int(done_samples // SAMPLE_RATE)}
-    job.progress(audioSecondsEncoded=last["seconds"], audioSecondsTotal=total_seconds)
+    written_at, written = clock(), int(done_samples // SAMPLE_RATE)
+    job.progress(audioSecondsEncoded=written, audioSecondsTotal=total_seconds)
 
     def on_progress(position, end):
+        nonlocal written_at, written
         seconds = min(total_seconds, int((starts[position] + end) // SAMPLE_RATE))
         now = clock()
-        if seconds == last["seconds"] or (now - last["at"] < every and seconds < total_seconds):
+        if seconds == written or (now - written_at < every and seconds < total_seconds):
             return
-        last.update(at=now, seconds=seconds)
+        written_at, written = now, seconds
         job.progress(audioSecondsEncoded=seconds)
 
     return on_progress
@@ -135,7 +136,7 @@ def write_reserved(job, session, path, value, should_stop, state_bytes=STATE_BYT
     size = sum(len(chunk) for chunk in json_chunks(value))
     need = folder_bytes(job.folder) + size + int(state_bytes)
     try:
-        session.reserve_disk(need, should_wait=lambda: not should_stop())
+        session.reserve_disk(need, should_wait=lambda: not should_stop(), on_wait=job.disk_wait)
     except BudgetExceeded as error:
         raise BudgetExceeded(f"The book's {what} is {size} bytes of JSON and was not written: with the job's "
                              f"other files it needs {need} bytes of disk. {error}") from None
@@ -233,6 +234,10 @@ class Job:
             timings = self.state.setdefault("stageTimings", {})
             timings[name] = timings.get(name, 0.0) + seconds
         self.save()
+
+    def disk_wait(self, waiting):
+        """The job waits while other books hold the disk budget (`waitingForDisk`), or got its reservation."""
+        self.progress(waitingForDisk=waiting)
 
     def gate_wait(self, waiting):
         """The encode waits for the window endpoints' gate (window requests come first), or got it again."""
@@ -670,7 +675,7 @@ class WorkerStages:
         """Reserve what the job's folder holds now plus `adds` bytes the next stage writes at its peak (and
         room for the small state, plan and group files; the result is reserved when it is written); waits while other books hold the budget."""
         need = folder_bytes(job.folder) + int(adds) + meta_bytes(len(job.request["sentences"]))
-        session.reserve_disk(need, should_wait=lambda: not should_stop())
+        session.reserve_disk(need, should_wait=lambda: not should_stop(), on_wait=job.disk_wait)
         job.progress(diskReservedBytes=need)
 
     def track_identity(self, session, index, track):

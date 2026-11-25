@@ -428,6 +428,7 @@ export function bookJobCounts(progress: { progress?: Record<string, unknown> | n
     if (typeof value === "number" && Number.isInteger(value) && value >= 0) counts[field] = value;
   }
   if (typeof reported.waitingForWindowRequests === "boolean") counts.waitingForWindowRequests = reported.waitingForWindowRequests;
+  if (typeof reported.waitingForDisk === "boolean") counts.waitingForDisk = reported.waitingForDisk;
   return counts;
 }
 
