@@ -11,7 +11,7 @@ export type SeriesCandidateReason = "one-book" | "episodic" | "compilation" | "t
 export type StoredSeriesCandidate = {
   /** The info hash when known, else `<source>:<id>`: what the chosen one is named by. */
   key: string;
-  source: "abb" | "prowlarr";
+  source: "abb" | "prowlarr" | "mam";
   id: string;
   title: string;
   size: string | null;
@@ -114,7 +114,7 @@ export function writeSeriesChoice(jobId: string, choice: StoredSeriesChoice) {
  * The owner chose a release for the book (Choose this one instead, or the Get sheet's select): it is the chosen one,
  * added to the list when the search did not find it.
  */
-export function markOwnerChoice(jobId: string, release: { source: "abb" | "prowlarr"; id: string; title?: string | null }, now = Date.now()) {
+export function markOwnerChoice(jobId: string, release: { source: "abb" | "prowlarr" | "mam"; id: string; title?: string | null }, now = Date.now()) {
   const choice = readSeriesChoice(jobId) ?? { at: now, chosen: null, by: "owner" as const, candidates: [] };
   let found = choice.candidates.find((candidate) => candidate.source === release.source && candidate.id === release.id);
   if (!found) {

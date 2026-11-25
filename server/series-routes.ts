@@ -87,7 +87,7 @@ export function registerSeriesRoutes(app: FastifyInstance) {
     requireAdmin(req);
     const { id, bookId } = workParams.parse(req.params);
     const body = z
-      .object({ source: z.enum(["abb", "prowlarr"]), id: z.string().min(1).max(300), replaceActive: z.boolean().optional(), confirmExistingAudio: z.boolean().optional() })
+      .object({ source: z.enum(["abb", "prowlarr", "mam"]), id: z.string().min(1).max(300), replaceActive: z.boolean().optional(), confirmExistingAudio: z.boolean().optional() })
       .parse(req.body ?? {});
     const result = await selectSeriesWorkRelease(currentUserId(req), id, bookId, body);
     noteOwnerSelect(currentUserId(req), id, bookId, { source: body.source, id: body.id });
@@ -119,7 +119,7 @@ export function registerSeriesRoutes(app: FastifyInstance) {
     requireAdmin(req);
     const { id, bookId } = workParams.parse(req.params);
     const body = z
-      .object({ key: z.string().min(1).max(400).optional(), source: z.enum(["abb", "prowlarr"]).optional(), id: z.string().min(1).max(300).optional() })
+      .object({ key: z.string().min(1).max(400).optional(), source: z.enum(["abb", "prowlarr", "mam"]).optional(), id: z.string().min(1).max(300).optional() })
       .refine((value) => !!value.key || (!!value.source && !!value.id), "Name the release by its key, or by its source and id.")
       .parse(req.body ?? {});
     return chooseSeriesCandidate(currentUserId(req), id, bookId, body);

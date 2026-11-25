@@ -129,7 +129,9 @@ if (
 for (const [table, columns] of [
   ["audio_editions", ["language", "release_title"]],
   // `kind` (#901): "ebook" for a torrent fetched for its EPUB or PDF; null for an audiobook, as every older row.
-  ["acquisitions", ["work_id", "language", "narrator", "kind"]],
+  // `mam_torrent_id` (#911): the MyAnonamouse torrent id of a private torrent (local client only, never TorBox, never
+  // stopped by Sonder); `seed_path` the torrent's root in the download folder, whose files are never deleted.
+  ["acquisitions", ["work_id", "language", "narrator", "kind", "mam_torrent_id", "seed_path"]],
 ] as const) {
   const existing = new Set(
     (

@@ -16,8 +16,8 @@ import { Chevron } from "../parts/icons";
 import { tip, type TipName } from "../tooltip-texts";
 import { writeAddress } from "../routes";
 import {
-  NOT_TRACKED_LINE, lightsDot, prepareResult, prepareValue, queueLine, torrentLine, workerLine, workers,
-  type QueueId,
+  NOT_TRACKED_LINE, lightsDot, mamSeedingLine, prepareResult, prepareValue, queueLine, torrentLine, workerLine, workers,
+  type MamSeeding, type QueueId,
 } from "./activity-server-lines";
 import { AttentionMark, ServerRow } from "./activity-server-row";
 import { WorkerHeading, WorkerPage } from "./activity-worker";
@@ -150,6 +150,34 @@ function WorkerRow({
   );
 }
 
+/**
+ * MyAnonamouse's torrents (#911): each one Sonder added, with how long it has seeded and its ratio. Shown only when
+ * there is one; a torrent not yet seeded 72 hours, or stopped in the client by hand, says so in the failed colour.
+ */
+function MamSeedingGroup({ torrents }: { torrents: MamSeeding[] }) {
+  if (!torrents.length) return null;
+  return (
+    <Group caption="Seeding on MyAnonamouse">
+      {torrents.map((torrent) => (
+        <li key={torrent.id} className="activity-server-item" data-testid={`server-mam-${torrent.id}`}>
+          <div className="activity-server-row">
+            <span className="activity-server-text">
+              <span className="activity-server-label type-body">{torrent.title}</span>
+              <span
+                className="activity-server-line type-label"
+                data-testid="server-row-line"
+                data-danger={(torrent.state === "stopped" || torrent.state === "missing") && !torrent.seededEnough ? "" : undefined}
+              >
+                {mamSeedingLine(torrent)}
+              </span>
+            </span>
+          </div>
+        </li>
+      ))}
+    </Group>
+  );
+}
+
 /** The queues of each group, with the tooltip each one's name carries. */
 const READING_SYNC_QUEUES: Array<[QueueId, TipName]> = [["alignment", "syncQueue"]];
 const DOWNLOAD_QUEUES_BEFORE: Array<[QueueId, TipName]> = [["acquisitions", "downloadQueue"]];
@@ -177,9 +205,15 @@ export function ActivityServer({
   notify: (text: string, error?: boolean) => void;
 }) {
   const [activity, setActivity] = useState<ActivityResponse | null>(null);
+  const [seeding, setSeeding] = useState<MamSeeding[]>([]);
   const [error, setError] = useState("");
   const alive = useRef(true);
   const load = useCallback(async () => {
+    // MyAnonamouse's torrents (#911), beside the activity; an older server has no such route and shows none.
+    void api<{ torrents?: MamSeeding[] }>("/mam/seeding").then(
+      (answer) => alive.current && setSeeding(Array.isArray(answer?.torrents) ? answer.torrents : []),
+      () => {},
+    );
     try {
       const answer = await api<ActivityResponse>("/activity");
       if (!alive.current) return;
@@ -292,6 +326,7 @@ export function ActivityServer({
               {torrent && <ServerRow id="torrent-client" name={torrent.label} info="torrent" line={torrentLine(torrent)} mark={lightsDot(torrent)} />}
               {queues(DOWNLOAD_QUEUES_AFTER)}
             </Group>
+            <MamSeedingGroup torrents={seeding} />
             <Group caption="Other">
               {queues(OTHER_QUEUES)}
               {imports && <ServerRow id="imports" name={imports.label} info="imports" line={NOT_TRACKED_LINE} muted />}

@@ -11,6 +11,7 @@ export type SettingsListInput = {
   settings: {
     torboxConfigured: boolean;
     prowlarrConfigured?: boolean;
+    mamConfigured?: boolean;
     storage?: { connected: boolean; usedBytes: number | null; totalBytes: number | null } | null;
   } | null;
   appearance: Pick<Appearance, "preset" | "colors">;
@@ -57,7 +58,7 @@ export function themeName(appearance: Pick<Appearance, "preset" | "colors">): st
 /** The services connected, as the administrator's Connections row says them. */
 export function connectionsValue(settings: SettingsListInput["settings"]): string {
   if (!settings) return "";
-  const names = [settings.torboxConfigured && "TorBox", settings.prowlarrConfigured && "Prowlarr"];
+  const names = [settings.torboxConfigured && "TorBox", settings.prowlarrConfigured && "Prowlarr", settings.mamConfigured && "MyAnonamouse"];
   const connected = names.filter((name): name is string => !!name);
   return connected.length ? connected.join(", ") : "Not connected";
 }

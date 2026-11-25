@@ -166,6 +166,12 @@ export function getLine({ chosen, mediaState, torboxConnected, health }: GetLine
     return line(`Replaces the download on its way (${onItsWay(mediaState.acquisition)}).`, false, true);
   const release = chosen === "magnet" ? null : chosen;
   if (release?.cached) return line("Plays from TorBox right away.");
+  // A MyAnonamouse torrent goes to the server's own client only, and keeps seeding there (#911).
+  if (release?.source === "mam") {
+    if (health && health.status !== "ok" && health.status !== "unconfigured" && health.message?.trim())
+      return line(health.message.trim(), true);
+    return line(MAM_LINE);
+  }
   const checked = !!release && (release.source === "prowlarr" || !!release.infoHash);
   if (!torboxConnected || checked) {
     if (health && health.status !== "ok" && health.status !== "unconfigured" && health.message?.trim())
@@ -174,6 +180,9 @@ export function getLine({ chosen, mediaState, torboxConnected, health }: GetLine
   }
   return line("Plays at once if TorBox has it, else downloads to your server.");
 }
+
+/** The line under Get this recording for a MyAnonamouse row (#911). */
+export const MAM_LINE = "Downloads to your server first and keeps seeding on MyAnonamouse.";
 
 /**
  * What the server writes as the indexer of a Prowlarr result that names none (server/sources/prowlarr.ts,
@@ -191,6 +200,7 @@ const NO_INDEXER = "prowlarr";
 export function sourceLink(chosen: Pick<AudiobookRelease, "url" | "source" | "indexer"> | "magnet" | null | undefined): SourceLink | null {
   if (!chosen || chosen === "magnet" || !isWebAddress(chosen.url)) return null;
   const href = chosen.url.trim();
+  if (chosen.source === "mam") return { text: "On MyAnonamouse", href };
   if (chosen.source !== "prowlarr") return { text: "On AudioBookBay", href };
   const indexer = chosen.indexer?.trim();
   return { text: indexer && indexer.toLowerCase() !== NO_INDEXER ? `On ${indexer}` : "On the indexer's page", href };

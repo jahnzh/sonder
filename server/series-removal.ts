@@ -1,5 +1,5 @@
 import { existsSync, realpathSync, unlinkSync } from "node:fs";
-import { isAbsolute, relative } from "node:path";
+import { isAbsolute, relative, sep } from "node:path";
 import { and, eq, inArray } from "drizzle-orm";
 import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
@@ -260,6 +260,22 @@ function managedMediaPath(path: string) {
   }
 }
 
+/**
+ * A file of a MyAnonamouse torrent (#911): the torrent seeds from it, so removing its book never deletes it (the owner's
+ * rule: at least 72 hours, and as long as possible). `seed_path` is the torrent's root in the download folder.
+ */
+export function pathOfSeedingTorrent(path: string) {
+  const roots = sqlite
+    .prepare("SELECT seed_path FROM acquisitions WHERE mam_torrent_id IS NOT NULL AND seed_path IS NOT NULL")
+    .pluck()
+    .all() as string[];
+  const canonical = managedMediaPath(path) ?? path;
+  return roots.some((root) => {
+    const seeded = managedMediaPath(root) ?? root;
+    return canonical === seeded || canonical.startsWith(seeded + sep);
+  });
+}
+
 function pathReferencedElsewhere(path: string, exceptTrackIds: Set<string>) {
   const canonical = managedMediaPath(path) ?? path;
   for (const track of db.select().from(s.tracks).all()) {
@@ -338,7 +354,8 @@ function detachUserFromAcquisition(
     .where(eq(s.acquisitions.id, acquisitionId))
     .get();
   if (!job || !isActiveAcquisitionStatus(job.status)) return;
-  if (job.backend === "local" && job.hash) torrentCancels.push({ hash: job.hash });
+  // A MyAnonamouse torrent is never stopped (#911): it finishes and seeds on in the client.
+  if (job.backend === "local" && job.hash && !job.mamTorrentId) torrentCancels.push({ hash: job.hash });
   markAcquisitionCancelledInDb(acquisitionId);
 }
 
@@ -651,8 +668,8 @@ async function finalizeEditionDeletes(
     if (managed && !pathsToUnlink.includes(managed) && !pathReferencedElsewhere(managed, new Set())) pathsToUnlink.push(managed);
   }
   for (const path of pathsToUnlink) {
-    // A file of a series pack stays while another book of the pack uses it (ADR 0027).
-    if (pathOfUsedPack(path)) {
+    // A file of a series pack stays while another book of the pack uses it (ADR 0027); one of a MAM torrent while it seeds.
+    if (pathOfUsedPack(path) || pathOfSeedingTorrent(path)) {
       skippedPaths.push(path);
       continue;
     }

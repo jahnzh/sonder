@@ -119,19 +119,55 @@ export async function getTorrent(hash: string) {
   );
   return result.torrents[0] || null;
 }
-export async function addTorrent(magnet: string, downloadDir: string) {
+/**
+ * Add a torrent by its magnet link, or by a `.torrent` file's bytes (`metainfo`: a private tracker's own file, #911,
+ * whose announce address carries the member's passkey and is never written anywhere else).
+ */
+export async function addTorrent(magnet: string, downloadDir: string, options: { metainfo?: Buffer } = {}) {
   const result = await transmission<{
     "torrent-added"?: { hashString: string; id: number; name: string };
     "torrent-duplicate"?: { hashString: string; id: number; name: string };
   }>("torrent-add", {
-    filename: magnet,
+    ...(options.metainfo ? { metainfo: options.metainfo.toString("base64") } : { filename: magnet }),
     "download-dir": downloadDir,
-    labels: ["sonder"],
+    labels: options.metainfo ? ["sonder", "mam"] : ["sonder"],
     paused: false,
   });
   const torrent = result["torrent-added"] || result["torrent-duplicate"];
   if (!torrent) throw new Error("Transmission did not return a torrent.");
   return torrent;
+}
+
+/**
+ * A private tracker's torrent seeds on (#911): no ratio limit and no idle limit stop it (Transmission's `seedRatioMode`
+ * and `seedIdleMode` 2, "unlimited", whatever the client's own settings say).
+ */
+export async function keepSeeding(hash: string, call: typeof transmission = transmission) {
+  await call("torrent-set", { ids: [hash], seedRatioMode: 2, seedIdleMode: 2 });
+}
+
+/** What Activity shows of a seeding torrent (#911): its status, how far it is, how long it has seeded and its ratio. */
+export type SeedingState = {
+  hashString: string;
+  status: number;
+  percentDone: number;
+  /** Seconds the torrent has seeded in all, as Transmission counts them (over restarts of the client). */
+  secondsSeeding: number;
+  /** Uploaded over downloaded; Transmission answers -1 when nothing was downloaded, -2 for an infinite ratio. */
+  uploadRatio: number;
+  uploadedEver: number;
+  error: number;
+  errorString: string;
+};
+
+export async function getSeedingStates(hashes: string[], timeoutMs = 5000) {
+  if (!hashes.length) return [] as SeedingState[];
+  const result = await transmission<{ torrents: SeedingState[] }>(
+    "torrent-get",
+    { ids: hashes, fields: ["hashString", "status", "percentDone", "secondsSeeding", "uploadRatio", "uploadedEver", "error", "errorString"] },
+    timeoutMs,
+  );
+  return result.torrents ?? [];
 }
 
 /**
