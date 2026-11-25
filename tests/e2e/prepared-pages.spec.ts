@@ -418,7 +418,17 @@ test("a tap for the next page while its part is still on its way turns the page 
     await route.continue();
   });
   await opened(page, ebook);
-  const here = await settledPage(page);
+  let here = await settledPage(page);
+  // The place opened is the page where the part's last sentence starts; where that sentence runs on over the turn
+  // (as it does in Firefox at this width) the part has one more page: the reader is taken to the part's last page.
+  const endsHere = () =>
+    band(page).evaluate((host, id) => {
+      const box = host.getBoundingClientRect();
+      const last = [...host.querySelectorAll(`[data-s="${id}"]`)].flatMap((span) => [...span.getClientRects()]).filter((rect) => rect.width > 0).at(-1);
+      return !!last && last.left >= box.left - 0.5 && last.right <= box.right + 0.5;
+    }, manifest.parts[4].last as string);
+  for (let step = 0; step < 3 && !(await endsHere()); step++) here = await turn(page, 1);
+  expect(await endsHere(), "the part's last page").toBe(true);
   // The view asks for the next part ahead of the reader: it is on its way, and held back, when the reader taps.
   await expect.poll(() => asked).toBeGreaterThan(0);
   const box = (await band(page).boundingBox())!;
@@ -428,11 +438,11 @@ test("a tap for the next page while its part is still on its way turns the page 
   release();
   // One tap, no second: the page turns when the part arrives.
   await expect.poll(async () => (await pageOf(page)).ids.some((id) => ordinal(id) > ordinal(manifest.parts[4].last)), { timeout: 15000 }).toBe(true);
-  // The part continues in the column the part before ended in, so the page that was left has gained lines: read
-  // again, it ends where the page turned to begins.
+  // The part begins on a page of its own: the page that was left, read again, is as it was and ends where the page
+  // turned to begins.
   const turnedTo = await pageOf(page);
   const left = await turn(page, -1);
-  expect(left.lines.filter((line) => !here.lines.includes(line)).every((line) => ordinal(line.split("@")[0]!) > ordinal(manifest.parts[4].last))).toBe(true);
+  expect(left.lines).toEqual(here.lines);
   expectJoined(left, turnedTo, ordinal, "the turn that waited");
   expect(asked).toBe(1);
 });
