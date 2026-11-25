@@ -52,7 +52,7 @@ let deps: SeriesReleaseSearchDeps = {};
 const ABB_SEARCH_CACHE_MS = 6 * 3600_000;
 const abbSearchSlugs = new Map<string, number>();
 
-function rememberAbbSlugs(results: { id: string }[]) {
+export function rememberAbbSlugs(results: { id: string }[]) {
   const expires = Date.now() + ABB_SEARCH_CACHE_MS;
   for (const release of results) abbSearchSlugs.set(release.id, expires);
   for (const [slug, expiry] of abbSearchSlugs)

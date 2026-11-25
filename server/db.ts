@@ -253,9 +253,17 @@ sqlite.exec(SERIES_RESAVE_TABLE);
 if (!(sqlite.prepare("PRAGMA table_info(user_work_library_origin)").all() as { name: string }[]).some((c) => c.name === "catalogue_series_id"))
   sqlite.exec("ALTER TABLE user_work_library_origin ADD COLUMN catalogue_series_id TEXT");
 // A series search that could not reach its source is tried again by itself (#717): how often it was, and not before when.
+// What the queue's audio search found and chose, as JSON (#898); when the owner moved the job to the front of the
+// queue (Search now); and a search asked again for a book that has its audiobook or one on its way (no download).
 {
   const seriesJobColumns = new Set((sqlite.prepare("PRAGMA table_info(series_acquisition_jobs)").all() as { name: string }[]).map((c) => c.name));
-  for (const [column, type] of [["auto_retries", "INTEGER NOT NULL DEFAULT 0"], ["retry_at", "INTEGER"]] as const)
+  for (const [column, type] of [
+    ["auto_retries", "INTEGER NOT NULL DEFAULT 0"],
+    ["retry_at", "INTEGER"],
+    ["candidates", "TEXT"],
+    ["front_at", "INTEGER"],
+    ["search_only", "INTEGER NOT NULL DEFAULT 0"],
+  ] as const)
     if (!seriesJobColumns.has(column)) sqlite.exec(`ALTER TABLE series_acquisition_jobs ADD COLUMN ${column} ${type}`);
 }
 // One-time copy of the single-account Hardcover key, state and queues to the admin (#15). The old rows stay for rollback.

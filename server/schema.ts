@@ -291,6 +291,12 @@ export const seriesAcquisitionJobs = sqliteTable("series_acquisition_jobs", {
   autoRetries: integer("auto_retries").notNull().default(0),
   /** A search put back by itself waits until then; null for one that may run now. */
   retryAt: integer("retry_at"),
+  /** What the audio search found and which one was chosen, as JSON (`server/series-queue.ts`, #898). */
+  candidates: text("candidates"),
+  /** When the owner moved the job to the front of the queue (Search now, #898); null for the queue's own order. */
+  frontAt: integer("front_at"),
+  /** 1: a search asked again for a book with its audiobook (or one on its way): it finds, and downloads nothing. */
+  searchOnly: integer("search_only").notNull().default(0),
 });
 export const userWorkCompletion = sqliteTable("user_work_completion", { userId: integer("user_id").notNull(), workId: text("work_id").notNull(), status: text("status").notNull() }, t => [primaryKey({ columns: [t.userId, t.workId] })]);
 export const userWorkLibraryOrigin = sqliteTable(

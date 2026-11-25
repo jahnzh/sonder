@@ -281,7 +281,7 @@ test("the pause switches import no feature, and the Activity modules do not open
     "series-acquisition-activity.ts", "alignment-activity.ts", "ebook-set-activity.ts", "backups-activity.ts"]) {
     const imports = runtimeImports(source(file));
     assert.ok(imports.every((path) => path === "./activity-source.ts" || path === "./activity-pause-model.ts" || path === "./activity-sources.ts"
-      || /^\.\/[a-z-]+-activity\.ts$/.test(path) || path === "fastify" || path === "./backup-schedule.ts" || path === "./work-cover.ts" || path === "./work-files.ts" || path === "./ebook-chosen.ts" || path === "../src/reading-types.ts" || path === "../src/types.ts"),
+      || /^\.\/[a-z-]+-activity\.ts$/.test(path) || path === "fastify" || path === "./backup-schedule.ts" || path === "./work-cover.ts" || path === "./work-files.ts" || path === "./series-queue-order.ts" || path === "./ebook-chosen.ts" || path === "../src/reading-types.ts" || path === "../src/types.ts"),
       `${file} imports ${imports.join(", ")}`);
   }
   assert.deepEqual(runtimeImports(source("backup-schedule.ts")), [], "the backup rules are pure");
@@ -295,6 +295,8 @@ test("the pause switches import no feature, and the Activity modules do not open
   assert.deepEqual(runtimeImports(source("acquisition-vocabulary.ts")), []);
   // The read-editions rule (#718) takes the database it is given as well.
   assert.deepEqual(runtimeImports(source("ebook-chosen.ts")), []);
+  // The series queue's order (#898) is pure as well.
+  assert.deepEqual(runtimeImports(source("series-queue-order.ts")), []);
 });
 
 // Series acquisition reads its vocabulary from the CHECK constraint of a real database built here.
@@ -317,7 +319,7 @@ test("series acquisition: every status the CHECK constraint allows maps to its A
   allowed.forEach((status, index) => {
     sqlite.prepare("INSERT INTO works(id,title,author,description,genre,year) VALUES(?,?,'Card','','',2000)").run(`w-${status}`, `Volume ${index + 1}`);
     sqlite.prepare("INSERT INTO series_acquisition_jobs(id,user_id,series_id,book_id,work_id,kind,status,error,updated_at) VALUES(?,1,7,?,?,'audio',?,?,?)")
-      .run(`job-${status}`, index, `w-${status}`, status, status === "failed" ? "No release found" : null, NOW - 60 * MIN);
+      .run(`job-${status}`, String(index), `w-${status}`, status, status === "failed" ? "No release found" : null, NOW - 60 * MIN);
   });
   const deps = { sqlite, getSetting: () => undefined, pauseState: () => ({}), now: () => NOW } as unknown as ActivityDeps;
   const activity = await collectActivity(deps, { probes: false }, [seriesAcquisitionSource]);
@@ -326,6 +328,8 @@ test("series acquisition: every status the CHECK constraint allows maps to its A
     assert.equal(byStatus[status].state, expected[status as SeriesAcquisitionJobStatus], status);
     assert.deepEqual(byStatus[status].facts, {
       kind: "series-acquisition", status, search: "audiobook", place: status === "pending" ? 2 : null, retryAt: null,
+      // The series and its book (#898): the row opens the Series page at the book.
+      seriesId: "7", seriesBookId: String(allowed.indexOf(status)),
     }, `${status}: the job's status word and kind; the waiting one is 2nd in line behind the search running now`);
     // Retry for a search that failed (#717), as the Series page offers it; nothing else to act on.
     assert.deepEqual(byStatus[status].actions, status === "failed" ? ["retry"] : [], `${status}: the actions it offers`);

@@ -599,3 +599,16 @@ test("a stalled download of a book that already has a copy says so, offers Cance
   assert.equal(row(now, "work:tb").line, "This book already has a copy · Preparing the stream");
   assert.equal(now.dot, false, "nothing needs attention: no dot");
 });
+
+test("a series search opens its series' page at the book; the owner's Skip and Stop searching read as such (#898)", () => {
+  const facts = { kind: "series-acquisition" as const, status: "failed", search: "audiobook" as const, seriesId: "s-1", seriesBookId: "bk-2" };
+  const skipped = item("series:1", { workId: "w", bookId: "b", state: "done", facts: { ...facts, outcome: "skipped" } });
+  const now = build({ activity: answer([skipped]) });
+  assert.equal(row(now, "work:w").line, "Skipped");
+  assert.deepEqual(row(now, "work:w").opens, { to: "series", seriesId: "s-1", seriesBookId: "bk-2", workId: "w", bookId: "b" });
+  const stopped = item("series:2", { workId: "w", bookId: "b", state: "done", facts: { ...facts, outcome: "stopped" } });
+  assert.equal(row(build({ activity: answer([stopped]) }), "work:w").line, "Search stopped");
+  // From an older server, without the series: its Book page as before.
+  const older = item("series:3", { workId: "w", bookId: "b", state: "queued", facts: { kind: "series-acquisition", status: "pending", search: "ebook" } });
+  assert.equal(row(build({ activity: answer([older]) }), "work:w").opens?.to, "book");
+});

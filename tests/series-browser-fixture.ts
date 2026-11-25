@@ -9,6 +9,8 @@
 // - "702" The Crossing by Bea South: Alice alone, the other series of the same name.
 // - "703" The Ferry Road by Wren Hollis: AudiobookDB's own labels (a novella at "1.5") and, from Open Library, the
 //   third book that has no audiobook yet.
+// - "704" The Lantern Keeper by Iris Vale: three books whose audio searches tests/series-queue-browser-fixture.ts
+//   answers (#898), for the spec of the series queue on the Series page.
 // Covers are https addresses on a reserved name (`.test` never resolves), so a page shows them without a live call;
 // a spec that wants them drawn routes the host.
 import { seriesMember, type FixtureControl, type FixtureMember, type FixtureSeries, type OpenLibrarySeriesDoc } from "./audiobookdb-fixture.ts";
@@ -44,6 +46,17 @@ export const browserSeries = (): FixtureSeries[] => [
       member("711", "The Ferry Road", "Wren Hollis", "1", 1),
       member("712", "A Night at the Landing", "Wren Hollis", "1.5", 1.5, { runtimeLengthMs: 5_400_000 }),
       member("713", "Low Water", "Wren Hollis", "2", 2),
+    ],
+  },
+  {
+    id: "704",
+    name: "The Lantern Keeper",
+    people: [person("Iris Vale", "Author")],
+    bookCount: 3,
+    books: [
+      member("721", "The Lantern Keeper", "Iris Vale", "1", 1),
+      member("722", "Keeper of Tides", "Iris Vale", "2", 2),
+      member("723", "The Last Light", "Iris Vale", "3", 3),
     ],
   },
 ];

@@ -1,0 +1,37 @@
+/* A book's search sheet over the Series page (src/pages/series-book-sheet.tsx, #898). Tokens from src/parts/tokens.css,
+   colours from the existing variables. Each search is a part under its caption: its line, the chosen release on the
+   surface card, the other releases as choice rows, then its steering rows. */
+.series-book-part {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.series-book-part > h2 {
+  margin: 0;
+}
+.series-book-line {
+  margin: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+/* The chosen release: its title, what it is, why it was chosen, and the link to its page. */
+.series-book-chosen {
+  box-sizing: border-box;
+  padding: var(--space-12) var(--space-16);
+  border-radius: var(--corner-group);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.series-book-muted {
+  color: var(--muted);
+}
+.series-book-error {
+  margin: 0;
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}

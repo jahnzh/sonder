@@ -394,7 +394,7 @@ export async function resolveCandidateAsins(
   }
 }
 
-const defaultDeps = (): SeriesAudioSearchDeps => ({
+export const defaultDeps = (): SeriesAudioSearchDeps => ({
   abbSearch: abbReleaseSearch,
   prowlarrSearch: prowlarrReleaseSearch,
   abbMagnetLink: abbMagnet,
@@ -512,6 +512,8 @@ export async function autoAcquireSeriesVolume(
     seriesLanguage?: string | null;
     /** The book's id on the catalogue: an ASIN of another book is not this one. */
     bookId?: string | null;
+    /** What the search found and the one picked (null: none), as the series queue keeps them (#898). */
+    onCandidates?: (candidates: SeriesAudioCandidate[], chosen: SeriesAudioCandidate | null) => void;
   },
   acquire: (
     magnet: string,
@@ -543,6 +545,7 @@ export async function autoAcquireSeriesVolume(
   const seriesLanguage = input.seriesLanguage || DEFAULT_SERIES_LANGUAGE;
   await resolveCandidateAsins(candidates, { language: seriesLanguage, bookId: input.bookId, ownTitles }, deps);
   const chosen = pickAutoAcquireCandidate(candidates, input.expected, seriesLanguage, ownTitles);
+  input.onCandidates?.(candidates, chosen?.hash ? chosen : null);
   if (!chosen?.hash) {
     markWorkEmptySearch(userId, input.workId);
     return getWorkMediaState(userId, input.workId);
