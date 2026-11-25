@@ -2033,7 +2033,8 @@ export function ReaderView({
           </div>
         )}
         {/* On a desktop the head names the book and the chapter after the face control (#595). */}
-        {desktop && <span className="reader-topbar-place type-caption">{headRestLine(book?.title, currentSection?.title || barChapter)}</span>}
+        {/* While the rail's thumb is held, its chapter and percent: the desktop's footer has no line for them. */}
+        {desktop && <span className="reader-topbar-place type-caption">{railHeld ? readoutLine(railHeld) : headRestLine(book?.title, currentSection?.title || barChapter)}</span>}
         {desktop && (
           <button
             className="icon-button"

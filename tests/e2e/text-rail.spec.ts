@@ -521,6 +521,42 @@ async function manifestOfPage(page: Page): Promise<Manifest> {
   return (await (await page.request.get(address!)).json()) as Manifest;
 }
 
+/** The rail's drawn column reaches the band's top and its bottom: its first segment begins and its last ends there. */
+async function expectRailToTheEnds(page: Page) {
+  const ends = await band(page).evaluate((host) => {
+    const box = host.getBoundingClientRect();
+    const drawn = [...host.querySelectorAll<HTMLElement>(".text-rail-segment")].filter((element) => !element.hidden).map((element) => element.getBoundingClientRect());
+    return { top: drawn[0]!.top - box.top, bottom: box.bottom - drawn.at(-1)!.bottom };
+  });
+  expect(ends.top, "the rail begins at the band's top").toBeCloseTo(0, 0);
+  expect(ends.bottom, "the rail ends at the band's bottom").toBeCloseTo(0, 0);
+}
+
+test("on a desktop the head reads the held thumb's chapter and percent, and the rail runs the band's whole height", async ({ page }) => {
+  test.setTimeout(150000);
+  test.skip(!!test.info().project.use.hasTouch, "a desktop: a project without touch");
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await openFollowing(page, `Rail desktop ${randomUUID()}`);
+  const head = room(page).locator(".reader-topbar-place");
+  await expect(head).toBeVisible();
+  const rest = await head.textContent();
+  expect(rest).not.toMatch(/%$/);
+  await expectRailToTheEnds(page);
+  const { x, y, column } = await thumbAt(page);
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x - AWAY, y, { steps: 2 });
+  await page.mouse.move(x - AWAY, column.y + column.height * 0.4, { steps: 4 });
+  const held = await railPlace(page);
+  await expect(head).toHaveText(new RegExp(`· ${Math.round(held * 100)}%$`));
+  // Held and zoomed out or in, the rail still runs from the band's top to its bottom and stays beside the text.
+  await expectRailToTheEnds(page);
+  await expectRailBesideText(room(page));
+  await page.mouse.up();
+  await expect(rail(page)).not.toHaveAttribute("data-held", "");
+  await expect(head).not.toHaveText(/%$/);
+});
+
 // ---- Pages mode (#803, #804): the same rail through the same seam ------------------------------------------------
 /** Pages mode: the first sentence that starts on the page shown (the reader's place for the page). */
 const firstOnPage = (page: Page) =>
@@ -548,6 +584,7 @@ test("in pages mode the thumb follows a page turned by hand; a drag shows the pa
   const padding = await band(page).locator(".prepared-part").first().evaluate((part) => [getComputedStyle(part).paddingLeft, getComputedStyle(part).paddingRight]);
   expect(padding).toEqual(["8px", "24px"]);
   await expectTextUncovered(room(page));
+  await expectRailToTheEnds(page);
   // A page turned by hand: following pauses and the thumb goes to the new page's first sentence.
   const opened = await firstOnPage(page);
   const text = (await band(page).boundingBox())!;

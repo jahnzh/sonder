@@ -151,21 +151,26 @@ export function createTextRail(seam: RailSeam, options: RailOptions) {
     };
     if (picture.ticks) rail.dataset.step = String(picture.ticks.step);
     else delete rail.dataset.step;
+    /**
+     * A box that begins at the rail's top or ends at its bottom is drawn on to the band's edge: the room at the ends
+     * keeps the thumb inside the band, and the column runs the band's whole height (the owner's check, #804).
+     */
+    const reach = (element: HTMLElement, box: { top: number; height: number }) => {
+      const top = box.top <= 0.5 ? -END_ROOM : box.top;
+      const bottom = box.top + box.height >= size - 2.5 ? size + END_ROOM : box.top + box.height;
+      element.style.top = px(END_ROOM + top);
+      element.style.height = px(bottom - top);
+      cut(element, top);
+    };
     drawn.forEach((element, at) => {
       const box = picture.segments[at];
       element.hidden = !box || box.height <= 0;
-      if (!box) return;
-      element.style.top = px(END_ROOM + box.top);
-      element.style.height = px(box.height);
+      if (!box || box.height <= 0) return;
+      reach(element, box);
       element.dataset.tone = box.tone;
-      cut(element, box.top);
     });
     read.hidden = !picture.read;
-    if (picture.read) {
-      read.style.top = px(END_ROOM + picture.read.top);
-      read.style.height = px(picture.read.height);
-      cut(read, picture.read.top);
-    }
+    if (picture.read) reach(read, picture.read);
     thumb.style.top = px(END_ROOM + picture.thumb.top);
     thumb.toggleAttribute("data-held", picture.thumb.held);
     thumb.dataset.tone = picture.thumb.tone;
@@ -174,13 +179,14 @@ export function createTextRail(seam: RailSeam, options: RailOptions) {
     if (picture.mark) mark.style.top = px(END_ROOM + picture.mark.top);
     overview.hidden = !picture.overview;
     if (picture.overview) {
-      overview.style.top = px(END_ROOM);
-      overview.style.height = px(size);
+      // The whole book from the band's top to its bottom, the rail's places at the same heights as on the rail.
+      overview.style.top = "0px";
+      overview.style.height = px(size + 2 * END_ROOM);
       overview.style.opacity = String(picture.overview.opacity);
-      overviewLit.style.top = px(picture.overview.lit.top);
+      overviewLit.style.top = px(END_ROOM + picture.overview.lit.top);
       overviewLit.style.height = px(picture.overview.lit.height);
       overviewTick.hidden = !picture.overview.tick;
-      if (picture.overview.tick) overviewTick.style.top = px(picture.overview.tick.top);
+      if (picture.overview.tick) overviewTick.style.top = px(END_ROOM + picture.overview.tick.top);
     }
     rail.toggleAttribute("data-held", !!held);
     rail.toggleAttribute("data-zoomed", !!picture.overview);
