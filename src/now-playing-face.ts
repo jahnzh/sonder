@@ -38,3 +38,16 @@ export const faceKeyName = (workId: string) => `face:${workId}`;
 export function readFace(value: string | null | undefined): Face | null {
   return value === "listen" || value === "read" ? value : null;
 }
+
+/**
+ * Whether opening a face loads its book into the player, paused at its own saved place (#862). With nothing in the
+ * player either face does (behaviour 8 of spec #586). Read also does when the player holds another recording that is
+ * not playing, so the book being read has its narration to follow; the player's save of the place it leaves keeps the
+ * other recording's progress its own. A recording that is playing is left playing, and Listen never moves the player:
+ * its play button does.
+ */
+export function prepareOnOpen(face: Face, book: { recordingId: string } | null, player: { recordingId: string; playing: boolean } | null): boolean {
+  if (!book) return false;
+  if (!player) return true;
+  return face === "read" && player.recordingId !== book.recordingId && !player.playing;
+}
