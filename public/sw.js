@@ -2,6 +2,10 @@
 const VERSION = /* VERSION */ "dev";
 const SHELL = `sonder-shell-${VERSION}`;
 const SEGMENTS = "sonder-stream-v1";
+// Kept prepared text (#805, src/keep-text.ts KEPT_TEXT_CACHE): Keep on this device stores a book's manifest, parts and
+// pictures here under their own addresses. The page reads the manifest and the parts itself; this worker answers the
+// pictures, which the page's <img> asks for. Reset this device leaves it, as it leaves the other kept files.
+const KEPT_TEXT = "sonder-kept-text-v1";
 const PRECACHE = /* PRECACHE */ [];
 const MAX_SEGMENTS = 24;
 const MAX_SEGMENT_BYTES = 4 * 1024 * 1024;
@@ -216,6 +220,19 @@ async function media(request, event) {
     throw error;
   }
 }
+// A picture of a kept book's prepared text: its address names the output's key and never changes, so the kept copy
+// answers first, with or without a connection; a picture not kept is the server's.
+async function keptText(request) {
+  const auth = await getRecord("preferences", "auth");
+  if (!(auth?.value?.required && !auth.value.authenticated)) {
+    const kept = await caches
+      .open(KEPT_TEXT)
+      .then((cache) => cache.match(request.url))
+      .catch(() => undefined);
+    if (kept) return kept;
+  }
+  return fetch(request);
+}
 function reportSource(event, trackId, source) {
   if (
     !event.clientId ||
@@ -240,6 +257,15 @@ self.addEventListener("fetch", (event) => {
     return;
   if (/^\/api\/media\/[^/]+$/.test(url.pathname)) {
     event.respondWith(media(request, event));
+    return;
+  }
+  if (
+    request.method === "GET" &&
+    /^\/api\/reader\/[^/]+\/prepared\/[0-9a-f]{16}\/pictures\/[^/]+$/.test(
+      url.pathname,
+    )
+  ) {
+    event.respondWith(keptText(request));
     return;
   }
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/audio/"))

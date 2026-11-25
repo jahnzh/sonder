@@ -7,6 +7,7 @@
 // cached for good.
 import type { PreparedManifest } from "../server/prepared-text";
 import { ApiError, api } from "./lib";
+import { keptManifest, keptPart, noticePreparedAnswer } from "./keep-text-store";
 
 export type { PreparedManifest };
 
@@ -169,15 +170,40 @@ export function reportRefused(id: string, key: string, part: number, refused: re
   void api(`/reader/${encodeURIComponent(id)}/prepared-refused`, { method: "POST", body: JSON.stringify({ key, part, refused }), keepalive: true }).catch(() => {});
 }
 
+/**
+ * The manifest: the server's, or this device's kept one (#805, Keep on this device) when the server does not answer.
+ * Without a connection a kept book does not wait for the attempts. An answer of another output than the kept one
+ * marks the kept text stale, so Keep saves the new one.
+ */
+async function loadManifest(id: string): Promise<PreparedManifest> {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    const kept = await keptManifest(id).catch(() => null);
+    if (kept) return kept;
+  }
+  try {
+    const manifest = await patiently(() => api<PreparedManifest>(`/reader/${encodeURIComponent(id)}/prepared`));
+    void noticePreparedAnswer(id, manifest).catch(() => {});
+    return manifest;
+  } catch (error) {
+    const kept = await keptManifest(id).catch(() => null);
+    if (kept) return kept;
+    throw error;
+  }
+}
+
 async function load(id: string): Promise<PreparedBook> {
-  const manifest = await patiently(() => api<PreparedManifest>(`/reader/${encodeURIComponent(id)}/prepared`));
+  const manifest = await loadManifest(id);
   const base = `/api/reader/${encodeURIComponent(id)}/prepared/${manifest.key}`;
   const parts = new Map<number, Promise<string>>();
   const failed = new Set<number>();
   /** The parts that arrived, oldest first. */
   const kept: number[] = [];
   const one = async (index: number) => {
-    const response = await fetch(`${base}/parts/${index}`);
+    const address = `${base}/parts/${index}`;
+    // A kept book's part is on this device (#805): its address names the output, so the kept copy is the server's.
+    const kept = await keptPart(address).catch(() => null);
+    if (kept !== null) return kept;
+    const response = await fetch(address);
     if (response.ok) return response.text();
     const answer = (await response.json().catch(() => ({}))) as { error?: string; code?: string };
     if (response.status === 404 && answer.code === "prepared_stale") {
