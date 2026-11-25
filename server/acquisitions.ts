@@ -15,6 +15,7 @@ import { addTorrent, getTorrent, removeTorrent, transmission } from "./transmiss
 import { getTorrentHealth } from "./torrent-health.ts";
 import { audioPattern } from "./preview-file.ts";
 import { getWorkMediaState, trackWorkMediaState } from "./work-media-state.ts";
+import { assignWaitingPackWorks, importPack, isPackAcquisition, leavePack, packOf, recordPack, settleJoinedBooks, type PackRequest } from "./acquisition-packs.ts";
 import { checkDownloadedLanguage } from "./series-language-check.ts";
 import {
   ACTIVE_ACQUISITION_STATUSES,
@@ -92,6 +93,8 @@ export async function acquire(
     language?: string | null;
     narrator?: string | null;
     userId?: number;
+    /** The download is a series pack serving these books (ADR 0027); `workId` is the one it was chosen for. */
+    pack?: PackRequest;
   } = {},
 ) {
   if (
@@ -108,6 +111,23 @@ export async function acquire(
   // A failed or cancelled download of the same torrent starts again; any other is joined.
   if (existing && existing.status !== "error" && existing.status !== "cancelled") {
     db.insert(s.userAcquisitions).values({ userId: metadata.userId ?? 1, acquisitionId: existing.id }).onConflictDoNothing().run();
+    // A pack another book has got already serves this one too (ADR 0027): no second download. A torrent imported
+    // whole before (not a pack) stays as it is.
+    const wasPack = isPackAcquisition(existing.id);
+    if ((metadata.pack && (wasPack || existing.status !== "ready")) || (wasPack && metadata.workId)) {
+      const book = (workId: string) => {
+        const work = db.select().from(s.works).where(eq(s.works.id, workId)).get()!;
+        return { workId: work.id, position: null, title: work.title };
+      };
+      const known = packOf(existing.id);
+      const request = metadata.pack ?? { seriesId: known!.seriesId, seriesName: known!.seriesName, volumes: [], works: [book(metadata.workId!)] };
+      // A download on its way for one book that becomes a pack keeps serving that book.
+      if (!wasPack && existing.workId && !request.works.some((entry) => entry.workId === existing.workId))
+        request.works = [...request.works, book(existing.workId)];
+      recordPack(existing.id, request);
+      await settleJoinedBooks(existing.id, metadata.userId ?? 1, request.works.map((entry) => entry.workId));
+      return db.select().from(s.acquisitions).where(eq(s.acquisitions.id, existing.id)).get()!;
+    }
     if (existing.bookId) {
       db.delete(s.userHiddenLibrary).where(and(eq(s.userHiddenLibrary.userId, metadata.userId ?? 1), eq(s.userHiddenLibrary.bookId, existing.bookId))).run();
       db.insert(s.userLibrary).values({userId: metadata.userId ?? 1, bookId: existing.bookId, status: "unread", addedAt: Date.now()}).onConflictDoNothing().run();
@@ -140,6 +160,13 @@ export async function acquire(
     updatedAt: Date.now(),
   };
   startAcquisitionRecord(entry);
+  if (metadata.pack) recordPack(id, metadata.pack);
+  else if (metadata.workId && isPackAcquisition(id)) {
+    // A failed pack got again for one book: that book is one of the pack's too.
+    const known = packOf(id)!;
+    const work = db.select().from(s.works).where(eq(s.works.id, metadata.workId)).get()!;
+    recordPack(id, { seriesId: known.seriesId, seriesName: known.seriesName, volumes: [], works: [{ workId: work.id, position: null, title: work.title }] });
+  }
   db.insert(s.userAcquisitions).values({userId: metadata.userId ?? 1, acquisitionId: id}).onConflictDoNothing().run();
   try {
     const route = await chooseBackend(hash, !!getSecret("torbox"), (h) =>
@@ -289,6 +316,14 @@ function createBook(
   // A series book whose files carry an ASIN of another language is marked once the download is done (#897).
   void checkDownloadedLanguage(job.id).catch((error) => console.warn(`series language check: ${(error as Error).message}`));
 }
+/** A pack is downloaded (ADR 0027): each of its books gets its own recording, and the acquisition is ready. */
+async function finishPack(job: Acquisition, files: Parameters<typeof importPack>[1]) {
+  const bookId = await importPack(job, files);
+  setAcquisitionStatus(job.id, "ready", { progress: 1, error: null, bookId, updatedAt: Date.now() });
+  // A book that joined while the files were read waits no longer.
+  await assignWaitingPackWorks(job.id);
+  void checkDownloadedLanguage(job.id).catch((error) => console.warn(`series language check: ${(error as Error).message}`));
+}
 const processing = new Set<string>();
 // Completed files that fail validation won't change on the next refresh, so these end the job.
 class InvalidTorrentError extends Error {}
@@ -333,6 +368,7 @@ export async function refreshAcquisition(id: string) {
       const files = torrent.files
         .map((file, index) => ({
           ...file,
+          index,
           wanted: torrent.fileStats[index]?.wanted !== false,
         }))
         .filter((f) => audioPattern.test(f.name) && f.wanted)
@@ -346,6 +382,16 @@ export async function refreshAcquisition(id: string) {
         torrent.percentDone < 1
       )
         return;
+      if (isPackAcquisition(job.id)) {
+        const stored = [];
+        for (const file of files) {
+          const path = resolveTorrentFile(torrent.downloadDir, file.name);
+          if (!existsSync(path) || statSync(path).size !== file.length) return;
+          stored.push({ key: String(file.index), name: file.name, path });
+        }
+        await finishPack(job, stored);
+        return;
+      }
       const ready = [];
       for (const file of files) {
         const path = resolveTorrentFile(torrent.downloadDir, file.name);
@@ -386,6 +432,10 @@ export async function refreshAcquisition(id: string) {
         );
       if (!files.length)
         throw new InvalidTorrentError("This torrent contains no supported audio files.");
+      if (isPackAcquisition(job.id)) {
+        await finishPack(job, files.map((f) => ({ key: String(f.id), name: f.name })));
+        return;
+      }
       createBook(
         job,
         files.map((f) => ({
@@ -573,6 +623,8 @@ export async function replacePreviousAcquisition(
   userId: number,
   previousAcquisitionId: string,
   newMagnet: string,
+  /** The book the new download is for; a series pack that also serves other books only lets this one go. */
+  workId?: string,
 ): Promise<ReplacePreviousResult> {
   const previous = db
     .select()
@@ -582,6 +634,9 @@ export async function replacePreviousAcquisition(
   if (!previous) return { action: "skipped_same_hash" };
   const newHash = magnetHash(newMagnet);
   if (previous.hash === newHash) return { action: "skipped_same_hash" };
+  // A series pack that serves other books too keeps downloading for them (ADR 0027): only this book leaves it.
+  const leaving = workId ?? previous.workId;
+  if (leaving && isPackAcquisition(previous.id) && leavePack(previous.id, leaving).remaining > 0) return { action: "detached_shared" };
 
   const users = db
     .select()
@@ -661,6 +716,6 @@ export async function acquireReplacing(
   const previous = replaceActive && rest.workId ? activeWorkAcquisition(userId, rest.workId) : null;
   const job = await acquireFn(magnet, rest);
   if (!previous || job.status === "error") return job;
-  const result = await replacePreviousAcquisition(userId, previous.id, magnet);
+  const result = await replacePreviousAcquisition(userId, previous.id, magnet, rest.workId);
   return result.action === "skipped_same_hash" ? job : { ...job, replaced: result.action };
 }

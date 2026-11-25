@@ -84,6 +84,8 @@ app.post("/api/__fixture/audiobookdb-series", async (request) => {
 await (await import("./new-book-browser-fixture.ts")).installNewBookFixture(app);
 // The series queue on the Series page (#898): The Lantern Keeper's audio searches answered, and a hold to catch them.
 (await import("./series-queue-browser-fixture.ts")).installSeriesQueueFixture(app);
+// A saved series with a pack waiting for the owner's choice of files (ADR 0027, #899).
+(await import("./pack-browser-fixture.ts")).registerPackFixtureRoutes(app);
 await app.listen({ port: Number(process.env.PLAYWRIGHT_PORT || 4173), host: "127.0.0.1" });
 const stop = async () => {
   await app.close();

@@ -266,6 +266,14 @@ if (!(sqlite.prepare("PRAGMA table_info(user_work_library_origin)").all() as { n
   ] as const)
     if (!seriesJobColumns.has(column)) sqlite.exec(`ALTER TABLE series_acquisition_jobs ADD COLUMN ${column} ${type}`);
 }
+// A series pack (ADR 0027, #899): one acquisition that serves several books. `acquisition_packs` holds the series, the
+// volumes the pack covers and, once known, its audio files; `acquisition_works` one row per book it serves, with the
+// files the split gave the book and the audio edition made from them.
+sqlite.exec(`
+CREATE TABLE IF NOT EXISTS acquisition_packs(acquisition_id TEXT PRIMARY KEY REFERENCES acquisitions(id),series_id TEXT NOT NULL,series_name TEXT NOT NULL,volumes TEXT NOT NULL DEFAULT '[]',files TEXT,created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS acquisition_works(acquisition_id TEXT NOT NULL REFERENCES acquisitions(id),work_id TEXT NOT NULL REFERENCES works(id),position REAL,title TEXT NOT NULL,cover TEXT,status TEXT NOT NULL DEFAULT 'waiting' CHECK(status IN ('waiting','ready','choose')),files TEXT,book_id TEXT,updated_at INTEGER NOT NULL,PRIMARY KEY(acquisition_id,work_id));
+CREATE INDEX IF NOT EXISTS acquisition_works_work ON acquisition_works(work_id);
+`);
 // One-time copy of the single-account Hardcover key, state and queues to the admin (#15). The old rows stay for rollback.
 export function migrateHardcoverToUsers(): void {
   sqlite.transaction(() => {

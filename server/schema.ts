@@ -155,6 +155,43 @@ export const acquisitions = sqliteTable("acquisitions", {
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
+/** A series pack (ADR 0027): the acquisition, its series, the volumes it covers and, once known, its audio files. */
+export const acquisitionPacks = sqliteTable("acquisition_packs", {
+  acquisitionId: text("acquisition_id")
+    .primaryKey()
+    .references(() => acquisitions.id),
+  seriesId: text("series_id").notNull(),
+  seriesName: text("series_name").notNull(),
+  /** JSON `[{ position, title }]`. */
+  volumes: text("volumes").notNull().default("[]"),
+  /** JSON `[{ key, name, path }]`, null until the pack is imported. */
+  files: text("files"),
+  createdAt: integer("created_at").notNull(),
+});
+export const PACK_WORK_STATUSES = ["waiting", "ready", "choose"] as const;
+export type PackWorkStatus = (typeof PACK_WORK_STATUSES)[number];
+/** A book a pack serves (ADR 0027): its files in the pack and the audio edition made from them. */
+export const acquisitionWorks = sqliteTable(
+  "acquisition_works",
+  {
+    acquisitionId: text("acquisition_id")
+      .notNull()
+      .references(() => acquisitions.id),
+    workId: text("work_id")
+      .notNull()
+      .references(() => works.id),
+    position: real("position"),
+    title: text("title").notNull(),
+    /** The book's own cover for its edition, as the series catalogue has it. */
+    cover: text("cover"),
+    status: text("status", { enum: PACK_WORK_STATUSES }).notNull().default("waiting"),
+    /** JSON list of the pack's file keys. */
+    files: text("files"),
+    bookId: text("book_id"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.acquisitionId, t.workId] }), index("acquisition_works_work").on(t.workId)],
+);
 export const mediaCopies = sqliteTable("media_copies", {
   trackId: text("track_id")
     .primaryKey()

@@ -60,17 +60,37 @@ function trackedRows(database: Database, userId: number, workIds: Iterable<strin
   return new Map(rows.map((row) => [row.workId, row]));
 }
 
+/**
+ * Prepare a query in its series-pack form (ADR 0027); a database from before packs (one the rollback script reads)
+ * has no `acquisition_works`, and every acquisition there is for its `work_id`: the plain form.
+ */
+function preparePackAware(database: Database, packs: string, plain: string) {
+  try {
+    return database.prepare(packs);
+  } catch (error) {
+    if (!/no such table: acquisition_works/.test((error as Error).message)) throw error;
+    return database.prepare(plain);
+  }
+}
+
+/**
+ * The user's latest acquisition of each work. The works an acquisition is for: a series pack's are its
+ * `acquisition_works` rows, any other's its `work_id`.
+ */
 function latestUserAcquisitions(database: Database, userId: number, workIds: Iterable<string>) {
-  const rows = database
-    .prepare(
-      `SELECT workId,id,status,updatedAt FROM (
-         SELECT a.work_id AS workId,a.id,a.status,a.updated_at AS updatedAt,
-           ROW_NUMBER() OVER (PARTITION BY a.work_id ORDER BY a.updated_at DESC,a.rowid DESC) AS n
+  const latest = (link: string) => `SELECT workId,id,status,updatedAt FROM (
+         SELECT json_each.value AS workId,a.id,a.status,a.updated_at AS updatedAt,
+           ROW_NUMBER() OVER (PARTITION BY json_each.value ORDER BY a.updated_at DESC,a.rowid DESC) AS n
          FROM user_acquisitions u JOIN acquisitions a ON a.id=u.acquisition_id
-         WHERE u.user_id=? AND a.work_id IN (SELECT value FROM json_each(?))
-       ) WHERE n=1`,
-    )
-    .all(userId, ids(workIds)) as LatestAcquisition[];
+           JOIN json_each(?) ON ${link}
+         WHERE u.user_id=?
+       ) WHERE n=1`;
+  const rows = preparePackAware(
+    database,
+    latest(`(a.work_id=json_each.value AND NOT EXISTS(SELECT 1 FROM acquisition_works p WHERE p.acquisition_id=a.id))
+             OR EXISTS(SELECT 1 FROM acquisition_works p WHERE p.acquisition_id=a.id AND p.work_id=json_each.value)`),
+    latest("a.work_id=json_each.value"),
+  ).all(ids(workIds), userId) as LatestAcquisition[];
   return new Map(rows.map((row) => [row.workId, row]));
 }
 
@@ -145,19 +165,23 @@ export function materialiseWorkMediaStates(
     const result: MaterialiseResult = { inserted: 0, updated: 0, unchanged: 0, dryRun };
     // Every pair the derived read gives a state: a tracking row, or an acquisition of the
     // user for an existing work (a row's work must exist: work_id references works).
-    const pairs = database
-      .prepare(
-        `SELECT user_id AS userId,work_id AS workId FROM work_media_states
+    const pairs = (link: string) => `SELECT user_id AS userId,work_id AS workId FROM work_media_states
          UNION
-         SELECT u.user_id,a.work_id FROM user_acquisitions u
-           JOIN acquisitions a ON a.id=u.acquisition_id
-           JOIN works w ON w.id=a.work_id
+         SELECT u.user_id,l.workId FROM user_acquisitions u
+           JOIN (${link}) l ON l.acquisitionId=u.acquisition_id
+           JOIN works w ON w.id=l.workId
            JOIN users us ON us.id=u.user_id
-         ORDER BY 1,2`,
-      )
-      .all() as { userId: number; workId: string }[];
+         ORDER BY 1,2`;
+    const plain = "SELECT id AS acquisitionId,work_id AS workId FROM acquisitions WHERE work_id IS NOT NULL";
+    const paired = preparePackAware(
+      database,
+      pairs(`SELECT a.id AS acquisitionId,a.work_id AS workId FROM acquisitions a
+               WHERE a.work_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM acquisition_works p WHERE p.acquisition_id=a.id)
+             UNION SELECT acquisition_id,work_id FROM acquisition_works`),
+      pairs(plain),
+    ).all() as { userId: number; workId: string }[];
     const byUser = new Map<number, string[]>();
-    for (const pair of pairs)
+    for (const pair of paired)
       byUser.set(pair.userId, [...(byUser.get(pair.userId) ?? []), pair.workId]);
     const stored = database.prepare(
       `SELECT work_id AS workId,state,hold_reason AS holdReason,acquisition_id AS acquisitionId,updated_at AS updatedAt
