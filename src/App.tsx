@@ -807,6 +807,8 @@ function LibraryApp({
                 online={online}
                 libgenUrl={settings?.libgenUrl || null}
                 prowlarrConfigured={settings ? !!settings.prowlarrConfigured : null}
+                annasConfigured={!!settings?.annasConfigured}
+                zlibConfigured={!!settings?.zlibConfigured}
                 onChanged={refresh}
               />
             )}

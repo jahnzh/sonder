@@ -1,5 +1,6 @@
 // The Get ebook sheet's search (#604, spec #600 "Searching, a failing source, nothing found"; #901). Pure: no React,
-// no window. Each source (Library Genesis, Prowlarr when it is connected, Standard Ebooks, Project Gutenberg) is asked
+// no window. Each source (Library Genesis, Anna’s Archive and Z-Library when set up in Settings, the libgen.rs family,
+// Prowlarr when it is connected, Standard Ebooks, Project Gutenberg) is asked
 // on its own, one page each (no Load more: Search on Library Genesis is the way further); its rows join as it answers,
 // and a source that fails says so with the server's sentence and a Retry of its own while the others' rows stay. A
 // source that limits requests names when it will be asked again, and the sheet asks it then. Every ask carries a
@@ -15,9 +16,17 @@ export { EBOOK_SOURCE_NAMES, type EbookSourceId };
 /** Library Genesis: the source the sheet's link and "nothing found" name. */
 export const SOURCE_NAME = EBOOK_SOURCE_NAMES.libgen;
 
-/** The sources asked, in the order their rows and failures are listed. */
-export function ebookSources({ prowlarr }: { prowlarr: boolean }): EbookSourceId[] {
-  return ["libgen", ...(prowlarr ? (["prowlarr"] as const) : []), "standardebooks", "gutenberg"];
+/** The sources asked, in the order their rows and failures are listed (the series search's order, #901). */
+export function ebookSources({ prowlarr, annas = false, zlib = false }: { prowlarr: boolean; annas?: boolean; zlib?: boolean }): EbookSourceId[] {
+  return [
+    "libgen",
+    ...(annas ? (["annas"] as const) : []),
+    ...(zlib ? (["zlib"] as const) : []),
+    "libgenrs",
+    ...(prowlarr ? (["prowlarr"] as const) : []),
+    "standardebooks",
+    "gutenberg",
+  ];
 }
 
 export type EbookSourceSearch = {

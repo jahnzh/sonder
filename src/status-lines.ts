@@ -370,9 +370,9 @@ export function seriesSearchLine({ status, search, place, retrying, reason, retr
   const file = search === "ebook" ? "Ebook" : "Audiobook";
   switch (status) {
     case "pending":
-      // Library Genesis limits requests (#901): the line says when the search asks again.
-      if (retrying && retryAt && (reason ?? "").startsWith(LIBGEN_LIMITED_REASON.slice(0, -1)))
-        return `Library Genesis is limiting requests, trying again at ${time(retryAt)}`;
+      // A source that limits requests (Library Genesis, #901): the line says when the search asks again.
+      const limiting = retrying && retryAt ? /^(.+) is limiting requests\.?$/.exec((reason ?? "").trim()) : null;
+      if (limiting && retryAt) return `${limiting[1]} is limiting requests, trying again at ${time(retryAt)}`;
       if (retrying) return withReason("Waiting to try again", searchReason(reason));
       return place && place > 0 ? `Waiting${DOT}${ordinal(place)} in line` : "Waiting for series search";
     case "searching":

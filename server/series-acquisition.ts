@@ -13,6 +13,7 @@ import {
 import { fetchTopKIntoEbookSet, seriesEbookSources } from "./ebook-set.ts";
 import { ebookSourcesRestUntil } from "./ebooks.ts";
 import { prowlarrConfig } from "./services.ts";
+import { annasConfigured, zlibConfigured } from "./sources/shadow-libraries.ts";
 import { retryWorkMediaAcquisition } from "./series-membership.ts";
 import {
   clearWorkMediaHold,
@@ -806,13 +807,14 @@ async function runEbookJob(
   const work = db.select({ year: s.works.year }).from(s.works).where(eq(s.works.id, job.workId)).get();
   // Library Genesis, Prowlarr, then the public-domain sources for an old book (#901).
   const result = await fetch(job.workId, "libgen", {
-    sources: seriesEbookSources({ year: work?.year ?? null }, !!prowlarrConfig()),
+    sources: seriesEbookSources({ year: work?.year ?? null }, { annas: annasConfigured(), zlib: zlibConfigured(), prowlarr: !!prowlarrConfig() }),
     userId: job.userId,
   });
   const failures = "failures" in result ? result.failures ?? [] : [];
   // A Prowlarr download was started: its EPUB joins the book when it is complete.
   if (result.started) return null;
-  // No edition was found while a source could not be asked: the job goes back in the queue for later (#901).
+  // No edition was found while a source could not be asked (one limiting requests, or out of reach): the job goes back
+  // in the queue for later, not before the sources' rests end (#901).
   const unreached = failures.find(isSourceReachFailure);
   if (unreached && !result.downloaded.some((member) => member.status !== "rejected"))
     throw Object.assign(new Error(unreached), { retryAt: ebookSourcesRestUntil() });

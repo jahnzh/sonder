@@ -76,7 +76,16 @@ import { registerPreviewRoutes, torboxPreviewLoop } from "./torbox-preview.ts";
 import { retrySeriesAcquisitionJob, seriesAcquisitionLoop } from "./series-acquisition.ts";
 import { getTorrentStates, transmission, transmissionConfigured } from "./transmission.ts";
 import { getTorrentHealth } from "./torrent-health.ts";
-import { searchEbooks, saveEbook, listEbooks, importEbook, EBOOK_SOURCES, type EbookSource } from "./ebooks.ts";
+import { searchEbooks, saveEbook, listEbooks, importEbook, EBOOK_SOURCES } from "./ebooks.ts";
+import {
+  ANNAS_DEFAULT_URL,
+  annasConfigured,
+  parseZlibToken,
+  testAnnas,
+  testZlib,
+  ZLIB_DEFAULT_URL,
+  zlibConfigured,
+} from "./sources/shadow-libraries.ts";
 import { reevaluateEbookSetForWork } from "./ebook-set.ts";
 import { ebookSetEvaluationLoop, registerUploadedEbookSetMember, retryEbookSetMember } from "./ebook-set-evaluation.ts";
 import {
@@ -319,7 +328,7 @@ export async function createApp(options?: {
   });
   app.addHook("preHandler", async (req) => {
     const path = req.routeOptions.url || "";
-    if (/^\/api\/(prowlarr|torbox)(?:\/|$)/.test(path) || /^\/api\/acquisitions(?:\/|$)/.test(path) || path === "/api/acquire" || path === "/api/torrents/health" || path === "/api/alignments/pool" || path === "/api/alignments/pool/staging" || path === "/api/alignments/pool/staging/remove" || path === "/api/local/test" || /^\/api\/discover\/(abb|prowlarr|previews)(?:\/|$)/.test(path) || path === "/api/discover/ebooks" || (req.method === "POST" && ["/api/ebooks", "/api/ebooks/import", "/api/import"].includes(path)) || (req.method === "POST" && /^\/api\/books\/[^/]+\/keep$/.test(path)) || (req.method === "POST" && /^\/api\/reader\/[^/]+\/link$/.test(path)) || (["PUT", "DELETE"].includes(req.method) && /^\/api\/recordings\/[^/]+\/(faults\/[^/]+|server-copy)$/.test(path)) || (["POST", "PATCH"].includes(req.method) && /^\/api\/alignments(?:\/|$)/.test(path)) || (req.method === "POST" && /^\/api\/works\/[^/]+\/ebook-set\/fetch$/.test(path))) requireAdmin(req);
+    if (/^\/api\/(prowlarr|torbox|annas|zlib)(?:\/|$)/.test(path) || /^\/api\/acquisitions(?:\/|$)/.test(path) || path === "/api/acquire" || path === "/api/torrents/health" || path === "/api/alignments/pool" || path === "/api/alignments/pool/staging" || path === "/api/alignments/pool/staging/remove" || path === "/api/local/test" || /^\/api\/discover\/(abb|prowlarr|previews)(?:\/|$)/.test(path) || path === "/api/discover/ebooks" || (req.method === "POST" && ["/api/ebooks", "/api/ebooks/import", "/api/import"].includes(path)) || (req.method === "POST" && /^\/api\/books\/[^/]+\/keep$/.test(path)) || (req.method === "POST" && /^\/api\/reader\/[^/]+\/link$/.test(path)) || (["PUT", "DELETE"].includes(req.method) && /^\/api\/recordings\/[^/]+\/(faults\/[^/]+|server-copy)$/.test(path)) || (["POST", "PATCH"].includes(req.method) && /^\/api\/alignments(?:\/|$)/.test(path)) || (req.method === "POST" && /^\/api\/works\/[^/]+\/ebook-set\/fetch$/.test(path))) requireAdmin(req);
   });
   registerCsp(app, { mode: cspMode() });
   app.get("/api/health", async () => ({ ok: true }));
@@ -543,6 +552,11 @@ export async function createApp(options?: {
     audiobookdbSource: audiobookDbKey().source,
     abbUrl: getSetting("abbUrl") || "https://audiobookbay.lu",
     libgenUrl: getSetting("libgenUrl") || "https://libgen.li",
+    // Anna’s Archive and Z-Library (#901): their addresses, and whether a key or an account is saved (never the values).
+    annasUrl: getSetting("annasUrl") || ANNAS_DEFAULT_URL,
+    annasConfigured: annasConfigured(),
+    zlibUrl: getSetting("zlibUrl") || ZLIB_DEFAULT_URL,
+    zlibConfigured: zlibConfigured(),
     prowlarrUrl: getSetting("prowlarrUrl") || "",
     prowlarrConfigured: !!prowlarrConfig(),
     localConfigured: transmissionConfigured(),
@@ -564,15 +578,31 @@ export async function createApp(options?: {
         hardcover: z.string().max(2000).optional(),
         abbUrl: z.url().optional(),
         libgenUrl: z.url().optional(),
-        // Accepted from older clients and ignored: Anna’s Archive is removed (#8).
-        annasUrl: z.string().optional(),
-        annas: z.string().optional(),
+        // Anna’s Archive (#901): its member key, and its address.
+        annasUrl: z.union([z.url(), z.literal("")]).optional(),
+        annas: z.string().max(1000).optional(),
+        // Z-Library (#901): its address, and the account (email and password, or a remember-me token).
+        zlibUrl: z.union([z.url(), z.literal("")]).optional(),
+        zlibEmail: z.string().max(300).optional(),
+        zlibPassword: z.string().max(300).optional(),
+        zlibToken: z.string().max(1000).optional(),
         prowlarrUrl: z.union([z.url(), z.literal("")]).optional(),
         prowlarr: z.string().max(200).optional(),
       })
       .parse(req.body);
-    delete input.annasUrl;
-    delete input.annas;
+    for (const [field, hosts] of [
+      ["annasUrl", /^([a-z0-9-]+\.)?annas-archive\.[a-z]{2,8}$/],
+      ["zlibUrl", /^([a-z0-9-]+\.)?(z-library|z-lib|zlibrary|1lib|singlelogin)\.[a-z]{2,8}$/],
+    ] as const) {
+      const value = input[field];
+      if (!value) continue;
+      const url = new URL(value);
+      if (url.protocol !== "https:" || !hosts.test(url.hostname) || url.username || url.password || url.port)
+        throw new Error(field === "annasUrl" ? "Use an HTTPS address of Anna’s Archive." : "Use an HTTPS address of Z-Library.");
+      input[field] = url.origin;
+    }
+    if (input.zlibToken && !parseZlibToken(input.zlibToken))
+      throw new Error("Paste the remember-me token as remix_userid=…; remix_userkey=… or as id:key.");
     if (input.prowlarrUrl) input.prowlarrUrl = normalizeBaseUrl(input.prowlarrUrl);
     if (input.abbUrl) {
       const u = new URL(input.abbUrl);
@@ -604,7 +634,7 @@ export async function createApp(options?: {
         db.delete(s.settings).where(eq(s.settings.key, key)).run();
         continue;
       }
-      const v = ["torbox", "prowlarr", "audiobookdb"].includes(key)
+      const v = ["torbox", "prowlarr", "audiobookdb", "annas", "zlibEmail", "zlibPassword", "zlibToken"].includes(key)
         ? encrypt(value)
         : value;
       db.insert(s.settings)
@@ -613,6 +643,15 @@ export async function createApp(options?: {
         .run();
     }
     return { ok: true };
+  });
+  // Settings' checks of Anna’s Archive's key and Z-Library's account (#901): what each said, plainly.
+  app.post("/api/annas/test", async () => {
+    if (!annasConfigured()) throw new Error("Enter the Anna’s Archive key first.");
+    return testAnnas();
+  });
+  app.post("/api/zlib/test", async () => {
+    if (!zlibConfigured()) throw new Error("Enter the Z-Library account first.");
+    return testZlib();
   });
   app.post("/api/prowlarr/test", async () => {
     const config = prowlarrConfig();
@@ -871,17 +910,10 @@ export async function createApp(options?: {
     magnetOf: ({ source, key }) => (source === "abb" ? abbMagnet(key) : prowlarrMagnet(key)),
     userOf: currentUserId,
   });
-  // Older clients may still send "annas"; refuse it with a readable message. An older client sends "libgen" only.
-  const sourceSchema = z.enum(["annas", ...EBOOK_SOURCES]);
-  const withoutAnnas = <T extends { source: z.infer<typeof sourceSchema> }>(input: T) => {
-    if (input.source === "annas")
-      throw new Error(
-        "Anna’s Archive is turned off. Search Library Genesis or import an EPUB or PDF.",
-      );
-    return input as T & { source: EbookSource };
-  };
+  // An older client sends "libgen" only; "annas" is a source again (#901), refused plainly without a key.
+  const sourceSchema = z.enum(EBOOK_SOURCES);
   app.get("/api/discover/ebooks", async (req) => {
-    const { source, q, page } = withoutAnnas(z
+    const { source, q, page } = (z
       .object({
         source: sourceSchema.default("libgen"),
         q: z.string().min(2).max(150),
@@ -891,7 +923,7 @@ export async function createApp(options?: {
     return searchEbooks(source, q, page);
   });
   app.post("/api/ebooks", async (req) => {
-    const input = withoutAnnas(z
+    const input = (z
       .object({
         source: sourceSchema,
         md5: z.string().regex(/^[a-f0-9]{32}$/i),

@@ -42,9 +42,10 @@ const ALL = ebookSources({ prowlarr: true });
 
 test("the words: the sources line, a source's failure, limiting requests, nothing found", () => {
   assert.equal(SEARCHING_TEXT, "Searching…");
-  assert.deepEqual(ALL, ["libgen", "prowlarr", "standardebooks", "gutenberg"]);
-  assert.deepEqual(ebookSources({ prowlarr: false }), ["libgen", "standardebooks", "gutenberg"]);
-  assert.equal(sourcesLine(ALL), "From Library Genesis, Prowlarr, Standard Ebooks and Project Gutenberg.");
+  assert.deepEqual(ALL, ["libgen", "libgenrs", "prowlarr", "standardebooks", "gutenberg"]);
+  assert.deepEqual(ebookSources({ prowlarr: false }), ["libgen", "libgenrs", "standardebooks", "gutenberg"]);
+  assert.deepEqual(ebookSources({ prowlarr: true, annas: true, zlib: true }), ["libgen", "annas", "zlib", "libgenrs", "prowlarr", "standardebooks", "gutenberg"]);
+  assert.equal(sourcesLine(ALL), "From Library Genesis, Library Genesis (libgen.rs), Prowlarr, Standard Ebooks and Project Gutenberg.");
   assert.equal(sourcesLine(["libgen"]), "From Library Genesis.");
   assert.equal(failedText("libgen"), "Library Genesis could not be searched.");
   assert.equal(limitedText("libgen", "13:05"), "Library Genesis is limiting requests, trying again at 13:05.");
@@ -58,12 +59,14 @@ test("every source is asked; the rows join as each answers, EPUBs first, the sou
   const { state, asks } = startEbookSearch(emptyEbookSearch(), "  Pride and Prejudice ", ALL);
   assert.deepEqual(asks.map((ask) => [ask.source, ask.query]), ALL.map((source) => [source, "Pride and Prejudice"]));
   assert.equal(view(state).searching, true);
-  let next = ebookAnswered(state, "standardebooks", asks[2].token, [result(3, "epub", "standardebooks")]);
+  let next = ebookAnswered(state, "standardebooks", asks[3].token, [result(3, "epub", "standardebooks")]);
   assert.equal(view(next).searching, true);
   assert.deepEqual(view(next).rows.map((row) => row.id), [`standardebooks-${result(3).md5}`]);
   next = ebookAnswered(next, "libgen", asks[0].token, [result(1, "pdf"), result(2)]);
-  next = ebookAnswered(next, "prowlarr", asks[1].token, [result(4, "epub", "prowlarr")]);
-  next = ebookAnswered(next, "gutenberg", asks[3].token, []);
+  next = ebookAnswered(next, "prowlarr", asks[2].token, [result(4, "epub", "prowlarr")]);
+  // The libgen.rs family lists a file Library Genesis lists too: one row, Library Genesis's.
+  next = ebookAnswered(next, "libgenrs", asks[1].token, [result(2, "epub", "libgenrs")]);
+  next = ebookAnswered(next, "gutenberg", asks[4].token, []);
   const shown = view(next);
   assert.equal(shown.searching, false);
   assert.deepEqual(shown.rows.map((row) => row.first), ["Edition 2", "Edition 4", "Edition 3", "Edition 1"]);

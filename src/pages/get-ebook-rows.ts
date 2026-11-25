@@ -11,6 +11,9 @@ const DOT = " · ";
 export type EbookSourceId = NonNullable<EbookResult["source"]>;
 export const EBOOK_SOURCE_NAMES: Record<EbookSourceId, string> = {
   libgen: "Library Genesis",
+  annas: "Anna’s Archive",
+  zlib: "Z-Library",
+  libgenrs: "Library Genesis (libgen.rs)",
   prowlarr: "Prowlarr",
   standardebooks: "Standard Ebooks",
   gutenberg: "Project Gutenberg",
@@ -40,8 +43,14 @@ export type EditionRow = {
 
 export const ALREADY_ADDED = "Already added";
 
-/** The id the server stores a source's file under (server/ebooks.ts `saveEbook`); a Prowlarr row's is its release. */
-export const editionId = (result: Pick<EbookResult, "source" | "md5">) => `${sourceOf(result)}-${result.md5.toLowerCase()}`;
+/**
+ * The id the server stores a source's file under (server/ebooks.ts `saveEbook`); a Prowlarr row's is its release. A
+ * libgen.rs file is the libgen.li family's file of that md5, so a file both list is one row.
+ */
+export const editionId = (result: Pick<EbookResult, "source" | "md5">) => {
+  const source = sourceOf(result);
+  return `${source === "libgenrs" ? "libgen" : source}-${result.md5.toLowerCase()}`;
+};
 
 export function editionRow(result: EbookResult, added: ReadonlySet<string>): EditionRow {
   const id = editionId(result);

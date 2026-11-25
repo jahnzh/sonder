@@ -96,7 +96,7 @@ type Asked = {
   saved: { id: string; ebookSet?: { status: string } }[];
 };
 /** The sources the sheet asks while Prowlarr is not connected (the suite's server has none), as its line names them. */
-const SOURCES_LINE = "From Library Genesis, Standard Ebooks and Project Gutenberg.";
+const SOURCES_LINE = "From Library Genesis, Library Genesis (libgen.rs), Standard Ebooks and Project Gutenberg.";
 
 /**
  * Library Genesis answered by the test (the other sources list nothing unless `others` answers them), and Get this
@@ -201,7 +201,7 @@ test("from the Book page: title and author searched, EPUBs before PDFs, a tap se
   await expect(rows(page).nth(2)).toHaveAccessibleName("Snow Crash EPUB · 2.3 MB · Spanish · 2010 · Library Genesis");
   await expect(rows(page).nth(3)).toHaveAccessibleName("Snow Crash PDF · 4.1 MB · English · 2000 · Library Genesis");
   await expect(sheet(page).getByText(SOURCES_LINE, { exact: true })).toBeVisible();
-  expect([...asked.sources].sort()).toEqual(["gutenberg", "libgen", "standardebooks"]);
+  expect([...asked.sources].sort()).toEqual(["gutenberg", "libgen", "libgenrs", "standardebooks"]);
   // No language button and no Load more.
   await expect(sheet(page).getByRole("button", { name: /^Language/ })).toHaveCount(0);
   await expect(sheet(page).getByRole("button", { name: /Load more/ })).toHaveCount(0);
@@ -501,7 +501,7 @@ test("every source's editions in one list, each naming its source; a limiting Li
   await expect(rows(page).nth(0)).toHaveAccessibleName("Pride and Prejudice by Jane Austen EPUB EPUB · 1.4 MB · 2023 · 1337x via Prowlarr · 12 seeders");
   await expect(rows(page).nth(1)).toHaveAccessibleName("Pride and Prejudice EPUB · 812 kB · English · 2014 · Standard Ebooks");
   await expect(rows(page).nth(2)).toHaveAccessibleName("Pride and Prejudice EPUB · English · Project Gutenberg");
-  await expect(sheet(page).getByText("From Library Genesis, Prowlarr, Standard Ebooks and Project Gutenberg.", { exact: true })).toBeVisible();
+  await expect(sheet(page).getByText("From Library Genesis, Library Genesis (libgen.rs), Prowlarr, Standard Ebooks and Project Gutenberg.", { exact: true })).toBeVisible();
   // Without a tap it is asked again at its time, and its row joins the others; its line goes.
   await expect(rows(page)).toHaveCount(4, { timeout: 10_000 });
   await expect(failure).toHaveCount(0);

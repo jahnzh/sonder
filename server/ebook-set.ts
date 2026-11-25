@@ -793,14 +793,21 @@ export function reevaluateEbookSetForWork(workId: string) {
   });
 }
 
+/** Which sources are set up in Settings: Anna's Archive's key, Z-Library's account, Prowlarr. */
+export type ConfiguredSources = { annas: boolean; zlib: boolean; prowlarr: boolean };
+
 /**
- * The sources the series ebook search asks, in order (#901): Library Genesis, then Prowlarr's book indexers when
- * Prowlarr is connected, then Standard Ebooks and Project Gutenberg for a book old enough to be in the public domain.
+ * The sources the series ebook search asks, in order (#901): Library Genesis, Anna's Archive and Z-Library when set
+ * up, the other Library Genesis family, Prowlarr's book indexers when connected, then Standard Ebooks and Project
+ * Gutenberg for a book old enough to be in the public domain.
  */
-export function seriesEbookSources(work: { year: number | null }, prowlarr: boolean, now = new Date()): EbookSource[] {
+export function seriesEbookSources(work: { year: number | null }, configured: ConfiguredSources, now = new Date()): EbookSource[] {
   return [
     "libgen",
-    ...(prowlarr ? (["prowlarr"] as const) : []),
+    ...(configured.annas ? (["annas"] as const) : []),
+    ...(configured.zlib ? (["zlib"] as const) : []),
+    "libgenrs",
+    ...(configured.prowlarr ? (["prowlarr"] as const) : []),
     ...(publicDomainAge(work.year, now) ? (["standardebooks", "gutenberg"] as const) : []),
   ];
 }
@@ -895,7 +902,8 @@ export async function fetchTopKIntoEbookSet(
       }
       for (const file of filtered) {
         if (downloaded.length >= remaining || found()) break;
-        const ebookId = `${file.source}-${file.md5}`;
+        // A libgen.rs file is kept as the libgen.li family's (saveEbook).
+        const ebookId = `${file.source === "libgenrs" ? "libgen" : file.source}-${file.md5}`;
         const already = db
           .select()
           .from(s.workEbookSetMembers)

@@ -8,9 +8,6 @@ import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
 import { eq } from "drizzle-orm";
 import { randomUUID, createHash } from "node:crypto";
-import dns, { type LookupAddress } from "node:dns";
-import { BlockList, isIP } from "node:net";
-import { Agent } from "undici";
 import {
   createWriteStream,
   existsSync,
@@ -30,8 +27,18 @@ import {
   createLibgenClient,
   LibgenLimitedError,
   LIBGEN_USER_AGENT,
-  type LibgenTiming,
+  sourceTiming,
 } from "./sources/libgen-client.ts";
+import {
+  annas,
+  annasDownload,
+  libgenRs,
+  searchAnnas,
+  searchLibgenRs,
+  searchZlib,
+  zlib,
+  zlibDownload,
+} from "./sources/shadow-libraries.ts";
 import {
   gutenbergSearchUrl,
   GUTENBERG,
@@ -42,10 +49,20 @@ import {
   standardEbooksSearchUrl,
   type PublicDomainSource,
 } from "./sources/public-domain.ts";
-// Anna’s Archive was removed for now (#8). Library Genesis, Prowlarr's book indexers and the public-domain
-// Standard Ebooks and Project Gutenberg are the sources (#901).
-export type EbookSource = "libgen" | "prowlarr" | "standardebooks" | "gutenberg";
-export const EBOOK_SOURCES = ["libgen", "prowlarr", "standardebooks", "gutenberg"] as const satisfies readonly EbookSource[];
+// The sources (#901): Library Genesis (the libgen.li family), Anna’s Archive with the member key in Settings,
+// Z-Library with the account in Settings, the other Library Genesis family (libgen.rs), Prowlarr's book indexers and
+// the public-domain Standard Ebooks and Project Gutenberg.
+export type EbookSource = "libgen" | "annas" | "zlib" | "libgenrs" | "prowlarr" | "standardebooks" | "gutenberg";
+/** The sources in the order the series search asks them (#901). */
+export const EBOOK_SOURCES = [
+  "libgen",
+  "annas",
+  "zlib",
+  "libgenrs",
+  "prowlarr",
+  "standardebooks",
+  "gutenberg",
+] as const satisfies readonly EbookSource[];
 export type EbookResult = {
   /** The file's md5 on Library Genesis; for another source a 32-hex key of the edition there. */
   md5: string;
@@ -65,17 +82,16 @@ export type EbookResult = {
 };
 const userAgent = LIBGEN_USER_AGENT;
 // The test suites ask fake mirrors many times in a row: no spacing, no waits, no rest.
-const testTiming: LibgenTiming = { spacing: { search: 0, download: 0 }, waits: [0, 0], mirrorsPerRequest: 2, rests: [0] };
 /** The one Library Genesis client (#901): the Get sheet and the series queue share its spacing and rests. */
 export const libgen = createLibgenClient({
   fetch: (url, init) => publicFetch(url, init),
   mirror: () => getSetting("libgenUrl"),
-  timing: process.env.NODE_ENV === "test" ? testTiming : undefined,
+  timing: sourceTiming(),
 });
 export { LibgenLimitedError };
-/** When Library Genesis may be asked again after limiting requests; 0 when it is not resting. */
+/** When the sources may be asked again after limiting requests: the latest rest of any; 0 when none rests. */
 export function ebookSourcesRestUntil() {
-  return Math.max(libgen.restingUntil("search"), libgen.restingUntil("download"));
+  return Math.max(...[libgen, annas, zlib, libgenRs].flatMap((client) => [client.restingUntil("search"), client.restingUntil("download")]));
 }
 async function libgenPage(kind: "search" | "download", path: string) {
   const { body, mirror } = await libgen.request(kind, path, {
@@ -156,127 +172,18 @@ export async function searchEbooks(
   pageNumber = 1,
 ): Promise<{ files: EbookResult[]; website: string }> {
   if (source === "libgen") return searchLibgen(q, pageNumber);
+  if (source === "annas") return searchAnnas(q);
+  if (source === "zlib") return searchZlib(q);
+  if (source === "libgenrs") return searchLibgenRs(q);
   if (source === "prowlarr") {
     const { prowlarrEbookSearch } = await import("./services.ts");
     return { files: await prowlarrEbookSearch(q), website: "" };
   }
   return searchPublicDomain(source, q);
 }
-// Separate lists, because BlockList also matches IPv4 addresses against IPv6
-// rules as IPv4-mapped addresses, which ::ffff:0:0/96 would always match.
-const privateV4 = new BlockList(),
-  privateV6 = new BlockList();
-for (const [network, prefix] of [
-  ["0.0.0.0", 8],
-  ["10.0.0.0", 8],
-  ["100.64.0.0", 10],
-  ["127.0.0.0", 8],
-  ["169.254.0.0", 16],
-  ["172.16.0.0", 12],
-  ["192.0.0.0", 24],
-  ["192.168.0.0", 16],
-  ["198.18.0.0", 15],
-  ["224.0.0.0", 3],
-] as const)
-  privateV4.addSubnet(network, prefix, "ipv4");
-for (const [network, prefix] of [
-  ["::", 96], // unspecified, loopback and IPv4-compatible
-  ["::ffff:0:0", 96], // IPv4-mapped
-  ["64:ff9b::", 96], // NAT64
-  ["64:ff9b:1::", 48],
-  ["100::", 64],
-  ["2001::", 32], // Teredo
-  ["2002::", 16], // 6to4
-  ["fc00::", 7],
-  ["fe80::", 10],
-  ["fec0::", 10],
-  ["ff00::", 8],
-] as const)
-  privateV6.addSubnet(network, prefix, "ipv6");
-export function privateAddress(ip: string) {
-  const family = isIP(ip);
-  if (!family) return true;
-  return family === 6
-    ? privateV6.check(ip, "ipv6")
-    : privateV4.check(ip, "ipv4");
-}
-class PrivateAddressError extends Error {
-  constructor() {
-    super("Downloads from private network addresses are not allowed.");
-  }
-}
-// Every address is checked when the connection is made, so a host can't pass
-// the check with one DNS answer and connect with another.
-const publicAgent = new Agent({
-  connect: {
-    lookup(hostname, options, callback) {
-      dns.lookup(hostname, { ...options, all: true }, (error, found) => {
-        const addresses = found as unknown as LookupAddress[];
-        if (error) return callback(error, "", 0);
-        if (!addresses.length || addresses.some((a) => privateAddress(a.address)))
-          return callback(new PrivateAddressError(), "", 0);
-        if ((options as { all?: boolean }).all)
-          return (callback as unknown as (e: null, a: LookupAddress[]) => void)(
-            null,
-            addresses,
-          );
-        callback(null, addresses[0].address, addresses[0].family);
-      });
-    },
-  },
-});
-// Waiting for a response and waiting between body chunks are limited separately,
-// so a large file on a slow mirror isn't cut off while it is still arriving.
-export const ebookTimeouts = { response: 60000, idle: 60000 };
-export async function publicFetch(input: string, init: RequestInit = {}) {
-  let url = new URL(input);
-  for (let attempt = 0; attempt < 5; attempt++) {
-    if (
-      url.protocol !== "https:" ||
-      url.username ||
-      url.password ||
-      !["", "443"].includes(url.port)
-    )
-      throw new Error(
-        "The source did not provide a secure public download URL.",
-      );
-    // Literal addresses never reach the agent's lookup.
-    const host = url.hostname.replace(/^\[|\]$/g, "");
-    if (isIP(host) && privateAddress(host)) throw new PrivateAddressError();
-    const waiting = new AbortController();
-    const timer = setTimeout(
-      () =>
-        waiting.abort(new Error("The ebook source did not respond in time.")),
-      ebookTimeouts.response,
-    );
-    let response;
-    try {
-      response = await fetch(url, {
-        ...init,
-        redirect: "manual",
-        signal: init.signal
-          ? AbortSignal.any([init.signal, waiting.signal])
-          : waiting.signal,
-        dispatcher: publicAgent,
-      } as RequestInit);
-    } catch (error) {
-      const cause = (error as { cause?: unknown }).cause;
-      throw cause instanceof PrivateAddressError ? cause : error;
-    } finally {
-      clearTimeout(timer);
-    }
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get("location");
-      await response.body?.cancel();
-      if (!location)
-        throw new Error("The ebook source returned an invalid redirect.");
-      url = new URL(location, url);
-      continue;
-    }
-    return response;
-  }
-  throw new Error("The ebook source redirected too many times.");
-}
+export { ebookTimeouts, privateAddress, publicFetch } from "./public-fetch.ts";
+import { ebookTimeouts, publicFetch } from "./public-fetch.ts";
+
 // Saving an ebook that is already on the server still attaches it to the chosen book.
 async function linkEbook(id: string, workId: string | undefined) {
   if (!workId) return;
@@ -323,6 +230,9 @@ async function fetchEbookFile(input: EbookResult, signal: AbortSignal) {
   }
   if (input.source === "standardebooks" || input.source === "gutenberg")
     return publicFetch(publicDomainDownload(input.source, input.url), { headers, signal });
+  if (input.source === "annas") return publicFetch(await annasDownload(input.md5.toLowerCase()), { headers, signal });
+  // The page names the book; the address fetched is the one Z-Library's API gives for it, never the client's.
+  if (input.source === "zlib") return publicFetch(await zlibDownload(input.url), { headers, signal });
   throw new Error("This source's editions are fetched as a download.");
 }
 /**
@@ -408,7 +318,7 @@ async function downloadEbook(input: EbookResult & { workId?: string }) {
       throw new Error("The ebook download was interrupted.");
     const digest = hash.digest("hex");
     // Only Library Genesis names a file by its md5; another source's key is its edition's.
-    if (input.source === "libgen" && digest !== input.md5.toLowerCase())
+    if ((input.source === "libgen" || input.source === "annas") && digest !== input.md5.toLowerCase())
       throw new Error(
         "The ebook checksum did not match. The incomplete download was discarded.",
       );
@@ -613,7 +523,9 @@ export async function importEbook(
 }
 
 const ebookDownloads = new Set<string>();
-export async function saveEbook(input: EbookResult & { workId?: string }) {
+export async function saveEbook(given: EbookResult & { workId?: string }) {
+  // The libgen.rs family's file is the libgen.li family's, by its md5: fetched and kept as that one.
+  const input = given.source === "libgenrs" ? { ...given, source: "libgen" as const } : given;
   const key = `${input.source}-${input.md5}`;
   if (ebookDownloads.has(key))
     throw new Error("This ebook is already downloading. Give it a moment.");

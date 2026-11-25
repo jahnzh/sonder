@@ -147,11 +147,14 @@ test("Prowlarr's recorded search: its EPUB book releases, no audiobook, EPUBs fi
   assert.equal(ebookReleaseFormat("Book [MOBI]"), null);
 });
 
-test("an old book adds the public-domain sources to the series search; Prowlarr only when connected", () => {
+test("the series search's order: Library Genesis, Anna's Archive, Z-Library, libgen.rs, Prowlarr, then the public-domain ones for an old book", () => {
   const now = new Date("2026-11-25T12:00:00Z");
-  assert.deepEqual(seriesEbookSources({ year: 2020 }, true, now), ["libgen", "prowlarr"]);
-  assert.deepEqual(seriesEbookSources({ year: 1813 }, false, now), ["libgen", "standardebooks", "gutenberg"]);
-  assert.deepEqual(seriesEbookSources({ year: null }, false, now), ["libgen"]);
+  const all = { annas: true, zlib: true, prowlarr: true };
+  const none = { annas: false, zlib: false, prowlarr: false };
+  assert.deepEqual(seriesEbookSources({ year: 1813 }, all, now), ["libgen", "annas", "zlib", "libgenrs", "prowlarr", "standardebooks", "gutenberg"]);
+  assert.deepEqual(seriesEbookSources({ year: 2020 }, { ...none, prowlarr: true }, now), ["libgen", "libgenrs", "prowlarr"]);
+  assert.deepEqual(seriesEbookSources({ year: 2020 }, { ...none, zlib: true }, now), ["libgen", "zlib", "libgenrs"]);
+  assert.deepEqual(seriesEbookSources({ year: null }, none, now), ["libgen", "libgenrs"]);
   assert.equal(publicDomainAge(1930, now), true);
   assert.equal(publicDomainAge(1931, now), false);
 });

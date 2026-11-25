@@ -314,6 +314,11 @@ export type Settings = {
   name: string;
   authenticated?: boolean;
   libgenUrl: string;
+  /** Anna’s Archive and Z-Library (#901): their addresses, and whether a key or an account is saved. Absent from an older server. */
+  annasUrl?: string;
+  annasConfigured?: boolean;
+  zlibUrl?: string;
+  zlibConfigured?: boolean;
   localConfigured: boolean;
   storageLabel: string;
   prowlarrUrl?: string;
@@ -381,7 +386,7 @@ export type EbookResult = {
   /** The file's md5 on Library Genesis; for another source a 32-hex key of the edition there. */
   md5: string;
   /** Where it is listed (#901); an older server answers Library Genesis's without it. */
-  source: "libgen" | "prowlarr" | "standardebooks" | "gutenberg";
+  source: "libgen" | "annas" | "zlib" | "libgenrs" | "prowlarr" | "standardebooks" | "gutenberg";
   /** A Prowlarr release's indexer and seeders, and whether TorBox has it cached. */
   indexer?: string;
   seeders?: number | null;
