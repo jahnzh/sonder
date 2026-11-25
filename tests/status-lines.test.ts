@@ -200,7 +200,7 @@ test("a size reads as the boards write it: one decimal below ten, none from ten 
 
 // The lines Now adds (#521): the series search lines and the named finished and failed forms, in one place.
 test("Now's lines: a series search, and the finished and failed forms with their figures", async () => {
-  const { seriesSearchLine, finishedLine, failedLine, withFileCount, withReason } = await import("../src/status-lines.ts");
+  const { seriesSearchLine, finishedLine, failedLine, withStepCount, withReason } = await import("../src/status-lines.ts");
   assert.equal(seriesSearchLine({ status: "pending", search: "audiobook" }), "Waiting for series search");
   assert.equal(seriesSearchLine({ status: "pending", search: "ebook" }), "Waiting for series search");
   assert.equal(seriesSearchLine({ status: "searching", search: "audiobook" }), "Searching for the audiobook");
@@ -227,8 +227,10 @@ test("Now's lines: a series search, and the finished and failed forms with their
   assert.equal(failedLine({ entry: "reading-sync" }), "Reading sync stopped");
   assert.equal(failedLine({ entry: "device-save", filesDone: 8, filesTotal: 12 }), "Not complete · 8 of 12 files");
 
-  assert.equal(withFileCount("Encoding audio", { done: 24, total: 43 }), "Encoding audio · 24 of 43 files");
-  assert.equal(withFileCount("Aligning text", null), "Aligning text");
+  assert.equal(withStepCount("Encoding audio", { done: 24, total: 43 }), "Encoding audio · 24 of 43 files");
+  assert.equal(withStepCount("Aligning text", null), "Aligning text");
+  assert.equal(withStepCount("Encoding audio", { done: 0, total: 1 }, { done: 17300, total: 84845 }), "Encoding audio · 20%",
+    "a book of one long file moves by the audio encoded");
   assert.equal(withReason("Downloading to server · 77%", "Blocked by Torrent client"), "Downloading to server · 77% · Blocked by Torrent client");
   assert.equal(withReason("Copying audio", null), "Copying audio");
 });

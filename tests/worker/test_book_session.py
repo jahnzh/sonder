@@ -307,16 +307,19 @@ class Sessions(unittest.TestCase):
         other.reserve_disk(9000)
         session = self.registry.open("job", self.folder)
         done = threading.Event()
+        waits = []  # the job reports the wait (waitingForDisk), so the server does not call it stuck
 
         def wait():
-            session.reserve_disk(4000, poll=0.01)
+            session.reserve_disk(4000, poll=0.01, on_wait=waits.append)
             done.set()
 
         thread = threading.Thread(target=wait)
         thread.start()
         self.assertFalse(done.wait(0.1))
+        self.assertEqual(waits, [True])
         self.registry.end("other", "fetched")
         self.assertTrue(done.wait(5))
+        self.assertEqual(waits, [True, False])
         thread.join(5)
         self.assertEqual(self.registry.budget.reserved("job"), 4000)
 

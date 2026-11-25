@@ -11,7 +11,7 @@
 import type { DeviceSaveEntry } from "./device-saves";
 import {
   SEARCH_SKIPPED_LINE, SEARCH_STOPPED_LINE, downloadLine, ebookCheckLine, failedLine, finishedLine, readingSyncLine, serverCopyLine, seriesSearchLine, spareEditionsLine,
-  withFileCount, withReason, withUser, deviceSaveLine, ALREADY_HAS_COPY_LINE, searchReason, SERIES_NOT_SAVED_AGAIN_LINE, SERIES_SAVED_AGAIN_LINE, metadataMatchLine,
+  withStepCount, withReason, withUser, deviceSaveLine, ALREADY_HAS_COPY_LINE, searchReason, SERIES_NOT_SAVED_AGAIN_LINE, SERIES_SAVED_AGAIN_LINE, metadataMatchLine,
   type DownloadFacts, type EbookCheckFacts, type ReadingSyncJobFacts, type SeriesSearchFacts, type ServerCopyFacts,
 } from "./status-lines";
 import type { ActivityItem, ActivityItemAction, ActivityProcess, ActivityResponse } from "./types";
@@ -198,7 +198,7 @@ function movingLine(item: ActivityItem): string | null {
           coverage: facts.coverage, progress: item.progress, wholeBook: facts.wholeBook, stage: facts.stage,
         },
       });
-      return line && item.state === "running" ? withFileCount(line, facts.files) : line;
+      return line && item.state === "running" ? withStepCount(line, facts.files, facts.audio) : line;
     }
     default:
       return null;

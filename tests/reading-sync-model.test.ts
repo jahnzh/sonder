@@ -73,6 +73,8 @@ test("every worker stage and count", () => {
   assert.deepEqual(at("encoding", { tracksTotal: 43, encodeQueuePosition: 1 }), { label: "Encoding audio", state: "running", value: "1 book ahead" });
   assert.deepEqual(at("encoding", { tracksTotal: 43, encodeQueuePosition: 0, tracksEncoded: 3 }), { label: "Encoding audio", state: "running", value: "3 of 43 files", progress: 3 / 43 }, "position 0 holds the encoder");
   assert.deepEqual(at("encoding", { waitingForWindowRequests: true }), { label: "Encoding audio", state: "running", value: "Waiting" });
+  assert.deepEqual(at("encoding", { tracksTotal: 1, tracksEncoded: 0, audioSecondsEncoded: 17300, audioSecondsTotal: 84845 }),
+    { label: "Encoding audio", state: "running", value: "20%", progress: 17300 / 84845 }, "one long file moves by the audio encoded");
   assert.deepEqual(at("anchoring"), { label: "Anchoring text to audio", state: "running" });
   assert.deepEqual(at("aligning", { groupsTotal: 8, groupsDone: 3 }), { label: "Aligning text", state: "running", value: "3 of 8 parts", progress: 3 / 8 });
   assert.deepEqual(at("finishing"), { label: "Saving the map", state: "running" });
