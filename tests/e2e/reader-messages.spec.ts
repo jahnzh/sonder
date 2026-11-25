@@ -1,4 +1,4 @@
-// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing, prepared-view, mobile-chrome
+// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing, mobile-chrome
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -99,24 +99,20 @@ async function toggleControls(page: Page, room: Locator) {
   await page.mouse.click(text.x + text.width / 2, text.y + text.height / 2);
   await expect(room).toHaveAttribute("data-controls-visible", String(!shown));
 }
-// Which sentence the page marks as narrated, or null while none is marked: the mark's address in the book in
-// today's reader, the sentence's id in the view of prepared text.
+// Which sentence the page marks as narrated, or null while none is marked: the sentence's id.
 async function followMark(room: Locator) {
   const mark = room.locator(".reader-viewport .sonder-follow");
   if (!(await mark.count())) return null;
-  return (await mark.first().getAttribute("data-epubcfi")) ?? (await mark.first().getAttribute("data-s"));
+  return mark.first().getAttribute("data-s");
 }
 // Moves the narration and waits until the reader has shown the sentence narrated there. The narrated sentence is
-// known (`data-current-passage`) some milliseconds before the follow jump has opened its chapter: in between the
-// old chapter's frame is taken out and the new one has no text yet, and a test that measured the page just then
-// found no paragraph, or a frame that was gone (#816). The jump is over when the pages are shown again and the mark
-// drawn is another one than before.
+// known (`data-current-passage`) some milliseconds before the follow jump has shown it, and a test that measured the
+// page just then found no paragraph (#816). The jump is over when the mark drawn is another one than before.
 async function narrateAt(page: Page, room: Locator, position: number) {
   const before = await followMark(room);
   await setPosition(page, position);
   await expect(room).toHaveAttribute("data-current-passage", /.+/);
   await expect.poll(async () => { const now = await followMark(room); return !!now && now !== before; }).toBe(true);
-  await expect(room.locator(".reader-viewport")).not.toHaveAttribute("data-jumping", /.*/);
 }
 // A long-press on the first sentence wholly on the page: Listen from here.
 async function longPress(page: Page, room: Locator) {

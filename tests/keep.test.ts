@@ -134,27 +134,29 @@ const textOf = (ebook: { id: string; fingerprint: string }) => ({ id: ebook.id, 
 /** The kept EPUBs, each with its prepared text kept beside it, as a book kept since #805 holds them. */
 const withHeld = (r: KeepReading, held: KeepReading["ebooks"]): KeepReading => ({ ...r, ebooks: held, texts: held.map(textOf) });
 const keptEpub = { id: "e1", fingerprint: "fp-e1", size: 600_000 };
+/** What a kept book needs while Keep keeps EPUB files (`keepEpub`), as it did until #806 turned `KEEP_EPUB_FILE` off. */
+const epubNeeds = (...[rec, downloads, parts = [], r = null]: Parameters<typeof keptNeeds>) => keptNeeds(rec, downloads, parts, r, { keepEpub: true });
 const mapKey = "reader-map:e1:r1";
 
-test("needs with an EPUB: the chosen EPUB is one more file, complete when this device keeps it", () => {
-  const missing = keptNeeds(recording("r1", 2), [file("r1", 0), file("r1", 1)], [], reading());
+test("with EPUB files kept, needs with an EPUB: the chosen EPUB is one more file, complete when this device keeps it", () => {
+  const missing = epubNeeds(recording("r1", 2), [file("r1", 0), file("r1", 1)], [], reading());
   assert.deepEqual(missing.ebook, { id: "e1", complete: false, size: 0 });
   // Its prepared text (#805) is fetched beside the EPUB and is no file that decides complete (`KEEP_EPUB_FILE`).
   assert.deepEqual(missing.text, { id: "e1", complete: false, size: 0, counted: false });
   assert.deepEqual([missing.filesSaved, missing.filesTotal, missing.complete], [2, 3, false]);
-  const held = keptNeeds(recording("r1", 2), [file("r1", 0), file("r1", 1)], [], withHeld(reading(), [keptEpub]));
+  const held = epubNeeds(recording("r1", 2), [file("r1", 0), file("r1", 1)], [], withHeld(reading(), [keptEpub]));
   assert.deepEqual([held.filesSaved, held.filesTotal, held.complete, held.size], [3, 3, true, 652_000]);
   // A book with only an ebook needs its EPUB; the text kept beside it counts in its size: "Ebook · 0.7 MB" once kept.
-  const only = keptNeeds(null, [], [], withHeld(reading(), [keptEpub]));
+  const only = epubNeeds(null, [], [], withHeld(reading(), [keptEpub]));
   assert.deepEqual([only.recordingId, only.filesSaved, only.filesTotal, only.complete, only.size], [null, 1, 1, true, 650_000]);
   // The Ebook page's rule picks the EPUB: the shared default, then this device's choice, then the first.
   const two = reading({ editions: [epub("e1"), epub("e2")], deviceChoice: "e2" });
-  assert.equal(keptNeeds(null, [], [], two).ebook?.id, "e2");
-  assert.equal(keptNeeds(null, [], [], { ...two, work: { ...two.work, chosenEbookId: "e1" } }).ebook?.id, "e1");
+  assert.equal(epubNeeds(null, [], [], two).ebook?.id, "e2");
+  assert.equal(epubNeeds(null, [], [], { ...two, work: { ...two.work, chosenEbookId: "e1" } }).ebook?.id, "e1");
   // Another edition's copy does not count for the chosen one.
-  assert.equal(keptNeeds(null, [], [], withHeld(two, [keptEpub])).ebook?.complete, false);
+  assert.equal(epubNeeds(null, [], [], withHeld(two, [keptEpub])).ebook?.complete, false);
   // An EPUB whose file is not on the server is not needed.
-  assert.equal(keptNeeds(null, [], [], reading({ editions: [epub("e1", { available: false })] })).filesTotal, 0);
+  assert.equal(epubNeeds(null, [], [], reading({ editions: [epub("e1", { available: false })] })).filesTotal, 0);
 });
 
 test("needs with a PDF only: a PDF is never needed", () => {
@@ -192,62 +194,62 @@ test("needs with a map: not ready needs none; ready and partly ready need it; a 
   assert.equal(keptNeeds(null, [], [], reading({ readingSync: [job()] })).map, null);
 });
 
-test("needs: a stored map is stale after Prepare again, or when it was built from another EPUB, or the EPUB is not kept", () => {
+test("with EPUB files kept, needs: a stored map is stale after Prepare again, or when it was built from another EPUB, or the EPUB is not kept", () => {
   const tracks = [file("r1", 0)];
   const stored = { [mapKey]: storedMap() };
   // Prepare again published a new job run: the stored map is of the old one.
-  const again = keptNeeds(recording("r1", 1), tracks, [], withHeld(reading({ readingSync: [job({ id: "job-2", updatedAt: 200 })], maps: stored }), [keptEpub]));
+  const again = epubNeeds(recording("r1", 1), tracks, [], withHeld(reading({ readingSync: [job({ id: "job-2", updatedAt: 200 })], maps: stored }), [keptEpub]));
   assert.deepEqual([again.map?.complete, again.filesSaved, again.filesTotal, again.complete], [false, 2, 3, false]);
   // The same job, updated after the stored copy.
-  assert.equal(keptNeeds(recording("r1", 1), tracks, [], withHeld(reading({ readingSync: [job({ updatedAt: 300 })], maps: stored }), [keptEpub])).map?.complete, false);
+  assert.equal(epubNeeds(recording("r1", 1), tracks, [], withHeld(reading({ readingSync: [job({ updatedAt: 300 })], maps: stored }), [keptEpub])).map?.complete, false);
   // New audio under the same job.
-  assert.equal(keptNeeds(recording("r1", 1), tracks, [], withHeld(reading({ readingSync: [job({ audioFingerprint: "other" })], maps: stored }), [keptEpub])).map?.complete, false);
+  assert.equal(epubNeeds(recording("r1", 1), tracks, [], withHeld(reading({ readingSync: [job({ audioFingerprint: "other" })], maps: stored }), [keptEpub])).map?.complete, false);
   // The kept EPUB is another file than the one the map was built from.
-  assert.equal(keptNeeds(recording("r1", 1), tracks, [], withHeld(reading({ readingSync: [job()], maps: stored }), [{ ...keptEpub, fingerprint: "fp-new" }])).map?.complete, false);
+  assert.equal(epubNeeds(recording("r1", 1), tracks, [], withHeld(reading({ readingSync: [job()], maps: stored }), [{ ...keptEpub, fingerprint: "fp-new" }])).map?.complete, false);
   // No kept EPUB: the map cannot be matched yet (the EPUB is saved first).
-  const noEpub = keptNeeds(recording("r1", 1), tracks, [], reading({ readingSync: [job()], maps: stored }));
+  const noEpub = epubNeeds(recording("r1", 1), tracks, [], reading({ readingSync: [job()], maps: stored }));
   assert.deepEqual([noEpub.ebook?.complete, noEpub.map?.complete, noEpub.filesSaved, noEpub.filesTotal], [false, false, 1, 3]);
   // A stored map without sentences does not count.
-  assert.equal(keptNeeds(recording("r1", 1), tracks, [], withHeld(reading({ readingSync: [job()], maps: { [mapKey]: storedMap({ intervals: [] }) } }), [keptEpub])).map?.complete, false);
+  assert.equal(epubNeeds(recording("r1", 1), tracks, [], withHeld(reading({ readingSync: [job()], maps: { [mapKey]: storedMap({ intervals: [] }) } }), [keptEpub])).map?.complete, false);
 });
 
-test("needs: the file count is the tracks, the EPUB and the map (11 of 12 files)", () => {
+test("with EPUB files kept, needs: the file count is the tracks, the EPUB and the map (11 of 12 files)", () => {
   const all = Array.from({ length: 10 }, (_, i) => file("r1", i, 41_000_000));
-  const needs = keptNeeds(recording("r1", 10), all, [], withHeld(reading({ readingSync: [job()] }), [keptEpub]));
+  const needs = epubNeeds(recording("r1", 10), all, [], withHeld(reading({ readingSync: [job()] }), [keptEpub]));
   assert.deepEqual([needs.filesSaved, needs.filesTotal], [11, 12]);
-  const one = keptNeeds(recording("r1", 10), all.slice(1), [], withHeld(reading({ readingSync: [job()], maps: { [mapKey]: storedMap() } }), [keptEpub]));
+  const one = epubNeeds(recording("r1", 10), all.slice(1), [], withHeld(reading({ readingSync: [job()], maps: { [mapKey]: storedMap() } }), [keptEpub]));
   assert.deepEqual([one.filesSaved, one.filesTotal, one.missing.map((t) => t.id)], [11, 12, ["r1-0"]]);
-  const complete = keptNeeds(recording("r1", 10), all, [], withHeld(reading({ readingSync: [job()], maps: { [mapKey]: storedMap() } }), [keptEpub]));
+  const complete = epubNeeds(recording("r1", 10), all, [], withHeld(reading({ readingSync: [job()], maps: { [mapKey]: storedMap() } }), [keptEpub]));
   assert.deepEqual([complete.filesSaved, complete.filesTotal, complete.complete, complete.size], [12, 12, true, 410_650_000]);
 });
 
 // The prepared text of a kept book (#805, step 6 of #799): what the new reading view reads offline.
-test("needs with prepared text: while Keep keeps EPUB files the text never makes a book Not complete; a stale one is missing", () => {
+test("with EPUB files kept, needs with prepared text: while Keep keeps EPUB files the text never makes a book Not complete; a stale one is missing", () => {
   const tracks = [file("r1", 0)];
   // A book kept before #805: the EPUB and no text. It stays complete (it reads from its EPUB); its text is missing, so
   // the saver fetches it quietly.
-  const before = keptNeeds(recording("r1", 1), tracks, [], { ...reading(), ebooks: [keptEpub] });
+  const before = epubNeeds(recording("r1", 1), tracks, [], { ...reading(), ebooks: [keptEpub] });
   assert.deepEqual(before.text, { id: "e1", complete: false, size: 0, counted: false });
   assert.deepEqual([before.ebook?.complete, before.filesSaved, before.filesTotal, before.complete], [true, 2, 2, true]);
   // Kept whole: its bytes count too.
-  const whole = keptNeeds(recording("r1", 1), tracks, [], withHeld(reading(), [keptEpub]));
+  const whole = epubNeeds(recording("r1", 1), tracks, [], withHeld(reading(), [keptEpub]));
   assert.deepEqual([whole.text?.complete, whole.complete, whole.size], [true, true, 1_000 + 600_000 + 50_000]);
   // The reader saw the server answer another output: the kept one still reads, and the next run replaces it.
-  const stale = keptNeeds(recording("r1", 1), tracks, [], { ...reading(), ebooks: [keptEpub], texts: [{ ...textOf(keptEpub), stale: true }] });
+  const stale = epubNeeds(recording("r1", 1), tracks, [], { ...reading(), ebooks: [keptEpub], texts: [{ ...textOf(keptEpub), stale: true }] });
   assert.deepEqual([stale.text?.complete, stale.complete, stale.size], [false, true, 601_000]);
   // A kept EPUB of another file than the text's (the server's file changed and the text was saved anew) does not hold
   // the text back: a changed file is seen by the stale mark, not by the EPUB copy, which Keep does not fetch again.
-  const other = keptNeeds(recording("r1", 1), tracks, [], { ...reading(), ebooks: [keptEpub], texts: [{ ...textOf(keptEpub), fingerprint: "fp-new" }] });
+  const other = epubNeeds(recording("r1", 1), tracks, [], { ...reading(), ebooks: [keptEpub], texts: [{ ...textOf(keptEpub), fingerprint: "fp-new" }] });
   assert.deepEqual([other.text?.complete, other.complete], [true, true]);
   // Another edition's text does not count for the chosen one; a PDF has none.
-  assert.equal(keptNeeds(null, [], [], { ...reading({ editions: [epub("e1"), epub("e2")], deviceChoice: "e2" }), texts: [textOf(keptEpub)] }).text?.complete, false);
-  assert.equal(keptNeeds(null, [], [], reading({ editions: [epub("p1", { format: "pdf" })] })).text, null);
+  assert.equal(epubNeeds(null, [], [], { ...reading({ editions: [epub("e1"), epub("e2")], deviceChoice: "e2" }), texts: [textOf(keptEpub)] }).text?.complete, false);
+  assert.equal(epubNeeds(null, [], [], reading({ editions: [epub("p1", { format: "pdf" })] })).text, null);
   // While Keep keeps EPUB files, none is dropped.
   assert.equal(whole.dropEpub, null);
 });
 
-test("replacing old kept EPUBs: without EPUB files a book needs its text only, and a kept EPUB goes once its text is complete", () => {
-  assert.equal(KEEP_EPUB_FILE, true, "epub.js still reads the kept EPUB until step 7 (#806) turns this off");
+test("replacing old kept EPUBs (#806): without EPUB files, the default, a book needs its text only, and a kept EPUB goes once its text is complete", () => {
+  assert.equal(KEEP_EPUB_FILE, false, "the reader reads the prepared text only since step 7 (#806)");
   const tracks = [file("r1", 0)];
   const off = { keepEpub: false };
   // An old kept book: the EPUB file and no text. The text is missing; the EPUB is not needed, and stays until it is.
@@ -257,6 +259,7 @@ test("replacing old kept EPUBs: without EPUB files a book needs its text only, a
   // Its text is saved: the EPUB file is dropped, and the book is complete with its text.
   const replaced = keptNeeds(recording("r1", 1), tracks, [], withHeld(reading(), [keptEpub]), off);
   assert.deepEqual([replaced.dropEpub, replaced.complete, replaced.size], ["e1", true, 51_000]);
+  assert.equal(keptNeeds(recording("r1", 1), tracks, [], withHeld(reading(), [keptEpub])).dropEpub, "e1", "the default keeps no EPUB file");
   // Once the file is gone: complete, nothing to drop.
   const after = keptNeeds(recording("r1", 1), tracks, [], { ...reading(), texts: [textOf(keptEpub)] }, off);
   assert.deepEqual([after.dropEpub, after.complete, after.filesTotal], [null, true, 2]);

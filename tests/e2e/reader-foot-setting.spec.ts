@@ -1,4 +1,4 @@
-// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing, mobile-iphone-slice14, prepared-view, mobile-chrome
+// @projects firefox, mobile-iphone-slice13, webkit-iphone-now-playing, mobile-iphone-slice14, mobile-chrome
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -7,7 +7,7 @@ import { skipOnMobile } from "./mobile";
 import { bandBoxes, expectTextUncovered, intersects, showControls } from "./reader-bands";
 import { openRead } from "./now-playing";
 import { gotoRead } from "./read-face";
-import {bookText,textFrame} from "./reader-view";
+import { bookText, textFrame } from "./reader-view";
 // Speed and the sleep timer in the reader's foot (#589, #890, spec #586 "Speed and the sleep timer in the foot"; ADR
 // 0019 amended 2026-11-24; boards ReaderSpeed.dc.html, ReaderSleep.dc.html): each opens a pop-up above its button
 // with its label and a Stepper, each change applied at once; the transport row stays usable underneath, the pop-up
@@ -36,7 +36,7 @@ async function withReader(page: Page, reader: object, run: () => Promise<void>) 
   try { await run(); } finally { await page.request.put("/api/appearance", { data: appearance }); }
 }
 const standalone = (page: Page) => page.locator(".reader-room");
-// The view's resize count and the bands' boxes stay the same across two reads apart: epub.js is done laying out.
+// The view's resize count and the bands' boxes stay the same across two reads apart: the view is done laying out.
 async function settled(room: Locator) {
   let previous = "";
   await expect.poll(async () => {
@@ -50,7 +50,7 @@ async function settled(room: Locator) {
 async function frameState(room: Locator) {
   const boxes = await bandBoxes(room);
   const scroll = await room.locator(".reader-viewport").evaluate((host) => {
-    const container = host.querySelector<HTMLElement>(":is(.epub-container,.prepared-scroll)");
+    const container = host.querySelector<HTMLElement>(".prepared-scroll");
     return { window: [window.scrollX, window.scrollY], view: container ? [container.scrollLeft, container.scrollTop] : null, resizes: host.getAttribute("data-view-resizes") };
   });
   return { boxes, scroll };
@@ -433,26 +433,15 @@ async function swipeCatcher(page: Page) {
   for (const [type, x] of [["pointerdown", 0.7], ["pointermove", 0.5], ["pointerup", 0.3]] as const)
     await catcher.dispatchEvent(type, { pointerType: "touch", isPrimary: true, pointerId: 7, button: 0, buttons: type === "pointerup" ? 0 : 1, clientX: at.x + at.width * x, clientY: at.y + at.height / 2 });
 }
-// A tap that reaches the text itself, past the catcher (into the epub.js frame, or the view of prepared text): the
-// reader's own handlers take it as a tap in the middle of the page and show or hide the controls.
+// A tap that reaches the text itself, past the catcher (on the prepared text): the reader's own handlers take it as
+// a tap in the middle of the page and show or hide the controls.
 async function tapPastCatcher(room: Locator) {
   await room.locator(".reader-viewport").evaluate((host) => {
     const band = host.getBoundingClientRect();
     const x = band.left + band.width / 2, y = band.top + band.height / 2;
-    let doc: Document = document, cx = x, cy = y;
-    for (const frame of host.querySelectorAll("iframe")) {
-      const r = frame.getBoundingClientRect();
-      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom && frame.contentDocument) {
-        doc = frame.contentDocument;
-        cx = x - r.left;
-        cy = y - r.top;
-        break;
-      }
-    }
-    const target = doc === document ? host.querySelector(".prepared-text") ?? host : doc.elementFromPoint(cx, cy) ?? doc.body;
-    const View = doc.defaultView as Window & typeof globalThis;
+    const target = host.querySelector(".prepared-text") ?? host;
     for (const type of ["pointerdown", "pointerup"])
-      target.dispatchEvent(new View.PointerEvent(type, { bubbles: true, button: 0, pointerType: "mouse", isPrimary: true, clientX: cx, clientY: cy }));
+      target.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, pointerType: "mouse", isPrimary: true, clientX: x, clientY: y }));
   });
 }
 

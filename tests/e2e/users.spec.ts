@@ -161,14 +161,14 @@ test("accounts keep libraries and offline queues separate", async ({ page }) => 
 // Now playing on its Read face (#593): the reader inside Now playing.
 async function openReaderPlayer(page: Page) {
   await openRead(page);
-  await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible({ timeout: 20000 });
+  await expect(page.locator(".inline-reader .reader-viewport .prepared-text")).toBeVisible({ timeout: 20000 });
   return nowPlaying(page);
 }
 
 async function revealReaderControls(page: Page) {
   await closePlaybackOptions(page);
   const room = page.locator(".inline-reader");
-  await expect(room.locator(".reader-viewport iframe")).toBeVisible();
+  await expect(room.locator(".reader-viewport .prepared-text")).toBeVisible();
   const topbar = room.locator(".reader-topbar");
   if (await topbar.isHidden()) {
     const box = (await room.locator(".reader-viewport").boundingBox())!;
@@ -191,7 +191,7 @@ async function positionHistoryButton(page: Page) {
 async function closePlaybackOptions(page: Page) {
   if (await listenFace(page).isVisible()) {
     await listenFace(page).getByRole("radio", { name: "Read", exact: true }).click();
-    await expect(page.locator(".inline-reader .reader-viewport iframe")).toBeVisible({ timeout: 20000 });
+    await expect(page.locator(".inline-reader .reader-viewport .prepared-text")).toBeVisible({ timeout: 20000 });
   }
 }
 

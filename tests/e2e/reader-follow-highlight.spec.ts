@@ -1,19 +1,15 @@
-// @projects firefox, mobile-chrome, mobile-firefox, mobile-safari, webkit-iphone-now-playing, prepared-view
+// @projects firefox, mobile-chrome, mobile-firefox, mobile-safari, webkit-iphone-now-playing
 import {test,expect,type Page} from "@playwright/test";
 import {readFileSync} from "node:fs";
 import {randomUUID} from "node:crypto";
 import {readerFixture} from "../reader-fixture";
 import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
 import {openRead} from "./now-playing";
-import {bookText,textFrame} from "./reader-view";
-import {installReaderFrames} from "./reader-frames";
-import {notOnPreparedView,onPreparedView} from "./prepared-view";
-// The service worker would answer the script request below before page.route sees it.
+import {bookText} from "./reader-view";
+// The service worker stays out of these timed checks, as it did when a route here served a script.
 test.use({serviceWorkers:"block"});
 // Per-step expect ceilings are up to 45 s; leave room for many highlight waits.
 installReaderWaitBudget(test);
-installReaderFrames(test);
-test.afterEach(async({page})=>{await page.unrouteAll({behavior:"wait"});});
 // Chapter one: counted blocks inside <nav> and text inside <svg> before the narrated text (#69).
 const navChapter=`<nav epub:type="landmarks" xmlns:epub="http://www.idpf.org/2007/ops"><ol><li>Skip to the story</li><li>Notes on this edition</li></ol></nav>`+
  `<p><svg xmlns="http://www.w3.org/2000/svg" width="40" height="12"><text x="0" y="10">Ornament</text></svg></p>`+
@@ -43,23 +39,11 @@ async function fixture(page:Page,title:string,unique=false){
  const map=await(await page.request.get(`/api/alignments/${jobs[0].id}/map`)).json();
  return {book,ebook,map,manifest};
 }
-// The text of the follow highlight: its CFI resolved in the page by epub.js's own CFI class.
-// In the view of prepared text (#802) the highlight is the sentence's own elements: its text is theirs.
+// The text of the follow highlight: the highlight is the sentence's own elements (#802), so its text is theirs.
 async function highlighted(page:Page){
  const follow=page.locator(".inline-reader .reader-viewport .sonder-follow");
- if(onPreparedView()){
-  await timedWait("follow-highlight",()=>expect(follow.first()).toBeVisible({timeout:READER_WAIT_MS.followHighlight}),{testName:test.info().title});
-  return (await follow.allTextContents()).join("").replace(/\s+/g," ");
- }
- await timedWait("follow-highlight",()=>expect(follow).toHaveAttribute("data-epubcfi",/^epubcfi\(/,{timeout:READER_WAIT_MS.followHighlight}),{testName:test.info().title});
- if(!await page.evaluate(()=>"ePub" in window)){
-  // An inline script (addScriptTag with a path) would be refused by the app's script-src 'self' (#76), so serve the file from the app's own origin.
-  await page.route("**/__epub-test.js",route=>route.fulfill({path:"node_modules/epubjs/dist/epub.min.js",contentType:"text/javascript"}));
-  await page.addScriptTag({url:"/__epub-test.js"});
- }
- const cfi=(await follow.getAttribute("data-epubcfi"))!;
- return textFrame(page.locator(".inline-reader")).evaluate((iframe:HTMLIFrameElement,cfi)=>
-  new (window as any).ePub.CFI(cfi).toRange(iframe.contentDocument).toString().replace(/\s+/g," "),cfi);
+ await timedWait("follow-highlight",()=>expect(follow.first()).toBeVisible({timeout:READER_WAIT_MS.followHighlight}),{testName:test.info().title});
+ return (await follow.allTextContents()).join("").replace(/\s+/g," ");
 }
 async function open(page:Page,book:any,interval:any){
  // Leave the previous page first: it saves its own position as it unloads.
@@ -120,12 +104,7 @@ test(`the follow highlight stays through a gap and moves when the next sentence 
   // Shortly before the end of chapter one's last sentence, so the narration crosses the whole gap.
   await open(page,book,{...last,start:Math.max(last.start,last.end-1.5)-.5});
   expect((await highlighted(page)).normalize("NFKC").trim()).toBe(text(last));
-  if(!onPreparedView()){
-   await page.route("**/__epub-test.js",route=>route.fulfill({path:"node_modules/epubjs/dist/epub.min.js",contentType:"text/javascript"}));
-   if(!await page.evaluate(()=>"ePub" in window))await page.addScriptTag({url:"/__epub-test.js"});
-  }
   const room=page.locator(".inline-reader");
-  await expect(room.locator(".reader-viewport")).not.toHaveAttribute("data-jumping",/.*/);
   await room.getByRole("button",{name:"Play narration",exact:true}).click();
   // The audio position, the passage followed, the text the highlight covers and where the view is scrolled, all
   // at one instant, until the highlight has moved on or 20 s passed.
@@ -142,15 +121,11 @@ test(`the follow highlight stays through a gap and moves when the next sentence 
     const room=document.querySelector(".inline-reader")!;
     const viewport=room.querySelector(".reader-viewport")!;
     const follow=viewport.querySelector(".sonder-follow");
-    const iframe=viewport.querySelector("iframe") as HTMLIFrameElement|null;
-    const container=viewport.querySelector(":is(.epub-container,.prepared-scroll)") as HTMLElement|null;
-    const cfi=follow?.getAttribute("data-epubcfi");
-    let text:string|null=null;
-    try{if(cfi&&iframe?.contentDocument)text=new (window as any).ePub.CFI(cfi).toRange(iframe.contentDocument).toString().replace(/\s+/g," ").trim();}catch{}
-    // The view of prepared text: the marked elements' own text.
-    if(!iframe&&follow)text=[...viewport.querySelectorAll(".sonder-follow")].map(element=>element.textContent).join("").replace(/\s+/g," ").trim();
+    const container=viewport.querySelector(".prepared-scroll") as HTMLElement|null;
+    // The marked elements' own text.
+    const text=follow?[...viewport.querySelectorAll(".sonder-follow")].map(element=>element.textContent).join("").replace(/\s+/g," ").trim():null;
     const passage=room.getAttribute("data-current-passage");
-    out.push({time:audio.currentTime,passage,text,view:`${container?.scrollLeft}:${container?.scrollTop}:${iframe?.contentWindow?.scrollX}:${iframe?.contentWindow?.scrollY}`});
+    out.push({time:audio.currentTime,passage,text,view:`${container?.scrollLeft}:${container?.scrollTop}`});
     if((passage&&passage!==previous)||Date.now()>deadline)break;
     await new Promise(resolve=>setTimeout(resolve,100));
    }
@@ -188,15 +163,14 @@ test("long-press on a sentence's first letter listens from that sentence, not th
   await bookText(page,".inline-reader").getByText("It carries a second sentence.").waitFor();
   // The left edge of "It carries a second sentence.": a caret there sits right after the previous sentence's space.
   const point=await page.locator(".inline-reader .reader-viewport").evaluate((host)=>{
-   const iframe=(window as any).__readerFrames(host)[0] as HTMLIFrameElement;
-   const doc=iframe.contentDocument!,walker=doc.createTreeWalker(doc.body,NodeFilter.SHOW_TEXT),box=iframe.getBoundingClientRect();
+   const text=host.querySelector(".prepared-text")!,walker=document.createTreeWalker(text,NodeFilter.SHOW_TEXT);
    let node:Node|null;
    while((node=walker.nextNode())){
     const at=(node.textContent||"").indexOf("It carries");
     if(at<0)continue;
-    const range=doc.createRange();range.setStart(node,at);range.setEnd(node,at+1);
+    const range=document.createRange();range.setStart(node,at);range.setEnd(node,at+1);
     const r=range.getBoundingClientRect();
-    return {x:box.x+r.x+1,y:box.y+r.y+r.height/2};
+    return {x:r.x+1,y:r.y+r.height/2};
    }
    throw new Error("sentence not rendered");
   });
@@ -207,56 +181,3 @@ test("long-press on a sentence's first letter listens from that sentence, not th
   await expect.poll(()=>page.evaluate(()=>(window as any).__seeks.at(-1))).toBe(second.start);
  });
 });
-test("the follow highlight is re-measured when fonts finish loading and cleans up listeners on chapter change",async({page})=>{
- notOnPreparedView("it watches epub.js's drawn highlight (SVG rectangles over the frame) being measured again when the frame's fonts load, and the frame's own listeners; in the new view the highlight is the sentence's own elements, which the browser lays out with the text, and there is no frame");
- const {book,map}=await fixture(page,"Highlight font load redraw");
- await withReader(page,{mode:"paginated"},async()=>{
-  await open(page,book,map.intervals[0]);
-  const rect=page.locator(".inline-reader .reader-viewport .sonder-follow rect").first();
-  await expect(rect).toBeVisible();
-  const widthBefore=await rect.evaluate((el:SVGRectElement)=>el.width.baseVal.value);
-
-  // Alter letter-spacing in the rendered chapter to change text width
-  await textFrame(page.locator(".inline-reader")).evaluate((iframe:HTMLIFrameElement)=>{
-    iframe.contentDocument!.body.style.letterSpacing="8px";
-  });
-
-  // Dispatch loadingdone on document.fonts
-  await page.evaluate(()=>{
-    document.fonts.dispatchEvent(new Event("loadingdone"));
-  });
-
-  // The highlight boxes must be re-measured afterwards
-  let widthAfterDocFonts=0;
-  await expect.poll(async()=>{
-    widthAfterDocFonts=await rect.evaluate((el:SVGRectElement)=>el.width.baseVal.value);
-    return widthAfterDocFonts;
-  },{timeout:3000}).not.toBe(widthBefore);
-
-  // Alter letter-spacing again and dispatch loadingdone on the frame document's fonts
-  await textFrame(page.locator(".inline-reader")).evaluate((iframe:HTMLIFrameElement)=>{
-    iframe.contentDocument!.body.style.letterSpacing="16px";
-    iframe.contentDocument!.fonts.dispatchEvent(new Event("loadingdone"));
-  });
-  await expect.poll(async()=>{
-    return rect.evaluate((el:SVGRectElement)=>el.width.baseVal.value);
-  },{timeout:3000}).not.toBe(widthAfterDocFonts);
-
-  // Chapter change: listeners on the old section document are cleaned up
-  const ch2Interval=map.intervals.find((i:any)=>i.paragraphId==="1:0");
-  await open(page,book,ch2Interval);
-  const ch2Rect=page.locator(".inline-reader .reader-viewport .sonder-follow rect").first();
-  await expect(ch2Rect).toBeVisible();
-  const ch2Before=await ch2Rect.evaluate((el:SVGRectElement)=>el.width.baseVal.value);
-
-  // Changing letter-spacing in chapter 2 and dispatching loadingdone on chapter 2 re-measures
-  await textFrame(page.locator(".inline-reader")).evaluate((iframe:HTMLIFrameElement)=>{
-    iframe.contentDocument!.body.style.letterSpacing="8px";
-    iframe.contentDocument!.fonts.dispatchEvent(new Event("loadingdone"));
-  });
-  await expect.poll(async()=>{
-    return ch2Rect.evaluate((el:SVGRectElement)=>el.width.baseVal.value);
-  },{timeout:3000}).not.toBe(ch2Before);
- });
-});
-

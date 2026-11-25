@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { readerFixture } from "../reader-fixture";
 import { installReaderWaitBudget, READER_WAIT_MS, timedWait } from "./timing";
 import { playFromLibrary } from "./library-play";
-// The service worker would answer the epub.js script request below before page.route sees it.
+// The service worker is blocked: every request of a test reaches the suite's server as the test makes it.
 test.use({ serviceWorkers: "block" });
 installReaderWaitBudget(test);
 const imported: string[] = [];
@@ -181,9 +181,6 @@ test("at 3× the follow highlight stays within one sentence of the audio and the
   );
   expect(intervals.length).toBeGreaterThanOrEqual(30);
   const order = intervals.map((interval) => interval.paragraphId);
-  const texts = new Map<string, string>(
-    manifest.sections[0].paragraphs.map((p: any) => [p.text, p.id]),
-  );
   const appearance = await (await page.request.get("/api/appearance")).json();
   await page.request.put("/api/appearance", {
     data: { ...appearance, reader: { ...appearance.reader, mode: "paginated", display: "book" } },
@@ -209,13 +206,7 @@ test("at 3× the follow highlight stays within one sentence of the audio and the
       () => expect(reader).toHaveAttribute("data-current-passage", start.paragraphId, { timeout: READER_WAIT_MS.followHighlight }),
       { testName: test.info().title },
     );
-    await expect(reader.locator(".reader-viewport .sonder-follow")).toHaveAttribute("data-epubcfi", /^epubcfi\(/);
-    // epub.js's CFI class turns the highlight back into the text it covers. An inline script would be
-    // refused by the app's script-src 'self' (#76), so the file is served from the app's own origin.
-    await page.route("**/__epub-test.js", (route) =>
-      route.fulfill({ path: "node_modules/epubjs/dist/epub.min.js", contentType: "text/javascript" }),
-    );
-    await page.addScriptTag({ url: "/__epub-test.js" });
+    await expect(reader.locator(".reader-viewport .sonder-follow").first()).toBeVisible();
     // Speed is in the reader's foot row, which shows with the controls (#587).
     await showControls(page, reader);
     // Speed opens its pop-up above its button with its stepper (#589, #890); End is 3×.
@@ -227,10 +218,10 @@ test("at 3× the follow highlight stays within one sentence of the audio and the
     await expect(speed).toHaveText("3×");
     await page.getByRole("button", { name: "Play narration", exact: true }).click();
     await expect.poll(() => audioRate(page)).toBe(3);
-    // Samples the audio position, the passage the reader follows and the text the highlight covers, all
-    // at the same instant, until the narration is past the last sentence of the chapter.
+    // Samples the audio position, the passage the reader follows and the sentence the highlight marks (its elements'
+    // `data-s`), all at the same instant, until the narration is past the last sentence of the chapter.
     const end = intervals.at(-1)!.end;
-    const samples: { time: number; passage: string | null; text: string | null; visible: boolean }[] =
+    const samples: { time: number; passage: string | null; marked: string | null; visible: boolean }[] =
       await page.evaluate(async (end) => {
         const out: any[] = [];
         const audio = ((window as any).__speedAudio as HTMLAudioElement[]).find((a) => !!a.src)!;
@@ -238,20 +229,14 @@ test("at 3× the follow highlight stays within one sentence of the audio and the
         while (audio.currentTime < end - 1 && Date.now() < deadline) {
           const room = document.querySelector(".inline-reader")!;
           const viewport = room.querySelector(".reader-viewport")!;
-          const follow = viewport.querySelector(".sonder-follow");
-          const iframe = viewport.querySelector("iframe") as HTMLIFrameElement | null;
-          const cfi = follow?.getAttribute("data-epubcfi");
-          let text: string | null = null;
-          try {
-            if (cfi && iframe?.contentDocument)
-              text = new (window as any).ePub.CFI(cfi).toRange(iframe.contentDocument).toString().replace(/\s+/g, " ").trim();
-          } catch {}
+          const follow = [...viewport.querySelectorAll(".sonder-follow")];
+          const marked = follow[0]?.getAttribute("data-s") ?? null;
           const box = viewport.getBoundingClientRect();
-          const rects = [...(follow?.querySelectorAll("rect") ?? [])].map((rect) => rect.getBoundingClientRect());
+          const rects = follow.flatMap((element) => [...element.getClientRects()]);
           const visible = rects.some(
             (r) => r.width > 0 && r.left >= box.left - 1 && r.right <= box.right + 1 && r.top >= box.top - 1 && r.bottom <= box.bottom + 1,
           );
-          out.push({ time: audio.currentTime, passage: room.getAttribute("data-current-passage"), text, visible });
+          out.push({ time: audio.currentTime, passage: room.getAttribute("data-current-passage"), marked, visible });
           await new Promise((resolve) => setTimeout(resolve, 150));
         }
         audio.pause();
@@ -265,7 +250,7 @@ test("at 3× the follow highlight stays within one sentence of the audio and the
       .map((sample) => ({
         ...sample,
         expected: order[at(sample.time)],
-        shownIndex: sample.text ? order.indexOf(texts.get(sample.text) ?? "") : -1,
+        shownIndex: sample.marked ? order.indexOf(sample.marked) : -1,
         passageIndex: sample.passage ? order.indexOf(sample.passage) : -1,
         expectedIndex: at(sample.time),
       }))
@@ -276,7 +261,7 @@ test("at 3× the follow highlight stays within one sentence of the audio and the
           !sample.visible,
       );
     const exact = samples.filter(
-      (sample) => sample.text && texts.get(sample.text) === order[at(sample.time)],
+      (sample) => sample.marked === order[at(sample.time)],
     ).length;
     testInfo.annotations.push({
       type: "3x follow",
@@ -284,7 +269,7 @@ test("at 3× the follow highlight stays within one sentence of the audio and the
     });
     expect(samples.length).toBeGreaterThan(40);
     // The highlight moved through the chapter, not just once.
-    expect(new Set(samples.map((sample) => sample.text)).size).toBeGreaterThanOrEqual(20);
+    expect(new Set(samples.map((sample) => sample.marked)).size).toBeGreaterThanOrEqual(20);
     expect(lagging).toEqual([]);
   } finally {
     await page.request.put("/api/appearance", { data: appearance });

@@ -167,7 +167,7 @@ try {
   if(hasEbook){
     await faces().getByRole("radio",{name:"Read",exact:true}).click();
     await expect.poll(hash).toBe(`#read/${book.workId}`);
-    await expect(page.locator(".now-playing-screen .reader-viewport iframe")).toBeVisible();
+    await expect(page.locator(".now-playing-screen .reader-viewport .prepared-text").first()).toBeVisible();
     check("Now playing switches to its Read face");
     // The Read face's head shows its controls after a tap on the text; the helper taps and clicks (#413).
     const room=page.locator(".now-playing-screen .reader-room");

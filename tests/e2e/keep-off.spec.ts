@@ -114,13 +114,14 @@ const danger = (page: Page) =>
 
 /**
  * What this origin's device databases hold of a book: complete files and sections of each recording, the stored
- * chunks of their tracks, the EPUB copy, the maps and the save records; and the audio files in the private file system.
+ * chunks of their tracks, the EPUB copy, the kept text's record, the maps and the save records; and the audio files in the
+ * private file system.
  */
 async function held(page: Page, recordingIds: string[], ebookId: string | null) {
   return page.evaluate(
     async ({ recordingIds, ebookId }) => {
       const names = (await indexedDB.databases()).map((d) => d.name).filter((n): n is string => !!n && n.startsWith("sonder"));
-      const out = { downloads: 0, parts: 0, chunks: 0, epub: 0, maps: 0, records: 0, opfs: 0 };
+      const out = { downloads: 0, parts: 0, chunks: 0, epub: 0, text: 0, maps: 0, records: 0, opfs: 0 };
       const tracks: string[] = [];
       const all = <T,>(request: IDBRequest<T>) => new Promise<T>((resolve, reject) => ((request.onsuccess = () => resolve(request.result)), (request.onerror = () => reject(request.error))));
       for (const name of names) {
@@ -146,6 +147,7 @@ async function held(page: Page, recordingIds: string[], ebookId: string | null) 
           const keys = (await all(db.transaction("preferences").objectStore("preferences").getAllKeys())) as string[];
           for (const key of keys) {
             if (ebookId && key === `reader-file:${ebookId}`) out.epub++;
+            if (ebookId && key === `reader-text:${ebookId}`) out.text++;
             if (key.startsWith("reader-map:") && ((ebookId && key.startsWith(`reader-map:${ebookId}:`)) || recordingIds.some((id) => key.endsWith(`:${id}`)))) out.maps++;
             if (recordingIds.some((id) => key === `device-save:${id}`) || (ebookId && key === `device-save:ebook:${ebookId}`)) out.records++;
           }
@@ -208,7 +210,9 @@ test("Off asks in place with the size; Cancel keeps everything; Remove leaves no
   await expect.poll(async () => (await held(page, [book.recordingId], book.ebookId)).maps, { timeout: 20_000 }).toBe(1);
   const before = await held(page, [book.recordingId], book.ebookId);
   expect(before.downloads).toBe(1);
-  expect(before.epub).toBe(1);
+  // The ebook is kept as its prepared text, not as the EPUB file (#806).
+  expect(before.text).toBe(1);
+  expect(before.epub).toBe(0);
 
   // Off asks in place with the size of every file of the book here; the switch stays on until Remove.
   await keep(page).click();
@@ -257,13 +261,13 @@ test("Off asks in place with the size; Cancel keeps everything; Remove leaves no
   await expect(keep(page)).toHaveAttribute("aria-checked", "true");
   expect(await held(page, [book.recordingId], book.ebookId)).toEqual(before);
 
-  // Remove leaves no file of the book: no download, section, chunk, EPUB, map or save record.
+  // Remove leaves no file of the book: no download, section, chunk, EPUB, kept text, map or save record.
   await keep(page).click();
   await offQuestion(page).getByRole("button", { name: "Remove", exact: true }).click();
   await expect(keep(page)).toHaveAttribute("aria-checked", "false");
   await expect(line(page)).toHaveCount(0);
   await expect(offQuestion(page)).toHaveCount(0);
-  await expect.poll(() => held(page, [book.recordingId], book.ebookId)).toEqual({ downloads: 0, parts: 0, chunks: 0, epub: 0, maps: 0, records: 0, opfs: 0 });
+  await expect.poll(() => held(page, [book.recordingId], book.ebookId)).toEqual({ downloads: 0, parts: 0, chunks: 0, epub: 0, text: 0, maps: 0, records: 0, opfs: 0 });
   // The place and the bookmarks stay, and the library entry.
   const work = await (await page.request.get(`/api/works/${encodeURIComponent(book.workId)}`)).json();
   expect(work.inLibrary).toBe(true);
@@ -399,7 +403,7 @@ test("a book with two recordings switched on the Audiobook page saves the new on
   await earlierRemove(page).click();
   await earlierQuestion(page).getByRole("button", { name: "Remove", exact: true }).click();
   await expect(earlier).toHaveCount(0);
-  await expect.poll(() => held(page, [book.second!], null)).toEqual({ downloads: 0, parts: 0, chunks: 0, epub: 0, maps: 0, records: 0, opfs: 0 });
+  await expect.poll(() => held(page, [book.second!], null)).toEqual({ downloads: 0, parts: 0, chunks: 0, epub: 0, text: 0, maps: 0, records: 0, opfs: 0 });
   expect(await files(page, book.recordingId)).toBe(1);
   await expect(keep(page)).toHaveAttribute("aria-checked", "true");
 });
@@ -431,7 +435,7 @@ test("another chosen recording learned from a routed library answer is saved and
   await earlierRemove(page).click();
   await earlierQuestion(page).getByRole("button", { name: "Remove", exact: true }).click();
   await expect(earlier).toHaveCount(0);
-  await expect.poll(() => held(page, [book.recordingId], null)).toEqual({ downloads: 0, parts: 0, chunks: 0, epub: 0, maps: 0, records: 0, opfs: 0 });
+  await expect.poll(() => held(page, [book.recordingId], null)).toEqual({ downloads: 0, parts: 0, chunks: 0, epub: 0, text: 0, maps: 0, records: 0, opfs: 0 });
   expect(await files(page, book.second!)).toBe(1);
 });
 
@@ -446,7 +450,7 @@ test("Remove from library names the size on this device and leaves no file of th
   await expect(confirm).toContainText(/^Remove from library\? Your place and the files stay\. It is also removed from this device, [\d.]+ MB\./);
   await confirm.getByRole("button", { name: "Remove", exact: true }).click();
   await expect(page).toHaveURL(/#library$/);
-  await expect.poll(() => held(page, [book.recordingId], book.ebookId)).toEqual({ downloads: 0, parts: 0, chunks: 0, epub: 0, maps: 0, records: 0, opfs: 0 });
+  await expect.poll(() => held(page, [book.recordingId], book.ebookId)).toEqual({ downloads: 0, parts: 0, chunks: 0, epub: 0, text: 0, maps: 0, records: 0, opfs: 0 });
   const records = (await (await page.request.get("/api/device/keep")).json()).records as { workId: string; on: boolean }[];
   expect(records.find((r) => r.workId === book.workId)?.on).toBe(false);
 });
@@ -474,7 +478,7 @@ test("This device's Remove does what Off does: no file of the book is left, and 
   await expect(confirm).toContainText(/^Remove [\d.]+ MB from this device\? Your place, bookmarks and library entry stay\./);
   await confirm.getByRole("button", { name: "Remove", exact: true }).click();
   await expect(page.getByRole("button", { name, exact: true })).toHaveCount(0);
-  await expect.poll(() => held(page, [book.recordingId], book.ebookId)).toEqual({ downloads: 0, parts: 0, chunks: 0, epub: 0, maps: 0, records: 0, opfs: 0 });
+  await expect.poll(() => held(page, [book.recordingId], book.ebookId)).toEqual({ downloads: 0, parts: 0, chunks: 0, epub: 0, text: 0, maps: 0, records: 0, opfs: 0 });
   await page.goto(address(book.workId));
   await expect(keep(page)).toHaveAttribute("aria-checked", "false");
   const records = (await (await page.request.get("/api/device/keep")).json()).records as { workId: string; on: boolean }[];
@@ -493,5 +497,5 @@ test("Remove from library on another device turns Keep off from the server: the 
   expect((await page.request.delete(`/api/works/${encodeURIComponent(book.workId)}/library`)).ok()).toBe(true);
   // This device's next run (Sonder opened again) merges the record and removes the files.
   await page.reload();
-  await expect.poll(() => held(page, [book.recordingId], book.ebookId), { timeout: 20_000 }).toEqual({ downloads: 0, parts: 0, chunks: 0, epub: 0, maps: 0, records: 0, opfs: 0 });
+  await expect.poll(() => held(page, [book.recordingId], book.ebookId), { timeout: 20_000 }).toEqual({ downloads: 0, parts: 0, chunks: 0, epub: 0, text: 0, maps: 0, records: 0, opfs: 0 });
 });

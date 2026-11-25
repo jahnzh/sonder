@@ -16,7 +16,7 @@ test("a single audio file without chapter markers gets reading sync prepared aut
  await gotoRead(page, id);
  await expect(page.getByRole("dialog", { name: "Now playing", exact: true })).toBeVisible();
  const reader=page.locator(".now-playing-screen");
- await expect(reader.locator(".reader-viewport iframe")).toBeVisible();
+ await expect(reader.locator(".reader-viewport .prepared-text")).toBeVisible();
  // Importing with a workId queues the backfill job; the alignment stub finishes it almost at once.
  await expect.poll(async()=>{
   const jobs=(await(await page.request.get(`/api/alignments?ebookId=${id}`)).json()).jobs;

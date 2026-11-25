@@ -495,16 +495,6 @@ input[type="range"]::-moz-range-thumb {
   justify-content: flex-end;
   gap: var(--space-8);
 }
-.inline-error {
-  font-size: max(11px, calc(10px * var(--ui-scale, 1)));
-  line-height: 1.8;
-  color: var(--danger);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--corner-control);
-  padding: var(--space-12);
-  margin-top: var(--space-16);
-}
 
 .app-loading {
   min-height: 100dvh;
@@ -802,9 +792,6 @@ input[type="range"]::-moz-range-thumb {
     font-size: max(11px, calc(9px * var(--ui-scale, 1)));
     margin-top: var(--space-16);
   }
-  .inline-error {
-    font-size: max(11px, calc(9px * var(--ui-scale, 1)));
-  }
 }
 @media (max-width: 390px) {
   .main-content {
@@ -986,11 +973,6 @@ input[type="range"]::-moz-range-thumb {
   color: var(--text);
   box-shadow: 0 1px 3px color-mix(in srgb, var(--shadow) 13%, transparent);
 }
-.inline-error {
-  background: var(--accent-soft);
-  border-color: var(--border);
-  color: var(--danger);
-}
 .app-loading {
   background: var(--raised);
 }
@@ -1064,9 +1046,6 @@ input[type="range"]::-moz-range-thumb {
   }
   .empty-state {
     padding: calc(var(--space-32) + var(--space-4)) var(--space-16);
-  }
-  .inline-error {
-    font-size: calc(11px * var(--ui-scale, 1));
   }
   .full-timestamps {
     font-size: max(11px, calc(10px * var(--ui-scale, 1)));

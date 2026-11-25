@@ -126,10 +126,11 @@ test("the switch on a book with a recording saves it: the line goes from Saving 
   await page.screenshot({ path: `${OUT}/keep-kept-desktop.png` });
 });
 
-test("no persist() without a tap: the reading cache of the book in the mini player does not ask", async ({ page }) => {
+test("no persist() without a tap: the reader loading the book in the mini player does not ask", async ({ page }) => {
   test.setTimeout(60_000);
   await countPersist(page);
-  // The most recently listened book has an EPUB: the mini player shows it and the reader caches its EPUB at load.
+  // The most recently listened book has an EPUB: the mini player shows it and the reader loads it, storing what the
+  // user saved of the book on the device (it keeps no copy of the EPUB since #806).
   const book = await importBook(page, unique("Listened"));
   const epub = await readerFixture({ title: book.title, bodies: ["<p>One sentence opens the book.</p>", "<p>A second chapter follows.</p>"] });
   const uploaded = await page.request.post(`/api/ebooks/import?workId=${encodeURIComponent(book.workId)}`, {
@@ -143,7 +144,7 @@ test("no persist() without a tap: the reading cache of the book in the mini play
   });
   expect(progress.ok()).toBe(true);
   await page.goto("/#library");
-  // The reader's cache write of that EPUB happened (it is the write that used to ask).
+  // The reader's write of the book's saved state happened (a write to the device, as its EPUB cache once was, which asked).
   await expect
     .poll(() =>
       page.evaluate(
@@ -154,12 +155,12 @@ test("no persist() without a tap: the reading cache of the book in the mini play
               const db = open.result;
               if (!db.objectStoreNames.contains("preferences")) return resolve(false), db.close();
               const get = db.transaction("preferences").objectStore("preferences").get(key);
-              get.onsuccess = () => (resolve(get.result?.value?.cache === true), db.close());
+              get.onsuccess = () => (resolve(!!get.result?.value), db.close());
               get.onerror = () => (resolve(false), db.close());
             };
             open.onerror = () => resolve(false);
           }),
-        `reader-file:${ebookId}`,
+        `reader-state:${ebookId}`,
       ),
       { timeout: 20_000 },
     )

@@ -1,7 +1,7 @@
-// @projects firefox, prepared-view
+// @projects firefox, webkit
 // Read on a desktop shows two pages side by side when the text area is wide enough (#762): in Page mode, when the text
 // area beside the contents and between the page arrows has room for two pages of the text's measure, the host spans
-// both and epub.js lays out a spread; narrower, a larger font or Scroll mode give one page, and switching keeps the
+// both and the prepared text lies in a spread of two columns; narrower, a larger font or Scroll mode give one page, and switching keeps the
 // place. The page arrows, bookmarks and search work across the spread; the dock and the footer keep their widths.
 // The narrated sentence's turn with two pages is in reader-page-turn.spec.ts (at 1920 by 1080).
 import { test, expect, type Locator, type Page } from "@playwright/test";
@@ -11,11 +11,8 @@ import { longBookFixture } from "../long-book-fixture";
 import { expectTextUncovered, intersects, type Box } from "./reader-bands";
 import { appearancePanel, closeAppearance, openAppearance, setStepper } from "./reader-appearance";
 import {bookText} from "./reader-view";
-import { onPreparedView } from "./prepared-view";
-import { installReaderFrames } from "./reader-frames";
 
 test.use({ serviceWorkers: "block" });
-installReaderFrames(test);
 const imported: string[] = [];
 let savedAppearance: unknown = null;
 test.beforeEach(async ({ page }, testInfo) => {
@@ -63,7 +60,7 @@ const rect = async (locator: Locator): Promise<Box> => {
 const near = (actual: number, expected: number, tolerance = 1) =>
   expect(Math.abs(actual - expected), `${actual} is not ${expected}`).toBeLessThanOrEqual(tolerance);
 
-/** The text band's box and epub.js's layout stay the same across two reads apart. */
+/** The text band's box and its layout stay the same across two reads apart. */
 async function settled(page: Page) {
   let previous = "";
   await expect
@@ -89,22 +86,18 @@ async function shownSentences(page: Page) {
   return host(page).evaluate((element) => {
     const bounds = element.getBoundingClientRect();
     const shown: { sentence: number; x: number }[] = [];
-    // The EPUB's frames, or on the view of prepared text the text itself standing in as one (reader-frames.ts).
-    for (const frame of (window as any).__readerFrames(element)) {
-      const doc = frame.contentDocument, box = frame.getBoundingClientRect();
-      if (!doc?.body) continue;
-      const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
-      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-        for (const match of node.textContent!.matchAll(/Chapter 1 sentence (\d+) /g)) {
-          const range = doc.createRange();
-          range.setStart(node, match.index!);
-          range.setEnd(node, match.index! + 1);
-          const r = [...range.getClientRects()].find((value) => value.width > 0);
-          if (!r) continue;
-          const x = box.left + r.left, y = box.top + r.top;
-          if (x >= bounds.left - 0.5 && x + r.width <= bounds.right + 0.5 && y >= bounds.top - 0.5 && y + r.height <= bounds.bottom + 0.5)
-            shown.push({ sentence: Number(match[1]), x: x - bounds.left });
-        }
+    const text = element.querySelector(".prepared-text");
+    if (!text) return shown;
+    const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      for (const match of node.textContent!.matchAll(/Chapter 1 sentence (\d+) /g)) {
+        const range = document.createRange();
+        range.setStart(node, match.index!);
+        range.setEnd(node, match.index! + 1);
+        const r = [...range.getClientRects()].find((value) => value.width > 0);
+        if (!r) continue;
+        if (r.left >= bounds.left - 0.5 && r.right <= bounds.right + 0.5 && r.top >= bounds.top - 0.5 && r.bottom <= bounds.bottom + 0.5)
+          shown.push({ sentence: Number(match[1]), x: r.left - bounds.left });
       }
     }
     return shown.sort((a, b) => a.sentence - b.sentence);
@@ -112,15 +105,15 @@ async function shownSentences(page: Page) {
 }
 const numbers = async (page: Page) => (await shownSentences(page)).map((value) => value.sentence);
 
-/** Two pages side by side: epub.js's layout has two, and sentences start on both halves of the host. */
+/** Two pages side by side: the layout has two, and sentences start on both halves of the host. */
 async function expectTwoPages(page: Page) {
   await expect(host(page)).toHaveAttribute("data-spread", "two");
   await expect(host(page)).toHaveAttribute("data-pages", "2");
   await settled(page);
   const width = (await rect(host(page))).width;
   expect(width).toBeGreaterThanOrEqual(800);
-  // The spread's pages keep their own gap of 48 (src/reader-spread.ts), not epub.js's twelfth of the width.
-  expect(await host(page).evaluate((element) => getComputedStyle(element.querySelector("iframe")?.contentDocument!.body ?? element.querySelector(".prepared-part")!).columnGap)).toBe("48px");
+  // The spread's pages keep their own gap of 48 (src/reader-spread.ts).
+  expect(await host(page).evaluate((element) => getComputedStyle(element.querySelector(".prepared-part")!).columnGap)).toBe("48px");
   const shown = await shownSentences(page);
   expect(shown.some((value) => value.x < width / 2), "a sentence starts on the left page").toBe(true);
   expect(shown.some((value) => value.x > width / 2), "a sentence starts on the right page").toBe(true);
@@ -223,13 +216,11 @@ test("a narrower window, a larger font and Scroll mode show one page, and switch
   }
   await settled(page);
   // The place is the first sentence shown (where the reader's position is saved from): after each switch it is still
-  // shown. Today's reader takes the place anew from each layout (from two pages to one that is the left page's
-  // start). The new view holds the place the reader turned to through every switch and never takes it anew, so a
-  // window resized again and again does not walk the reader back through the book (#803).
-  let place = (await numbers(page))[0]!;
+  // shown. The reader holds the place it turned to through every switch and never takes it anew, so a window resized
+  // again and again does not walk the reader back through the book (#803).
+  const place = (await numbers(page))[0]!;
   const kept = async () => {
     expect(await numbers(page)).toContain(place);
-    if (!onPreparedView()) place = (await numbers(page))[0]!;
   };
   // Contents hidden: 1280 − 168 = 1112, two pages.
   await reader.getByRole("button", { name: "Hide contents", exact: true }).click();

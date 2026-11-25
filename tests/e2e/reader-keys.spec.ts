@@ -1,17 +1,16 @@
-// @projects firefox, webkit-iphone-now-playing, mobile-iphone-slice14, prepared-view
+// @projects firefox, webkit-iphone-now-playing, mobile-iphone-slice14
 import {test,expect,type Page} from "@playwright/test";
 import {showControls} from "./reader-bands";
 import {readFileSync} from "node:fs";
 import {randomUUID} from "node:crypto";
 import {readerFixture} from "../reader-fixture";
 import {installReaderWaitBudget,READER_WAIT_MS,timedWait} from "./timing";
-import {highlightShown,textShown,bookText,textFrame} from "./reader-view";
+import {highlightShown,textShown,textFrame} from "./reader-view";
 import {appearancePanel,openAppearance} from "./reader-appearance";
 import {openRead} from "./now-playing";
 import { gotoRead } from "./read-face";
-import {onPreparedView} from "./prepared-view";
 // `F` returns to the narration only when the reader has the keyboard (#501 review): not behind a sheet or a dialog
-// above the reader, not while typing in a field (also one inside the book's pages), not with a modifier and not
+// above the reader, not while typing in a field, not with a modifier and not
 // without the book's narration in the player. A focused button does not take it.
 test.use({serviceWorkers:"block"});
 installReaderWaitBudget(test);
@@ -21,16 +20,12 @@ test.afterEach(async({page})=>{
  for(const id of imported.splice(0))expect((await page.request.delete(`/api/library/${id}`)).ok()).toBe(true);
 });
 const sentences=(chapter:number)=>Array.from({length:14},(_,i)=>`<p>Chapter ${chapter} paragraph ${i+1} opens a short scene. The rabbit hurried past the trees again. Alice wondered what would happen to her next.</p>`).join("");
-// Chapter two carries the fields a book keeps once the reader has sanitised it (it removes <input>, <button> and
-// contenteditable): a text area and a list to choose from.
-const fields=`<p>Notes for this chapter follow here.</p><p><textarea id="note" aria-label="Note"></textarea></p>`+
- `<p><select id="choice" aria-label="Choice"><option value="apple">apple</option><option value="fig">fig</option></select></p>`;
 async function fixture(page:Page,title:string,{link=true}={}){
  const response=await page.request.post("/api/import",{multipart:{title,author:"Reader QA",file:{name:"Narration.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}}});
  expect(response.ok()).toBe(true);
  const id=(await response.json()).id;imported.push(id);
  const book=(await(await page.request.get("/api/books")).json()).find((b:any)=>b.id===id);
- const epub=await readerFixture({title:`${title} ${randomUUID()}`,bodies:[sentences(1),fields+sentences(2)]});
+ const epub=await readerFixture({title:`${title} ${randomUUID()}`,bodies:[sentences(1),sentences(2)]});
  const uploaded=await page.request.post(`/api/ebooks/import${link?`?workId=${book.workId}`:""}`,{multipart:{file:{name:"Keys.epub",mimeType:"application/epub+zip",buffer:epub}}});
  expect(uploaded.ok()).toBe(true);
  const ebook=(await uploaded.json()).id;
@@ -88,7 +83,7 @@ test("F does nothing behind the reader's More panel or with a modifier key",asyn
  // turn, and outside them.
  for(const key of ["Control+f","Alt+f","Meta+f","Control+Shift+F"])await page.keyboard.press(key);
  await stillAway(page);
- // Outside them: on the player's Back to narration button (Firefox keeps the focus in the frame after a blur),
+ // Outside them: on the player's Back to narration button,
  // in the foot's row that the controls show (#587).
  await showControls(page,room);
  const backButton=room.getByRole("button",{name:"Back to narration",exact:true});
@@ -106,35 +101,17 @@ test("F does nothing behind the reader's More panel or with a modifier key",asyn
  await backWithF(page,room,interval,manifest);
 });
 
-test("F typed into a field goes into the field, in the book's pages and in the reader's search",async({page})=>{
+test("F typed into the reader's search goes into the field",async({page})=>{
  const {book,map,manifest}=await fixture(page,`Keys fields ${test.info().repeatEachIndex}`);
  const interval=firstInterval(map);
  const room=await openFollowing(page,book,interval);
- const frame=bookText(page,".inline-reader");
- // Contents → chapter two, which holds the fields: the reader pages away from the narration in chapter one.
+ // Contents → chapter two: the reader pages away from the narration in chapter one.
  await showControls(page,room);
  await room.getByRole("button",{name:"Chapters",exact:true}).click();
  // Chapters is a page of its own (#590): its row opens the reader there.
  await page.locator(".reader-pages-chapter",{hasText:"The Pool of Tears"}).click();
  await expect(room).not.toHaveAttribute("data-current-passage",/.+/);
  const playing=room.getByRole("button",{name:"Pause narration",exact:true});
- // Not on the new reading view (#802): prepared text holds no form fields (they are not on its allow-list), so the
- // book has nothing to type into there. The Search half below applies to both views.
- if(!onPreparedView()){
-  const note=frame.locator("#note");
-  await expect(note).toBeVisible({timeout:READER_WAIT_MS.followHighlight});
-  // Every key typed into a field of the book stays there: F, Space and the arrows are not shortcuts there.
-  await note.focus();
-  await page.keyboard.type("f F");
-  await page.keyboard.press("ArrowLeft");
-  await page.keyboard.type("x");
-  await expect(note).toHaveValue("f xF");
-  // In a list, F picks the option that starts with it.
-  const choice=frame.locator("#choice");
-  await choice.focus();
-  await page.keyboard.press("f");
-  await expect(choice).toHaveValue("fig");
- }
  await stillAway(page);
  await expect(playing).toHaveCount(0);
  // The Search page's field takes F as a letter too (#590).

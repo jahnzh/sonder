@@ -404,7 +404,7 @@ test("Space toggles playback across views and arrows skip 30 seconds while ignor
       .click();
     await openRead(page);
     await expect(
-      page.locator(".inline-reader .reader-viewport iframe"),
+      page.locator(".inline-reader .reader-viewport .prepared-text"),
     ).toBeVisible();
     // The face control that switched to Read had focus; the keys act from Now playing itself, as before.
     await nowPlaying.evaluate((element) => (element as HTMLElement).focus());

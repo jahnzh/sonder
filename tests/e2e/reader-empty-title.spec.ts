@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import JSZip from "jszip";
 import { gotoRead } from "./read-face";
 // A document named .html whose title is written <title/> (#812, The Picture of Dorian Gray in Delphi's Parts Edition):
-// epub.js parses it as HTML, where the title never ends and takes the page with it. The page shows its text.
+// parsed as HTML, the title never ends and takes the page with it (epub.js did so, #812). The reader shows its text.
 
 test.use({ serviceWorkers: "block" });
 const imported: string[] = [];
@@ -55,11 +55,12 @@ test("a .html page whose title is written <title/> shows its text", async ({ pag
   const uploaded = await page.request.post(`/api/ebooks/import?workId=${book.workId}`, { multipart: { file: { name: "EmptyTitle.epub", mimeType: "application/epub+zip", buffer: await emptyTitleEpub(title) } } });
   expect(uploaded.ok()).toBe(true);
   await gotoRead(page, (await uploaded.json()).id as string);
-  const frame = page.frameLocator(".reader-room .reader-viewport iframe");
+  const text = page.locator(".reader-room .reader-viewport .prepared-text");
   // The book opens on its first page, the one with the empty title.
-  await expect(frame.getByText(TITLE_PAGE)).toBeVisible();
-  await expect(frame.getByText("A CAREFUL AUTHOR", { exact: true })).toBeVisible();
-  // Nothing of the page ended up in the document's title.
-  expect(await frame.locator("html").evaluate((root) => root.ownerDocument.title)).toBe("");
+  await expect(text.getByText(TITLE_PAGE)).toBeVisible();
+  await expect(text.getByText("A CAREFUL AUTHOR", { exact: true })).toBeVisible();
+  // Nothing of the page ended up in a title: not the app's, and no title element in the text.
+  expect(await page.title()).not.toContain(TITLE_PAGE);
+  await expect(text.locator("title")).toHaveCount(0);
   expect(errors).toEqual([]);
 });

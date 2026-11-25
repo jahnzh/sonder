@@ -1,4 +1,4 @@
-// @projects firefox, webkit-iphone-now-playing, prepared-view
+// @projects firefox, webkit-iphone-now-playing
 // Now playing for a book without a recording or without an EPUB (#594, spec #586 "A book without a recording, a book
 // without an EPUB"; board ReaderEbookOnly.dc.html), against the suite's own server at a phone's 390 by 844. An
 // ebook-only book (#555) opens from the Book page's Read on Now playing's Read face, has no mini player, and its foot

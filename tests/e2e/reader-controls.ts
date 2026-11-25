@@ -4,17 +4,15 @@
 // than the 1.5 s the earlier helper waited, it tapped again, the head showed for a moment, the second tap hid it, and
 // the next click on a head button waited for a visible button until the test's timeout. Here a tap is repeated only
 // when the room still says the controls are off once a tap can no longer be on its way: the room's
-// `data-controls-visible` is written in the same render as the head's visibility. A tap can be lost for real while
-// the reader replaces the section's frame (it follows a new position): pointerdown in the old frame, pointerup in
-// the new one, which is not a tap.
+// `data-controls-visible` is written in the same render as the head's visibility.
 import { expect, type Locator, type Page } from "@playwright/test";
 
 /** How long a tap may take to show the controls before it counts as lost: the render of the reader under load. */
 export const TAP_RENDER_MS = 10_000;
 
 export async function revealControls(page: Page, room: Locator, { timeout = 30_000 } = {}) {
-  // The book's text is there: the EPUB's frame, or the prepared text of the new view (#802).
-  await expect(room.locator(".reader-viewport :is(iframe, .prepared-text)").first()).toBeVisible();
+  // The book's text is there: the prepared text (#802).
+  await expect(room.locator(".reader-viewport .prepared-text").first()).toBeVisible();
   await expect(room.locator(".reader-loading")).toHaveCount(0);
   const topbar = room.locator(".reader-topbar");
   await expect(async () => {

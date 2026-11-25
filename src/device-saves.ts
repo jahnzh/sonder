@@ -13,6 +13,7 @@
  * The server must not import this file: the production image copies only four files of `src/`.
  */
 import { deviceSaveLine } from "./status-lines";
+import { keptEdition } from "./keep";
 
 /** The key of a recording's record in the device database's `preferences` store. */
 export const DEVICE_SAVE_KEY_PREFIX = "device-save:";
@@ -113,6 +114,8 @@ export type KeptInput = {
     recordingId: string | null;
     tracks: readonly { id: string }[];
     ebook: { id: string; complete: boolean; size: number } | null;
+    /** The prepared text (#805): the book's ebook file where no EPUB file is kept (`keptEdition`, #806). */
+    text?: { id: string; complete: boolean; size: number; counted: boolean } | null;
     filesTotal: number;
     filesSaved: number;
     size: number;
@@ -123,7 +126,8 @@ export type KeptInput = {
 
 /** The save id of a kept work: its chosen recording, or `ebook:<id>` for a book with only an ebook (#551). */
 export function keptSaveId(needs: KeptInput["needs"]): string {
-  return needs.recordingId ?? (needs.ebook ? `ebook:${needs.ebook.id}` : "");
+  const edition = keptEdition(needs);
+  return needs.recordingId ?? (edition ? `ebook:${edition.id}` : "");
 }
 
 /** The state of one recording's save. */
@@ -164,6 +168,8 @@ export type DeviceSaveEntry = RecordingSave & {
   saveId?: string;
   /** The audio files of the kept book are among its files (it has a chosen recording with tracks). */
   hasAudio?: boolean;
+  /** The kept book's ebook file is here: its EPUB, or its prepared text (#806). */
+  hasEbook?: boolean;
   /** Every recording of the work with files or a save on this device, the shown one first. */
   recordings: RecordingSave[];
   /** The work's ebook saved for reading offline, if any. */
@@ -247,8 +253,10 @@ export function deviceSaveEntries(input: DeviceSaveInput): DeviceSaveEntries {
     // The work's other recordings with files here are its earlier copies: listed, and what Remove frees.
     const others = (byWork.get(kept.workId) ?? []).filter((r) => r.recordingId !== save.recordingId);
     const ebook = ebooks.get(kept.workId) ?? null;
-    // The kept EPUB is in the needs' size once it is here; any other kept edition of the work adds its own.
-    const counted = kept.needs.ebook?.complete ? kept.needs.ebook.id : null;
+    // The kept ebook (its EPUB, or its prepared text, #806) is in the needs' size once it is here; any other kept
+    // edition of the work adds its own.
+    const edition = keptEdition(kept.needs);
+    const counted = edition?.complete ? edition.id : null;
     const otherEbooks = (input.ebooks ?? []).filter((e) => e.workId === kept.workId && e.id !== counted).reduce((sum, e) => sum + (e.size || 0), 0);
     const totalSize = save.bytesSaved + others.reduce((sum, r) => sum + r.bytesSaved, 0) + otherEbooks;
     entries.push({
@@ -257,6 +265,7 @@ export function deviceSaveEntries(input: DeviceSaveInput): DeviceSaveEntries {
       keep: true,
       saveId: keptSaveId(kept.needs),
       hasAudio: kept.needs.tracks.length > 0,
+      hasEbook: !!edition?.complete,
       recordings: [...(save.recordingId ? [save] : []), ...others],
       ebook,
       totalSize,

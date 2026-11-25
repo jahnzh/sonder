@@ -59,8 +59,8 @@ async function importWithEbook(page: Page, title: string) {
 // The reader on its own is gone (#613 part 2): every reader is Now playing's Read face (#593), at #read/<workId>.
 const reader = (page: Page) => page.locator(".now-playing-screen .reader-room");
 async function closeReader(page: Page) {
-  await expect(reader(page).locator(".reader-viewport iframe")).toBeVisible();
-  // A tap in the middle of the page shows the reader's controls (no drag over the EPUB frame).
+  await expect(reader(page).locator(".reader-viewport .prepared-text")).toBeVisible();
+  // A tap in the middle of the page shows the reader's controls (no drag over the text).
   await showReadControls(page);
   await reader(page).locator(".reader-topbar").getByRole("button", { name: "Close reader", exact: true }).click();
 }
@@ -609,42 +609,32 @@ test.describe("with answers from the test", () => {
     await expect(page.getByRole("status").filter({ hasText: "That ebook is no longer in your library." })).toHaveCount(0);
   });
 
-  test("a removed ebook whose details are kept on the device but whose file is not shows the Library", async ({ page }) => {
+  test("a removed ebook whose details are kept on the device shows the Library", async ({ page }) => {
     const book = await importWithEbook(page, unique("Cached details"));
     await page.goto(`/#reader/${book.ebookId}`);
-    await expect(reader(page).locator(".reader-viewport iframe")).toBeVisible();
+    await expect(reader(page).locator(".reader-viewport .prepared-text")).toBeVisible();
     await expect(page).toHaveURL(readAddress(book.workId));
-    // The reader kept the details on the device (and, where the browser can, the file: take that away again).
-    const fileKey = `reader-file:${book.ebookId}`;
-    const preferences = (action: "has" | "delete", key: string) =>
-      page.evaluate(
-        ([action, key]) =>
-          new Promise<boolean>((resolve, reject) => {
-            const open = indexedDB.open("sonder");
-            open.onerror = () => reject(open.error);
-            open.onsuccess = () => {
-              const db = open.result;
-              const store = db.transaction("preferences", "readwrite").objectStore("preferences");
-              const request = action === "has" ? store.count(key) : store.delete(key);
-              request.onsuccess = () => {
-                db.close();
-                resolve(action === "has" ? (request.result as number) > 0 : true);
-              };
-              request.onerror = () => reject(request.error);
-            };
-          }),
-        [action, key] as const,
-      );
-    await expect.poll(() => preferences("has", `reader-book:${book.ebookId}`)).toBe(true);
-    // Away from the app first, so no save of the file is still on its way.
-    await page.goto("/api/health");
-    await preferences("delete", fileKey);
-    expect(await preferences("has", fileKey)).toBe(false);
-    // Removed on the server: both its details and its file are "not found".
+    // The book's details on the device, as Keep on this device stores them (`reader-book:<id>`, #806): an old link
+    // reads them only without an answer from the server.
+    const details = await (await page.request.get(`/api/reader/${book.ebookId}`)).json();
+    await page.evaluate(
+      ([key, value]) =>
+        new Promise<void>((resolve, reject) => {
+          const open = indexedDB.open("sonder");
+          open.onerror = () => reject(open.error);
+          open.onsuccess = () => {
+            const db = open.result;
+            const tx = db.transaction("preferences", "readwrite");
+            tx.objectStore("preferences").put({ key, value });
+            tx.oncomplete = () => (db.close(), resolve());
+            tx.onerror = () => reject(tx.error);
+          };
+        }),
+      [`reader-book:${book.ebookId}`, details] as const,
+    );
+    // Removed on the server: its details are "not found", which is final.
     await page.route(new RegExp(`/api/reader/${book.ebookId}$`), (route) =>
       route.fulfill({ status: 404, json: { error: "Ebook not found." } }));
-    await page.route(new RegExp(`/api/ebooks/${book.ebookId}/file$`), (route) =>
-      route.fulfill({ status: 404, json: { error: "This ebook is no longer on the media drive." } }));
     await page.goto(`/#reader/${book.ebookId}`);
     await expect(shown(page)).toHaveText("Library");
     await expect(reader(page)).toBeHidden();

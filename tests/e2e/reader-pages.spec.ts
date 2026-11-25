@@ -1,4 +1,4 @@
-// @projects firefox, webkit-iphone-now-playing, mobile-iphone-slice14, prepared-view
+// @projects firefox, webkit-iphone-now-playing, mobile-iphone-slice14
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -7,7 +7,6 @@ import { showControls } from "./reader-bands";
 import {highlightShown,textShown,bookText} from "./reader-view";
 import {openRead} from "./now-playing";
 import { gotoRead } from "./read-face";
-import { onPreparedView } from "./prepared-view";
 // Chapters, Bookmarks and Search as pages (#590, spec #586; boards Chapters.dc.html, ReaderBookmarks.dc.html,
 // ReaderSearch.dc.html): `#book/<workId>/chapters`, `/bookmarks`, `/search`, each a Page with one Title, "Back to the
 // book" and the book's title. A row opens the reader there, paged away, and Back to narration returns.
@@ -84,7 +83,7 @@ const hashOf = (page: Page) => page.evaluate(() => location.hash);
 /** Where the reader's text stands: the view's scroll offsets, its resize count and the sentence the head names. */
 const placeOf = (room: Locator) =>
   room.locator(".reader-viewport").evaluate((host) => {
-    const container = host.querySelector<HTMLElement>(":is(.epub-container,.prepared-scroll)");
+    const container = host.querySelector<HTMLElement>(".prepared-scroll");
     return { left: container?.scrollLeft, top: container?.scrollTop, resizes: host.getAttribute("data-view-resizes") };
   });
 const checkpoint = async (page: Page, ebook: string) => (await (await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint;
@@ -94,12 +93,11 @@ test("each page opens from the reader and its back button returns to the same pl
   const room = await openStandalone(page, ebook);
   // Two pages on, so the place is not the book's start.
   const box = (await room.locator(".reader-viewport").boundingBox())!;
-  // The new view follows the saved Reading mode since #803 (pages by default); `data-mode` names the one it shows.
-  const column = onPreparedView() && (await room.locator(".reader-viewport").getAttribute("data-mode")) === "scroll";
+  // The reader follows the saved Reading mode since #803 (pages by default); `data-mode` names the one it shows.
+  const column = (await room.locator(".reader-viewport").getAttribute("data-mode")) === "scroll";
   for (let turn = 1; turn <= 2; turn++) {
     await page.mouse.click(box.x + box.width * 0.9, box.y + box.height / 2);
-    // A turn moves the pages one band's width on; the new view's column in scroll mode (#802) nine tenths of its
-    // height down.
+    // A turn moves the pages one band's width on; the column in scroll mode (#802) nine tenths of its height down.
     if (column) await expect.poll(async () => (await placeOf(room)).top).toBeGreaterThanOrEqual(turn * (box.height * 0.9 - 2));
     else await expect.poll(async () => (await placeOf(room)).left).toBeGreaterThanOrEqual(turn * (box.width - 1));
   }

@@ -1,4 +1,4 @@
-// @projects firefox, webkit-iphone-now-playing, prepared-view
+// @projects firefox, webkit-iphone-now-playing
 // #742 second round: the live reader check's automatic pick took a work with no shared default and two EPUBs, sampled
 // the map of the second, set this device's choice to it, and Read opened another EPUB ("Read opened EPUB
 // libgen-201c3bd3…, not libgen-1dafeaa8… of the sampled map"). The check reloaded the app before opening Read; its

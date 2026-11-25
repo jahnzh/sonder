@@ -1,4 +1,4 @@
-// @projects firefox, webkit-iphone-now-playing, mobile-iphone-slice14, prepared-view
+// @projects firefox, webkit-iphone-now-playing, mobile-iphone-slice14
 import {test,expect,type Page} from "@playwright/test";
 import {readFileSync} from "node:fs";
 import {randomUUID} from "node:crypto";
@@ -9,13 +9,11 @@ import {highlightShown,textShown,bookText} from "./reader-view";
 import {setTextSize} from "./reader-appearance";
 import {openRead} from "./now-playing";
 import { gotoRead } from "./read-face";
-import { installReaderFrames } from "./reader-frames";
 // What the deleted Lyrics long-book test guarded that also holds for the book's text (#501 review): a search
 // result and a bookmark far away in a long book show their sentence on the page, and the text size setting
 // changes the size of the book's text that is drawn.
 test.use({serviceWorkers:"block"});
 installReaderWaitBudget(test);
-installReaderFrames(test);
 const imported:string[]=[];
 test.afterEach(async({page})=>{
  await page.unrouteAll({behavior:"wait"});
@@ -93,22 +91,20 @@ test("a search result and a bookmark far away in a long book show their sentence
  await showTopbar(page,room);
  await room.locator(".reader-player").getByRole("button",{name:"Chapters",exact:true}).click();
  await page.getByRole("radio",{name:"Bookmarks",exact:true}).click();
- // The Bookmarks page lists the saved sentence in full: from the book's sentences, or, in the new view (#802), which
- // holds none, from the sentence saved with the bookmark, as the reader's own bookmark button saves it.
+ // The Bookmarks page lists the saved sentence in full: from the sentence saved with the bookmark, as the reader's own
+ // bookmark button saves it (the prepared text, #802, holds no book's sentences).
  await page.locator(".reader-pages-bookmark-open",{hasText:markedText.trim().slice(0,40)}).click();
  await expect.poll(()=>textShown(room,markedText),{timeout:READER_WAIT_MS.followHighlight}).toBe(true);
  expect(await textShown(room,foundText)).toBe(false);
 });
 
-// The rule in Reader.tsx: the body's font size is clamp(max(14, size − 2) px, 4.6vw, size + 1 px), where vw is the
-// width of the book's frame; paragraphs inherit it.
+// The rule in Reader.tsx and prepared-text.css: the text's font size is clamp(max(14, size − 2) px, 4.6cqw, size + 1 px),
+// where cqw is the width of the band that scrolls the text; paragraphs inherit it.
 async function drawnSize(page:Page){
  return page.locator(".reader-room .reader-viewport").evaluate(host=>{
-  for(const frame of (window as any).__readerFrames(host)){
-   const doc=frame.contentDocument,paragraph=doc?.querySelector("p");
-   if(paragraph)return {px:parseFloat(getComputedStyle(paragraph).fontSize),frameWidth:doc!.defaultView!.innerWidth};
-  }
-  return null;
+  const paragraph=host.querySelector(".prepared-text p"),scroller=host.querySelector<HTMLElement>(".prepared-scroll");
+  if(!paragraph||!scroller)return null;
+  return {px:parseFloat(getComputedStyle(paragraph).fontSize),frameWidth:scroller.clientWidth};
  });
 }
 const expectedSize=(size:number,frameWidth:number)=>Math.min(size+1,Math.max(Math.max(14,size-2),frameWidth*0.046));

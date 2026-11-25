@@ -84,7 +84,7 @@ async function go(page: Page, address: string) {
 async function openRead(page: Page, address: string) {
   await go(page, address);
   await expect(page.getByRole("dialog", { name: "Now playing", exact: true })).toBeVisible();
-  await expect(room(page).locator(".reader-viewport iframe").first()).toBeVisible();
+  await expect(room(page).locator(".reader-viewport .prepared-text")).toBeVisible();
   await settled(room(page));
   return room(page);
 }

@@ -85,7 +85,7 @@ async function openRead(page: Page, workId: string) {
   await page.goto("about:blank");
   await page.goto(`/#read/${encodeURIComponent(workId)}`);
   await expect(screen(page)).toBeVisible();
-  await expect(room(page).locator(".reader-viewport iframe").first()).toBeVisible();
+  await expect(room(page).locator(".reader-viewport .prepared-text")).toBeVisible();
   await settled(room(page));
   return room(page);
 }
@@ -105,9 +105,9 @@ async function openChapters(page: Page, reader: Locator, workId: string) {
   await expect(page.getByRole("heading", { level: 1, name: "Chapters", exact: true })).toBeVisible();
 }
 const message = (reader: Locator) => reader.locator(".reader-player > .reader-message");
-const frame = (reader: Locator) => reader.locator(".reader-viewport iframe").first().contentFrame();
+const text = (reader: Locator) => reader.locator(".reader-viewport .prepared-text");
 async function longPress(page: Page, reader: Locator) {
-  const paragraphs = frame(reader).locator("p");
+  const paragraphs = text(reader).locator("p");
   await paragraphs.first().waitFor();
   const view = (await reader.locator(".reader-viewport").boundingBox())!;
   let box = null;
@@ -116,7 +116,7 @@ async function longPress(page: Page, reader: Locator) {
     if (candidate && candidate.x >= view.x && candidate.x + 100 <= view.x + view.width && candidate.y >= view.y && candidate.y + 20 <= view.y + view.height) box = candidate;
   }
   expect(box).not.toBeNull();
-  // No move while the button is down (the frames take a move with a button held as a selection).
+  // No move while the button is down (a move with a button held is a selection).
   await page.mouse.move(box!.x + Math.min(box!.width / 2, 80), box!.y + Math.min(box!.height / 2, 10));
   await page.mouse.down();
   await page.waitForTimeout(650);

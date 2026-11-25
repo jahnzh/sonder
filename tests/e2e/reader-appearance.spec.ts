@@ -1,4 +1,4 @@
-// @projects firefox, webkit-iphone-now-playing, mobile-iphone-slice14, prepared-view
+// @projects firefox, webkit-iphone-now-playing, mobile-iphone-slice14
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -10,16 +10,13 @@ import { appearancePanel, closeAppearance, expectDockedUncovered, insideBand, op
 import { installReaderWaitBudget, READER_WAIT_MS } from "./timing";
 import { openRead } from "./now-playing";
 import { gotoRead } from "./read-face";
-import {bookText,textFrame,expectHighlightDrawn} from "./reader-view";
-import { installReaderFrames } from "./reader-frames";
-import { notOnPreparedView, onPreparedView } from "./prepared-view";
+import { expectHighlightDrawn, textFrame } from "./reader-view";
 // Appearance docked under the text (#588; spec #586 "Appearance docked under the text"; board
 // ReaderAppearance.dc.html): Aa docks the panel in place of the foot, the text is laid out again in what is left with
 // the narrated sentence in view, and closing it brings the foot back. In Now playing's Read face (the reader on its own went, #613 part 2).
 
 test.use({ serviceWorkers: "block" });
 installReaderWaitBudget(test);
-installReaderFrames(test);
 test.afterEach(async ({ page }) => { await page.unrouteAll({ behavior: "wait" }); });
 
 // The suite's audio with the fixture EPUB and a narration map: chapter one is narrated from 0 s, chapter two from 100 s.
@@ -64,16 +61,15 @@ async function openAt(page: Page, where: Where, book: any, ebook: string, interv
   await settled(room);
   return room;
 }
-// The highlight is drawn and the pages are shown: the follow jump has landed.
+// The highlight is drawn: the follow jump has landed.
 async function followed(room: Locator) {
-  await expectHighlightDrawn(room,{ timeout: READER_WAIT_MS.followHighlight });
-  await expect(room.locator(".reader-viewport")).not.toHaveAttribute("data-jumping", /.*/, { timeout: READER_WAIT_MS.followHighlight });
+  await expectHighlightDrawn(room, { timeout: READER_WAIT_MS.followHighlight });
 }
-// The view's resize count and the bands' boxes stay the same across two reads apart: epub.js is done laying out.
+// The view's resize count and the bands' boxes stay the same across two reads apart: the view is done laying out.
 async function settled(room: Locator) {
   let previous = "";
   await expect.poll(async () => {
-    const now = JSON.stringify([await resizes(room), await room.locator(".reader-viewport").boundingBox(), await room.locator(".reader-viewport :is(.epub-container,.prepared-scroll)").boundingBox()]);
+    const now = JSON.stringify([await resizes(room), await room.locator(".reader-viewport").boundingBox(), await room.locator(".reader-viewport .prepared-scroll").boundingBox()]);
     const same = now === previous && !now.startsWith("[0");
     previous = now;
     return same;
@@ -84,38 +80,27 @@ const resizes = async (room: Locator) => Number((await room.locator(".reader-vie
 async function highlightLines(room: Locator) {
   return room.locator(".reader-viewport").evaluate((host) => {
     const band = host.getBoundingClientRect();
-    // epub.js draws the highlight as SVG rectangles; the view of prepared text (#802) marks the sentence's own
-    // elements, whose line boxes are its lines.
-    const drawn = [...host.querySelectorAll(".sonder-follow rect")].map((rect) => rect.getBoundingClientRect());
-    return (drawn.length ? drawn : [...host.querySelectorAll(".sonder-follow")].flatMap((element) => [...element.getClientRects()]))
+    // The sentence's own elements are marked (#802): their line boxes are its lines.
+    return [...host.querySelectorAll(".sonder-follow")].flatMap((element) => [...element.getClientRects()])
       .filter((rect) => rect.height > 1 && rect.right > band.left + 1 && rect.left < band.right - 1)
       .map((rect) => ({ top: rect.top, bottom: rect.bottom }))
       .sort((a, b) => a.top - b.top);
   });
 }
-// Every line box of the text on the shown page: none may be cut by the band's edge in pages mode.
-async function cutLines(room: Locator) {
+// How many line boxes of the text are on the shown page (in pages mode, in its column and not in one beside it).
+async function shownLines(room: Locator) {
   return room.locator(".reader-viewport").evaluate((host) => {
-    const band = host.getBoundingClientRect(), cut: { top: number; bottom: number }[] = [];
+    const band = host.getBoundingClientRect();
     let lines = 0;
-    for (const frame of (window as any).__readerFrames(host)) {
-      const doc = frame.contentDocument, at = frame.getBoundingClientRect();
-      if (!doc?.body) continue;
-      const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
-      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-        if (!node.textContent?.trim()) continue;
-        const range = doc.createRange();
-        range.selectNodeContents(node);
-        for (const rect of range.getClientRects()) {
-          const left = at.left + rect.left, right = at.left + rect.right;
-          if (rect.height < 1 || right <= band.left + 1 || left >= band.right - 1) continue;
-          lines++;
-          const top = at.top + rect.top, bottom = at.top + rect.bottom;
-          if (top < band.top - 0.5 || bottom > band.bottom + 0.5) cut.push({ top, bottom });
-        }
-      }
+    const walker = document.createTreeWalker(host.querySelector(".prepared-text") ?? host, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!node.textContent?.trim()) continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      for (const rect of range.getClientRects())
+        if (rect.height >= 1 && rect.right > band.left + 1 && rect.left < band.right - 1 && rect.bottom > band.top && rect.top < band.bottom) lines++;
     }
-    return { lines, cut };
+    return lines;
   });
 }
 // Where the first line of each sentence of chapter one is on the shown page, in the window's coordinates: each
@@ -125,31 +110,11 @@ async function sentenceTops(room: Locator, manifest: any) {
   const blocks = fragments.map((fragment) => ({ id: fragment.id, first: fragments.find((other) => other.blockIndex === fragment.blockIndex)!.text, start: fragment.start }));
   return room.locator(".reader-viewport").evaluate((host, blocks) => {
     const band = host.getBoundingClientRect(), found: { id: string; top: number; bottom: number }[] = [];
-    for (const frame of (window as any).__readerFrames(host)) {
-      const doc = frame.contentDocument, at = frame.getBoundingClientRect();
-      // The view of prepared text (#802) names each sentence on its elements: its first line box, when in the band.
-      if ((frame as any).prepared) {
-        for (const block of blocks) {
-          const rect = doc.querySelector(`[data-s="${block.id}"]`)?.getClientRects()[0];
-          // In the band, and in pages mode on the page shown and not in a column beside it.
-          if (rect && rect.top >= band.top && rect.top < band.bottom && rect.left >= band.left && rect.left < band.right) found.push({ id: block.id, top: rect.top, bottom: rect.bottom });
-        }
-        continue;
-      }
-      for (const paragraph of doc?.querySelectorAll("p") ?? []) {
-        const text = paragraph.firstChild;
-        if (!text?.textContent) continue;
-        for (const block of blocks.filter((block) => text.textContent!.startsWith(block.first))) {
-          const range = doc!.createRange();
-          range.setStart(text, block.start);
-          range.setEnd(text, Math.min(block.start + 4, text.textContent.length));
-          const rect = range.getClientRects()[0];
-          if (!rect) continue;
-          const left = at.left + rect.left;
-          if (left < band.left || left >= band.right) continue;
-          found.push({ id: block.id, top: at.top + rect.top, bottom: at.top + rect.bottom });
-        }
-      }
+    // The prepared text names each sentence on its elements (#802): its first line box, when in the band.
+    for (const block of blocks) {
+      const rect = host.querySelector(`.prepared-text [data-s="${block.id}"]`)?.getClientRects()[0];
+      // In the band, and in pages mode on the page shown and not in a column beside it.
+      if (rect && rect.top >= band.top && rect.top < band.bottom && rect.left >= band.left && rect.left < band.right) found.push({ id: block.id, top: rect.top, bottom: rect.bottom });
     }
     return { band: { y: band.top, height: band.height }, found };
   }, blocks);
@@ -179,9 +144,8 @@ for (const where of ["now playing"] as const)
       // The narrated sentence is in the lower third of the page: the panel will dock over where it is.
       const lines = await highlightLines(room);
       expect(lines.length).toBeGreaterThan(0);
-      // (The new view, #802, brings the narrated sentence near the top of its column when it opens there, so the
+      // (The view, #802, brings the narrated sentence near the top of its column when it opens there, so the
       // sentence is not under the panel to begin with; what follows holds for it all the same.)
-      if (!onPreparedView()) expect(lines[0]!.top).toBeGreaterThanOrEqual(before.text.y + (before.text.height * 2) / 3);
       await showControls(page, room);
       const count = await resizes(room);
       // Aa docks the panel in place of the foot.
@@ -197,21 +161,19 @@ for (const where of ["now playing"] as const)
       expect(docked.panel.y + docked.panel.height).toBeCloseTo(before.foot.y + before.foot.height, 0);
       expect(docked.text.y).toBeCloseTo(before.text.y, 0);
       expect(docked.text.y + docked.text.height).toBeCloseTo(docked.panel.y, 0);
-      const view = (await room.locator(".reader-viewport :is(.epub-container,.prepared-scroll)").boundingBox())!;
+      const view = (await room.locator(".reader-viewport .prepared-scroll").boundingBox())!;
       expect(view.height).toBeCloseTo(docked.text.height, 0);
-      // The first line of the narrated sentence is inside the smaller band, and pages mode cuts no line there.
+      // The first line of the narrated sentence is inside the smaller band, with lines of the text around it. (A
+      // column runs on under the band's edge, #802, so a line may be cut there.)
       await expect.poll(async () => { const now = await highlightLines(room); return now.length > 0 && insideBand(now[0]!, docked.text); }, { timeout: READER_WAIT_MS.followHighlight }).toBe(true);
-      const { lines: shown, cut } = await cutLines(room);
-      expect(shown).toBeGreaterThan(3);
-      // Only pages cut no line at the band's edge; a column runs on under it.
-      if (!onPreparedView()) expect(cut).toEqual([]);
+      expect(await shownLines(room)).toBeGreaterThan(3);
       // Closing lays the view out once more, and on the next frame by itself: the view fills the band again then.
       const atNextFrame = await room.evaluate((scope) => new Promise<{ host: number; view: number }>((done) => {
         scope.querySelector<HTMLButtonElement>('[aria-label="Close appearance"]')!.click();
         // React commits the click's update in a microtask; the frame asked for after it is the next frame.
         queueMicrotask(() => requestAnimationFrame(() => {
           const host = scope.querySelector<HTMLElement>(".reader-viewport")!;
-          done({ host: host.getBoundingClientRect().height, view: host.querySelector<HTMLElement>(":is(.epub-container,.prepared-scroll)")!.getBoundingClientRect().height });
+          done({ host: host.getBoundingClientRect().height, view: host.querySelector<HTMLElement>(".prepared-scroll")!.getBoundingClientRect().height });
         }));
       }));
       expect(atNextFrame.view).toBeCloseTo(atNextFrame.host, 0);
@@ -242,9 +204,9 @@ test("the panel as on ReaderAppearance.dc.html at 390 by 844: the rows, their na
       const close = panel.getByRole("button", { name: "Close appearance", exact: true });
       expect((await close.boundingBox())!.height).toBeCloseTo(44, 0);
       const rows = panel.getByRole("listitem");
-      // No Theme row: it went with the reader on its own (#613 part 2). The new view has the text position rail,
-      // and with it the Reading position row (#804).
-      const names = ["Reading mode", "Follow the narration", ...(onPreparedView() ? ["Reading position"] : []), "Font", "Size", "Line height", "Margins", "Line width"];
+      // No Theme row: it went with the reader on its own (#613 part 2). The text position rail has the Reading
+      // position row (#804).
+      const names = ["Reading mode", "Follow the narration", "Reading position", "Font", "Size", "Line height", "Margins", "Line width"];
       await expect(rows).toHaveCount(names.length);
       const labels = await rows.locator(".part-row-label").allTextContents();
       expect(labels).toEqual(names);
@@ -264,13 +226,11 @@ test("the panel as on ReaderAppearance.dc.html at 390 by 844: the rows, their na
       expect(mark.width).toBeCloseTo(168, 0);
       expect(mark.height).toBeCloseTo(44, 0);
       await expect(panel.getByRole("switch", { name: "Follow the narration", exact: true })).toHaveAttribute("aria-checked", "true");
-      // What the text position rail shows, where there is one: the whole book, as saved.
+      // What the text position rail shows: the whole book, as saved.
       const position = panel.getByRole("radiogroup", { name: "Reading position shows", exact: true });
-      if (onPreparedView()) {
-        await expect(position.getByRole("radio")).toHaveText(["Book", "Chapter"]);
-        await expect(position.getByRole("radio", { name: "Book", exact: true })).toHaveAttribute("aria-checked", "true");
-        expect((await position.boundingBox())!.width).toBeCloseTo(168, 0);
-      } else await expect(position).toHaveCount(0);
+      await expect(position.getByRole("radio")).toHaveText(["Book", "Chapter"]);
+      await expect(position.getByRole("radio", { name: "Book", exact: true })).toHaveAttribute("aria-checked", "true");
+      expect((await position.boundingBox())!.width).toBeCloseTo(168, 0);
       await expect(panel.getByRole("radiogroup", { name: "Theme", exact: true })).toHaveCount(0);
       for (const name of ["App", "Dark", "Light", "Sepia"]) await expect(panel.getByRole("radio", { name, exact: true })).toHaveCount(0);
       const font = panel.getByRole("radiogroup", { name: "Font", exact: true });
@@ -364,8 +324,8 @@ test("the reader's font and size persist from the docked panel without interrupt
     const start = (await audioTime())!;
     await expect.poll(async () => (await audioTime())!.time).toBeGreaterThan(start.time + 0.2);
   };
-  // What the text stands on: the frame's body, or, where the text is in the page itself (#802), the reader's room.
-  const ground = () => (onPreparedView() ? page.locator(".reader-room").first() : bookText(page).first().locator("body"));
+  // What the text stands on: the text is in the page itself (#802), on the reader's room.
+  const ground = () => page.locator(".reader-room").first();
   await withReader(page, { mode: "paginated", theme: "sepia", font: "serif", size: 19 }, async () => {
     const room = await openAt(page, "now playing", book, ebook, first);
     await showControls(page, room);
@@ -375,9 +335,8 @@ test("the reader's font and size persist from the docked panel without interrupt
     await stillPlaying();
     await panel.getByRole("radiogroup", { name: "Font", exact: true }).getByRole("radio", { name: "Sans", exact: true }).click();
     await setStepper(room, "Size", 22);
-    const frameBody = ground();
     // The app's ground (the dark preset's), not the stored sepia page.
-    await expect(frameBody).toHaveCSS("background-color", "rgb(16, 21, 16)");
+    await expect(ground()).toHaveCSS("background-color", "rgb(16, 21, 16)");
     await expect.poll(async () => (await (await page.request.get("/api/appearance")).json()).reader).toMatchObject({ theme: "sepia", font: "sans", size: 22 });
     await stillPlaying();
     await closeAppearance(room);

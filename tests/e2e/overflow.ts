@@ -6,7 +6,7 @@ import { expect, type Page } from "@playwright/test";
  * Only what is shown counts. Two readers stay mounted while closed, with visibility: hidden inside a closed
  * position: fixed dialog: Now playing's inline reader whenever the dock's book has an ebook (on a shared suite server
  * an earlier spec can give one to the seeded Alice, #640), and the reader on its own under its Chapters, Bookmarks and
- * Search pages (#590). epub.js lays their views out in columns wider than the viewport; the dialog clips them, the
+ * Search pages (#590). In pages mode their prepared text lies in columns wider than the viewport; the dialog clips them, the
  * document stays as wide as the window, and nothing scrolls sideways (measured in Firefox and Chromium at 390 by 844).
  * The last line keeps that true: an overflow that did reach the page still fails here.
  */

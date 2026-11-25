@@ -12,9 +12,6 @@ import "./text-rail.css";
 import "./player.css";
 import "./parts/tokens.css";
 import {handleSearchKey} from "./keyboard";
-import {rememberReaderView} from "./reader-view-switch";
-// The hidden switch of the reading view (#802): a choice in the address is remembered before the app reads it.
-rememberReaderView();
 applyAppearance(cachedAppearance());
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
