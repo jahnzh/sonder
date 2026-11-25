@@ -30,7 +30,7 @@ Completion: your report lists every bullet of the issue's Proposal, and next to 
 
 Steps the coordinator runs to land a run's work (#905), without asking the owner:
 
-1. Merge the run's branches into `main` (after reverting a merge, revert the revert before re-merging the branch; a plain merge brings in only the commits made since).
+1. Merge `main` into each branch, then merge the run's branches into `main` (after reverting a merge, revert the revert before re-merging the branch; a plain merge brings in only the commits made since).
 2. One land check of the merged tip: `npm run ci:run <sha>` (build, unit suite, browser smoke set in Chromium), read with `scripts/ci-result.sh`. A failure is judged at once: fix it, or, for a test that passes when rerun alone, note it as flaky and land. A check cut off by time with no failure does not hold landing.
 3. Land with `scripts/orca-land.sh`, deploy at once with `scripts/deploy-prod.sh <commit>`, and close the issues the run delivered.
 
