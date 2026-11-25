@@ -11,9 +11,11 @@ import { longBookFixture } from "../long-book-fixture";
 import { expectTextUncovered, intersects, type Box } from "./reader-bands";
 import { appearancePanel, closeAppearance, openAppearance, setStepper } from "./reader-appearance";
 import {bookText} from "./reader-view";
-import { notOnPreparedView } from "./prepared-view";
+import { onPreparedView } from "./prepared-view";
+import { installReaderFrames } from "./reader-frames";
 
 test.use({ serviceWorkers: "block" });
+installReaderFrames(test);
 const imported: string[] = [];
 let savedAppearance: unknown = null;
 test.beforeEach(async ({ page }, testInfo) => {
@@ -87,7 +89,8 @@ async function shownSentences(page: Page) {
   return host(page).evaluate((element) => {
     const bounds = element.getBoundingClientRect();
     const shown: { sentence: number; x: number }[] = [];
-    for (const frame of element.querySelectorAll("iframe")) {
+    // The EPUB's frames, or on the view of prepared text the text itself standing in as one (reader-frames.ts).
+    for (const frame of (window as any).__readerFrames(element)) {
       const doc = frame.contentDocument, box = frame.getBoundingClientRect();
       if (!doc?.body) continue;
       const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
@@ -117,7 +120,7 @@ async function expectTwoPages(page: Page) {
   const width = (await rect(host(page))).width;
   expect(width).toBeGreaterThanOrEqual(800);
   // The spread's pages keep their own gap of 48 (src/reader-spread.ts), not epub.js's twelfth of the width.
-  expect(await host(page).evaluate((element) => getComputedStyle(element.querySelector("iframe")!.contentDocument!.body).columnGap)).toBe("48px");
+  expect(await host(page).evaluate((element) => getComputedStyle(element.querySelector("iframe")?.contentDocument!.body ?? element.querySelector(".prepared-part")!).columnGap)).toBe("48px");
   const shown = await shownSentences(page);
   expect(shown.some((value) => value.x < width / 2), "a sentence starts on the left page").toBe(true);
   expect(shown.some((value) => value.x > width / 2), "a sentence starts on the right page").toBe(true);
@@ -149,7 +152,6 @@ async function openRead(page: Page, workId: string) {
   await settled(page);
 }
 
-test.beforeEach(() => notOnPreparedView("it is about pages mode: two pages side by side on a desktop. The new view is scroll mode only; pages mode is step 4 of the reader plan"));
 
 test("at 1920 by 1080 Read shows two pages with the contents open and hidden; arrows, bookmarks and search work across them", async ({ page }, testInfo) => {
   test.setTimeout(120000);
@@ -221,11 +223,13 @@ test("a narrower window, a larger font and Scroll mode show one page, and switch
   }
   await settled(page);
   // The place is the first sentence shown (where the reader's position is saved from): after each switch it is still
-  // shown. From two pages to one that is the left page's start.
+  // shown. Today's reader takes the place anew from each layout (from two pages to one that is the left page's
+  // start). The new view holds the place the reader turned to through every switch and never takes it anew, so a
+  // window resized again and again does not walk the reader back through the book (#803).
   let place = (await numbers(page))[0]!;
   const kept = async () => {
     expect(await numbers(page)).toContain(place);
-    place = (await numbers(page))[0]!;
+    if (!onPreparedView()) place = (await numbers(page))[0]!;
   };
   // Contents hidden: 1280 − 168 = 1112, two pages.
   await reader.getByRole("button", { name: "Hide contents", exact: true }).click();

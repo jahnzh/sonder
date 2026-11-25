@@ -43,6 +43,8 @@ const table: { address: string; route: Route; place: string; parent: Route | nul
   { address: "#book/w1/get/audiobook/magnet", route: { name: "get-magnet", workId: "w1" }, place: "library", parent: { name: "get", workId: "w1", kind: "audiobook" } },
   { address: "#series/s1", route: { name: "series", id: "s1" }, place: "library", parent: { name: "library" } },
   { address: "#series/s1/add", route: { name: "series-add", id: "s1" }, place: "library", parent: { name: "series", id: "s1" } },
+  // A book's search sheet over the Series page (#898).
+  { address: "#series/s1/book/bk-2", route: { name: "series-book", id: "s1", bookId: "bk-2" }, place: "library", parent: { name: "series", id: "s1" } },
   { address: "#listen/w1", route: { name: "listen", workId: "w1" }, place: "library", parent: { name: "book", workId: "w1" } },
   { address: "#read/w1", route: { name: "read", workId: "w1" }, place: "library", parent: { name: "book", workId: "w1" } },
   // Discover's "Search for a recording" (#575): the Get sheet without a book, whose parent is Discover.
@@ -71,6 +73,7 @@ test("a parameter with reserved characters survives writing and reading", () => 
       { name: "get-magnet", workId: id },
       { name: "series", id },
       { name: "series-add", id },
+      { name: "series-book", id, bookId: id },
       { name: "listen", workId: id },
       { name: "read", workId: id },
       { name: "worker", worker: id },
@@ -304,7 +307,7 @@ test("first pages, and what covers a page", () => {
   assert.equal(isFirstPage({ name: "activity", part: "server" }), false);
   assert.equal(isFirstPage({ name: "book", workId: "w" }), false);
   assert.equal(isFirstPage({ name: "unknown", place: "library" }), true);
-  for (const address of ["#book/w/get/ebook", "#book/w/get/audiobook/magnet", "#series/s/add", "#listen/w", "#read/w"])
+  for (const address of ["#book/w/get/ebook", "#book/w/get/audiobook/magnet", "#series/s/add", "#series/s/book/b", "#listen/w", "#read/w"])
     assert.equal(coversPage(readAddress(address)), true, address);
   // An old reader link covers nothing: it reads as the Library until the Read face replaces it.
   assert.equal(coversPage(readAddress("#reader/e")), false);

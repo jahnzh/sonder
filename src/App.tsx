@@ -311,10 +311,10 @@ function LibraryApp({
   // The Library's Series chip (#567): the saved series, read again whenever the Library or a series is shown.
   const savedSeries = useSavedSeries(
     seriesRevision,
-    address.route.name === "library" ? "library" : address.route.name === "series" || address.route.name === "series-add" ? `series` : "other",
+    address.route.name === "library" ? "library" : address.route.name === "series" || address.route.name === "series-add" || address.route.name === "series-book" ? `series` : "other",
     online,
   );
-  const seriesRouteId = pageRoute.name === "series" || pageRoute.name === "series-add" ? pageRoute.id : null;
+  const seriesRouteId = pageRoute.name === "series" || pageRoute.name === "series-add" || pageRoute.name === "series-book" ? pageRoute.id : null;
   // A desktop shows a saved series beside the chip's list (DesktopSeries.dc.html); a series that is not saved stays one
   // column. Until the list is read the series is taken as saved: the page itself sends one that is not to the Library.
   const seriesBeside = seriesRouteId !== null && sideBySide && (savedSeries.items === undefined || isSavedSeries(savedSeries.items, seriesRouteId));
@@ -806,6 +806,9 @@ function LibraryApp({
                 workId={getEbookSheet}
                 online={online}
                 libgenUrl={settings?.libgenUrl || null}
+                prowlarrConfigured={settings ? !!settings.prowlarrConfigured : null}
+                annasConfigured={!!settings?.annasConfigured}
+                zlibConfigured={!!settings?.zlibConfigured}
                 onChanged={refresh}
               />
             )}
@@ -926,6 +929,7 @@ function LibraryApp({
                   open={{
                     book: openWork,
                     sync: (workId) => address.navigate({ name: "book-page", workId, page: "sync" }),
+                    series: (id, bookId) => address.navigate({ name: "series-book", id, bookId }),
                     worker: (worker) => address.navigate({ name: "worker", worker }),
                     server: () => address.navigate({ name: "activity", part: "server" }),
                   }}

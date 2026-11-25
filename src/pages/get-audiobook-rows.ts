@@ -195,3 +195,32 @@ export function sourceLink(chosen: Pick<AudiobookRelease, "url" | "source" | "in
   const indexer = chosen.indexer?.trim();
   return { text: indexer && indexer.toLowerCase() !== NO_INDEXER ? `On ${indexer}` : "On the indexer's page", href };
 }
+
+/** A book of a series pack (ADR 0027), as `POST /api/works/<id>/packs/describe` names it. */
+export type PackBookView = { position: number; title: string; workId: string | null; hasAudio: boolean; gets: boolean };
+/** A row's release that is a pack of a series the book is in, and the books it holds. */
+export type PackView = { seriesId: string; seriesName: string; from: number; to: number; books: PackBookView[] };
+
+/** What a pack row's second line starts with: the books it holds ("Books 1–8"). */
+export function packLabel(pack: Pick<PackView, "from" | "to">): string {
+  return `Books ${pack.from}–${pack.to}`;
+}
+
+/**
+ * The line under Get this recording for a chosen pack: which books of the series it holds, and the other books
+ * without audio it also gets ("Holds books 1–8 of Dungeon Crawler Carl. Also gets Carl's Doomsday Scenario.").
+ */
+export function packLine(pack: PackView, workId: string): string {
+  const holds = `Holds books ${pack.from}–${pack.to} of ${pack.seriesName}.`;
+  const others = pack.books.filter((book) => book.gets && book.workId !== workId).map((book) => book.title);
+  return others.length ? `${holds} Also gets ${others.join(", ")}.` : holds;
+}
+
+/** One unit of a downloaded pack the owner can choose for the book (`GET /api/works/<id>/pack`). */
+export type PackUnitView = { key: string; label: string; files: number; position: number | null };
+export type PackChoice = { acquisitionId: string; title: string; units: PackUnitView[] };
+
+/** What a unit's row says under its name: how many files it holds. */
+export function packUnitDetail(unit: Pick<PackUnitView, "files">): string {
+  return unit.files === 1 ? "1 file" : `${unit.files} files`;
+}

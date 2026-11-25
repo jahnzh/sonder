@@ -39,6 +39,8 @@ run("INSERT INTO works(id,title,author,description,genre,year) VALUES('w2','Xeno
 // Neither edition has a track, so both are placeholders: a work lends its cover, and no edition id is sent (#514).
 run("INSERT INTO audio_editions(id,work_id,cover,narrator,rating,source_label) VALUES('ed1','w1','/covers/ed1.jpg','',0,'')");
 run("INSERT INTO audio_editions(id,work_id,cover,narrator,rating,source_label) VALUES('ed2','w2','/covers/ed2.jpg','',0,'')");
+// The administrator has the book of the reading syncs in their library: a sync of a book that is not calls for no attention (#881).
+run("INSERT INTO user_library(user_id,book_id,status,added_at) VALUES(1,'ed1','unread',?)", NOW - DAY);
 run("INSERT INTO series_catalogue(id,name,author,book_count) VALUES(7,'Ender','Card',4)");
 
 // Acquisitions: every status `server/acquisitions.ts`, `server/app.ts` and `server/series-removal.ts` write,

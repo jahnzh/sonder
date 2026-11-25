@@ -19,7 +19,8 @@ export type {
  * queries are in `work-media-derivation.ts`.
  *
  * Presence: a work has a media state for a user while either
- *  - the user has an acquisition for the work (`user_acquisitions` → `acquisitions.work_id`), or
+ *  - the user has an acquisition for the work (`user_acquisitions` → `acquisitions.work_id`, or for a series
+ *    pack its `acquisition_works` rows, ADR 0027), or
  *  - a `work_media_states` row exists for the pair. The row marks the work as tracked for
  *    the user and holds the hold reason; its `state` and `acquisition_id` columns are not
  *    read here. They are written only by `materialiseWorkMediaStates`, before a rollback
@@ -99,14 +100,18 @@ export function clearWorkMediaHoldsOfAcquisition(acquisitionId: string) {
        WHERE hold_reason IS NOT NULL AND (user_id,work_id) IN (
          SELECT u.user_id,a.work_id FROM user_acquisitions u
            JOIN acquisitions a ON a.id=u.acquisition_id
-         WHERE a.id=? AND a.work_id IS NOT NULL
+         WHERE a.id=? AND a.work_id IS NOT NULL AND a.kind IS NOT 'ebook'
+         UNION
+         SELECT u.user_id,p.work_id FROM user_acquisitions u
+           JOIN acquisition_works p ON p.acquisition_id=u.acquisition_id
+         WHERE p.acquisition_id=?
          UNION
          SELECT u.user_id,e.work_id FROM user_acquisitions u
            JOIN acquisitions a ON a.id=u.acquisition_id
            JOIN audio_editions e ON e.id=a.book_id
          WHERE a.id=?)`,
     )
-    .run(Date.now(), acquisitionId, acquisitionId);
+    .run(Date.now(), acquisitionId, acquisitionId, acquisitionId);
 }
 
 /**

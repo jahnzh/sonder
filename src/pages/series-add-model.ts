@@ -2,7 +2,7 @@
 // `#series/<id>/add` offers, which are chosen, the switches, the button and the request it sends, as pure functions of
 // `GET /api/series/<id>`, the user's library by work on this device, the role, the preferred language and what the
 // user ticked. No React, no `window`, no fetch. The server imports nothing from here.
-import { normalizeSeriesLanguage, selectSeriesDefaults, seriesBooks } from "../series-selection";
+import { DEFAULT_SERIES_LANGUAGE, normalizeSeriesLanguage, selectSeriesDefaults, seriesBooks } from "../series-selection";
 import type { LibraryWork } from "../types";
 import { NO_AUDIOBOOK_LINE } from "../status-lines";
 import type { SeriesPageSeries, SeriesPageWork } from "./series-model";
@@ -59,7 +59,7 @@ export type SeriesAddModel = {
   /** "What is found downloads to your server." while a Get switch is on. */
   note: string | null;
   /** `POST /api/series`. */
-  body: { id: string; bookIds: string[]; searchAudio: boolean; searchEbooks: boolean };
+  body: { id: string; bookIds: string[]; searchAudio: boolean; searchEbooks: boolean; language: string };
 };
 
 const keyOf = (work: Pick<SeriesAddWork, "id" | "position">) => (work.position === null ? `b:${work.id}` : `n:${work.position}`);
@@ -98,7 +98,7 @@ function openingChoice(series: SeriesAddSeries, opening: SeriesAddOpening, saved
 /** The languages the picker offers: the series', English, the device's and the one chosen, once each, sorted. */
 export function seriesLanguages(series: SeriesAddSeries, language: string, deviceLanguage: string): string[] {
   const found = series.works.flatMap((work) => [work.language, ...(work.editionLanguages ?? [])]);
-  return [...new Set(["en", deviceLanguage, language, ...found].filter((item): item is string => !!item).map(normalizeSeriesLanguage).filter(Boolean))].sort();
+  return [...new Set([DEFAULT_SERIES_LANGUAGE, deviceLanguage, language, ...found].filter((item): item is string => !!item).map(normalizeSeriesLanguage).filter(Boolean))].sort();
 }
 
 /**
@@ -156,13 +156,13 @@ export function seriesAddModel(
     caption: `Not in your library · ${choices.length}`,
     choices,
     switches: admin ? { audio: facts.getAudio, ebooks: facts.getEbooks } : null,
-    language: normalizeSeriesLanguage(language) || "en",
+    language: normalizeSeriesLanguage(language) || DEFAULT_SERIES_LANGUAGE,
     languages: seriesLanguages(series, language, facts.deviceLanguage),
     // A series that is not saved can be saved with no book chosen ("Save series"); a saved one needs a book to add.
     button: saved
       ? { label: addButtonLabel(chosen.length), disabled: chosen.length === 0 }
       : { label: saveButtonLabel(chosen.length), disabled: false },
     note: searchAudio || searchEbooks ? GET_NOTE : null,
-    body: { id: series.id, bookIds, searchAudio, searchEbooks },
+    body: { id: series.id, bookIds, searchAudio, searchEbooks, language: normalizeSeriesLanguage(language) || DEFAULT_SERIES_LANGUAGE },
   };
 }

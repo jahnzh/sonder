@@ -30,7 +30,7 @@ import { SLEEP_CHOICES, formatSleep, sleepShown } from "../sleep-stepper";
 import { chapterTimeLeft, currentChapter, listeningChapters, type ListeningChapter } from "../chapters";
 import { listenChapterLine, listenPlaces, useDesktop } from "../now-playing-desktop";
 import { isReaderPage, openedFromListen, useOpenerAny } from "../reader-pages";
-import { type Face, faceFacts, faceKeyName, faceToOpen, readFace } from "../now-playing-face";
+import { type Face, faceFacts, faceKeyName, faceToOpen, prepareOnOpen, readFace } from "../now-playing-face";
 import { tip } from "../tooltip-texts";
 import type { DeviceSaveRecord } from "../device-saves";
 import type { Book, Download, DownloadPart, LibraryWork } from "../types";
@@ -118,10 +118,13 @@ function NowPlayingScreen({ workId, face, open, ...props }: NowPlayingProps & { 
     if (open && known && exists(face)) rememberFace(workId, face);
   }, [open, known, face, listenExists, readExists, workId]);
   // With nothing in the player, opening Now playing on either face makes this book ready at its saved place without
-  // playing it, as the expanded player did: Read follows that place (behaviour 8 of spec #586).
+  // playing it, as the expanded player did: Read follows that place (behaviour 8 of spec #586). Read does so too when
+  // the player holds another book that is not playing (#862); whether it plays is read as the face opens, so pausing
+  // the other book later does not swap it out.
   useEffect(() => {
-    if (open && book && !p.book) void p.prepare(book);
-  }, [open, book?.id, p.book?.id]);
+    const player = p.book ? { recordingId: p.book.recordingId, playing: p.playing } : null;
+    if (open && book && prepareOnOpen(face, book, player)) void p.prepare(book);
+  }, [open, face, book?.id, p.book?.id]);
 
   // Only while the entry still shows this face: the kept-mounted dialog can hear of a focus outside it after the
   // address has moved on (a link or a typed address), and Back from there would undo that move. The reader on its own

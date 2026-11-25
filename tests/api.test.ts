@@ -143,7 +143,7 @@ test("secrets are encrypted and do not appear in settings responses", async () =
       await app.inject({
         method: "PATCH",
         url: "/api/settings",
-        // "annas" is still sent by older clients and must be ignored.
+        // Anna’s Archive's key is a source's again (#901), encrypted as the others.
         payload: { torbox: key, annas: key },
       })
     ).statusCode,
@@ -157,13 +157,12 @@ test("secrets are encrypted and do not appear in settings responses", async () =
   assert.ok(stored && !stored.value.includes(key));
   const settings = (await app.inject("/api/settings")).json();
   assert.equal(settings.torboxConfigured, true);
-  assert.equal(settings.annasConfigured, undefined);
-  assert.equal(
-    db.select().from(s.settings).where(eq(s.settings.key, "annas")).get(),
-    undefined,
-  );
+  assert.equal(settings.annasConfigured, true);
+  const annas = db.select().from(s.settings).where(eq(s.settings.key, "annas")).get();
+  assert.ok(annas && !annas.value.includes(key));
   assert.ok(!JSON.stringify(settings).includes(key));
   db.delete(s.settings).where(eq(s.settings.key, "torbox")).run();
+  db.delete(s.settings).where(eq(s.settings.key, "annas")).run();
 });
 test("cross-origin mutations and invalid mirror URLs are rejected", async () => {
   assert.equal(

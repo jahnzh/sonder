@@ -94,10 +94,13 @@ test("each page opens from the reader and its back button returns to the same pl
   const room = await openStandalone(page, ebook);
   // Two pages on, so the place is not the book's start.
   const box = (await room.locator(".reader-viewport").boundingBox())!;
+  // The new view follows the saved Reading mode since #803 (pages by default); `data-mode` names the one it shows.
+  const column = onPreparedView() && (await room.locator(".reader-viewport").getAttribute("data-mode")) === "scroll";
   for (let turn = 1; turn <= 2; turn++) {
     await page.mouse.click(box.x + box.width * 0.9, box.y + box.height / 2);
-    // A turn moves the pages one band's width on; the new view's column (#802) nine tenths of its height down.
-    if (onPreparedView()) await expect.poll(async () => (await placeOf(room)).top).toBeGreaterThanOrEqual(turn * (box.height * 0.9 - 2));
+    // A turn moves the pages one band's width on; the new view's column in scroll mode (#802) nine tenths of its
+    // height down.
+    if (column) await expect.poll(async () => (await placeOf(room)).top).toBeGreaterThanOrEqual(turn * (box.height * 0.9 - 2));
     else await expect.poll(async () => (await placeOf(room)).left).toBeGreaterThanOrEqual(turn * (box.width - 1));
   }
   const before = await placeOf(room);

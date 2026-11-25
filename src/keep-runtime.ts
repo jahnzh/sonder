@@ -15,6 +15,7 @@ import { loadReader, saveEpubOffline } from "./reading";
 import { KeepSaver, type KeepJob, type KeepTrigger, type LockManager, type SaverMessage } from "./keep-saver";
 import { accountDatabase, api, authDB, deleteDownloads, downloadTrack, getDownloadedBlob, listDeviceSaveRecords, listOfflineEbookEditionIds, localDB, removeOfflineEbook, writeDeviceSaveRecord } from "./lib";
 import { deviceBook, type DeviceBook } from "./keep-device";
+import { keepText, keptTextSize, listKeptTexts, removeKeptText } from "./keep-text-store";
 import { removeEbookFromDevice } from "./ebook-device-copy";
 import type { Download, DownloadPart, LibraryWork, Track } from "./types";
 import { EBOOK_DEVICE_EVENT } from "./reading";
@@ -170,6 +171,12 @@ export function startKeepSaver(account: number): KeepSaver {
     saveTrack: (track, signal, onProgress) => downloadTrack(track as Track, signal, onProgress),
     saveEbook: keepEbook,
     saveMap: keepMap,
+    saveText: keepText,
+    // A kept EPUB file its prepared text replaced (#805): the file goes, the text and the place stay.
+    dropEpub: async (ebookId) => {
+      await removeEbookFromDevice(ebookId);
+      await removeOfflineEbook(ebookId);
+    },
     writeRecord: async (recordingId, workId, change) => {
       if (change.state === "off") return;
       await writeDeviceSaveRecord(recordingId, workId, change);
@@ -234,9 +241,14 @@ export function startKeepSaver(account: number): KeepSaver {
   return created;
 }
 
-/** What this device holds of the stored works' EPUBs and maps, and this user's choices of edition (#551). */
+/**
+ * What this device holds of the stored works' EPUBs, their prepared texts (#805) and maps, and this user's choices of
+ * edition (#551).
+ */
 async function readingHeld(works: readonly LibraryWork[]) {
   const ebooks: HeldEbook[] = [];
+  const epubIds = works.flatMap((work) => (work.ebooks ?? []).filter((ebook) => ebook.format === "epub").map((ebook) => ebook.id));
+  const texts = epubIds.length ? await listKeptTexts(epubIds).catch(() => []) : [];
   const maps: Record<string, HeldMap | undefined> = {};
   const ebookChoices: Record<string, string | null> = {};
   for (const work of works) {
@@ -255,7 +267,7 @@ async function readingHeld(works: readonly LibraryWork[]) {
       if (stored) maps[key] = stored;
     }
   }
-  return { ebooks, maps, ebookChoices };
+  return { ebooks, texts, maps, ebookChoices };
 }
 
 /** The SHA-256 of a file in hex, as the server fingerprints an EPUB (`server/reader.ts`); null where the page has none. */
@@ -399,6 +411,7 @@ export function useKeptNeeds(work: LibraryWork | null, downloads: readonly Downl
     work,
     deviceChoice: held.value.ebookChoices[work.workId] ?? null,
     ebooks: held.value.ebooks,
+    texts: held.value.texts,
     maps: held.value.maps,
   });
 }
@@ -455,6 +468,7 @@ export function useKeptWorks(works: ReadonlyMap<string, LibraryWork>, downloads:
       work,
       deviceChoice: state.held.ebookChoices[work.workId] ?? null,
       ebooks: state.held.ebooks,
+      texts: state.held.texts,
       maps: state.held.maps,
     });
     kept.push({ workId: entry.workId, entry, needs });
@@ -479,8 +493,10 @@ export async function readDeviceBook(workId: string, work?: Pick<LibraryWork, "r
   const records = await listDeviceSaveRecords().catch(() => [] as DeviceSaveRecord[]);
   const ebookCopies: { id: string; size: number }[] = [];
   for (const id of ebookIds) {
-    const size = await ebookDeviceCopySize(id);
-    if (size != null) ebookCopies.push({ id, size });
+    // An edition's copy here is its EPUB file, its kept prepared text (#805), or both.
+    const file = await ebookDeviceCopySize(id);
+    const text = await keptTextSize(id).catch(() => null);
+    if (file != null || text != null) ebookCopies.push({ id, size: (file ?? 0) + (text ?? 0) });
   }
   const maps: { key: string; size: number }[] = [];
   const keys = (await localDB.preferences.where("key").startsWith("reader-map:").primaryKeys().catch(() => [])) as string[];
@@ -509,6 +525,7 @@ async function removePlan(plan: Pick<DeviceBook, "recordingIds" | "ebookIds" | "
   for (const id of plan.ebookIds) {
     await removeEbookFromDevice(id);
     await removeOfflineEbook(id);
+    await removeKeptText(id).catch(() => {});
   }
   for (const key of plan.mapKeys) await localDB.preferences.delete(key).catch(() => {});
   window.dispatchEvent(new Event("sonder:downloads-changed"));

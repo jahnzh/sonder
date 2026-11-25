@@ -22,6 +22,7 @@ export function saysNoConnectionItself(route: Route): boolean {
     case "worker":
     case "series":
     case "series-add":
+    case "series-book":
     case "sync-details":
       return true;
     case "book-page":

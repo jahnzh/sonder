@@ -12,6 +12,17 @@ import {
 } from "./series-catalogue.ts";
 import { retrySeriesWorkAcquisition } from "./series-acquisition.ts";
 import { searchSeriesWorkReleases, selectSeriesWorkRelease } from "./series-release-search.ts";
+import {
+  chooseSeriesCandidate,
+  noteOwnerSelect,
+  resumeSeriesSearches,
+  searchSeriesWorkAgain,
+  searchSeriesWorkNow,
+  seriesWorkSearch,
+  skipSeriesWork,
+  stopSeriesSearches,
+  withSeriesQueue,
+} from "./series-queue.ts";
 import { previewSeriesRemoval, removeSavedSeries } from "./series-removal.ts";
 import { currentUserId, requireAdmin } from "./users.ts";
 
@@ -23,6 +34,8 @@ export const catalogueId = z
 const language = z.string().trim().min(1).max(100).optional();
 const params = z.object({ id: catalogueId });
 const workParams = z.object({ id: catalogueId, bookId: catalogueId });
+/** A search's kind; absent (both kinds), as an older or a newer client may send an empty body. */
+const optionalKind = z.object({ kind: z.enum(["audio", "ebook"]).optional() }).passthrough();
 
 export function registerSeriesRoutes(app: FastifyInstance) {
   app.get("/api/discover/series", async (req) => {
@@ -42,13 +55,15 @@ export function registerSeriesRoutes(app: FastifyInstance) {
   app.get("/api/series/:id", async (req) => {
     const { id } = params.parse(req.params);
     const query = z.object({ refresh: z.coerce.boolean().optional(), language }).parse(req.query ?? {});
-    return refreshSavedCatalogueSeries(currentUserId(req), id, { force: !!query.refresh, language: query.language });
+    const userId = currentUserId(req);
+    // The queue's run for the series and each book's place in it (#898), over the saved series' answer.
+    return withSeriesQueue(userId, id, await refreshSavedCatalogueSeries(userId, id, { force: !!query.refresh, language: query.language }));
   });
   app.post("/api/series", async (req) => {
     const body = z
-      .object({ id: catalogueId, bookIds: z.array(catalogueId).max(1000), searchAudio: z.boolean().optional(), searchEbooks: z.boolean().optional() })
+      .object({ id: catalogueId, bookIds: z.array(catalogueId).max(1000), searchAudio: z.boolean().optional(), searchEbooks: z.boolean().optional(), language })
       .parse(req.body ?? {});
-    return saveCatalogueSeries(currentUserId(req), body.id, body.bookIds, { searchAudio: body.searchAudio, searchEbooks: body.searchEbooks });
+    return saveCatalogueSeries(currentUserId(req), body.id, body.bookIds, { searchAudio: body.searchAudio, searchEbooks: body.searchEbooks, language: body.language });
   });
   app.delete("/api/series/:id", async (req) => {
     const { id } = params.parse(req.params);
@@ -74,7 +89,48 @@ export function registerSeriesRoutes(app: FastifyInstance) {
     const body = z
       .object({ source: z.enum(["abb", "prowlarr"]), id: z.string().min(1).max(300), replaceActive: z.boolean().optional(), confirmExistingAudio: z.boolean().optional() })
       .parse(req.body ?? {});
-    return selectSeriesWorkRelease(currentUserId(req), id, bookId, body);
+    const result = await selectSeriesWorkRelease(currentUserId(req), id, bookId, body);
+    noteOwnerSelect(currentUserId(req), id, bookId, { source: body.source, id: body.id });
+    return result;
+  });
+  // The series queue on the Series page (#898): a book's searches with what was found and chosen, and the owner's
+  // steering. The administrator's, as the release select is.
+  app.get("/api/series/:id/works/:bookId/acquisition", async (req) => {
+    requireAdmin(req);
+    const { id, bookId } = workParams.parse(req.params);
+    return seriesWorkSearch(currentUserId(req), id, bookId);
+  });
+  app.post("/api/series/:id/works/:bookId/acquisition/now", async (req) => {
+    requireAdmin(req);
+    const { id, bookId } = workParams.parse(req.params);
+    return searchSeriesWorkNow(currentUserId(req), id, bookId, optionalKind.parse(req.body ?? {}).kind);
+  });
+  app.post("/api/series/:id/works/:bookId/acquisition/again", async (req) => {
+    requireAdmin(req);
+    const { id, bookId } = workParams.parse(req.params);
+    return searchSeriesWorkAgain(currentUserId(req), id, bookId, optionalKind.parse(req.body ?? {}).kind ?? "audio");
+  });
+  app.post("/api/series/:id/works/:bookId/acquisition/skip", async (req) => {
+    requireAdmin(req);
+    const { id, bookId } = workParams.parse(req.params);
+    return skipSeriesWork(currentUserId(req), id, bookId, optionalKind.parse(req.body ?? {}).kind);
+  });
+  app.post("/api/series/:id/works/:bookId/acquisition/choose", async (req) => {
+    requireAdmin(req);
+    const { id, bookId } = workParams.parse(req.params);
+    const body = z
+      .object({ key: z.string().min(1).max(400).optional(), source: z.enum(["abb", "prowlarr"]).optional(), id: z.string().min(1).max(300).optional() })
+      .refine((value) => !!value.key || (!!value.source && !!value.id), "Name the release by its key, or by its source and id.")
+      .parse(req.body ?? {});
+    return chooseSeriesCandidate(currentUserId(req), id, bookId, body);
+  });
+  app.post("/api/series/:id/queue/stop", async (req) => {
+    requireAdmin(req);
+    return stopSeriesSearches(currentUserId(req), params.parse(req.params).id);
+  });
+  app.post("/api/series/:id/queue/resume", async (req) => {
+    requireAdmin(req);
+    return resumeSeriesSearches(currentUserId(req), params.parse(req.params).id);
   });
   app.post("/api/series/:id/ack", async (req) => {
     const { id } = params.parse(req.params);

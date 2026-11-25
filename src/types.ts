@@ -55,7 +55,7 @@ export type Book = {
   sourceLabel: string;
   mediaState?: {
     state: "missing" | "queued" | "failed" | "available";
-    holdReason?: "unreleased" | "empty_search" | null;
+    holdReason?: "unreleased" | "empty_search" | "another_language" | null;
     acquisitionId?: string | null;
   } | null;
 };
@@ -251,7 +251,7 @@ export type MetadataApplied = {
 };
 export type WorkMediaState = {
   state: "missing" | "queued" | "failed" | "available";
-  holdReason: "unreleased" | "empty_search" | null;
+  holdReason: "unreleased" | "empty_search" | "another_language" | null;
   /**
    * The acquisition behind a queued or failed state. Its status, progress and error are shown to
    * the administrator only, as `/api/acquisitions` is; for anyone else they are null.
@@ -314,6 +314,12 @@ export type Settings = {
   name: string;
   authenticated?: boolean;
   libgenUrl: string;
+  /** Anna’s Archive and Z-Library (#901): their addresses, and whether a key or an account is saved. Absent from an older server. */
+  annasUrl?: string;
+  annasConfigured?: boolean;
+  zlibUrl?: string;
+  zlibConfigured?: boolean;
+  zlibSaved?: { email: boolean; password: boolean; token: boolean };
   localConfigured: boolean;
   storageLabel: string;
   prowlarrUrl?: string;
@@ -378,8 +384,14 @@ export type ReleaseSourceStatus = {
   error?: string;
 };
 export type EbookResult = {
+  /** The file's md5 on Library Genesis; for another source a 32-hex key of the edition there. */
   md5: string;
-  source: "libgen";
+  /** Where it is listed (#901); an older server answers Library Genesis's without it. */
+  source: "libgen" | "annas" | "zlib" | "libgenrs" | "prowlarr" | "standardebooks" | "gutenberg";
+  /** A Prowlarr release's indexer and seeders, and whether TorBox has it cached. */
+  indexer?: string;
+  seeders?: number | null;
+  cached?: boolean;
   title: string;
   authors: string[];
   extension: "epub" | "pdf";
@@ -415,7 +427,18 @@ export type SeriesWorkAcquisition = {
     | "has_audio"
     | "has_ebook"
     | "no_permission"
+    /** The owner's Skip, and Stop searching for the series (#898). */
+    | "owner"
+    | "stopped"
     | null;
+  /** A waiting search's place in the series queue (1 is the search running now), #898; absent from an older server. */
+  place?: number | null;
+  /** A waiting search the queue put back by itself, after its source could not be reached. */
+  retrying?: boolean;
+  /** How many releases the audio search found; null before it kept any. */
+  found?: number | null;
+  /** The audio search picked one and asked for its download. */
+  chosen?: boolean;
 };
 
 export type TorrentHealth = {
@@ -499,7 +522,8 @@ export type ActivityItem = {
  */
 export type ActivityFacts =
   /** A download: where it is fetched (`local`, `torbox`, `copy`; null when the row has none). */
-  | { kind: "acquisition"; status: string; backend: string | null }
+  /** `file` is "ebook" for a torrent fetched for its EPUB or PDF (#901); absent for an audiobook. */
+  | { kind: "acquisition"; status: string; backend: string | null; file?: "ebook" }
   | { kind: "server-copy"; status: string }
   /** A series search for the audiobook or for the ebook of a work. */
   | {
@@ -523,6 +547,11 @@ export type ActivityFacts =
        * `running`, `done`, `unsure`, `failed`); the error is the reason. An older client reads it as a series search.
        */
       metadataMatch?: true;
+      /** The saved series and its book the search is for (#898): the row opens the Series page at the book. */
+      seriesId?: string;
+      seriesBookId?: string;
+      /** The owner's Skip or Stop searching on the Series page (#898); absent for the queue's own outcomes. */
+      outcome?: "skipped" | "stopped";
     }
   | {
       kind: "alignment";

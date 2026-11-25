@@ -67,7 +67,8 @@ test("series save opt-ins, ebook failure, and retry show specific progress", asy
   }).toBe("failed");
 
   await page.reload();
-  await expect(companion.getByRole("button", { name: /^Crossing Companion Series search failed$/ })).toBeVisible();
+  // The failed search names itself and its reason (#898): the ebook's, or the audiobook's when that failed too.
+  await expect(companion.getByRole("button", { name: /^Crossing Companion (Ebook search failed · fixture ebook fail|Audiobook search failed( · .+)?)$/ })).toBeVisible();
   await companion.getByRole("button", { name: "Retry Crossing Companion", exact: true }).click();
   await expect.poll(async () => {
     const view = await (
@@ -82,7 +83,7 @@ test("series save opt-ins, ebook failure, and retry show specific progress", asy
   if (audioFailed) await expect(companion.getByRole("button", { name: "Retry Crossing Companion", exact: true })).toBeVisible();
   else {
     await expect(companion.getByRole("button", { name: "Retry Crossing Companion", exact: true })).toHaveCount(0);
-    await expect(companion.getByRole("button", { name: /^Crossing Companion / })).not.toHaveAccessibleName(/Series search failed/);
+    await expect(companion.getByRole("button", { name: /^Crossing Companion / })).not.toHaveAccessibleName(/search failed/);
   }
   const added = (await crossing()).works.filter(
     (work) => work.added && !addedBefore.includes(work.id) && !before.has(work.title),

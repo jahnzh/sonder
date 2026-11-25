@@ -495,8 +495,7 @@ export function ReaderView({
   const [spreadWidth, setSpreadWidth] = useState<number | null>(null);
   useLayoutEffect(() => {
     const area = pageArea.current;
-    // The new view is one column in scroll mode whatever the saved reading mode is (pages mode is step 4 of #799).
-    if (!desktop || !area || prepared) {
+    if (!desktop || !area) {
       setSpreadWidth(null);
       return;
     }
@@ -626,8 +625,9 @@ export function ReaderView({
     setLocator(next);
   };
   const preparedLink = useRef<(target: PreparedTarget) => void>(() => {});
-  // The new view's loading failures, in the reader's words: without a connection the book cannot be read in this
-  // view yet (Keep on this device is step 6 of #799); anything else is a part or the book that could not be loaded.
+  // The new view's loading failures, in the reader's words: without a connection a book that is not kept on this
+  // device cannot be read in this view (a kept one reads its kept text, #805); anything else is a part or the book
+  // that could not be loaded.
   const loadError = (error: unknown): ReaderError =>
     !navigator.onLine || error instanceof TypeError ? "book-offline" : engine.current?.firstInView() ? "text-load" : "book-load";
   const staleReloads = useRef(0);
@@ -668,7 +668,7 @@ export function ReaderView({
       // The band changed (Appearance docked or closed): the narrated sentence is brought into it again, as today's
       // reader follows it again after sizing its view.
       onBandResized: () => redrawHighlight(),
-    });
+    }, { mode: preferences.mode === "scroll" ? "scroll" : "pages", spread: !!spreadWidth });
     engine.current = view;
     // A place chosen on the rail (a drag, a click, a key) is the reader's own choice, as a page turn by hand is
     // (`turn`): it replaces a follow jump in flight, pages away from the narration and is saved, also in the moment
@@ -688,6 +688,15 @@ export function ReaderView({
         const ended = chosen();
         seam.turn(direction);
         ended();
+      },
+      // In pages mode a wheel over the rail that turns the page is a turn by hand (`turning` comes just before it,
+      // and not for a wheel that turns nothing); in scroll mode it scrolls, as a scroll by hand.
+      wheel(event) {
+        let ended: (() => void) | null = null;
+        seam.wheel(event, () => {
+          ended = chosen();
+        });
+        (ended as (() => void) | null)?.();
       },
     };
     const textRail = createTextRail(railSeam, { segments: railSegments(source.manifest, source.index), sentences: source.index.total, scope: railScope.current, onHeld: setRailHeld });
@@ -728,6 +737,13 @@ export function ReaderView({
       if (engine.current === view) engine.current = null;
     };
   }, [id, prepared, source, openAttempt]);
+  // The reading mode and the two-page spread reach the new view as its layout; the sentence at the top stays there.
+  useEffect(() => {
+    const view = engine.current;
+    if (!prepared || !view) return;
+    const settled = following.beginOwnDisplay();
+    void view.relayout({ mode: preferences.mode === "scroll" ? "scroll" : "pages", spread: !!spreadWidth }).finally(settled);
+  }, [prepared, preferences.mode, !!spreadWidth, rendered]);
   useEffect(() => {
     if (prepared || !book || !viewport.current) return;
     let disposed = false;
@@ -1333,6 +1349,12 @@ export function ReaderView({
         if (pagedSentence.current === paged && jump.current()) setFollowRevision((value) => value + 1);
       });
   };
+  // The new view's page turn inside the narrated sentence (#803): the same rule (`pageToShow`) on the words as the
+  // view measures them in its columns. The view measures anew each time, so there is nothing to keep or renew.
+  const turnInsidePrepared = (interval: AlignmentInterval) => {
+    const player = playerRef.current;
+    engine.current?.showNarratedPage(interval.paragraphId, (words) => pageToShow(words, interval.start, interval.end, positionIn(interval, player.track?.id, player.position))?.page ?? null);
+  };
   // The new view's jump to a sentence (#802): the same steps as today's below, on the prepared text. The narrated
   // sentence stays where it is while it is in view; any other place is shown at the top of the band.
   const showPrepared = async (paragraphId: string, persist: boolean, recordingId: string | undefined) => {
@@ -1357,6 +1379,10 @@ export function ReaderView({
     if (persist) await saveReading(id, place, "listening", recordingId);
     view.highlight(paragraphId);
     highlight.current = paragraphId;
+    // A narrated sentence that crosses a page is shown on the page of the word being narrated.
+    const now = playerRef.current;
+    const interval = narrated ? following.highlightedSentence(mapRef.current, placeOf(now.book, now.track?.id, now.position)) : null;
+    if (interval?.paragraphId === paragraphId) turnInsidePrepared(interval);
     return true;
   };
   const clearHighlight = () => {
@@ -1572,7 +1598,8 @@ export function ReaderView({
       });
     } else if (interval) {
       // The same narrated sentence: in pages mode the page turns inside it once the narration reaches a word on the next page.
-      turnInside(key);
+      if (prepared) turnInsidePrepared(interval);
+      else turnInside(key);
     } else if (!interval && highlight.current && (rendition.current || engine.current)) {
       // Before the map's first sentence there is no narrated sentence (a jump back before it).
       clearHighlight();
@@ -1926,6 +1953,11 @@ export function ReaderView({
       "--prepared-measure": preferences.width === 720 ? "34em" : `${preferences.width}px`,
     } as CSSProperties;
   }, [prepared, themeKey]);
+  // In pages mode the text's box keeps its size when its look changes, so the view is told: it shows the page that
+  // holds the reader's place in the columns as they are now.
+  useEffect(() => {
+    engine.current?.restyled();
+  }, [preparedStyle]);
   // The message in the foot (#591): a place saved elsewhere, an error, a notice with Undo, an update while paused.
   const update = useReaderUpdate(viewport);
   const message = messageToShow(messages.state, {
@@ -2005,7 +2037,8 @@ export function ReaderView({
           </div>
         )}
         {/* On a desktop the head names the book and the chapter after the face control (#595). */}
-        {desktop && <span className="reader-topbar-place type-caption">{headRestLine(book?.title, currentSection?.title || barChapter)}</span>}
+        {/* While the rail's thumb is held, its chapter and percent: the desktop's footer has no line for them. */}
+        {desktop && <span className="reader-topbar-place type-caption">{railHeld ? readoutLine(railHeld) : headRestLine(book?.title, currentSection?.title || barChapter)}</span>}
         {desktop && (
           <button
             className="icon-button"
@@ -2062,7 +2095,7 @@ export function ReaderView({
             ref={viewport}
             data-spread={spreadWidth ? "two" : undefined}
             data-view={prepared ? "prepared" : undefined}
-            style={prepared ? preparedStyle : spreadWidth ? ({ "--reader-spread": `${spreadWidth}px` } as CSSProperties) : undefined}
+            style={prepared ? (spreadWidth ? ({ ...preparedStyle, "--reader-spread": `${spreadWidth}px` } as CSSProperties) : preparedStyle) : spreadWidth ? ({ "--reader-spread": `${spreadWidth}px` } as CSSProperties) : undefined}
             aria-label="Ebook pages"
           />
           {footSetting && <TextCatcher key={footSetting} viewport={viewport} onClose={() => setFootSetting(null)} />}

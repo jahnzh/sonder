@@ -7,6 +7,8 @@
 // cached for good.
 import type { PreparedManifest } from "../server/prepared-text";
 import { ApiError, api } from "./lib";
+import { partAddress, preparedBase } from "./keep-text";
+import { keptManifest, keptPart, keptTextKey, noticePreparedAnswer } from "./keep-text-store";
 
 export type { PreparedManifest };
 
@@ -20,6 +22,15 @@ export const MANIFEST_FRESH_MS = 5 * 60_000;
 export const LOAD_ATTEMPTS = 3;
 /** The waits before the second and the third attempt. */
 export const LOAD_WAITS_MS = [1000, 3000];
+/**
+ * The waits in use: a browser test may set shorter ones (`window.__sonderLoadWaits`) so as not to sit through them.
+ * It changes the waits only and must never change how often something is asked (`LOAD_ATTEMPTS`): a page that could
+ * raise that would turn one failed answer into a stream of requests.
+ */
+const loadWaits = (): readonly number[] => {
+  const set = (globalThis as { __sonderLoadWaits?: unknown }).__sonderLoadWaits;
+  return Array.isArray(set) && set.length && set.every((value) => typeof value === "number" && value >= 0) ? (set as number[]) : LOAD_WAITS_MS;
+};
 /** A server that asks for a longer wait than this (`Retry-After`) is not asked again by itself. */
 export const LOAD_RETRY_AFTER_LIMIT_MS = 10_000;
 /** The resolved parts whose text is kept in memory; a part read longer ago is asked of the browser's cache again. */
@@ -39,7 +50,8 @@ export async function patiently<T>(ask: () => Promise<T>, wait: (ms: number) => 
       const status = error instanceof ApiError ? error.status : undefined;
       const asked = error instanceof ApiError && error.retryAfter ? error.retryAfter * 1000 : 0;
       if (status === 429 ? !asked || asked > LOAD_RETRY_AFTER_LIMIT_MS : status !== undefined && status < 500 && status !== 408) throw error;
-      await wait(Math.max(asked, LOAD_WAITS_MS[attempt - 1] ?? LOAD_WAITS_MS.at(-1)!));
+      const waits = loadWaits();
+      await wait(Math.max(asked, waits[attempt - 1] ?? waits.at(-1)!));
     }
   }
 }
@@ -169,15 +181,43 @@ export function reportRefused(id: string, key: string, part: number, refused: re
   void api(`/reader/${encodeURIComponent(id)}/prepared-refused`, { method: "POST", body: JSON.stringify({ key, part, refused }), keepalive: true }).catch(() => {});
 }
 
+/**
+ * The manifest: the server's, or this device's kept one (#805, Keep on this device) when the server does not answer.
+ * Without a connection a kept book does not wait for the attempts. An answer of another output than the kept one
+ * marks the kept text stale, so Keep saves the new one.
+ */
+async function loadManifest(id: string): Promise<PreparedManifest> {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    const kept = await keptManifest(id).catch(() => null);
+    if (kept) return kept;
+  }
+  try {
+    const manifest = await patiently(() => api<PreparedManifest>(`/reader/${encodeURIComponent(id)}/prepared`));
+    void noticePreparedAnswer(id, manifest).catch(() => {});
+    return manifest;
+  } catch (error) {
+    const kept = await keptManifest(id).catch(() => null);
+    if (kept) return kept;
+    throw error;
+  }
+}
+
 async function load(id: string): Promise<PreparedBook> {
-  const manifest = await patiently(() => api<PreparedManifest>(`/reader/${encodeURIComponent(id)}/prepared`));
-  const base = `/api/reader/${encodeURIComponent(id)}/prepared/${manifest.key}`;
+  const manifest = await loadManifest(id);
+  // The addresses Keep stores the parts under (`keep-text.ts`), so a kept part is found by the address read.
+  const base = preparedBase(id, manifest.key);
+  // This output is kept on this device (#805): its parts are read from there.
+  const kept = (await keptTextKey(id).catch(() => null)) === manifest.key;
   const parts = new Map<number, Promise<string>>();
   const failed = new Set<number>();
   /** The parts that arrived, oldest first. */
-  const kept: number[] = [];
+  const arrived: number[] = [];
   const one = async (index: number) => {
-    const response = await fetch(`${base}/parts/${index}`);
+    const address = partAddress(base, index);
+    // A kept book's part is on this device (#805): its address names the output, so the kept copy is the server's.
+    const copy = kept ? await keptPart(address).catch(() => null) : null;
+    if (copy !== null) return copy;
+    const response = await fetch(address);
     if (response.ok) return response.text();
     const answer = (await response.json().catch(() => ({}))) as { error?: string; code?: string };
     if (response.status === 404 && answer.code === "prepared_stale") {
@@ -198,9 +238,9 @@ async function load(id: string): Promise<PreparedBook> {
         parts.set(index, part);
         part.then(
           () => {
-            kept.push(index);
+            arrived.push(index);
             // The text of parts read long ago is let go: the browser's own cache answers for them again.
-            while (kept.length > PARTS_KEPT) parts.delete(kept.shift()!);
+            while (arrived.length > PARTS_KEPT) parts.delete(arrived.shift()!);
           },
           () => failed.add(index),
         );
@@ -226,4 +266,15 @@ export function preparedBook(id: string, now = Date.now()): Promise<PreparedBook
   books.set(id, entry);
   book.catch(() => books.get(id) === entry && books.delete(id));
   return book;
+}
+
+/**
+ * How far into the whole book a sentence is, 0 to 1, from the manifest alone: the characters of the parts before
+ * the sentence's part, plus its share of its own part by its place among that part's sentences.
+ */
+export function positionInBook(manifest: PreparedBook["manifest"], index: PreparedBook["index"], id: string): number {
+  const part = manifest.parts[index.partOf(id)];
+  if (!part || manifest.chars <= 0) return 0;
+  const within = part.sentences > 1 ? (index.ordinalOf(id) - part.ordinal) / part.sentences : 0;
+  return Math.min(1, Math.max(0, (part.charStart + within * part.chars) / manifest.chars));
 }

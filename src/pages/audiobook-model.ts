@@ -2,7 +2,7 @@
 // functions of what the page knows: the work's recordings, the chosen one's sources, its copies on this device and its
 // fault marks. No React, no `window`, no fetch, so the unit tests read them as plain data. The server imports nothing
 // from here.
-import { downloadLine, serverCopyLine } from "../status-lines";
+import { ANOTHER_LANGUAGE_LINE, downloadLine, serverCopyLine } from "../status-lines";
 import { bytes } from "../size-format";
 import type { Download, MediaFault, PlaybackSourceChoice, RecordingSources, Track, WorkRecording } from "../types";
 
@@ -41,8 +41,11 @@ export function recordingPlace(recording: { serverStored: boolean; tracks: Pick<
 }
 
 /** The Audiobook row's line: the recording's narrator, length and where it stands ("[NARRATOR] · 9 h 12 min · On server"). */
-export function audiobookRowLine(recording: Pick<WorkRecording, "narrator" | "duration" | "serverStored"> & { tracks: Pick<Track, "sourceType">[] }): string {
-  return [recordingName(recording), lengthLine(recording.duration), recordingPlace(recording)].filter(Boolean).join(DOT);
+export function audiobookRowLine(
+  recording: Pick<WorkRecording, "narrator" | "duration" | "serverStored"> & { tracks: Pick<Track, "sourceType">[] },
+  anotherLanguage = false,
+): string {
+  return [recordingName(recording), lengthLine(recording.duration), recordingPlace(recording), anotherLanguage ? ANOTHER_LANGUAGE_LINE : null].filter(Boolean).join(DOT);
 }
 
 export type CopyScope = "device" | "server" | "original";
@@ -169,8 +172,16 @@ export function reportScopes(facts: { deviceFiles: number; serverFiles: number; 
 
 /** The recordings in the order the page lists them: the work's own order (the one added first first). */
 export type RecordingChoice = { value: string; label: string; detail: string };
-export function recordingChoices(recordings: WorkRecording[]): RecordingChoice[] {
-  return recordings.map((recording) => ({ value: recording.recordingId, label: recordingName(recording), detail: recordingDetail(recording) }));
+export function recordingChoices(recordings: WorkRecording[], anotherLanguageId: string | null = null): RecordingChoice[] {
+  return recordings.map((recording) => {
+    const detail = recordingDetail(recording);
+    // The work is held "another language" (#897): the chosen recording says it, so a copy in another language is not an ordinary download.
+    return {
+      value: recording.recordingId,
+      label: recordingName(recording),
+      detail: recording.recordingId === anotherLanguageId ? [detail, ANOTHER_LANGUAGE_LINE].filter(Boolean).join(DOT) : detail,
+    };
+  });
 }
 
 /** The stand-in a removal confirmation states: what stays. */

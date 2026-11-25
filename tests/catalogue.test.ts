@@ -341,7 +341,7 @@ test("the match page: search both providers, pick a book and a release, unlink; 
   assert.equal(page.link.matchedBy, "manual");
   // Picked by hand, the other entry of the same work is gathered with it (#754): both entries' releases are listed.
   assert.deepEqual(page.releases.map((entry: { id: string; bookId: string }) => [entry.id, entry.bookId]), [["rl-dune-b", "bk-dune-b"], ["rl-dune-a", "bk-dune-a"]]);
-  assert.deepEqual(page.link.duplicates, [{ id: "bk-dune-a", title: "Dune", releases: 1 }]);
+  assert.deepEqual(page.link.duplicates, [{ id: "bk-dune-a", title: "Dune", releases: 1, url: "https://audiobookdb.org/books/bk-dune-a" }]);
   // The length agrees within a minute: linked at once.
   assert.equal(page.recordings[0].release.releaseId, "rl-dune-b");
   const unlinked = await call(admin, "DELETE", "/api/recordings/rec-w-dune/release");
@@ -495,8 +495,8 @@ test("the batch matches the three titles and Meditations: every entry of a work 
   const page = (await call(admin, "GET", "/api/works/w-meditations/catalogue")).json();
   assert.equal(page.link.id, "hTJnVwadQJUM");
   assert.deepEqual(page.link.duplicates, [
-    { id: "4DqnhVBTt3iG", title: "Marcus Aurelius - Meditations", releases: 1 },
-    { id: "M8WaKdjCh86T", title: "Marcus Aurelius – Meditations", releases: 1 },
+    { id: "4DqnhVBTt3iG", title: "Marcus Aurelius - Meditations", releases: 1, url: "https://audiobookdb.org/books/4DqnhVBTt3iG" },
+    { id: "M8WaKdjCh86T", title: "Marcus Aurelius – Meditations", releases: 1, url: "https://audiobookdb.org/books/M8WaKdjCh86T" },
   ]);
   assert.deepEqual(page.releases.map((release: { id: string }) => release.id), [...Array.from({ length: 8 }, (_, i) => `rl-med-h${i + 1}`), "rl-med-4d", "rl-med-m8"]);
   assert.ok(!page.releases.some((release: { id: string }) => release.id === "rl-classics"));

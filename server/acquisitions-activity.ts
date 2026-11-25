@@ -160,6 +160,8 @@ export type AcquisitionRow = {
    * SQLite answers. A stuck download of it is then `superseded`.
    */
   has_copy?: number | null;
+  /** "ebook" for a torrent fetched for its EPUB or PDF (#901); null for an audiobook. */
+  kind?: string | null;
 };
 
 export const TORRENT_CLIENT = { id: "torrent-client", label: "Torrent client" };
@@ -213,7 +215,7 @@ export const acquisitionSource = defineSource<AcquisitionRow[], AcquisitionProbe
     withWorks(
       sqlite, userId,
       sqlite.prepare(
-        `SELECT a.id, a.hash, a.title, a.author, a.backend, a.status, a.progress, a.error, a.cover, a.created_at, a.updated_at,
+        `SELECT a.id, a.hash, a.title, a.author, a.backend, a.status, a.progress, a.error, a.cover, a.created_at, a.updated_at, a.kind,
                 w.id AS work_id, ${HAS_OTHER_COPY_SQL} AS has_copy
            FROM acquisitions a LEFT JOIN audio_editions e ON e.id = a.book_id
            LEFT JOIN works w ON w.id = COALESCE(a.work_id, e.work_id)`,
@@ -246,14 +248,14 @@ export const acquisitionSource = defineSource<AcquisitionRow[], AcquisitionProbe
         id, kind: "acquisition" as const, processId: "acquisitions", title: row.title, detail: row.author || null, user: null,
         state, progress: clamp01(row.progress), host: row.backend || null, startedAt: row.created_at, updatedAt: row.updated_at,
         ...book, cover: book.cover || cover,
-        facts: { kind: "acquisition" as const, status: row.status, backend: row.backend || null },
+        facts: { kind: "acquisition" as const, status: row.status, backend: row.backend || null, ...(row.kind === "ebook" ? { file: "ebook" as const } : {}) },
         error: unknown ?? (row.error || null),
         changedAt: state === "running" ? tracker.observe(id, `${row.status}|${row.progress}`, now) : row.updated_at,
         dependsOn: usesLocalTorrentClient(row.backend || null) ? TORRENT_CLIENT.id : null,
         actions: offeredActions(ACQUISITION_ACTIONS, row.status),
         ...stuckFields(row, probe.value?.torrents ?? null),
         // A download still fetching a book that already has a copy (#716): once stuck, not a problem of the book.
-        ...(state === "running" && row.has_copy ? { superseded: true } : {}),
+        ...(state === "running" && row.has_copy && row.kind !== "ebook" ? { superseded: true } : {}),
       };
     });
     return { drafts, services: [{ ...TORRENT_CLIENT, ...torrentProcessHealth(probe.value?.health ?? null, probe.failure) }] };

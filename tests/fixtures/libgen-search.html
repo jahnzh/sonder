@@ -1,0 +1,1045 @@
+﻿<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+	<META HTTP-EQUIV="CACHE-CONTROL" CONTENT="max-age=604800, must-revalidate">
+	<meta name="rating" content="general">
+	<!--<link href="/rss/index.php" rel="alternate" type="application/rss+xml" title="News" />-->
+	<link rel="shortcut icon" href="/img/favicon.ico" type="image/x-icon">
+	<title>Library Genesis</title>
+		
+	<!--[if IE 6]>
+	<style>
+		body {behavior: url("/csshover3.htc");}
+		#menu li .drop {background:url("img/drop.gif") no-repeat right 8px; 
+	</style>
+	<![endif]-->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.5.3/dist/css/bootstrap.min.css">	
+	
+<link href="/css/font.min.css" rel="stylesheet">	
+<style>
+nav.navbar .dropdown:hover > .dropdown-menu {
+ display: block; 
+}
+.bd-placeholder-img {
+	font-size: 1.125rem;
+	text-anchor: middle;
+	-webkit-user-select: none;
+	-moz-user-select: none;
+	-ms-user-select: none;
+	user-select: none;
+}
+@media (min-width: 768px) {
+			.bd-placeholder-img-lg {
+			font-size: 3.5rem;
+		}
+	}
+
+.panel-heading .accordion-toggle:after {
+    font-family: "Glyphicons Halflings";  
+    content: "\e114";    
+    float: right;       
+    color: grey;         
+}
+.panel-heading .accordion-toggle.collapsed:after {
+    content: "\e080";   
+}
+.tooltip-inner {
+    max-width: 350px;
+    width: 350px; 
+}
+h1 {
+	display: block; 
+	font-size: 1.8rem; 
+	font-weight: bold; 
+	font-family: Georgia, "Times New Roman", Times, serif;  color: #A00000; 
+}
+#tablelibgen td { 
+	font-family: "Pt Sans", Tahoma, Helvetica, sans-serif; 
+	margin: 0; 
+	padding: 0em 3px; 
+	font-size: 1rem;
+}
+
+#tablelibgen1 td { 
+	font-family: "Pt Sans", Tahoma, Helvetica, sans-serif; 
+	margin: 0; 
+	padding: 0em 3px; 
+	font-size: 1rem;
+}
+
+.taghide {
+    display: none; 
+}
+.taghide + label ~ div {
+    display: none;
+}
+/* оформляем текст label */
+.taghide + label {
+    display: inline-block; 
+}
+/* вид текста label при активном переключателе */
+
+/* когда чекбокс активен показываем блоки с содержанием  */
+.taghide:checked + label + div {
+    display: block; 
+}
+
+
+
+/*.navbar {
+	background-color: #BBBBBB;
+}*/
+	</style>
+
+	<link rel="stylesheet" href="/css/dark-mode.css">
+	<script src="https://code.jquery.com/jquery-3.6.0.min.js" integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=" crossorigin="anonymous"></script>
+<link rel="stylesheet" type="text/css" href="../css/paginator3000.css" />
+<script type="text/javascript" src="../js/paginator3000.js"></script><script data-cfasync="false" async type="text/javascript" src="//je.deuxseethe.com/rUJqARoMIAl18z/146156"></script>
+
+
+
+
+</head>
+<body>    
+<nav class="navbar navbar-expand-md navbar-dark bg-secondary  mb-1">
+  
+   <a class="navbar-brand" href="/index.php">
+    <img src="/img/logo.png"  height="30" alt="">
+  </a>
+  <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation">
+    <span class="navbar-toggler-icon"></span>
+  </button>
+  <div class="collapse navbar-collapse" id="navbarCollapse">
+    <ul class="navbar-nav mr-auto">
+      <li class="nav-item active">
+        <a class="nav-link" href="/community/app.php/article/news">NEWS <span class="sr-only">(current)</span></a>
+      </li>
+      <li class="nav-item active">
+        <a class="nav-link" href="/community/">FORUM <span class="sr-only">(current)</span></a>
+      </li>
+	
+      <li class="nav-item dropdown">
+<a class="btn btn-secondary dropdown-toggle" href="/community/ucp.php?mode=login" role="button" id="dropdownMenuLink"  aria-haspopup="true" aria-expanded="false">
+          LOGIN
+        </a>
+        <div class="dropdown-menu" aria-labelledby="dropdown01">    
+          <a class="dropdown-item" href="/community/ucp.php?mode=register">Register</a>
+        </div>
+      </li>
+      <li class="nav-item dropdown">
+        <a class="btn btn-secondary dropdown-toggle" href="#" role="button" id="dropdownMenuLink"  aria-haspopup="true" aria-expanded="false">
+          DOWNLOAD
+        </a>
+        <div class="dropdown-menu" aria-labelledby="dropdown01">      
+
+          <a class="dropdown-item" href="/mirrors.php">Mirrors</a>
+          <a class="dropdown-item" href="http://libgenfrialc7tguyjywa36vtrdcplwpxaw43h6o63dmmwhvavo5rqqd.onion/">TOR</a>
+
+	<div class="dropdown-divider"></div>
+         <h6 class="dropdown-header">P2P</h6>
+          <a class="dropdown-item" href="/torrents/">Torrents</a>
+          <a class="dropdown-item" href="https://ipdl.cat/data/torrents.html">Torrents status</a>
+          <a class="dropdown-item" href="/nzb/">Usenet (*.nzb)</a>
+          <a class="dropdown-item" href="/soft/">Soft</a>
+	<!--https://phillm.net/libgen-stats-table.php-->
+
+
+
+
+	<div class="dropdown-divider"></div>
+         <h6 class="dropdown-header">DB Dumps</h6>
+          <a class="dropdown-item" href="/dirlist.php?dir=dbdumps">Libgen</a>
+          <a class="dropdown-item" href="http://libgen.rs/dbdumps/">libgen.rs (gen.lib.rus.ec)</a>
+
+	<!--<div class="dropdown-divider"></div>
+ 	 <a class="dropdown-item" href="/magz0/">Unsorted magz</a>
+ 	 <a class="dropdown-item" href="/fict0/">Unsorted fiction</a>
+
+	 <a class="dropdown-item" href="/comics4/">Unsorted comics</a>
+        </div>-->
+
+      </li>
+
+      <li class="nav-item dropdown">
+        <a class="btn btn-secondary dropdown-toggle" href="librarian.php" role="button" id="dropdownMenuLink"  aria-haspopup="true" aria-expanded="false">
+          UPLOAD
+        </a>
+        <div class="dropdown-menu" aria-labelledby="dropdown01">  
+          <a class="dropdown-item" href="ftp://ftp.libgen.bz/upload/">FTP</a> 
+        </div>
+      </li>
+
+      <li class="nav-item dropdown">
+        <a class="btn btn-secondary dropdown-toggle" href="/index.php?req=fmode:last&topics1=all" role="button" id="dropdownMenuLink"  aria-haspopup="true" aria-expanded="false">
+          LAST
+        </a>
+
+        <div class="dropdown-menu" aria-labelledby="dropdown01">
+	<a class="dropdown-item" href="/index.php?req=fmode:last&topics1=all"><b>Files</b></a>
+
+          <a class="dropdown-item" href="/index.php?req=fmode:last&topics%5B%5D=l">Libgen</a>
+          <a class="dropdown-item" href="/index.php?req=fmode:last&topics%5B%5D=a">Scientific Articles</a> 
+          <a class="dropdown-item" href="/index.php?req=fmode:last&topics%5B%5D=f">Fiction</a> 
+          <a class="dropdown-item" href="/index.php?req=fmode:last&topics%5B%5D=c">Comics</a> 
+          <a class="dropdown-item" href="/index.php?req=fmode:last&topics%5B%5D=m">Magazines</a> 
+          <a class="dropdown-item" href="/index.php?req=fmode:last&topics%5B%5D=s">Standards</a> 
+          <a class="dropdown-item" href="/index.php?req=fmode:last&topics%5B%5D=r">Fiction RUS</a>
+	<div class="dropdown-divider"></div>
+          <a class="dropdown-item" href="/index.php?req=mode:last&curtab=e">Editions</a> 
+          <a class="dropdown-item" href="/index.php?req=mode:last&curtab=s">Series</a>
+          <a class="dropdown-item" href="/index.php?req=mode:last&curtab=p">Publishers</a> 
+        <!--  <a class="dropdown-item" href="/index.php?req=mode:last&curtab=f">Files</a> -->
+          <a class="dropdown-item" href="/index.php?req=mode:last&curtab=a">Authors</a> 
+          <a class="dropdown-item" href="/index.php?req=mode:last&curtab=w">Works</a>
+
+
+  
+        </div>
+
+
+      </li>
+
+      <li class="nav-item dropdown">
+        <a class="btn btn-secondary dropdown-toggle" href="#" role="button" id="dropdownMenuLink"  aria-haspopup="true" aria-expanded="false">
+          OTHERS
+        </a>
+
+        <div class="dropdown-menu" aria-labelledby="dropdown01">  
+          <a class="dropdown-item" href="json.php">API</a> 
+          <a class="dropdown-item" href="rss.php">RSS</a> 
+          <a class="dropdown-item" href="top.php">Top 100 users</a> 
+          <a class="dropdown-item" href="stat.php">Stats</a>
+
+	<a class="dropdown-item" href="topics.php">Topics</a>
+
+          <a class="dropdown-item" href="batchsearchindex.php">Batch search</a>  
+          <a class="dropdown-item" href="biblioservice.php">Bibliographic services</a>
+          <a class="dropdown-item" href="https://wiki.mhut.org/software:libgen_desktop">Libgen librarian for desktop</a>
+
+
+          <a class="dropdown-item" href="/code/">Source (PHP)</a>
+          <a class="dropdown-item" href="/soft/">LG soft</a>
+          <!--<a class="dropdown-item" href="/import/">Import local files in LG format</a>-->
+          <a class="dropdown-item" href="https://z-library.se/fulltext/">Full text search</a>
+
+
+
+        </div>
+      </li>
+
+
+
+     <!-- <li class="nav-item dropdown">
+        <a class="btn btn-secondary dropdown-toggle" href="topics.php" role="button" id="dropdownMenuLink"  aria-haspopup="true" aria-expanded="false">
+          Topics
+        </a>
+      </li>
+-->
+
+      <li class="nav-item dropdown">
+        <a class="btn btn-secondary dropdown-toggle" href="#" role="button" id="dropdownMenuLink"  aria-haspopup="true" aria-expanded="false">
+          LINKS
+        </a>
+
+        <div class="dropdown-menu" aria-labelledby="dropdown01">  
+
+
+          
+          <a class="dropdown-item" href="http://sci-hub.ru">Sci-hub</a> 
+          <a class="dropdown-item" href="http://magzdb.org">Magzdb.org</a>
+
+          <a class="dropdown-item" href="http://nlr.ru/rlin/Periodika_rus.php">РНБ</a>
+          <a class="dropdown-item" href="http://rsl.ru/">РГБ</a>
+          <a class="dropdown-item" href="http://loc.gov/">LOC</a>
+          <a class="dropdown-item" href="https://comicvine.gamespot.com/">ComicVine</a>
+          <a class="dropdown-item" href="http://cyberleninka.ru/">Cyberleninka</a>
+          <a class="dropdown-item" href="http://lib.rus.ec/">Lib.rus.ec</a>
+          <a class="dropdown-item" href="http://flibusta.is/">Flibusta.is</a>
+          <a class="dropdown-item" href="http://goodreads.com/">Goodreads.com</a>
+          <a class="dropdown-item" href="http://worldcat.org/">Worldcat.org</a>
+          <a class="dropdown-item" href="https://wiki.archiveteam.org/">Archive team</a>
+          <a class="dropdown-item" href="https://www.reddit.com/r/libgen/">Reddit</a>
+          <a class="dropdown-item" href="http://annas-archive.org/">Anna's Archive</a>
+          <a class="dropdown-item" href="https://welib.org/">Welib</a>
+          <a class="dropdown-item" href="https://open-slum.org/">The Shadow Library Uptime Monitor</a>
+
+        </div>
+
+      </li>
+
+
+      <li class="nav-item dropdown">
+        <a class="btn btn-secondary" href="index.php?req=mode:req&curtab=e" role="button" id="dropdownMenuLink"  aria-haspopup="true" aria-expanded="false">
+          WANTED
+        </a>
+      </li>
+
+    </ul>
+  </div>
+
+  <div class="nav-link">
+
+    <div class="custom-control custom-switch">
+      <input type="checkbox" class="custom-control-input" id="darkSwitch">
+      <label class="custom-control-label" for="darkSwitch">🌓</label>
+    </div>
+    <script src="/js/dark-mode-switch.js"></script>
+  </div>
+   <a class="navbar-brand" href="setlang.php?req=dungeon+crawler+carl&columns%5B%5D=t&columns%5B%5D=a&objects%5B%5D=f&topics%5B%5D=l&topics%5B%5D=f&res=50&filesuns=all&lang=ru">RU</a>
+</nav>
+<form class="card p-2 needs-validation" novalidate id="formlibgen" action="index.php" enctype="multipart/form-data" METHOD="GET">
+<div class="input-group mb-3" >
+	<input autofocus type="text" class="form-control" placeholder="Input value" name="req" aria-label="input text" aria-describedby="button-addon2" value="dungeon crawler carl" required>
+	<div class="input-group-append">
+	<button class="btn btn-outline-secondary"  id="button-addon2" type="submit">&nbsp;&nbsp;&nbsp;&nbsp;&#128269;&nbsp;&nbsp;&nbsp;&nbsp;</button>
+	</div>
+
+	<div class="invalid-feedback">Input value</div>
+</div>
+
+<div class="container-fluid">
+	<div class="row">
+		<div class="col-8">	
+			<div class="d-block" id="topic">
+				<strong>Search in fields:</strong>
+				<input type="checkbox" checked class="column-input" id="colt" name="columns[]" value="t">
+				<label class="column-label" for="coltitle">Title</label>
+				<input type="checkbox" checked class="column-input" id="cola" name="columns[]" value="a">
+				<label class="column-label" for="colauthor">Author(s)</label>
+				<input type="checkbox"  class="column-input" id="cols" name="columns[]" value="s">
+				<label class="column-label" for="colseries">Series</label>
+				<input type="checkbox"  class="column-input" id="coly" name="columns[]" value="y">
+				<label class="column-label" for="colyear">Year</label>
+				<input type="checkbox"  class="column-input" id="colp" name="columns[]" value="p">
+				<label class="column-label" for="colpublisher">Publisher</label>
+				<input type="checkbox"  class="column-input" id="coli" name="columns[]" value="i">
+				<label class="column-label" for="colisbn">ISBN</label>
+	  		</div>
+	
+	  		<div class="d-block" id="object">
+				<strong>Search in objects:</strong>
+				<input type="checkbox" checked class="column-input" id="objf" name="objects[]" value="f">
+				<label class="column-label" for="objf">Files</label>
+				<input type="checkbox"  class="column-input" id="obje" name="objects[]" value="e">
+				<label class="column-label" for="obje">Editions</label>
+				<input type="checkbox"  class="column-input" id="objs" name="objects[]" value="s">
+				<label class="column-label" for="objs">Series</label>
+				<input type="checkbox"  class="column-input" id="obja" name="objects[]" value="a">
+				<label class="column-label" for="obja">Authors</label>
+				<input type="checkbox"  class="column-input" id="objp" name="objects[]" value="p">
+				<label class="column-label" for="objp">Publishers</label>
+				<input type="checkbox"  class="column-input" id="objw" name="objects[]" value="w">
+				<label class="column-label" for="objw">Works</label>
+			</div>
+			<div class="d-block" id="column">
+				<strong>Search in topics :</strong>
+				<input type="checkbox" checked class="column-input" id="topl" name="topics[]" value="l" >
+				<label class="column-label" for="topl">Libgen</label>
+				<input type="checkbox"  class="column-input" id="topc" name="topics[]" value="c" >
+				<label class="column-label" for="topc">Comics</label>
+				<input type="checkbox" checked class="column-input" id="topf" name="topics[]" value="f" >
+				<label class="column-label" for="topf">Fiction</label>
+				<input type="checkbox"  class="column-input" id="topa" name="topics[]" value="a" >
+				<label class="column-label" for="topa">Scientific Articles</label>
+				<input type="checkbox"  class="column-input" id="topm" name="topics[]" value="m" >
+				<label class="column-label" for="topm">Magazines</label>
+				<input type="checkbox"  class="column-input" id="topr" name="topics[]" value="r" >
+				<label class="column-label" for="topr">Fiction RUS</label>
+				<input type="checkbox"  class="column-input" id="tops" name="topics[]" value="s" >
+				<label class="column-label" for="tops">Standards</label>
+			</div>
+ 		</div>
+		<div class="col-4">
+
+			<!--<div >
+				<strong>Results per page:</strong>
+
+				<div class="custom-control custom-radio custom-control-inline">
+				<input type="radio" id="res25" name="res" class="custom-control-input" value="25" checked>
+				<label class="custom-control-label" for="res25">25</label>
+				</div>
+				<div class="custom-control custom-radio custom-control-inline">
+				<input type="radio" id="res50" name="res" class="custom-control-input" value="50" >
+				<label class="custom-control-label" for="res50">50</label>
+				</div>
+				<div class="custom-control custom-radio custom-control-inline">
+				<input type="radio" id="res100" name="res" class="custom-control-input" value="100" >
+				<label class="custom-control-label" for="res100">100</label>
+
+				</div>
+ 			</div>
+			-->
+			<div class="d-block">
+				<table><tr><td>
+					<div class="custom-control custom-switch">
+						<input type="checkbox" class="custom-control-input" id="covers" name="covers" >
+						<label class="custom-control-label" for="covers"><strong>Show Covers</strong></label>
+						<script type="text/javascript">
+						$("input[id=covers]").change(function(){
+							if($(this).is(":checked")==false)
+							{
+								document.cookie = "covers=; expires=Thu 01-Jan-70 00:00:01 GMT;";
+							}
+						});				
+						</script>
+					</div>
+					</td><td> 
+					<div class="custom-control custom-switch">
+						<input type="checkbox" class="custom-control-input" id="showch" name="showch" >
+						<label class="custom-control-label" for="showch"><strong>Show chapters</strong></label>
+						<script type="text/javascript">
+						$("input[id=showch]").change(function(){
+							if($(this).is(":checked")==false)
+							{
+								document.cookie = "showch=; expires=Thu 01-Jan-70 00:00:01 GMT;";
+							}
+						});				
+						</script>
+					</div>
+				</td></tr></table>
+
+ 			</div>
+
+			<div class="d-block">
+
+				<div class="custom-control custom-switch">
+					<input type="checkbox" class="custom-control-input" id="gmode" name="gmode" >
+					<label class="custom-control-label" for="gmode" ><strong>Google mode <a href="#" data-toggle="modal" data-target="#googlemodemodal">?</a></strong></label>
+					<script type="text/javascript">
+					$("input[id=gmode]").change(function(){
+						if($(this).is(":checked")==false)
+						{
+							document.cookie = "gmode=; expires=Thu 01-Jan-70 00:00:01 GMT;";
+						}
+					});
+					</script>
+					
+				</div>
+ 			</div>
+
+			<div >
+
+
+				<strong>Seach in files:</strong>
+
+				<div class="custom-control custom-radio custom-control-inline">
+				<input type="radio" id="all" name="filesuns" class="custom-control-input" value="all" checked>
+				<label class="custom-control-label" for="all">All</label>
+				</div>
+				<div class="custom-control custom-radio custom-control-inline">
+				<input type="radio" id="sort" name="filesuns" class="custom-control-input" value="sort" >
+				<label class="custom-control-label" for="sort">Only sorted</label>
+				</div>
+				<div class="custom-control custom-radio custom-control-inline">
+				<input type="radio" id="unsort" name="filesuns" class="custom-control-input" value="unsort" >
+				<label class="custom-control-label" for="unsort">Only uns.</label>
+				</div>
+
+
+
+ 			</div>
+
+ 		</div>
+	</div>
+</div>
+</form><ul class="nav nav-tabs "><li class="nav-item">
+ <a class="nav-link active " href="/index.php?req=dungeon+crawler+carl&columns%5B%5D=t&columns%5B%5D=a&objects%5B%5D=f&topics%5B%5D=l&topics%5B%5D=f&res=50&filesuns=all&curtab=f">Files <span class="badge badge-primary">57</span></a>
+</li><li class="nav-item">
+ <a class="nav-link  " href="/index.php?req=dungeon+crawler+carl&columns%5B%5D=t&columns%5B%5D=a&objects%5B%5D=f&topics%5B%5D=l&topics%5B%5D=f&res=50&filesuns=all&curtab=e">Editions</a>
+</li><li class="nav-item">
+ <a class="nav-link  " href="/index.php?req=dungeon+crawler+carl&columns%5B%5D=t&columns%5B%5D=a&objects%5B%5D=f&topics%5B%5D=l&topics%5B%5D=f&res=50&filesuns=all&curtab=s">Series</a>
+</li><li class="nav-item">
+ <a class="nav-link  " href="/index.php?req=dungeon+crawler+carl&columns%5B%5D=t&columns%5B%5D=a&objects%5B%5D=f&topics%5B%5D=l&topics%5B%5D=f&res=50&filesuns=all&curtab=a">Authors</a>
+</li><li class="nav-item">
+ <a class="nav-link  " href="/index.php?req=dungeon+crawler+carl&columns%5B%5D=t&columns%5B%5D=a&objects%5B%5D=f&topics%5B%5D=l&topics%5B%5D=f&res=50&filesuns=all&curtab=p">Publishers</a>
+</li><li class="nav-item">
+ <a class="nav-link  " href="/index.php?req=dungeon+crawler+carl&columns%5B%5D=t&columns%5B%5D=a&objects%5B%5D=f&topics%5B%5D=l&topics%5B%5D=f&res=50&filesuns=all&curtab=w">Works</a>
+</li><li class="navbar-right" style="float: right !important;"><a class="nav-link" href="/json.php?object=f&ids=115669014,96511057,101160260,115744938,115808681,101160259,115669017,115744943,6516789,96511584,96823609,97529181,101081630,101081631,101081632,101081633,101160258,101160261,102174054,104075589,107257437,115675659,115705926,115744956,115755262,115757096,115912734,116000783,116023330,116147951,116148169,116319285,116454790,116536582,100646818,102535365,6637007,100940078,102536083,116486954,102500410,102535364,102535366,106671344,112107814,112803885,113010396,113742175,115785129,115793339,115911295,116151900,116266617,116266667,116312919,116312928,116317334"><font color="black">JSON</font></a></li> </ul><div style="text-align: center;" class="paginator" id="paginator_example_top"></div><script type="text/javascript">paginator_example_top = new Paginator("paginator_example_top", 3, 25, 1, "/index.php?req=dungeon+crawler+carl&columns%5B%5D=t&columns%5B%5D=a&objects%5B%5D=f&topics%5B%5D=l&topics%5B%5D=f&res=50&filesuns=all&curtab=f&order=&ordermode=desc&filesuns=all&page=" );</script><table class="table  table-striped" id="tablelibgen"><thead><tr>
+
+<th scope="col" class="first_col"><nobr>
+ID <a href="/index.php?req=dungeon+crawler+carl&columns%5B%5D=t&columns%5B%5D=a&objects%5B%5D=f&topics%5B%5D=l&topics%5B%5D=f&res=50&filesuns=all&curtab=f&order=f_id&ordermode=asc">&#8597</a> 
+Time add. <a href="/index.php?req=dungeon+crawler+carl&columns%5B%5D=t&columns%5B%5D=a&objects%5B%5D=f&topics%5B%5D=l&topics%5B%5D=f&res=50&filesuns=all&curtab=f&order=time_added&ordermode=asc">&#8597</a> 
+Title <a href="/index.php?req=dungeon+crawler+carl&columns%5B%5D=t&columns%5B%5D=a&objects%5B%5D=f&topics%5B%5D=l&topics%5B%5D=f&res=50&filesuns=all&curtab=f&order=title&ordermode=asc">&#8597</a> 
+Series <a href="/index.php?req=dungeon+crawler+carl&columns%5B%5D=t&columns%5B%5D=a&objects%5B%5D=f&topics%5B%5D=l&topics%5B%5D=f&res=50&filesuns=all&curtab=f&order=series&ordermode=asc">&#8597</a></nobr></th>
+<th scope="col"><nobr>Author(s) <a href="/index.php?req=dungeon+crawler+carl&columns%5B%5D=t&columns%5B%5D=a&objects%5B%5D=f&topics%5B%5D=l&topics%5B%5D=f&res=50&filesuns=all&curtab=f&order=author&ordermode=asc">&#8597</a></nobr></th>
+<th scope="col"><nobr>Publisher <a href="/index.php?req=dungeon+crawler+carl&columns%5B%5D=t&columns%5B%5D=a&objects%5B%5D=f&topics%5B%5D=l&topics%5B%5D=f&res=50&filesuns=all&curtab=f&order=publisher&ordermode=asc">&#8597</a></nobr></th>
+<th scope="col"><nobr>Year <a href="/index.php?req=dungeon+crawler+carl&columns%5B%5D=t&columns%5B%5D=a&objects%5B%5D=f&topics%5B%5D=l&topics%5B%5D=f&res=50&filesuns=all&curtab=f&order=year&ordermode=asc">&#8597</a></nobr></th>
+<th scope="col">Language</th>
+<th scope="col">Pages</th>
+<th scope="col"><nobr>Size  <a href="/index.php?req=dungeon+crawler+carl&columns%5B%5D=t&columns%5B%5D=a&objects%5B%5D=f&topics%5B%5D=l&topics%5B%5D=f&res=50&filesuns=all&curtab=f&order=filesize&ordermode=asc">&#8597</a></nobr></th>
+<th scope="col"><nobr>Ext. <a href="/index.php?req=dungeon+crawler+carl&columns%5B%5D=t&columns%5B%5D=a&objects%5B%5D=f&topics%5B%5D=l&topics%5B%5D=f&res=50&filesuns=all&curtab=f&order=extension&ordermode=asc">&#8597</a></nobr></th>
+<th scope="col">Mirrors</th>
+</tr></thead><tbody><tr>
+
+<td><b>Dungeon Crawler Carl #1</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2026-02-02/2026-02-02; ID: 115669014<br>Dungeon Crawler Carl_ Dungeon C - Matt Dinniman" href="edition.php?id=208315875">Dungeon Crawler Carl: Dungeon Crawler Carl Book 1 <i></i></a> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">f 10090645</span></nobr>
+
+</td>
+<td>Matt Dinniman </td>
+<td>Dandy House</td>
+<td><nobr>2020</nobr></td>
+<td>English</td>
+<td>0</td>
+<td><nobr><a href="/file.php?id=115669014">2 MB</a></nobr></td>
+<td>epub</td>
+<td><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=7a72d22ff9b6696e90ad924e42db2d12"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Randombook" href="https://randombook.org/book/7a72d22ff9b6696e90ad924e42db2d12?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/7a72d22ff9b6696e90ad924e42db2d12?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/7a72d22ff9b6696e90ad924e42db2d12?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.me" href="https://libgen.me/book/7a72d22ff9b6696e90ad924e42db2d12?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </td>
+</tr><tr>
+
+<td><b>Dungeon Crawler Carl</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2021-11-03/2021-11-04; ID: 96511057<br>The Dungeon Anarchists Cookbook Dungeon Crawler Carl Book 3 by Matt Dinniman [Dinniman, Matt] (z-lib.org)" href="edition.php?id=140539519">The Dungeon Anarchist's Cookbook: Dungeon Crawler Carl Book 3 <i></i></a> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">f 2674658</span></nobr>
+
+</td>
+<td>Matt Dinniman</td>
+<td>Dandy House</td>
+<td><nobr>2021</nobr></td>
+<td>English</td>
+<td>0</td>
+<td><nobr><a href="/file.php?id=96511057">593 kB</a></nobr></td>
+<td>epub</td>
+<td><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=57cde5f547cb9eff0233238bc6d92a8e"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Randombook" href="https://randombook.org/book/57cde5f547cb9eff0233238bc6d92a8e?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/57cde5f547cb9eff0233238bc6d92a8e?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/57cde5f547cb9eff0233238bc6d92a8e?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.me" href="https://libgen.me/book/57cde5f547cb9eff0233238bc6d92a8e?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </td>
+</tr><tr>
+
+<td><b>Dungeon Crawler Carl #3</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2023-07-12/2023-07-17; ID: 101160260<br>Matt Dinniman - The Dungeon Anarchist&#039;s Cookbook: Dungeon Crawler Carl Book 3 (2021, Dandy House)" href="edition.php?id=144911001">The Dungeon Anarchist's Cookbook: Dungeon Crawler Carl Book 3 <i></i></a> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">f 5496180</span></nobr>
+
+</td>
+<td>Dinniman, Matt</td>
+<td>Dandy House</td>
+<td><nobr>2021</nobr></td>
+<td>English</td>
+<td>64</td>
+<td><nobr><a href="/file.php?id=101160260">593 kB</a></nobr></td>
+<td>epub</td>
+<td><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=0f302494247cac7c60b4f20bc899e44f"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Randombook" href="https://randombook.org/book/0f302494247cac7c60b4f20bc899e44f?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/0f302494247cac7c60b4f20bc899e44f?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/0f302494247cac7c60b4f20bc899e44f?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.me" href="https://libgen.me/book/0f302494247cac7c60b4f20bc899e44f?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </td>
+</tr><tr>
+
+<td><b>Dungeon Crawler Carl #3</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2026-03-13/2026-03-13; ID: 115744938<br>9798217287185 Dungeon Crawler Carl - 03 - The Dungeon Anarchist&#039;s Cookbook - Matt Dinniman" href="edition.php?id=208375272">Dungeon Crawler Carl - 03 - The Dungeon Anarchist's Cookbook <i></i></a><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2026-03-13/2026-03-13; ID: 115744938<br>9798217287185 Dungeon Crawler Carl - 03 - The Dungeon Anarchist&#039;s Cookbook - Matt Dinniman" href="edition.php?id=208375272"><i><font color="green"> 9798217287185</font></a></i> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">l 8119459</span></nobr>
+
+</td>
+<td>Matt Dinniman</td>
+<td>Random House</td>
+<td><nobr>2021</nobr></td>
+<td>English</td>
+<td>0</td>
+<td><nobr><a href="/file.php?id=115744938">677 kB</a></nobr></td>
+<td>epub</td>
+<td><nobr><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=31d1d9ebf6c719d7ce30a674de39a5a9"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.xyz" href="https://libgen.xyz/book/31d1d9ebf6c719d7ce30a674de39a5a9?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/31d1d9ebf6c719d7ce30a674de39a5a9?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/31d1d9ebf6c719d7ce30a674de39a5a9?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="randombook.org" href="https://randombook.org/book/31d1d9ebf6c719d7ce30a674de39a5a9?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </nobr></td>
+</tr><tr>
+
+<td><b>Dungeon Crawler Carl #3</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2026-04-11/2026-04-11; ID: 115808681<br>9798217287185 The Dungeon Anarchist&#039;s Cookbook (Dungeon Crawler Carl 3) - Matt Dinniman" href="edition.php?id=208423386">The Dungeon Anarchist's Cookbook (Dungeon Crawler Carl 3) <i></i></a><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2026-04-11/2026-04-11; ID: 115808681<br>9798217287185 The Dungeon Anarchist&#039;s Cookbook (Dungeon Crawler Carl 3) - Matt Dinniman" href="edition.php?id=208423386"><i><font color="green"> 9798217287185</font></a></i> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">l 8157709</span></nobr>
+
+</td>
+<td>Matt Dinniman</td>
+<td>Random House</td>
+<td><nobr>2021</nobr></td>
+<td>English</td>
+<td>0</td>
+<td><nobr><a href="/file.php?id=115808681">553 kB</a></nobr></td>
+<td>epub</td>
+<td><nobr><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=abe87262ff8120162101e6334de0230e"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.xyz" href="https://libgen.xyz/book/abe87262ff8120162101e6334de0230e?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/abe87262ff8120162101e6334de0230e?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/abe87262ff8120162101e6334de0230e?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="randombook.org" href="https://randombook.org/book/abe87262ff8120162101e6334de0230e?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </nobr></td>
+</tr><tr>
+
+<td><b>Dungeon Crawler Carl #2</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2023-07-12/2023-07-17; ID: 101160259<br>Matt Dinniman - Carl&#039;s Doomsday Scenario: Dungeon Crawler Carl Book 2 (2021, Dandy House)" href="edition.php?id=144911000">Carl's Doomsday Scenario: Dungeon Crawler Carl Book 2 <i></i></a> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">f 5496179</span></nobr>
+
+</td>
+<td>Dinniman, Matt</td>
+<td>Dandy House</td>
+<td><nobr>2021</nobr></td>
+<td>English</td>
+<td>53</td>
+<td><nobr><a href="/file.php?id=101160259">414 kB</a></nobr></td>
+<td>epub</td>
+<td><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=ebcd23307b828b46fdc09be85f282bec"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Randombook" href="https://randombook.org/book/ebcd23307b828b46fdc09be85f282bec?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/ebcd23307b828b46fdc09be85f282bec?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/ebcd23307b828b46fdc09be85f282bec?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.me" href="https://libgen.me/book/ebcd23307b828b46fdc09be85f282bec?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </td>
+</tr><tr>
+
+<td><b>Dungeon Crawler Carl #2</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2026-02-02/2026-02-02; ID: 115669017<br>Carl&#039;s Doomsday Scenario_ Dunge - Matt Dinniman" href="edition.php?id=208315878">Carl's Doomsday Scenario: Dungeon Crawler Carl Book 2 <i></i></a> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">f 10090646</span></nobr>
+
+</td>
+<td>Matt Dinniman </td>
+<td>Dandy House</td>
+<td><nobr>2021 January 6</nobr></td>
+<td>English</td>
+<td>0</td>
+<td><nobr><a href="/file.php?id=115669017">3 MB</a></nobr></td>
+<td>epub</td>
+<td><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=d8b8346207a2c3cd46b5069cf18fd032"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Randombook" href="https://randombook.org/book/d8b8346207a2c3cd46b5069cf18fd032?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/d8b8346207a2c3cd46b5069cf18fd032?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/d8b8346207a2c3cd46b5069cf18fd032?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.me" href="https://libgen.me/book/d8b8346207a2c3cd46b5069cf18fd032?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </td>
+</tr><tr>
+
+<td><b>Dungeon Crawler Carl #2</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2026-03-13/2026-03-13; ID: 115744943<br>9798217287178 Dungeon Crawler Carl - 02 - Carl&#039;s Doomsday Scenario - Matt Dinniman" href="edition.php?id=208375277">Dungeon Crawler Carl - 02 - Carl's Doomsday Scenario <i></i></a><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2026-03-13/2026-03-13; ID: 115744943<br>9798217287178 Dungeon Crawler Carl - 02 - Carl&#039;s Doomsday Scenario - Matt Dinniman" href="edition.php?id=208375277"><i><font color="green"> 9798217287178</font></a></i> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">l 8119464</span></nobr>
+
+</td>
+<td>Matt Dinniman</td>
+<td>Random House</td>
+<td><nobr>2021</nobr></td>
+<td>English</td>
+<td>0</td>
+<td><nobr><a href="/file.php?id=115744943">459 kB</a></nobr></td>
+<td>epub</td>
+<td><nobr><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=5381d89c93b99146f30d1305f3731fcd"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.xyz" href="https://libgen.xyz/book/5381d89c93b99146f30d1305f3731fcd?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/5381d89c93b99146f30d1305f3731fcd?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/5381d89c93b99146f30d1305f3731fcd?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="randombook.org" href="https://randombook.org/book/5381d89c93b99146f30d1305f3731fcd?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </nobr></td>
+</tr><tr>
+
+<td><b>Dungeon Crawler Carl 1</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2021-06-18/2021-10-17; ID: 6516789<br>B08BKGYQXW_EBOK" href="edition.php?id=6268092">Dungeon Crawler Carl <i></i></a> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">f 2507060</span></nobr>
+
+</td>
+<td>Matt Dinniman,  </td>
+<td>Dandy House</td>
+<td><nobr>2020</nobr></td>
+<td>English</td>
+<td>446</td>
+<td><nobr><a href="/file.php?id=6516789">1 MB</a></nobr></td>
+<td>epub</td>
+<td><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=9852781bb644b519f4df08cca7f0008a"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Randombook" href="https://randombook.org/book/9852781bb644b519f4df08cca7f0008a?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/9852781bb644b519f4df08cca7f0008a?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/9852781bb644b519f4df08cca7f0008a?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.me" href="https://libgen.me/book/9852781bb644b519f4df08cca7f0008a?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </td>
+</tr><tr>
+
+<td><b>Dungeon Crawler Carl 4</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2021-11-03/2021-11-04; ID: 96511584<br>The Gate of the Feral Gods Dungeon Crawler Carl Book 4 by Matt Dinniman [Dinniman, Matt] (z-lib.org)" href="edition.php?id=140540046">The Gate of the Feral Gods: Dungeon Crawler Carl Book 4 <i></i></a> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">f 2675184</span></nobr>
+
+</td>
+<td>Matt Dinniman</td>
+<td>Dandy House</td>
+<td><nobr>2021</nobr></td>
+<td>English</td>
+<td>0</td>
+<td><nobr><a href="/file.php?id=96511584">627 kB</a></nobr></td>
+<td>epub</td>
+<td><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=201c3bd3fae6ce236da1ac4fe4d3cc9a"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Randombook" href="https://randombook.org/book/201c3bd3fae6ce236da1ac4fe4d3cc9a?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/201c3bd3fae6ce236da1ac4fe4d3cc9a?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/201c3bd3fae6ce236da1ac4fe4d3cc9a?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.me" href="https://libgen.me/book/201c3bd3fae6ce236da1ac4fe4d3cc9a?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </td>
+</tr><tr>
+
+<td><b><a href="series.php?id=410653">Dungeon Crawler Carl   </a> №1</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2022-03-07/2022-04-24; ID: 96823609<br>Dungeon Crawler Carl - Matt Dinniman" href="edition.php?id=140792278">Dungeon Crawler Carl <i></i></a> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">f 2821105</span></nobr>
+
+</td>
+<td><a href="author.php?id=484447">Динниман, Мэтт (Author)</a></td>
+<td>Dandy House</td>
+<td><nobr>2020</nobr></td>
+<td>English</td>
+<td>0</td>
+<td><nobr><a href="/file.php?id=96823609">1 MB</a></nobr></td>
+<td>epub</td>
+<td><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=ecc11c5da4e45a320d46a58b28c2b8eb"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Randombook" href="https://randombook.org/book/ecc11c5da4e45a320d46a58b28c2b8eb?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/ecc11c5da4e45a320d46a58b28c2b8eb?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/ecc11c5da4e45a320d46a58b28c2b8eb?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.me" href="https://libgen.me/book/ecc11c5da4e45a320d46a58b28c2b8eb?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </td>
+</tr><tr>
+
+<td><b>Dungeon Crawler Carl 5</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2022-03-29/2022-04-05; ID: 97529181<br>B09R6C5X88_EBOK" href="edition.php?id=141489524">The Butcher's Masquerade: Dungeon Crawler Carl Book 5 <i></i></a> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">f 3463679</span></nobr>
+
+</td>
+<td>Matt Dinniman</td>
+<td>Dandy House</td>
+<td><nobr>2022</nobr></td>
+<td>English</td>
+<td>0 / 724</td>
+<td><nobr><a href="/file.php?id=97529181">913 kB</a></nobr></td>
+<td>epub</td>
+<td><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=b07914d6b5120bc05c07704bec18d17d"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Randombook" href="https://randombook.org/book/b07914d6b5120bc05c07704bec18d17d?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/b07914d6b5120bc05c07704bec18d17d?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/b07914d6b5120bc05c07704bec18d17d?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.me" href="https://libgen.me/book/b07914d6b5120bc05c07704bec18d17d?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </td>
+</tr><tr>
+
+<td><b>Dungeon Crawler Carl #1</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2023-07-12/2023-07-17; ID: 101081630<br>Matt Dinniman - Dungeon Crawler Carl - 01 (2021, Dandy House)" href="edition.php?id=144832362">Dungeon Crawler Carl - 01 <i></i></a><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2023-07-12/2023-07-17; ID: 101081630<br>Matt Dinniman - Dungeon Crawler Carl - 01 (2021, Dandy House)" href="edition.php?id=144832362"><i><font color="green"> 9798707228315</font></a></i> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">f 5424872</span></nobr>
+
+</td>
+<td>Dinniman, Matt</td>
+<td>Dandy House</td>
+<td><nobr>2021</nobr></td>
+<td>English</td>
+<td>132</td>
+<td><nobr><a href="/file.php?id=101081630">1 MB</a></nobr></td>
+<td>epub</td>
+<td><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=d8a811082e5f3a14232f459a21f1689f"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Randombook" href="https://randombook.org/book/d8a811082e5f3a14232f459a21f1689f?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/d8a811082e5f3a14232f459a21f1689f?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/d8a811082e5f3a14232f459a21f1689f?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.me" href="https://libgen.me/book/d8a811082e5f3a14232f459a21f1689f?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </td>
+</tr><tr>
+
+<td><b>Dungeon Crawler Carl #2</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2023-07-12/2023-07-17; ID: 101081631<br>Matt Dinniman - Dungeon Crawler Carl - 02 (2021, Dandy House)" href="edition.php?id=144832363">Dungeon Crawler Carl - 02 <i></i></a> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">f 5424873</span></nobr>
+
+</td>
+<td>Dinniman, Matt</td>
+<td>Dandy House</td>
+<td><nobr>2021</nobr></td>
+<td>English</td>
+<td>53</td>
+<td><nobr><a href="/file.php?id=101081631">374 kB</a></nobr></td>
+<td>epub</td>
+<td><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=14492aa2919e1b9178b7e4e64b9ed281"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Randombook" href="https://randombook.org/book/14492aa2919e1b9178b7e4e64b9ed281?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/14492aa2919e1b9178b7e4e64b9ed281?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/14492aa2919e1b9178b7e4e64b9ed281?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.me" href="https://libgen.me/book/14492aa2919e1b9178b7e4e64b9ed281?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </td>
+</tr><tr>
+
+<td><b>Dungeon Crawler Carl #3</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2023-07-12/2023-07-17; ID: 101081632<br>Matt Dinniman - Dungeon Crawler Carl - 03 (2021, Dandy House)" href="edition.php?id=144832364">Dungeon Crawler Carl - 03 <i></i></a> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">f 5424874</span></nobr>
+
+</td>
+<td>Dinniman, Matt</td>
+<td>Dandy House</td>
+<td><nobr>2021</nobr></td>
+<td>English</td>
+<td>64</td>
+<td><nobr><a href="/file.php?id=101081632">553 kB</a></nobr></td>
+<td>epub</td>
+<td><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=57f622787331474bd9343720fd26675b"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Randombook" href="https://randombook.org/book/57f622787331474bd9343720fd26675b?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/57f622787331474bd9343720fd26675b?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/57f622787331474bd9343720fd26675b?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.me" href="https://libgen.me/book/57f622787331474bd9343720fd26675b?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </td>
+</tr><tr>
+
+<td><b>Dungeon Crawler Carl #4</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2023-07-12/2023-07-17; ID: 101081633<br>Matt Dinniman - Dungeon Crawler Carl - 04 (2021, Dandy House)" href="edition.php?id=144832365">Dungeon Crawler Carl - 04 <i></i></a> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">f 5424875</span></nobr>
+
+</td>
+<td>Dinniman, Matt</td>
+<td>Dandy House</td>
+<td><nobr>2021</nobr></td>
+<td>English</td>
+<td>66</td>
+<td><nobr><a href="/file.php?id=101081633">626 kB</a></nobr></td>
+<td>epub</td>
+<td><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=91c98d00516c1da811d1db41892d7dfe"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Randombook" href="https://randombook.org/book/91c98d00516c1da811d1db41892d7dfe?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/91c98d00516c1da811d1db41892d7dfe?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/91c98d00516c1da811d1db41892d7dfe?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.me" href="https://libgen.me/book/91c98d00516c1da811d1db41892d7dfe?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </td>
+</tr><tr>
+
+<td><b>Dungeon Crawler Carl #1</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2023-07-12/2023-07-17; ID: 101160258<br>Gamelit Adventure (2020, Dandy House)" href="edition.php?id=144910999">Dungeon Crawler Carl: A LitRPG/Gamelit Adventure <i></i></a> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">f 5496178</span></nobr>
+
+</td>
+<td>Dinniman, Matt</td>
+<td>Dandy House</td>
+<td><nobr>2020</nobr></td>
+<td>English</td>
+<td>131</td>
+<td><nobr><a href="/file.php?id=101160258">1 MB</a></nobr></td>
+<td>epub</td>
+<td><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=f9b913e7a77d3636b6e9972e1d2c838f"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Randombook" href="https://randombook.org/book/f9b913e7a77d3636b6e9972e1d2c838f?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/f9b913e7a77d3636b6e9972e1d2c838f?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/f9b913e7a77d3636b6e9972e1d2c838f?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.me" href="https://libgen.me/book/f9b913e7a77d3636b6e9972e1d2c838f?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </td>
+</tr><tr>
+
+<td><b>Dungeon Crawler Carl #4</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2023-07-12/2023-07-17; ID: 101160261<br>Matt Dinniman - The Gate of the Feral Gods: Dungeon Crawler Carl Book 4 (2021, Dandy House)" href="edition.php?id=144911002">The Gate of the Feral Gods: Dungeon Crawler Carl Book 4 <i></i></a> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">f 5496181</span></nobr>
+
+</td>
+<td>Dinniman, Matt</td>
+<td>Dandy House</td>
+<td><nobr>2021</nobr></td>
+<td>English</td>
+<td>66</td>
+<td><nobr><a href="/file.php?id=101160261">627 kB</a></nobr></td>
+<td>epub</td>
+<td><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=d26b4b3e2512c3feb6e6821ebe794733"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Randombook" href="https://randombook.org/book/d26b4b3e2512c3feb6e6821ebe794733?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/d26b4b3e2512c3feb6e6821ebe794733?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/d26b4b3e2512c3feb6e6821ebe794733?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.me" href="https://libgen.me/book/d26b4b3e2512c3feb6e6821ebe794733?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </td>
+</tr><tr>
+
+<td><b><a href="series.php?id=410653">Dungeon Crawler Carl   </a> №5</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2023-07-13/2023-07-19; ID: 102174054<br>Matt Dinniman - The Butcher&#039;s Masquerade: Dungeon Crawler Carl Book 5 (2022, Dandy House)" href="edition.php?id=145924759">The Butcher's Masquerade: Dungeon Crawler Carl Book 5 <i></i></a> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">f 6213772</span></nobr>
+
+</td>
+<td><a href="author.php?id=484447">Динниман, Мэтт (Author)</a></td>
+<td>Dandy House</td>
+<td><nobr>2022</nobr></td>
+<td>English</td>
+<td>112</td>
+<td><nobr><a href="/file.php?id=102174054">800 kB</a></nobr></td>
+<td>epub</td>
+<td><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=36f4843189af9088cb329a37b7171c82"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Randombook" href="https://randombook.org/book/36f4843189af9088cb329a37b7171c82?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/36f4843189af9088cb329a37b7171c82?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/36f4843189af9088cb329a37b7171c82?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.me" href="https://libgen.me/book/36f4843189af9088cb329a37b7171c82?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </td>
+</tr><tr>
+
+<td><b>Dungeon Crawler Carl 6</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2023-12-30/2024-02-04; ID: 104075589<br>Dungeon Crawler Carl - 6 - The Eye of the Bedlam Bride (Matt Dinniman - 2023)" href="edition.php?id=147026393">The Eye of the Bedlam Bride: Dungeon Crawler Carl Book 6 <i></i></a><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2023-12-30/2024-02-04; ID: 104075589<br>Dungeon Crawler Carl - 6 - The Eye of the Bedlam Bride (Matt Dinniman - 2023)" href="edition.php?id=147026393"><i><font color="green"> 9798396866379</font></a></i> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">f 6702765</span></nobr>
+
+</td>
+<td>Matt Dinniman</td>
+<td>Dandy House</td>
+<td><nobr>2023</nobr></td>
+<td>English</td>
+<td>0</td>
+<td><nobr><a href="/file.php?id=104075589">5 MB</a></nobr></td>
+<td>pdf</td>
+<td><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=76a87030a578ad0bc33710e2684c2d7b"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Randombook" href="https://randombook.org/book/76a87030a578ad0bc33710e2684c2d7b?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/76a87030a578ad0bc33710e2684c2d7b?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/76a87030a578ad0bc33710e2684c2d7b?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.me" href="https://libgen.me/book/76a87030a578ad0bc33710e2684c2d7b?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </td>
+</tr><tr>
+
+<td><b>Dungeon Crawler Carl</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2024-11-12/2024-11-12; ID: 107257437<br>This Inevitable Ruin_ Dungeon Crawler Carl Book 7 - Matt Dinniman" href="edition.php?id=149913605">This Inevitable Ruin: Dungeon Crawler Carl Book 7 <i></i></a> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">f 7581155</span></nobr>
+
+</td>
+<td>Matt Dinniman </td>
+<td>Dandy House</td>
+<td><nobr>2024</nobr></td>
+<td>English</td>
+<td>0</td>
+<td><nobr><a href="/file.php?id=107257437">3 MB</a></nobr></td>
+<td>epub</td>
+<td><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=9f03951ed3eca60c23430c21fe317007"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Randombook" href="https://randombook.org/book/9f03951ed3eca60c23430c21fe317007?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/9f03951ed3eca60c23430c21fe317007?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/9f03951ed3eca60c23430c21fe317007?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.me" href="https://libgen.me/book/9f03951ed3eca60c23430c21fe317007?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </td>
+</tr><tr>
+
+<td><b>Dungeon Crawler Carl #1</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2026-02-05/2026-02-05; ID: 115675659<br>9780593820254 Dungeon Crawler Carl - Matt Dinniman.epub 9780593820254 Dungeon Crawler Carl - Matt Dinniman" href="edition.php?id=208321741">Dungeon Crawler Carl <i></i></a><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2026-02-05/2026-02-05; ID: 115675659<br>9780593820254 Dungeon Crawler Carl - Matt Dinniman.epub 9780593820254 Dungeon Crawler Carl - Matt Dinniman" href="edition.php?id=208321741"><i><font color="green"> 9780593820254</font></a></i> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">l 8072512</span></nobr>
+
+</td>
+<td>Matt Dinniman</td>
+<td>Dandy House</td>
+<td><nobr>2020</nobr></td>
+<td>English</td>
+<td>0</td>
+<td><nobr><a href="/file.php?id=115675659">1 MB</a></nobr></td>
+<td>epub</td>
+<td><nobr><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=9b97d0a4e27213fc624fef64268bad5a"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.xyz" href="https://libgen.xyz/book/9b97d0a4e27213fc624fef64268bad5a?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/9b97d0a4e27213fc624fef64268bad5a?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/9b97d0a4e27213fc624fef64268bad5a?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="randombook.org" href="https://randombook.org/book/9b97d0a4e27213fc624fef64268bad5a?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </nobr></td>
+</tr><tr>
+
+<td><b>Dungeon Crawler Carl #1</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2026-03-01/2026-03-01; ID: 115705926<br>059382024X, 0971469614803, 9780593820247 Dungeon Crawler Carl - Matt Dinniman" href="edition.php?id=208336435">Dungeon Crawler Carl <i></i></a><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2026-03-01/2026-03-01; ID: 115705926<br>059382024X, 0971469614803, 9780593820247 Dungeon Crawler Carl - Matt Dinniman" href="edition.php?id=208336435"><i><font color="green"> 059382024X; 9780593820247</font></a></i> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">l 8085145</span></nobr>
+
+</td>
+<td>Matt Dinniman</td>
+<td>Ace</td>
+<td><nobr>2020</nobr></td>
+<td>English</td>
+<td>0</td>
+<td><nobr><a href="/file.php?id=115705926">2 MB</a></nobr></td>
+<td>epub</td>
+<td><nobr><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=a913f5deef2fbde3fdb14e6e6e9153d0"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.xyz" href="https://libgen.xyz/book/a913f5deef2fbde3fdb14e6e6e9153d0?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/a913f5deef2fbde3fdb14e6e6e9153d0?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/a913f5deef2fbde3fdb14e6e6e9153d0?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="randombook.org" href="https://randombook.org/book/a913f5deef2fbde3fdb14e6e6e9153d0?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </nobr></td>
+</tr><tr>
+
+<td><b>Dungeon Crawler Carl #7</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2026-03-13/2026-03-13; ID: 115744956<br>9780241829936 Dungeon Crawler Carl - 07 - This Inevitable Ruin - Matt Dinniman" href="edition.php?id=208375288">Dungeon Crawler Carl - 07 - This Inevitable Ruin <i></i></a><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2026-03-13/2026-03-13; ID: 115744956<br>9780241829936 Dungeon Crawler Carl - 07 - This Inevitable Ruin - Matt Dinniman" href="edition.php?id=208375288"><i><font color="green"> 9780241829936</font></a></i> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">l 8119477</span></nobr>
+
+</td>
+<td>Matt Dinniman</td>
+<td>Penguin Random House</td>
+<td><nobr>2024</nobr></td>
+<td>English</td>
+<td>0</td>
+<td><nobr><a href="/file.php?id=115744956">3 MB</a></nobr></td>
+<td>epub</td>
+<td><nobr><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=ff13682d0c353e7569ad520ff2c5810c"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.xyz" href="https://libgen.xyz/book/ff13682d0c353e7569ad520ff2c5810c?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/ff13682d0c353e7569ad520ff2c5810c?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/ff13682d0c353e7569ad520ff2c5810c?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="randombook.org" href="https://randombook.org/book/ff13682d0c353e7569ad520ff2c5810c?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </nobr></td>
+</tr><tr>
+
+<td><b>Dungeon Crawler Carl #1</b><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2026-03-16/2026-03-16; ID: 115755262<br>9798707228315 Dungeon Crawler Carl - Matt Dinniman" href="edition.php?id=208385523">Dungeon Crawler Carl <i></i></a><br><a data-toggle="tooltip" data-placement="right" data-html="true" title="Add/Edit : 2026-03-16/2026-03-16; ID: 115755262<br>9798707228315 Dungeon Crawler Carl - Matt Dinniman" href="edition.php?id=208385523"><i><font color="green"> 9798707228315</font></a></i> 
+<nobr><span class="badge badge-primary"><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="Book">b</a></span> 
+<span class="badge badge-secondary"">l 8128711</span></nobr>
+
+</td>
+<td>Matt Dinniman</td>
+<td>Dandy House</td>
+<td><nobr>2020</nobr></td>
+<td>English</td>
+<td>0</td>
+<td><nobr><a href="/file.php?id=115755262">1 MB</a></nobr></td>
+<td>epub</td>
+<td><nobr><a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen" href="/ads.php?md5=a21bfd3f18a35cd01243cc1f3959390d"><span class="badge badge-primary">1</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.xyz" href="https://libgen.xyz/book/a21bfd3f18a35cd01243cc1f3959390d?utm_source=libgen.li"><span class="badge badge-primary">2</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="anna's archive" href="https://en.annas-archive.gl/md5/a21bfd3f18a35cd01243cc1f3959390d?r=Ax2w6jC"><span class="badge badge-primary">3</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="libgen.pw" href="https://libgen.pw/book/a21bfd3f18a35cd01243cc1f3959390d?utm_source=libgen.li"><span class="badge badge-primary">4</span></a> <a data-toggle="tooltip" data-placement="bottom" data-html="true" title="randombook.org" href="https://randombook.org/book/a21bfd3f18a35cd01243cc1f3959390d?utm_source=libgen.li"><span class="badge badge-primary">5</span></a> </nobr></td>
+</tr></tbody></table><table>
+  <tr>
+    <td><script>
+	atOptions = {
+		'key' : '80ff16b446cdd16fda9f69edcec465d4',
+		'format' : 'iframe',
+		'height' : 60,
+		'width' : 468,
+		'params' : {}
+	};
+</script>
+<script src="https://bauval.org/22/80ff16b446cdd16fda9f69edcec465d4"></script>
+
+</td>
+    <td><script>
+	atOptions = {
+		'key' : '80ff16b446cdd16fda9f69edcec465d4',
+		'format' : 'iframe',
+		'height' : 60,
+		'width' : 468,
+		'params' : {}
+	};
+</script>
+<script src="https://bauval.org/22/80ff16b446cdd16fda9f69edcec465d4"></script>
+
+</td>
+  </tr> 
+</table><div style="text-align: center;" class="paginator" id="paginator_example_bottom"></div><script type="text/javascript">paginator_example_bottom = new Paginator("paginator_example_bottom", 3, 25, 1, "/index.php?req=dungeon+crawler+carl&columns%5B%5D=t&columns%5B%5D=a&objects%5B%5D=f&topics%5B%5D=l&topics%5B%5D=f&res=50&filesuns=all&curtab=f&order=&ordermode=desc&filesuns=all&page=" );</script><div class="modal fade text-dark" id="googlemodemodal" tabindex="-1" aria-labelledby="googlemodemodalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="googlemodemodalLabel">Google mode</h5>
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        
+By default, the search searches for a set of marked fields containing all the words specified in the query in no particular order<br>
+Advanced search mode (Google mode), allows you to set more precise search terms:<br>
+- Quotes: "" - search exactly for the phrase as it is written in the database<br>
+- Mask: * (min 3 chars)- search by part of a word<br>
+- Excluding words: - (minus) - does not display records containing this word, also, these conditions can be combined.<br>
+Example:<br>
+"Physics and Chemistry" Basi * -technology<br>
+means the title of the book contains the exact phrase "Physics and Chemistry", contains the word starting with Basi and does not contain the word technology.<br>
+You can also search for a specific field or view mode that is not displayed for selection in the interface, syntax: field_name:value<br>
+List of add. fields:<br>
+For the Files tab:<br>
+<i>md5</i><br>
+<i>tth</i><br>
+<i>sha1</i><br>
+<i>sha256</i><br>
+<i>crc32</i><br>
+<i>edonkey</i><br>
+<i>doi</i><br>
+
+View modes:<br>
+<i>mode:last</i> - last added entries (for a given object - series, authors, editions, etc.)<br>
+<br>
+<i>fmode:last</i> - last added files (for the given repository)<br>
+<br>
+Add. fields for object "editions" and "files":<br>
+<i>issuevolume</i> - periodical volume<br>
+<i>issuesid</i> - serial ID of the periodical<br>
+<i>issuenumber</i> - the number (within the volume) of the periodical<br>
+<i>issuetnumber</i> is the gross number of the periodical<br>
+<i>issueynumber</i> - intra-annual issue of the periodical<br>
+<i>year</i> - year<br>
+<i>publisherid</i> - Publisher ID<br>
+<i>authorid</i> - Author's ID<br>
+<i>lang</i> - three-letter language code (ISO 639)<br>
+<i>fsize</i> - filesize (MBytes), for example: fsize&gt;10, fsize&lt;20, fsize=15<br>
+<i>ext</i> - File extenstion <br>
+<i>booktopicid</i> - ID of the classifier for books<br>
+<i>tags</i> - Теги (издание, работы, серия)<br>
+<br>
+Add. fields for object "series"<br>
+<i>comtopicid</i> - ID of the classifier for comics<br>
+<i>smtopicid</i> - ID of the classifier for scientific journals<br>
+<i>magtopicid</i> - ID of the classifier for magazines<br>
+<i>issn</i> - ISSN
+
+      </div>
+    </div>
+  </div>
+</div><nav class="navbar sticky-bottom navbar-expand-sm navbar-dark bg-secondary">
+  <div class="collapse navbar-collapse" id="navbarCollapse">
+    <ul class="navbar-nav mr-auto">
+      <li class="nav-item">
+	    <a class="nav-link" href="#" data-toggle="modal" data-target="#dmcamodal">DMCA</a>
+      </li>
+      <li class="nav-item">
+	    <a class="nav-link" href="#" data-toggle="modal" data-target="#aboutmodal">ABOUT</a>
+      </li>
+      <li class="nav-item">
+	    <a class="nav-link" href="#" data-toggle="modal" data-target="#donatemodal" >DONATE</a>
+      </li>
+	
+    </ul>
+	<span class="navbar-text">Users online 6733</span>
+  </div>
+</nav>
+
+<!-- Modal Donate -->
+<div class="modal fade text-dark" id="donatemodal" tabindex="-1" aria-labelledby="donatemodalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="donatemodalLabel">Donate</h5>
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <a href="bitcoin://bc1qlv9lwa5vncm2jjrxyhddfcvu0z3u5vn0s9672r">Bitcoin</a>
+	<br>
+        <a href="monero:48WhyKv4D9x53SyDFNYuMsHsDzuHXEcht4mWoFtXtE3k4KZ3A7goi3CQWBQQZ3A8PSK7CpwnAFKLnfGiZTAbEpcaCQCghvN">Monero</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal About -->
+<div class="modal fade text-dark" id="aboutmodal" tabindex="-1" aria-labelledby="aboutmodalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="aboutmodalLabel">About</h5>
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body">
+
+
+<div id="about">
+The Library Genesis aggregator is a community aiming at collecting and cataloging items descriptions for the most part of scientific, 
+scientific and technical directions, as well as file metadata. In addition to the descriptions, 
+the aggregator contains only links to third-party resources hosted by users. 
+All information posted on the website is collected from publicly available public Internet resources and is intended solely for informational purposes.  
+</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal DMCA -->
+<div class="modal fade text-dark" id="dmcamodal" tabindex="-1" aria-labelledby="dmcamodalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="dmcamodalLabel">About</h5>
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body">
+
+<div id="dmca">
+Library Genesis - aggregator items is a website that collects and organizes online items from users. 
+Item aggregation is done for fact-finding purposes, and website Library Genesis respects the rights of copyright holders and respect dcma.
+
+     Removing Content From Library Genesis / DMCA Policy
+     Library Genesis respects the intellectual property of others.
+</div>
+
+    <div class="dmca">
+     If you believe that your copyrighted work has been copied in a way that constitutes copyright infringement and is accessible on this site, you may notify our copyright agent, as set forth in the Digital Millennium Copyright Act of 1998 (DMCA). For your complaint to be valid under the DMCA, you must provide the following information when providing notice of the claimed copyright infringement:
+</div>
+    <div class="dmca">
+     * A physical or electronic signature of a person authorized to act on behalf of the copyright owner Identification of the copyrighted work claimed to have been infringed <br />
+     * Identification of the material that is claimed to be infringing or to be the subject of the infringing activity and that is to be removed <br />
+     * Information reasonably sufficient to permit the service provider to contact the complaining party, such as an address, telephone number, and, if available, an electronic mail address <br />
+     * A statement that the complaining party "in good faith believes that use of the material in the manner complained of is not authorized by the copyright owner, its agent, or law" <br />
+     * A statement that the "information in the notification is accurate", and "under penalty of perjury, the complaining party is authorized to act on behalf of the owner of an exclusive right that is allegedly infringed" <br />
+     The above information must be submitted as a written, faxed or emailed notification to the following Designated Agent: ianzlib@protonmail.com. Appeals will be reviewed within 72 hours.</div>
+
+
+      </div>
+    </div>
+  </div>
+</div>
+
+
+	<script src="https://cdn.jsdelivr.net/npm/popper.js@1.12.5/dist/umd/popper.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.3/dist/js/bootstrap.min.js" integrity="sha384-w1Q4orYjBQndcko6MimVbzY0tgp4pWB4lZ7lr30WKz0vr/aWKhXdBNmNb5D92v7s" crossorigin="anonymous"></script>
+	<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-ho+j7jyWK8fNQe+A12Hb8AhRq26LrZ/JpcUGGOn+Y7RsweNrtN/tE3MoK7ZeZDyx" crossorigin="anonymous"></script>
+	<script src="/js/form-validation.js"></script>
+	<script>
+$('[data-toggle="tooltip"]').tooltip();
+$('.btn-tooltip-bottom').tooltip({
+    placement: 'bottom'
+});
+</script>
+
+</body>
+</html>

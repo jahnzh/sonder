@@ -221,9 +221,9 @@ test("an ebook check names its work and carries its hold reason", () => {
 });
 
 test("a series search names its work and says whether it looks for the audiobook or the ebook", () => {
-  assert.deepEqual(item("series-acquisition:search-ebook").facts, { kind: "series-acquisition", status: "done", search: "ebook", place: null, retryAt: null });
+  assert.deepEqual(item("series-acquisition:search-ebook").facts, { kind: "series-acquisition", status: "done", search: "ebook", place: null, retryAt: null, seriesId: "7", seriesBookId: "2.0" });
   assert.deepEqual(book("series-acquisition:search-ebook"), { workId: "w-real", bookId: "ed-real", cover: "/covers/real.jpg" });
-  assert.deepEqual(item("series-acquisition:search-audio").facts, { kind: "series-acquisition", status: "pending", search: "audiobook", place: 1, retryAt: null });
+  assert.deepEqual(item("series-acquisition:search-audio").facts, { kind: "series-acquisition", status: "pending", search: "audiobook", place: 1, retryAt: null, seriesId: "7", seriesBookId: "1.0" });
 });
 
 test("a work whose only audio edition is a placeholder lends its cover and no edition id", () => {

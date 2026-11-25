@@ -11,6 +11,7 @@
 import type { ActivityState } from "../src/types.ts";
 import type { SeriesAcquisitionJobStatus } from "./series-acquisition.ts";
 import { activityFailure, defineSource, itemWork, stateFrom, withWorks, type ActivityAction, type ItemWork } from "./activity-source.ts";
+import { seriesQueueOrder } from "./series-queue-order.ts";
 import { worksWithFile } from "./work-files.ts";
 
 const MINUTE = 60_000;
@@ -31,7 +32,12 @@ export const SERIES_ACQUISITION_ACTIVITY_STATES: Record<SeriesAcquisitionJobStat
 export const SERIES_EXPECTED_OUTCOMES: Record<string, string> = {
   no_permission: "skipped, no permission to acquire",
   cancelled: "replaced by a manual choice",
+  // The owner's Skip and Stop searching on the Series page (#898).
+  skipped: "skipped",
+  stopped: "stopped",
 };
+/** The owner's own outcomes (#898), which Now names ("Skipped", "Search stopped") rather than as finished. */
+const OWNER_OUTCOMES: Record<string, "skipped" | "stopped"> = { skipped: "skipped", stopped: "stopped" };
 
 export type SeriesJobRow = {
   id: string | number;
@@ -51,6 +57,9 @@ export type SeriesJobRow = {
   resave?: { userId: number; hardcoverSeriesId: number };
   /** A book of a series' 'Match automatically' (#719 part b, `metadata_match_jobs`): `status` is the row's own. */
   metadataMatch?: { workId: string };
+  /** The series and its book the search is for (#898): the row opens that series' page at the book. */
+  series_id?: string | null;
+  book_id?: string | null;
 };
 
 /** The reset's rows Activity lists: a series not found or not saved yet, and one saved without some of its books. */
@@ -130,12 +139,15 @@ export const seriesAcquisitionSource = defineSource<SeriesJobRow[]>({
       sqlite, userId,
       sqlite.prepare(
         // The queue's order (`SERIES_QUEUE_ORDER` in `server/series-acquisition.ts`): the places in line follow it.
-        `SELECT j.id, u.username AS user, j.kind, w.title, j.status, j.error, j.updated_at, j.retry_at, w.id AS work_id
+        `SELECT j.id, u.username AS user, j.kind, w.title, j.status, j.error, j.updated_at, j.retry_at, w.id AS work_id,
+                j.series_id, j.book_id, j.user_id AS owner_id
            FROM series_acquisition_jobs j LEFT JOIN users u ON u.id = j.user_id LEFT JOIN works w ON w.id = j.work_id
-          ORDER BY j.rowid`,
-      ).all() as Array<Omit<SeriesJobRow, "work"> & { work_id: string | null }>,
+          ORDER BY ${seriesQueueOrder("j")}`,
+      ).all() as Array<Omit<SeriesJobRow, "work"> & { work_id: string | null; owner_id: number }>,
       (row) => row.work_id,
-    ).filter((row) => !failedButHasFile(sqlite, row)).map((row): SeriesJobRow => row).concat(resaveRows(sqlite), metadataMatchRows(sqlite, userId)),
+    )
+      // The Series page is the saved series of the one reading (#898): another user's search opens its book as before.
+      .map(({ owner_id, ...row }) => (owner_id === userId ? row : { ...row, series_id: null, book_id: null })).filter((row) => !failedButHasFile(sqlite, row)).map((row): SeriesJobRow => row).concat(resaveRows(sqlite), metadataMatchRows(sqlite, userId)),
   report(rows, _probe, context) {
     const now = context?.now ?? Date.now();
     // The search running now is first in line; the waiting jobs that may run follow in the queue's order.
@@ -159,6 +171,8 @@ export const seriesAcquisitionSource = defineSource<SeriesJobRow[]>({
         facts: {
           kind: "series-acquisition" as const, status: row.status, search: row.kind === "ebook" ? ("ebook" as const) : ("audiobook" as const),
           place: places.get(row.id) ?? null, retryAt,
+          ...(row.series_id && row.book_id ? { seriesId: row.series_id, seriesBookId: row.book_id } : {}),
+          ...(row.status === "failed" && row.error && OWNER_OUTCOMES[row.error] ? { outcome: OWNER_OUTCOMES[row.error] } : {}),
         },
         error: expected ? null : mapped.unknown ?? (row.error || null), changedAt: row.updated_at,
         // Retry for a search that failed; a skip or a manual takeover has nothing to retry.

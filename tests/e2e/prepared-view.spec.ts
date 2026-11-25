@@ -16,6 +16,15 @@ import { choosePreparedView } from "./prepared-view";
 test.use({ serviceWorkers: "block" });
 installReaderWaitBudget(test);
 const imported: string[] = [];
+// Everything here is about the view in scroll mode; pages mode has its own spec (prepared-pages.spec.ts).
+let appearance: any = null;
+test.beforeEach(async ({ page }) => {
+  appearance = await (await page.request.get("/api/appearance")).json();
+  expect((await page.request.put("/api/appearance", { data: { ...appearance, reader: { ...appearance.reader, mode: "scroll" } } })).ok()).toBe(true);
+});
+test.afterEach(async ({ page }) => {
+  if (appearance) await page.request.put("/api/appearance", { data: appearance });
+});
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "wait" });
   for (const id of imported.splice(0)) expect((await page.request.delete(`/api/library/${id}`)).ok()).toBe(true);
@@ -440,6 +449,30 @@ test("a place and a bookmark saved in one view open in the other", async ({ page
 const partRequests = (requests: ReturnType<typeof counted>, part: number) => requests.of(new RegExp(`/prepared/[0-9a-f]+/parts/${part}$`)).length;
 const footError = (page: Page) => page.locator(".reader-room .reader-player > .reader-message").getByRole("alert");
 const toEnd = (page: Page) => band(page).locator(".prepared-scroll").evaluate((scroller) => scroller.scrollTo(0, scroller.scrollHeight));
+/**
+ * Forgets what this device stored of the user's state of a book at its last open (`reader-state:<id>`, and the
+ * details today's reader stores, `reader-book:<id>`): since #805 the reader opens with them when the server does not
+ * answer, so a device that has them never says the book could not be loaded for that. Run on a page of the app's
+ * origin with no app open, which would store them again.
+ */
+const forgetStoredState = (page: Page, ebook: string) =>
+  page.evaluate(
+    (ebook) =>
+      new Promise<void>((done, fail) => {
+        const open = indexedDB.open("sonder");
+        open.onerror = () => fail(open.error);
+        open.onsuccess = () => {
+          const tx = open.result.transaction("preferences", "readwrite");
+          for (const key of [`reader-state:${ebook}`, `reader-book:${ebook}`]) tx.objectStore("preferences").delete(key);
+          tx.oncomplete = () => {
+            open.result.close();
+            done();
+          };
+          tx.onerror = () => fail(tx.error);
+        };
+      }),
+    ebook,
+  );
 
 test("a part that always fails is asked for three times, then the foot says so and Retry loads it", async ({ page }) => {
   test.setTimeout(120000);
@@ -514,6 +547,18 @@ test("a book whose manifest, saved place or first part cannot be loaded says so 
       return failing ? route.fulfill({ status: 503, json: { error: "The server's own sentence." } }) : route.continue();
     });
     await page.goto("/api/health");
+    if (what === "the saved place") {
+      // The opens before stored what the user saved on this device, and the reader takes that when the server does
+      // not answer (#805): the book opens, after the same three tries, and says nothing.
+      await gotoRead(page, ebook);
+      await expect(band(page).locator(".prepared-text p").first(), "the stored state").toBeVisible({ timeout: 20000 });
+      await expect(footError(page)).toHaveCount(0);
+      expect(asked, "the stored state").toBe(3);
+      // A device that has not stored it, as one that never opened the book, cannot open it without the server.
+      await page.goto("/api/health");
+      await forgetStoredState(page, ebook);
+      asked = 0;
+    }
     await gotoRead(page, ebook);
     await expect(footError(page), what).toHaveText("This book could not be loaded.", { timeout: 20000 });
     await expect(page.locator(".reader-room")).not.toContainText("The server's own sentence.");
@@ -538,6 +583,14 @@ test("without a connection the reader says in its own words that this view needs
   await page.goto("/#library");
   await expect(page.locator("nav[aria-label='Main']").first()).toBeVisible();
   await page.evaluate(() => new Promise((done) => setTimeout(done, 400)));
+  // That open stored what the user saved on this device, which the reader takes without an answer (#805), and the
+  // browser keeps the manifest and the parts it fetched in its own cache, which Firefox offline may answer even the
+  // `no-cache` manifest from: with the state stored the book can read there (it did in the 25 Nov check). Here the
+  // device holds no state of the book, as one that never opened it, and the reader needs the server for it.
+  await page.goto("/api/health");
+  await forgetStoredState(page, ebook);
+  await page.goto("/#library");
+  await expect(page.locator("nav[aria-label='Main']").first()).toBeVisible();
   await context.setOffline(true);
   try {
     await page.reload().catch(() => {});

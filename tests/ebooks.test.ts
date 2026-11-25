@@ -27,13 +27,13 @@ after(async () => {
   sqlite.close();
   rmSync(temp, { recursive: true, force: true });
 });
-test("older clients asking for Anna’s Archive get a clear refusal without any upstream request", async () => {
+test("Anna’s Archive without a key in Settings is refused plainly, without any upstream request (#901)", async () => {
   globalThis.fetch = async () => {
     throw new Error("No upstream request expected");
   };
   const search = await app.inject("/api/discover/ebooks?source=annas&q=Alice");
   assert.equal(search.statusCode, 400);
-  assert.match(search.json().error, /Anna’s Archive is turned off/);
+  assert.equal(search.json().error, "Add your Anna’s Archive key in Settings first.");
   const save = await app.inject({
     method: "POST",
     url: "/api/ebooks",
@@ -51,7 +51,7 @@ test("older clients asking for Anna’s Archive get a clear refusal without any 
     },
   });
   assert.equal(save.statusCode, 400);
-  assert.match(save.json().error, /Anna’s Archive is turned off/);
+  assert.equal(save.json().error, "Add your Anna’s Archive key in Settings first.");
 });
 function upload(filename: string, bytes: Buffer, workId?: string) {
   const boundary = "sonder-ebook-test";

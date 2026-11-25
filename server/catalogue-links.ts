@@ -12,6 +12,7 @@
 // - A matched work is not searched again: only its match page searches.
 import { sqlite } from "./db.ts";
 import { placeholderEditionSql } from "./placeholder-edition.ts";
+import { backfillPlaceholderCovers, fillBookCover, fillSeriesCovers } from "./placeholder-cover.ts";
 import {
   audiobookDbBook,
   audiobookDbByAsin,
@@ -22,6 +23,7 @@ import {
   searchAudiobookDbBooks,
   type CatalogueBook,
   type CatalogueRelease,
+  audiobookDbPageUrl,
 } from "./audiobookdb.ts";
 import { openLibraryWork, openLibraryWorkUrl, refreshOpenLibraryEntry, searchOpenLibrary } from "./openlibrary.ts";
 import { googleBooksUrl, googleBooksVolume, refreshGoogleBooksEntry } from "./googlebooks.ts";
@@ -312,7 +314,7 @@ export type WorkLink = {
   /** The other AudiobookDB entries of the same work (#754), each with its number of releases. */
   duplicates: WorkDuplicate[];
 };
-export type WorkDuplicate = { id: string; title: string; releases: number };
+export type WorkDuplicate = { id: string; title: string; releases: number; url: string };
 type LinkRow = { provider: MainCatalogueProvider; externalId: string; title: string; author: string; seriesId: string | null; seriesName: string | null; seriesPosition: string | null; seriesSort: number | null; matchedBy: WorkLink["matchedBy"] };
 export function workLink(workId: string): WorkLink | null {
   const row = sqlite
@@ -329,14 +331,15 @@ export function workLink(workId: string): WorkLink | null {
     author: row.author,
     series: row.seriesName ? { id: row.seriesId, name: row.seriesName, position: row.seriesPosition, sort: row.seriesSort } : null,
     matchedBy: row.matchedBy,
-    url: row.provider === "openlibrary" ? openLibraryWorkUrl(row.externalId) : "https://audiobookdb.org",
+    url: row.provider === "openlibrary" ? openLibraryWorkUrl(row.externalId) : audiobookDbPageUrl("book", row.externalId),
     duplicates: row.provider === "audiobookdb" ? workDuplicates(workId) : [],
   };
 }
 export function workDuplicates(workId: string): WorkDuplicate[] {
-  return sqlite
+  const rows = sqlite
     .prepare("SELECT external_id AS id,title,releases FROM work_catalogue_duplicates WHERE work_id=? AND provider='audiobookdb' ORDER BY releases DESC,linked_at,external_id")
-    .all(workId) as WorkDuplicate[];
+    .all(workId) as Omit<WorkDuplicate, "url">[];
+  return rows.map((row) => ({ ...row, url: audiobookDbPageUrl("book", row.id) }));
 }
 /** Every AudiobookDB entry the work is: its main link first, then its duplicates. Empty without an AudiobookDB link. */
 export function workEntryIds(workId: string): string[] {
@@ -440,11 +443,13 @@ export async function linkWork(
   if (isExtraProvider(target.provider)) return linkProvider(workId, target.provider, target.id, wantsDescription, priority);
   let stored: { title: string; author: string; series: CatalogueBook["series"][number] | null; description: string | null };
   let releases: CatalogueRelease[] = [];
+  let linkedCover: string | null = null;
   const duplicates: { book: CatalogueBook; releases: number }[] = [];
   if (target.provider === "audiobookdb") {
     // A live answer only when the description is to be filled: the cache never holds one.
     const book = await audiobookDbBook(target.id, { priority, fresh: wantsDescription });
     stored = { title: book.title, author: book.authors.join(", "), series: book.series[0] ?? null, description: book.description };
+    linkedCover = book.cover;
     releases = (await audiobookDbReleases(book.id, { priority })).map((release) => ({ ...release, bookId: release.bookId ?? book.id }));
     const others = options.duplicates ?? (await sameWorkEntries(book, priority));
     for (const id of new Set(others.filter((other) => other !== book.id))) {
@@ -472,6 +477,7 @@ export async function linkWork(
     sqlite.prepare("DELETE FROM work_catalogue_duplicates WHERE work_id=?").run(workId);
     const keep = sqlite.prepare("INSERT OR REPLACE INTO work_catalogue_duplicates(work_id,provider,external_id,title,author,releases,linked_at) VALUES(?,'audiobookdb',?,?,?,?,?)");
     for (const entry of duplicates) keep.run(workId, entry.book.id, entry.book.title, entry.book.authors.join(", ").slice(0, 300), entry.releases, now);
+    if (target.provider === "audiobookdb") fillBookCover(target.id, linkedCover);
     if (wantsDescription && stored.description) sqlite.prepare("UPDATE works SET description=? WHERE id=? AND trim(description)=''").run(stored.description, workId);
     sqlite
       .prepare("INSERT INTO work_catalogue_match(work_id,outcome,reason,candidates,checked_at) VALUES(?,?,NULL,1,?) ON CONFLICT(work_id) DO UPDATE SET outcome=excluded.outcome,reason=NULL,candidates=1,checked_at=excluded.checked_at")
@@ -663,7 +669,12 @@ export async function refreshCatalogue(now = Date.now(), limit = 20): Promise<{ 
   for (const entry of expiredDetails(now, limit)) {
     if (stopped.has(entry.provider)) continue;
     try {
-      if (entry.provider === "audiobookdb") await refreshAudiobookDbEntry(entry.kind, entry.key);
+      if (entry.provider === "audiobookdb") {
+        const read = await refreshAudiobookDbEntry(entry.kind, entry.key);
+        // A placeholder without a cover takes the one the entry now has (#900).
+        if (read && "members" in read) fillSeriesCovers(read.id, read.members.map((member) => ({ id: member.book.id, cover: member.book.cover })));
+        else if (read) fillBookCover(read.id, read.cover);
+      }
       else if (entry.provider === "googlebooks") await refreshGoogleBooksEntry(entry.kind, entry.key);
       else if (entry.provider === "itunes") await refreshItunesEntry(entry.kind, entry.key);
       else await refreshOpenLibraryEntry(entry.kind, entry.key);
@@ -692,6 +703,19 @@ export function catalogueRefreshLoop(log: (message: string) => void): Background
         },
         (error: Error) => log(`Catalogue refresh failed: ${error.message}`),
       ),
+  };
+}
+
+/**
+ * The catalogue's covers for what has none (#900): at startup, then daily, the placeholders of linked works and the
+ * series rows without a cover take the cached answers' covers. A round with nothing to fill reads nothing.
+ */
+export function catalogueCoverLoop(log: (message: string) => void): BackgroundProcess {
+  return {
+    id: "catalogue-covers",
+    intervalMs: 24 * 60 * 60 * 1000,
+    runAtStart: true,
+    tick: () => backfillPlaceholderCovers(log).then(() => undefined, (error: Error) => log(`Catalogue covers failed: ${error.message}`)),
   };
 }
 

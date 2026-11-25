@@ -25,6 +25,10 @@ import {
   type Priority,
 } from "./catalogue-provider.ts";
 
+/** A page of AudiobookDB's own site (#902): a book, a series or a release. */
+export function audiobookDbPageUrl(kind: "book" | "series" | "release", id: string): string {
+  return `https://audiobookdb.org/${kind === "book" ? "books" : kind === "series" ? "series" : "releases"}/${encodeURIComponent(id)}`;
+}
 export const AUDIOBOOKDB_BASE = "https://api.audiobookdb.org/api";
 export const AUDIOBOOKDB_DAILY_UNITS = 10_000;
 /** Units kept back from searches so details (a match, a refresh) still go through near the limit. */
@@ -155,10 +159,23 @@ function peopleWithRole(entry: Json, role: "author" | "narrator"): string[] {
   const single = role === "author" ? nameOf(entry.author) : nameOf(entry.narrator);
   return [...new Set([...direct, ...people, single].filter((name): name is string => !!name))];
 }
-function coverOf(entry: Json): string | null {
-  for (const value of [entry.cover, entry.coverUrl, entry.image, entry.imageUrl, entry.thumbnail]) {
+/**
+ * A book's or series' cover (#900). AudiobookDB names it as an `images` array (`{ id, url, sourceUrl, width, height,
+ * blurdata }`): the first image with an https address, its `url` before its `sourceUrl`. The single-address shapes
+ * (`cover`, `coverUrl`, `image`, `imageUrl`, `thumbnail`) are kept and read first.
+ */
+export function coverOf(entry: Json): string | null {
+  const https = (value: unknown) => {
     const url = isObject(value) ? text(value.url) ?? text(value.large) ?? text(value.medium) ?? text(value.src) : text(value);
-    if (url && /^https:\/\//.test(url)) return url;
+    return url && /^https:\/\//.test(url) ? url : null;
+  };
+  for (const value of [entry.cover, entry.coverUrl, entry.image, entry.imageUrl, entry.thumbnail]) {
+    const url = https(value);
+    if (url) return url;
+  }
+  for (const image of arrayOf(entry.images)) {
+    const url = https(isObject(image) ? image.url : image) ?? (isObject(image) ? https(image.sourceUrl) : null);
+    if (url) return url;
   }
   return null;
 }
@@ -493,12 +510,13 @@ export async function testAudiobookDb(): Promise<{ limit: number | null; remaini
 }
 
 /** The refresh loop: one cached detail fetched again (a 404 deletes it). */
-export async function refreshAudiobookDbEntry(kind: string, key: string): Promise<void> {
+export async function refreshAudiobookDbEntry(kind: string, key: string): Promise<CatalogueBook | CatalogueSeries | undefined> {
   const options = { priority: "background" as const, fresh: true };
-  if (kind === "book") await audiobookDbBook(key, options);
-  else if (kind === "release") await audiobookDbRelease(key, options);
+  if (kind === "book") return audiobookDbBook(key, options);
+  if (kind === "release") await audiobookDbRelease(key, options);
   else if (kind === "asin") await audiobookDbByAsin(key, options);
-  else if (kind === "series") await audiobookDbSeries(key, options);
+  else if (kind === "series") return audiobookDbSeries(key, options);
+  return undefined;
 }
 
 export function audiobookDbUnitsToday(): number {

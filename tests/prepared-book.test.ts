@@ -12,7 +12,7 @@ Object.assign(globalThis, {
   localStorage: { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => void store.set(key, value), removeItem: (key: string) => void store.delete(key) },
   window: Object.assign(globalThis, { addEventListener() {}, removeEventListener() {}, dispatchEvent: () => true }),
 });
-const { sentenceIndex, patiently, preparedBook, PreparedStaleError, LOAD_ATTEMPTS, LOAD_WAITS_MS } = await import("../src/prepared-book.ts");
+const { sentenceIndex, positionInBook, patiently, preparedBook, PreparedStaleError, LOAD_ATTEMPTS, LOAD_WAITS_MS } = await import("../src/prepared-book.ts");
 const { ApiError } = await import("../src/lib.ts");
 const { sentencePlaces } = await import("../src/reader-places.ts");
 
@@ -75,6 +75,37 @@ test("the manifest places every sentence where the sentences themselves do", asy
   assert.equal(index.sectionOf("x"), null);
   assert.deepEqual(index.sectionSpan(1), { start: 0, count: 0 });
   assert.deepEqual(places.sectionSpan(1), { start: 0, count: 0 });
+});
+
+test("a sentence's position in the whole book comes from the manifest alone, rises with the reading order and ends near 1", async () => {
+  const chapters = [0, 1, 2].map((chapter) => Array.from({ length: 900 }, (_unused, number) => `Chapter ${chapter} sentence ${number} is a sentence of some length to fill the parts of this book.`));
+  const files: Record<string, string> = Object.fromEntries(chapters.map((chapter, at) => [`c${at}.xhtml`, chapter.map((text) => `<p>${text}</p>`).join("")]));
+  const sections = sectionsOf(chapters, [0, 1, 2]);
+  const { manifest } = await prepareEpub({
+    epub: await preparedFixture({ chapters: files }),
+    book: { id: "ed", fingerprint: "f", language: "en", sections },
+    base: "/api/reader/ed/prepared/0123456789abcdef",
+    key: "0123456789abcdef",
+    writePicture: async () => {},
+  });
+  assert.ok(manifest.parts.length > 2);
+  const index = sentenceIndex(manifest);
+  const ids = sections.flatMap((section) => section.paragraphs.map((paragraph) => paragraph.id));
+  let before = -1;
+  for (const id of ids) {
+    const position = positionInBook(manifest, index, id);
+    assert.ok(position > before || (before === 0 && position === 0), `${id}: ${position} after ${before}`);
+    assert.ok(position >= 0 && position <= 1);
+    before = position;
+  }
+  assert.equal(positionInBook(manifest, index, ids[0]!), 0);
+  assert.ok(before > 0.99, `the last sentence is at ${before}`);
+  // Sentences of one length: the position is the share of the sentences before, within a hundredth.
+  for (const at of [300, 1350, 2400]) assert.ok(Math.abs(positionInBook(manifest, index, ids[at]!) - at / ids.length) < 0.01, `sentence ${at}`);
+  // The first sentence of a part is where the parts before it end.
+  const third = manifest.parts[2]!;
+  assert.equal(positionInBook(manifest, index, third.first!), third.charStart / manifest.chars);
+  assert.equal(positionInBook(manifest, index, "9:9"), 0);
 });
 
 test("a failed request is asked again a few times with growing waits, never without end; a refusal that stands is not asked again", async () => {

@@ -332,7 +332,19 @@ export type SeriesSearchFacts = {
   retrying?: boolean;
   /** The stored reason of a failure, or of the last try of a search that waits to try again. */
   reason?: string | null;
+  /** When a waiting search tries again (#901): a source that limits requests names it. */
+  retryAt?: number | null;
+  /** The time of day as the device writes it; the default is the device's own. */
+  time?: (at: number) => string;
 };
+
+/** The sentence the server stores while Library Genesis limits requests (server/sources/libgen-client.ts, #901). */
+export const LIBGEN_LIMITED_REASON = "Library Genesis is limiting requests.";
+
+/** The time of day as the device writes it (13:05). */
+export function clockTime(at: number) {
+  return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
 
 /** 1st, 2nd, 3rd, 4th, … 11th, 12th, 13th, 21st. */
 export function ordinal(n: number): string {
@@ -354,10 +366,13 @@ export function searchReason(reason: string | null | undefined): string {
  * A series search's line. A finished search for the audiobook has none: the download it starts takes over the row.
  * A failure names the search and its reason; a waiting search says where it is in the queue (#717).
  */
-export function seriesSearchLine({ status, search, place, retrying, reason }: SeriesSearchFacts): string | null {
+export function seriesSearchLine({ status, search, place, retrying, reason, retryAt, time = clockTime }: SeriesSearchFacts): string | null {
   const file = search === "ebook" ? "Ebook" : "Audiobook";
   switch (status) {
     case "pending":
+      // A source that limits requests (Library Genesis, #901): the line says when the search asks again.
+      const limiting = retrying && retryAt ? /^(.+) is limiting requests\.?$/.exec((reason ?? "").trim()) : null;
+      if (limiting && retryAt) return `${limiting[1]} is limiting requests, trying again at ${time(retryAt)}`;
       if (retrying) return withReason("Waiting to try again", searchReason(reason));
       return place && place > 0 ? `Waiting${DOT}${ordinal(place)} in line` : "Waiting for series search";
     case "searching":
@@ -395,7 +410,7 @@ export function metadataMatchLine(status: string, reason: string | null): string
 
 /** What a finished entry of Now concerns, with the facts its line is written from. */
 export type FinishedFacts =
-  | { entry: "download"; backend?: "local" | "torbox" | "copy" | null; cancelled?: boolean }
+  | { entry: "download"; backend?: "local" | "torbox" | "copy" | null; cancelled?: boolean; file?: "ebook" }
   | { entry: "server-copy" }
   | { entry: "series-search"; search: "audiobook" | "ebook" }
   | { entry: "ebook-check"; status: "accepted" | "rejected" }
@@ -408,6 +423,8 @@ export function finishedLine(facts: FinishedFacts): string | null {
     case "download":
       // Cancelled from Activity (#716): nothing became of the file.
       if (facts.cancelled) return "Download cancelled";
+      // A torrent fetched for its ebook (#901): the file is imported into the book on the server.
+      if (facts.file === "ebook") return "Ebook on server";
       return facts.backend === "torbox" ? "Audiobook streams from TorBox" : "Audiobook on server";
     case "server-copy":
       return "Audiobook on server";
@@ -517,7 +534,7 @@ export function bookSyncLine({ hasRecording, audioComing, hasEbook, hasEpub, job
 /** A work's media state, as the Audiobook row of a work without a recording reads it. */
 export type MediaStateFacts = {
   state: "missing" | "queued" | "failed" | "available";
-  holdReason: "unreleased" | "empty_search" | null;
+  holdReason: "unreleased" | "empty_search" | "another_language" | null;
 };
 
 /**
@@ -526,6 +543,7 @@ export type MediaStateFacts = {
  * state, whose line is the download's.
  */
 export function mediaStateLine({ state, holdReason }: MediaStateFacts): string | null {
+  if (holdReason === "another_language") return ANOTHER_LANGUAGE_LINE;
   if (state === "failed") return downloadLine({ status: "error" });
   if (state !== "missing") return null;
   return holdReason === "unreleased" ? `${downloadLine({ status: null })}${DOT}not released yet` : downloadLine({ status: null });
@@ -642,7 +660,68 @@ export const NO_AUDIOBOOK_LINE = "No audiobook yet";
 export const NOT_RELEASED_LINE = "Not released yet";
 /** A series search for the book's audiobook or ebook failed (`series_acquisition_jobs`, `failed`). */
 export const SERIES_SEARCH_FAILED_LINE = failedLine({ entry: "series-search" });
+/** A downloaded book of a series whose release is in another language than the series' (#897): the user chooses another. */
+export const ANOTHER_LANGUAGE_LINE = "Another language";
 /** A book a member cannot add: it matches a book on the server that only the administrator can link. */
 export const NEEDS_ADMIN_LINE = "Needs the administrator to link it";
 /** The same hold for the administrator: the book matches several books on the server. */
 export const SEVERAL_MATCHES_LINE = "Matches more than one book on the server";
+
+/*
+ * The series queue on the Series page (#898): the line over the books while the queue has work for the series, and a
+ * book's own lines for what its search did.
+ */
+/** The owner skipped the book's search: nothing is searched or downloaded for it. */
+export const SEARCH_SKIPPED_LINE = "Skipped";
+/** The owner stopped the series' searches before this one started. */
+export const SEARCH_STOPPED_LINE = "Search stopped";
+/** The audio search found no release of the book. */
+export const NOTHING_FOUND_LINE = "Nothing found";
+/** The audio search found releases but chose none (only sets of books, or episodes): the owner chooses. */
+export function leftToChooseLine(found: number): string {
+  return `${found} found${DOT}choose one`;
+}
+
+/** "in 25 s", "in 2 min"; "now" at or under a second. */
+export function startsIn(ms: number): string {
+  const seconds = Math.ceil(ms / 1000);
+  if (seconds <= 1) return "now";
+  if (seconds < 60) return `in ${seconds} s`;
+  return `in ${Math.round(seconds / 60)} min`;
+}
+
+export type SeriesRunFacts = {
+  /** The series' search running now: the book as the row numbers it ("book 3", or its title) and what it looks for. */
+  searching: { book: string; search: "audiobook" | "ebook" } | null;
+  /** A search of another series runs now. */
+  otherSearching: boolean;
+  /** The series' searches that wait, those waiting to try their source again among them. */
+  waiting: number;
+  retrying: number;
+  /** The series' searches the owner stopped. */
+  stopped: number;
+  /** The series queue is switched off on Activity's Server page. */
+  paused: boolean;
+  /** Milliseconds until the queue starts its next search; null while one runs or when it is not known. */
+  nextIn: number | null;
+};
+
+/**
+ * The run line over a saved series' books: what the queue does now for the series, how many of its searches wait, and
+ * when the next starts ("Searching for book 3 · audiobook · 5 waiting", "Next search in 20 s · 5 waiting"). Null when
+ * the queue has nothing of the series and none was stopped.
+ */
+export function seriesRunLine({ searching, otherSearching, waiting, retrying, stopped, paused, nextIn }: SeriesRunFacts): string | null {
+  const waits = waiting > 0 ? `${waiting} waiting` : null;
+  const join = (...parts: (string | null)[]) => parts.filter(Boolean).join(DOT);
+  if (searching) return join(`Searching for ${searching.book}`, searching.search, paused ? null : waits);
+  if (waiting > 0) {
+    if (paused) return join(QUEUE_OFF_LINE, waits);
+    if (otherSearching) return join("Another series is being searched", waits);
+    if (retrying >= waiting) return `${waiting} waiting to try again`;
+    if (nextIn !== null) return join(`Next search ${startsIn(nextIn)}`, waits);
+    return waits;
+  }
+  if (stopped > 0) return join(SEARCH_STOPPED_LINE, `${stopped} not searched`);
+  return null;
+}

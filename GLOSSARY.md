@@ -291,7 +291,7 @@ A running activity whose progress and last update have not changed for longer th
 _Avoid_: Hung, frozen
 
 **Needs attention**:
-What the user has to look at: for the administrator, an activity that failed in the last seven days, is stuck or is blocked, and a background process that is down; for anyone, a device save on the device in hand whose last attempt failed. It lights the attention dot on Activity, and Activity's Now lists exactly these under that name. A paused process and a worker that is not in use need no attention.
+What the user has to look at: for the administrator, an activity that failed in the last seven days, is stuck or is blocked, and a background process that is down (a reading sync of a book that is not in the administrator's library needs none: it stays listed, and counts again when the book is added back); for anyone, a device save on the device in hand whose last attempt failed. It lights the attention dot on Activity, and Activity's Now lists exactly these under that name. A paused process and a worker that is not in use need no attention.
 _Avoid_: Error, alert, problem (for the state)
 
 **Activity source**:

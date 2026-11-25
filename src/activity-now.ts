@@ -10,7 +10,7 @@
  */
 import type { DeviceSaveEntry } from "./device-saves";
 import {
-  downloadLine, ebookCheckLine, failedLine, finishedLine, readingSyncLine, serverCopyLine, seriesSearchLine, spareEditionsLine,
+  SEARCH_SKIPPED_LINE, SEARCH_STOPPED_LINE, downloadLine, ebookCheckLine, failedLine, finishedLine, readingSyncLine, serverCopyLine, seriesSearchLine, spareEditionsLine,
   withFileCount, withReason, withUser, deviceSaveLine, ALREADY_HAS_COPY_LINE, searchReason, SERIES_NOT_SAVED_AGAIN_LINE, SERIES_SAVED_AGAIN_LINE, metadataMatchLine,
   type DownloadFacts, type EbookCheckFacts, type ReadingSyncJobFacts, type SeriesSearchFacts, type ServerCopyFacts,
 } from "./status-lines";
@@ -54,6 +54,8 @@ export type NowButton =
 export type NowOpens =
   | { to: "book"; workId: string; bookId: string | null }
   | { to: "reading-sync"; workId: string; bookId: string | null }
+  /** A series search (#898): the saved series' page at the book, with what its search found and chose. */
+  | { to: "series"; seriesId: string; seriesBookId: string; workId: string; bookId: string | null }
   | { to: "worker"; hostId: string }
   | { to: "server" }
   | null;
@@ -182,7 +184,7 @@ function movingLine(item: ActivityItem): string | null {
       // A waiting search says where it is in the queue, or that it waits to try its source again (#717).
       return seriesSearchLine({
         status: facts.status as SeriesSearchFacts["status"], search: facts.search, place: facts.place,
-        retrying: !!facts.retryAt, reason: item.error,
+        retrying: !!facts.retryAt, reason: item.error, retryAt: facts.retryAt,
       });
     case "ebook-set":
       return ebookCheckLine(
@@ -208,7 +210,7 @@ function doneLine(item: ActivityItem): string | null {
   const facts = item.facts;
   switch (facts.kind) {
     case "acquisition":
-      return finishedLine({ entry: "download", backend: facts.backend as DownloadFacts["backend"], cancelled: facts.status === "cancelled" });
+      return finishedLine({ entry: "download", backend: facts.backend as DownloadFacts["backend"], cancelled: facts.status === "cancelled", file: facts.file });
     case "server-copy":
       return finishedLine({ entry: "server-copy" });
     case "series-acquisition":
@@ -272,6 +274,9 @@ function serverEntry(item: ActivityItem, now: number, spares: Map<string, { tota
     line = withReason(failed ? SERIES_NOT_SAVED_AGAIN_LINE : SERIES_SAVED_AGAIN_LINE, searchReason(item.error));
   // A book of a series' 'Match automatically' (#719 part b): waiting, matching, matched, no sure match or failed, and why.
   else if (item.facts.kind === "series-acquisition" && item.facts.metadataMatch) line = metadataMatchLine(item.facts.status, item.error);
+  // The owner's Skip or Stop searching on the Series page (#898): its own words, not a finished search.
+  else if (item.facts.kind === "series-acquisition" && item.facts.outcome)
+    line = item.facts.outcome === "skipped" ? SEARCH_SKIPPED_LINE : SEARCH_STOPPED_LINE;
   // A failed series search names which search failed and why (#717).
   else if (failed && item.facts.kind === "series-acquisition")
     line = seriesSearchLine({ status: "failed", search: item.facts.search, reason: item.error });
@@ -300,7 +305,14 @@ function serverEntry(item: ActivityItem, now: number, spares: Map<string, { tota
     cover: notBook ? null : item.cover,
     entry,
     // A series search is about the file it looks for ("Ebook on server" has the Ebook icon, ActivityFailedSave.dc.html).
-    icon: notBook || saveAgain || metadataMatch ? "server" : item.facts.kind === "series-acquisition" ? item.facts.search : ICON_OF[entry] ?? null,
+    icon: notBook || saveAgain || metadataMatch
+      ? "server"
+      : item.facts.kind === "series-acquisition"
+        ? item.facts.search
+        : // A torrent fetched for its ebook (#901) is about the ebook.
+          item.facts.kind === "acquisition" && item.facts.file === "ebook"
+          ? "ebook"
+          : ICON_OF[entry] ?? null,
     line: line ?? item.detail ?? "",
     failed: failed || notBook,
     progress: group === "progress" && !item.stuck && !item.superseded ? item.progress : null,
@@ -309,9 +321,11 @@ function serverEntry(item: ActivityItem, now: number, spares: Map<string, { tota
     ...(action && action !== "cancel" && item.actions.includes("cancel") ? { cancel: { action: "cancel" as const, source: "server" as const, itemId: item.id } } : {}),
     opens: notBook
       ? { to: "server" }
-      : item.workId
-        ? { to: syncOpen ? "reading-sync" : "book", workId: item.workId, bookId: item.bookId }
-        : null,
+      : item.workId && item.facts.kind === "series-acquisition" && item.facts.seriesId && item.facts.seriesBookId
+        ? { to: "series", seriesId: item.facts.seriesId, seriesBookId: item.facts.seriesBookId, workId: item.workId, bookId: item.bookId }
+        : item.workId
+          ? { to: syncOpen ? "reading-sync" : "book", workId: item.workId, bookId: item.bookId }
+          : null,
     changedAt: item.updatedAt,
     place: group === "waiting" && item.facts.kind === "series-acquisition" ? item.facts.place ?? null : null,
   };

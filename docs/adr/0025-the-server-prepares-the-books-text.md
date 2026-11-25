@@ -94,3 +94,50 @@ The times were taken on the production machine while other work ran on it; singl
 - Keep on this device (ADR 0018, ADR 0021) stores the prepared parts instead of the EPUB file from step 6, and replaces EPUBs kept before.
 - A text PDF becomes a second input that produces the same prepared text and the same kind of sentence ids (step 8); a PDF that fails the quality gate keeps today's behaviour.
 - The measurement reads the page only through the room, the text band, the loading line, `data-current-passage` and the follow highlight, and counts text in the band itself or in a frame inside it. The new view keeps those names so the before and after are measured by the same script.
+
+## Pages mode in the new view (step 4, #803)
+
+Built behind the same hidden switch. A page is a CSS column (two side by side on a desktop with room for them). Nothing of the whole book is laid out.
+
+**The rule (ray, 2026-11-21): every part begins on a new page, always, reading forwards and backwards; with two pages side by side, on a left page.** A part's pages depend on that part, the band and the style alone. Whatever parts are in the page around it, its text stands on the same pages, line for line. Nothing is measured or made up for when a part comes or goes.
+
+- **How it holds: each loaded part is a run of columns of its own**, in a box exactly as wide as the whole pages its text fills, and the parts stand side by side. No part's text is in another part's columns, so no part can move a line of another; a part can only move the others by its whole pages. A forced column break in one run of columns for all parts would say the same in Chromium, but Firefox (157) has no forced column break: the first build of the rule passed every walk in Chromium and failed every one in Firefox.
+
+- **A part before the pages shown** (put in as the reader nears the run's first page, taken out when it is far behind) moves them by the whole pages it fills, an even number with two pages side by side, and the band is put that many pages further. A part after them changes nothing before it. At most five parts are in the page, reading on or back.
+- **Two pages side by side:** a part that fills an odd number of pages ends with an empty right page, so that the next part begins on a left page and which page is left and which right never depends on the parts loaded. The pages are counted, not measured: laid out one page wide, a part's columns run on beyond its box by a whole number of pages.
+- **A part is whole in the page before any of its pages is shown.** A turn towards a part that is not there yet waits for it; no page is seen half empty and then filled.
+- **Its price: a short page where a part ends inside a chapter, reading forwards too.** A part is cut by size (about 120 KB), between two paragraphs, so a chapter longer than a part is cut inside. The page before the cut ends early, as before a chapter's heading, and with two pages the right page may be empty. This is not rare in this library: in Snow Crash 9 of 13 joints between parts are inside a chapter, in one edition of The Picture of Dorian Gray 31 of 64, in Look to Windward 8 of 10; in such books about once every 60 to 100 pages of a phone. Where a part ends with its chapter the page would end there anyway.
+- **What was tried first and given up (2026-11-21):** parts that run on in the column the part before ended in, so that no page is short. Then every part's place depends on the parts before it, and each part that came or went before the reader had to be made up for by a measured space (above the run, and between two parts for a reader who came backwards). Three reviews each found a path on which that did not hold (sentences shown again or hidden, a page with no text), and on real books a turn forward again was not always the page that was left. The rule above replaces the measuring by a property that holds by construction.
+- **Not built, for a follow-up:** the server could prefer a chapter's end as the place to cut a part when one lies near the size limit, which would put most short pages where a new page is natural. Sentence ids would not change.
+- **The page is held by a place in its text**, never by a column's number. The place is where the reader last moved to: the top of a page turned to, a sentence jumped to, the page the narration turned to. It stays that until the reader moves again. A layout made anew (a band resized, Appearance opened, another size of text, a picture that arrived) shows the page that holds the place and never takes the place anew: taken anew, each resize and back moved the reader a page (found in review, 2026-11-21).
+- **Every length of a page is a whole number of px.** A browser stretches columns to fill their box, so in a band of an odd width (two pages) or a fractional one the columns were a fraction wider than reckoned and the pages drifted, a px or more every few turns. The text's box is given the width of exactly one page or two, at most a px per page narrower than the band.
+- **The band reaches as far as the page shown.** A scrolled box goes no further than its content, and the last column's margin is not content: an empty box placed beyond the page shown keeps the last page of the run, and a single column on the left of two pages, at the margin.
+- **A tap for a page whose part is still on its way** turns the page when the part is there; the tap is not lost (the fault of #445, not repeated here).
+- **The browser's own scroll** (a link focused with the keyboard, a word found in the page) is answered by showing the whole page that holds what it showed.
+- **A page's saved place is the first sentence that starts on it**, so opening the place shows a page that holds it.
+
+**A place opened again shows exactly the page that was left**, at the same width and style: the saved place is the first sentence that starts on the page, and a part's pages are the same however the reader came to them. (Before the rule above, a part read into ran on in the column of the part before, and a place opened again showed the saved sentence on a page that could begin a few lines earlier or later.)
+
+**Measured** on a copy of production, the new view, median of 3, pages mode against scroll mode on the same image and night (`--mode pages` and `--mode scroll`), the books of the baseline above:
+
+| Book | Profile | State | First text pages / scroll | Place shown pages / scroll | Following pages / scroll | Bytes pages / scroll |
+| --- | --- | --- | --- | --- | --- | --- |
+| short | desktop | cold | 245 / 428 ms | 391 / 607 ms | 1,202 / 1,391 ms | 180 / 180 KB |
+| short | desktop | warm | 137 / 145 ms | 237 / 287 ms | 387 / 407 ms | 144 / 144 KB |
+| short | phone | cold | 1,022 / 953 ms | 1,086 / 1,085 ms | 1,921 / 1,888 ms | 206 / 206 KB |
+| short | phone | warm | 472 / 370 ms | 717 / 479 ms | 894 / 553 ms | 144 / 144 KB |
+| average | desktop | cold | 224 / 1,185 ms | 360 / 1,185 ms | 1,231 / 1,295 ms | 409 / 409 KB |
+| average | desktop | warm | 101 / 113 ms | 186 / 191 ms | 310 / 319 ms | 170 / 170 KB |
+| average | phone | cold | 898 / 858 ms | 1,010 / 974 ms | 2,056 / 2,067 ms | 409 / 409 KB |
+| average | phone | warm | 378 / 344 ms | 586 / 496 ms | 756 / 610 ms | 170 / 170 KB |
+| long | desktop | cold | 209 / 1,737 ms | 322 / 1,737 ms | – / – ms | 1,662 / 1,662 KB |
+| long | desktop | warm | 119 / 111 ms | 246 / 248 ms | – / – ms | 1,123 / 1,123 KB |
+| long | phone | cold | 852 / 2,751 ms | 967 / 2,751 ms | – / – ms | 1,709 / 1,662 KB |
+| long | phone | warm | 407 / 387 ms | 915 / 860 ms | – / – ms | 375 / 1,123 KB |
+
+Bytes and requests are the same in both modes. Pages mode is no slower to open cold. Warm on the phone profile (the processor slowed four times) it shows its place 60 to 340 ms later than scroll mode: a whole part is laid out in columns before the page is shown. The long book's cold figures favour pages mode because in scroll mode its first screen waits for the cover picture.
+
+**Real books in pages mode** (Chromium with a Pixel 7 profile and Firefox, 2026-11-21): The Picture of Dorian Gray Parts Edition, The State of the Art, the "bionic reading" edition, a book of 52 large pictures, a book with 132 pictures and a three-column table, a book with a 239-row table, 60 to 120 pages each, the last three also as two pages on a desktop: never an empty page, no line cut by a page's edge, no picture or table over an edge, at most five parts in the page, back and forward again the same pages line for line. On a book with a reading sync map, 120 narrated sentences on: the part being narrated was on the page shown every time, also inside each sentence that breaks over two pages. Not checked: a table wider than three columns (the library has none; a table is held to the page's width by the stylesheet, untested on a real wide one) and a real Android phone or emulator (the emulator's host was unreachable).
+
+Not explained: The State of the Art once did not open within 90 seconds on its first preparing in the copy and opened in 7 seconds the next time; and the long book's warm phone median in pages mode (375 KB) lacks the bytes of the reading sync map that every other warm row of that book carries (1,123 KB).
+

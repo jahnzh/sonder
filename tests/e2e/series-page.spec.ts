@@ -233,8 +233,8 @@ test("a failed ebook search shows Series search failed with Retry, which runs it
   await expect.poll(async () => (await companion())?.acquisition?.ebook?.status).toBe("failed");
   await page.goto("/#series/701");
   const item = row(related(page), "Crossing Companion");
-  // A failed row still opens its book; Retry is its own button.
-  await expect(link(item, "Crossing Companion")).toHaveAccessibleName(/^Crossing Companion Series search failed$/);
+  // A failed row names its search and the reason (#898); Retry is its own button.
+  await expect(link(item, "Crossing Companion")).toHaveAccessibleName(/^Crossing Companion Ebook search failed · fixture ebook fail$/);
   const retries: string[] = [];
   page.on("request", (request) => {
     if (request.url().includes("/acquisition/retry")) retries.push(request.postData() ?? "");
@@ -242,7 +242,7 @@ test("a failed ebook search shows Series search failed with Retry, which runs it
   await item.getByRole("button", { name: "Retry Crossing Companion", exact: true }).click();
   await expect.poll(async () => (await companion())?.acquisition?.ebook?.status).toBe("done");
   expect(retries.map((body) => JSON.parse(body))).toEqual([{ kind: "ebook" }]);
-  await expect(link(item, "Crossing Companion")).not.toHaveAccessibleName(/Series search failed/);
+  await expect(link(item, "Crossing Companion")).not.toHaveAccessibleName(/search failed/);
   await expect(item.getByRole("button", { name: "Retry Crossing Companion", exact: true })).toHaveCount(0);
 });
 

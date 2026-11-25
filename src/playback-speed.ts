@@ -51,6 +51,20 @@ export function speedMemory(preferences: SpeedPreferences) {
   // null records that the recording has no speed of its own.
   const recordings = new Map<string, number | null>();
   let device: number | null = null;
+  // The newest write per key that has not finished: a row to put, or null to
+  // delete. A page that goes while one is in flight can lose it, so it is
+  // written again by `rewritePending` (on `pagehide`).
+  const pending = new Map<string, PreferenceRow | null>();
+  const write = (key: string, row: PreferenceRow | null) => {
+    pending.set(key, row);
+    const done = (row ? preferences.put(row) : preferences.delete(key)).then(
+      () => {
+        if (pending.get(key) === row) pending.delete(key);
+      },
+      () => {},
+    );
+    return done;
+  };
   const deviceLoaded = preferences.get(LEGACY_SPEED_KEY).then(
     (row) => {
       device ??= clampSpeed(row?.value);
@@ -87,17 +101,25 @@ export function speedMemory(preferences: SpeedPreferences) {
     /** Drops the recording's own speed so it follows the default again. */
     forget(recordingId: string) {
       recordings.set(recordingId, null);
-      return preferences.delete(recordingSpeedKey(recordingId)).catch(() => {});
+      return write(recordingSpeedKey(recordingId), null);
     },
     remember(recordingId: string | undefined, speed: number) {
       if (recordingId) recordings.set(recordingId, speed);
       else device = speed;
-      return preferences
-        .put({
-          key: recordingId ? recordingSpeedKey(recordingId) : LEGACY_SPEED_KEY,
-          value: speed,
-        })
-        .catch(() => {});
+      const key = recordingId ? recordingSpeedKey(recordingId) : LEGACY_SPEED_KEY;
+      return write(key, { key, value: speed });
+    },
+    /** True while a put or delete has been started and has not finished. */
+    hasPending: () => pending.size > 0,
+    /**
+     * Starts every unfinished write again, newest intent per key. Called when
+     * the page is going away, where a write in flight may be dropped; a write
+     * repeated after it finished is harmless.
+     */
+    rewritePending() {
+      return Promise.all(
+        [...pending].map(([key, row]) => write(key, row)),
+      ).then(() => {});
     },
   };
 }

@@ -624,10 +624,10 @@ export async function queueEngineRebuilds(log: AutoQueueLog = console): Promise<
     for (const workId of projectedWorks) {
       // A consensus map of an older engine is queued above and regenerates its projections when it
       // publishes. One that already published (the server stopped before it projected) projects now.
-      const consensusJobId = getEbookSetPresentation(workId).consensus?.jobId;
-      const consensus = consensusJobId ? jobs().find((job) => job.id === consensusJobId) : undefined;
-      if (!consensus || engineIsOlder(consensus.engine, target) || !alignmentMapUsable(consensus)) continue;
       try {
+        const consensusJobId = getEbookSetPresentation(workId).consensus?.jobId;
+        const consensus = consensusJobId ? jobs().find((job) => job.id === consensusJobId) : undefined;
+        if (!consensus || engineIsOlder(consensus.engine, target) || !alignmentMapUsable(consensus)) continue;
         await onConsensusAlignmentFinished(workId, consensus);
         result.projections++;
       } catch (error) {
@@ -1737,14 +1737,19 @@ export function registerAlignment(app: FastifyInstance) {
       `alignment write: ${req.method} ${path}${meta?.action ? ` action=${meta.action}` : ""} status=${status} durationMs=${durationMs}`,
     );
   });
-  for (const job of jobs()) {
-    if (job.audioFingerprint.startsWith("audio-v2:")) continue;
-    try {
-      // Upgrade only maps whose complete original source fingerprint still
-      // validates; never bless a changed file just because it has a new format.
-      if (job.audioFingerprint === audioFingerprint(job.recordingId, false))
-        transition.upgradeAudioFingerprint(job, audioFingerprint(job.recordingId));
-    } catch {}
+  try {
+    for (const job of jobs()) {
+      if (job.audioFingerprint.startsWith("audio-v2:")) continue;
+      try {
+        // Upgrade only maps whose complete original source fingerprint still
+        // validates; never bless a changed file just because it has a new format.
+        if (job.audioFingerprint === audioFingerprint(job.recordingId, false))
+          transition.upgradeAudioFingerprint(job, audioFingerprint(job.recordingId));
+      } catch {}
+    }
+  } catch (error) {
+    // The listing failed (a full database): the server still starts, and the upgrade is tried at the next start.
+    app.log.warn(`Reading-sync maps could not be listed to upgrade their audio fingerprints: ${error instanceof Error ? error.message : String(error)}`);
   }
   rebuildScan = queueEngineRebuilds(app.log).catch((error) => {
     app.log.warn(`Reading-sync rebuilds could not be queued: ${error instanceof Error ? error.message : String(error)}`);

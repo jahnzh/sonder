@@ -8,9 +8,6 @@ import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
 import { eq } from "drizzle-orm";
 import { randomUUID, createHash } from "node:crypto";
-import dns, { type LookupAddress } from "node:dns";
-import { BlockList, isIP } from "node:net";
-import { Agent } from "undici";
 import {
   createWriteStream,
   existsSync,
@@ -26,9 +23,48 @@ import { ebookSetMembersRemoved, removePendingMembersLeftBehind } from "./ebook-
 import { join, basename, extname } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-// Anna’s Archive was removed for now (#8); Library Genesis is the only source.
-export type EbookSource = "libgen";
+import {
+  createLibgenClient,
+  LibgenLimitedError,
+  LIBGEN_USER_AGENT,
+  sourceTiming,
+} from "./sources/libgen-client.ts";
+import { annasDownload, searchAnnas, searchLibgenRs, searchZlib, zlibDownload } from "./sources/shadow-libraries.ts";
+import {
+  gutenbergSearchUrl,
+  GUTENBERG,
+  parseGutenberg,
+  parseStandardEbooks,
+  publicDomainDownload,
+  STANDARD_EBOOKS,
+  standardEbooksSearchUrl,
+  type PublicDomainSource,
+} from "./sources/public-domain.ts";
+// The sources (#901): Library Genesis (the libgen.li family), Anna’s Archive with the member key in Settings,
+// Z-Library with the account in Settings, the other Library Genesis family (libgen.rs), Prowlarr's book indexers and
+// the public-domain Standard Ebooks and Project Gutenberg.
+export type EbookSource = "libgen" | "annas" | "zlib" | "libgenrs" | "prowlarr" | "standardebooks" | "gutenberg";
+/** The sources in the order the series search asks them (#901). */
+export const EBOOK_SOURCES = [
+  "libgen",
+  "annas",
+  "zlib",
+  "libgenrs",
+  "prowlarr",
+  "standardebooks",
+  "gutenberg",
+] as const satisfies readonly EbookSource[];
+/**
+ * The edition id a source's file is kept under (#901). Library Genesis, the libgen.rs family and Anna’s Archive name a
+ * file by its own md5 (checked when it is saved), so the same file from any of them is one edition, `libgen-<md5>`; a
+ * file the book has from one is "Already added" from the others. Another source's key is its own edition's.
+ */
+export function ebookEditionId(result: { source: string; md5: string }) {
+  const md5 = result.md5.toLowerCase();
+  return ["libgen", "libgenrs", "annas"].includes(result.source) ? `libgen-${md5}` : `${result.source}-${result.md5}`;
+}
 export type EbookResult = {
+  /** The file's md5 on Library Genesis; for another source a 32-hex key of the edition there. */
   md5: string;
   source: EbookSource;
   title: string;
@@ -39,45 +75,29 @@ export type EbookResult = {
   year: string | null;
   coverUrl: string | null;
   url: string;
+  /** A Prowlarr release's indexer and seeders, and whether TorBox has it cached; absent for the other sources. */
+  indexer?: string;
+  seeders?: number | null;
+  cached?: boolean;
 };
-const userAgent =
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36";
-function baseUrl(_source: EbookSource) {
-  return getSetting("libgenUrl") || "https://libgen.li";
+const userAgent = LIBGEN_USER_AGENT;
+// The test suites ask fake mirrors many times in a row: no spacing, no waits, no rest.
+/** The one Library Genesis client (#901): the Get sheet and the series queue share its spacing and rests. */
+export const libgen = createLibgenClient({
+  fetch: (url, init) => publicFetch(url, init),
+  mirror: () => getSetting("libgenUrl"),
+  timing: sourceTiming(),
+});
+export { LibgenLimitedError };
+
+async function libgenPage(kind: "search" | "download", path: string) {
+  const { body, mirror } = await libgen.request(kind, path, {
+    headers: { Accept: "text/html" },
+    timeoutMs: 20000,
+  });
+  return { html: body ?? "", mirror };
 }
-async function page(url: string, source: EbookSource) {
-  let response;
-  try {
-    response = await publicFetch(url, {
-      headers: {
-        Accept: "text/html",
-        "User-Agent": userAgent,
-        Referer: baseUrl(source) + "/",
-      },
-      signal: AbortSignal.timeout(20000),
-    });
-  } catch {
-    throw new Error(
-      "Library Genesis could not be reached. Try another mirror in Settings or open the source website.",
-    );
-  }
-  if (!response.ok)
-    throw new Error(
-      `Library Genesis returned ${response.status}. This mirror may need browser verification.`,
-    );
-  const html = await response.text();
-  if (/<title>\s*Welcome to nginx!/i.test(html))
-    throw new Error(
-      "This mirror is unavailable. Try another mirror in Settings or open the source website.",
-    );
-  return html;
-}
-export async function searchEbooks(
-  source: EbookSource,
-  q: string,
-  pageNumber = 1,
-): Promise<{ files: EbookResult[]; website: string }> {
-  const base = baseUrl(source);
+async function searchLibgen(q: string, pageNumber: number) {
   const params = new URLSearchParams([
     ["req", q],
     ["columns[]", "t"],
@@ -90,8 +110,8 @@ export async function searchEbooks(
     ["filesuns", "all"],
     ["page", String(pageNumber)],
   ]);
-  const url = `${base}/index.php?${params}`;
-  const html = await page(url, source);
+  const path = `index.php?${params}`;
+  const { html, mirror } = await libgenPage("search", path);
   const files = parseLibgen(html).map((f) => ({ ...f, coverUrl: null }));
   if (
     !files.length &&
@@ -106,125 +126,61 @@ export async function searchEbooks(
     files: files
       .filter((f) => f.extension === "epub" || f.extension === "pdf")
       .slice(0, 50)
-      .map((f) => ({ ...f, source, url: `${base}/ads.php?md5=${f.md5}` })),
-    website: url,
+      .map((f) => ({ ...f, source: "libgen" as const, url: `${mirror}/ads.php?md5=${f.md5}` })),
+    website: `${mirror}/${path}`,
   };
 }
-// Separate lists, because BlockList also matches IPv4 addresses against IPv6
-// rules as IPv4-mapped addresses, which ::ffff:0:0/96 would always match.
-const privateV4 = new BlockList(),
-  privateV6 = new BlockList();
-for (const [network, prefix] of [
-  ["0.0.0.0", 8],
-  ["10.0.0.0", 8],
-  ["100.64.0.0", 10],
-  ["127.0.0.0", 8],
-  ["169.254.0.0", 16],
-  ["172.16.0.0", 12],
-  ["192.0.0.0", 24],
-  ["192.168.0.0", 16],
-  ["198.18.0.0", 15],
-  ["224.0.0.0", 3],
-] as const)
-  privateV4.addSubnet(network, prefix, "ipv4");
-for (const [network, prefix] of [
-  ["::", 96], // unspecified, loopback and IPv4-compatible
-  ["::ffff:0:0", 96], // IPv4-mapped
-  ["64:ff9b::", 96], // NAT64
-  ["64:ff9b:1::", 48],
-  ["100::", 64],
-  ["2001::", 32], // Teredo
-  ["2002::", 16], // 6to4
-  ["fc00::", 7],
-  ["fe80::", 10],
-  ["fec0::", 10],
-  ["ff00::", 8],
-] as const)
-  privateV6.addSubnet(network, prefix, "ipv6");
-export function privateAddress(ip: string) {
-  const family = isIP(ip);
-  if (!family) return true;
-  return family === 6
-    ? privateV6.check(ip, "ipv6")
-    : privateV4.check(ip, "ipv4");
-}
-class PrivateAddressError extends Error {
-  constructor() {
-    super("Downloads from private network addresses are not allowed.");
-  }
-}
-// Every address is checked when the connection is made, so a host can't pass
-// the check with one DNS answer and connect with another.
-const publicAgent = new Agent({
-  connect: {
-    lookup(hostname, options, callback) {
-      dns.lookup(hostname, { ...options, all: true }, (error, found) => {
-        const addresses = found as unknown as LookupAddress[];
-        if (error) return callback(error, "", 0);
-        if (!addresses.length || addresses.some((a) => privateAddress(a.address)))
-          return callback(new PrivateAddressError(), "", 0);
-        if ((options as { all?: boolean }).all)
-          return (callback as unknown as (e: null, a: LookupAddress[]) => void)(
-            null,
-            addresses,
-          );
-        callback(null, addresses[0].address, addresses[0].family);
-      });
-    },
+const publicDomainSites: Record<PublicDomainSource, { name: string; search: (q: string) => string; website: (q: string) => string; parse: typeof parseGutenberg }> = {
+  standardebooks: {
+    name: "Standard Ebooks",
+    search: standardEbooksSearchUrl,
+    website: (q) => `${STANDARD_EBOOKS}/ebooks?${new URLSearchParams({ query: q })}`,
+    parse: parseStandardEbooks,
   },
-});
-// Waiting for a response and waiting between body chunks are limited separately,
-// so a large file on a slow mirror isn't cut off while it is still arriving.
-export const ebookTimeouts = { response: 60000, idle: 60000 };
-export async function publicFetch(input: string, init: RequestInit = {}) {
-  let url = new URL(input);
-  for (let attempt = 0; attempt < 5; attempt++) {
-    if (
-      url.protocol !== "https:" ||
-      url.username ||
-      url.password ||
-      !["", "443"].includes(url.port)
-    )
-      throw new Error(
-        "The source did not provide a secure public download URL.",
-      );
-    // Literal addresses never reach the agent's lookup.
-    const host = url.hostname.replace(/^\[|\]$/g, "");
-    if (isIP(host) && privateAddress(host)) throw new PrivateAddressError();
-    const waiting = new AbortController();
-    const timer = setTimeout(
-      () =>
-        waiting.abort(new Error("The ebook source did not respond in time.")),
-      ebookTimeouts.response,
-    );
-    let response;
-    try {
-      response = await fetch(url, {
-        ...init,
-        redirect: "manual",
-        signal: init.signal
-          ? AbortSignal.any([init.signal, waiting.signal])
-          : waiting.signal,
-        dispatcher: publicAgent,
-      } as RequestInit);
-    } catch (error) {
-      const cause = (error as { cause?: unknown }).cause;
-      throw cause instanceof PrivateAddressError ? cause : error;
-    } finally {
-      clearTimeout(timer);
-    }
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get("location");
-      await response.body?.cancel();
-      if (!location)
-        throw new Error("The ebook source returned an invalid redirect.");
-      url = new URL(location, url);
-      continue;
-    }
-    return response;
+  gutenberg: {
+    name: "Project Gutenberg",
+    search: gutenbergSearchUrl,
+    website: (q) => `${GUTENBERG}/ebooks/search/?${new URLSearchParams({ query: q })}`,
+    parse: parseGutenberg,
+  },
+};
+async function searchPublicDomain(source: PublicDomainSource, q: string) {
+  const site = publicDomainSites[source];
+  let response;
+  try {
+    response = await publicFetch(site.search(q), {
+      headers: { Accept: "application/atom+xml, application/xml;q=0.9", "User-Agent": "Sonder" },
+      signal: AbortSignal.timeout(20000),
+    });
+  } catch (error) {
+    throw new Error(`${site.name} could not be reached.`, { cause: error });
   }
-  throw new Error("The ebook source redirected too many times.");
+  // Project Gutenberg answers 503 with a maintenance page while it is down.
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error(`${site.name} is unavailable (${response.status}).`);
+  }
+  const files = site.parse(await response.text());
+  return { files: files.slice(0, 30), website: site.website(q) };
 }
+export async function searchEbooks(
+  source: EbookSource,
+  q: string,
+  pageNumber = 1,
+): Promise<{ files: EbookResult[]; website: string }> {
+  if (source === "libgen") return searchLibgen(q, pageNumber);
+  if (source === "annas") return searchAnnas(q);
+  if (source === "zlib") return searchZlib(q);
+  if (source === "libgenrs") return searchLibgenRs(q);
+  if (source === "prowlarr") {
+    const { prowlarrEbookSearch } = await import("./services.ts");
+    return { files: await prowlarrEbookSearch(q), website: "" };
+  }
+  return searchPublicDomain(source, q);
+}
+export { ebookTimeouts, privateAddress, publicFetch } from "./public-fetch.ts";
+import { ebookTimeouts, publicFetch } from "./public-fetch.ts";
+
 // Saving an ebook that is already on the server still attaches it to the chosen book.
 async function linkEbook(id: string, workId: string | undefined) {
   if (!workId) return;
@@ -247,16 +203,34 @@ async function linkEbook(id: string, workId: string | undefined) {
   invalidateParsedBook(id);
   await ebookSetMembersRemoved(left);
 }
-async function resolveDownload(source: EbookSource, md5: string) {
-  const base = baseUrl(source);
-  const mirror = parseMirrorPage(
-    await page(`${base}/ads.php?md5=${md5}`, "libgen"),
-  );
-  if (!mirror.download)
+/** The file's address on a mirror: its download page (`ads.php`) names the keyed link (`get.php`). */
+async function resolveLibgenDownload(md5: string) {
+  const { html, mirror } = await libgenPage("download", `ads.php?md5=${md5}`);
+  const page = parseMirrorPage(html);
+  if (!page.download)
     throw new Error(
       "Library Genesis did not provide a direct link. Open the source website to download manually.",
     );
-  return new URL(mirror.download, base).href.replace(/^http:/i, "https:");
+  return { url: new URL(page.download, mirror).href.replace(/^http:/i, "https:"), mirror };
+}
+/** The file's response: through the Library Genesis client for its keyed link, straight from a public-domain source. */
+async function fetchEbookFile(input: EbookResult, signal: AbortSignal) {
+  const headers = { "User-Agent": userAgent, "Accept-Encoding": "identity" };
+  if (input.source === "libgen") {
+    const { url, mirror } = await resolveLibgenDownload(input.md5);
+    const { response } = await libgen.request("download", url, {
+      headers: { ...headers, Referer: `${mirror}/` },
+      read: false,
+      signal,
+    });
+    return response;
+  }
+  if (input.source === "standardebooks" || input.source === "gutenberg")
+    return publicFetch(publicDomainDownload(input.source, input.url), { headers, signal });
+  if (input.source === "annas") return publicFetch(await annasDownload(input.md5.toLowerCase()), { headers, signal });
+  // The page names the book; the address fetched is the one Z-Library's API gives for it, never the client's.
+  if (input.source === "zlib") return publicFetch(await zlibDownload(input.url), { headers, signal });
+  throw new Error("This source's editions are fetched as a download.");
 }
 /**
  * A new or replaced EPUB has its text prepared in the background (#827), so its first reader does not wait for it.
@@ -272,7 +246,7 @@ function prepareAhead(id: string, format: string | undefined) {
 }
 async function downloadEbook(input: EbookResult & { workId?: string }) {
   ensureMediaStorage();
-  const id = `${input.source}-${input.md5}`;
+  const id = ebookEditionId(input);
   const saved = db
     .select()
     .from(s.ebookEditions)
@@ -285,16 +259,8 @@ async function downloadEbook(input: EbookResult & { workId?: string }) {
   const ext = input.extension?.toLowerCase();
   if (!["epub", "pdf"].includes(ext || ""))
     throw new Error("Choose an EPUB or PDF ebook.");
-  const url = await resolveDownload(input.source, input.md5);
   const stalled = new AbortController();
-  const response = await publicFetch(url, {
-    headers: {
-      "User-Agent": userAgent,
-      Referer: baseUrl(input.source) + "/",
-      "Accept-Encoding": "identity",
-    },
-    signal: stalled.signal,
-  });
+  const response = await fetchEbookFile(input, stalled.signal);
   if (!response.ok || !response.body)
     throw new Error(
       "The ebook could not be downloaded. Open the source website to check availability.",
@@ -348,7 +314,8 @@ async function downloadEbook(input: EbookResult & { workId?: string }) {
     if (!size || (expected && expected !== size))
       throw new Error("The ebook download was interrupted.");
     const digest = hash.digest("hex");
-    if (digest !== input.md5.toLowerCase())
+    // Only Library Genesis names a file by its md5; another source's key is its edition's.
+    if ((input.source === "libgen" || input.source === "annas") && digest !== input.md5.toLowerCase())
       throw new Error(
         "The ebook checksum did not match. The incomplete download was discarded.",
       );
@@ -553,8 +520,10 @@ export async function importEbook(
 }
 
 const ebookDownloads = new Set<string>();
-export async function saveEbook(input: EbookResult & { workId?: string }) {
-  const key = `${input.source}-${input.md5}`;
+export async function saveEbook(given: EbookResult & { workId?: string }) {
+  // The libgen.rs family's file is the libgen.li family's, by its md5: fetched and kept as that one.
+  const input = given.source === "libgenrs" ? { ...given, source: "libgen" as const } : given;
+  const key = ebookEditionId(input);
   if (ebookDownloads.has(key))
     throw new Error("This ebook is already downloading. Give it a moment.");
   ebookDownloads.add(key);

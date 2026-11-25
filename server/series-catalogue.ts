@@ -26,10 +26,12 @@ import {
 } from "./audiobookdb.ts";
 import { searchOpenLibrarySeries } from "./openlibrary.ts";
 import { CatalogueError, type Priority } from "./catalogue-provider.ts";
+import { languageCode } from "./release-language.ts";
 import { LINKED_ENTRIES, authorMatches, englishRelease, linkWork, normaliseTitle, titleMatches } from "./catalogue-links.ts";
 import { applyTitleEdits, handSeriesMembers, isLocalSeriesId, localSeriesHead, localSeriesIds } from "./work-metadata.ts";
 import { workVisibleTo } from "./work-library.ts";
 import { ensurePlaceholder, isPlaceholderEdition } from "./placeholder-edition.ts";
+import { fillSeriesCovers } from "./placeholder-cover.ts";
 import { hasServerMedia } from "./downloads.ts";
 import { getWorkMediaStates } from "./work-media-state.ts";
 import { enqueueSeriesAcquisition, seriesWorkAcquisitions } from "./series-acquisition.ts";
@@ -345,6 +347,8 @@ export async function saveCatalogueSeries(
   options?: {
     searchAudio?: boolean;
     searchEbooks?: boolean;
+    /** The series' language as the user chose it (#897), kept for the automatic pick; unchanged when absent. */
+    language?: string;
     /** The reset (`series-resave.ts`): books saved with the Hardcover series, each with the work it had then. */
     restore?: Map<string, { workId: string; introduced: boolean }>;
     priority?: Priority;
@@ -364,6 +368,8 @@ export async function saveCatalogueSeries(
   sqlite.transaction(() => {
     upsertCatalogue(entry, new Map(preview.map((work) => [work.id, work.workId])));
     sqlite.prepare("INSERT OR IGNORE INTO user_saved_series(user_id,series_id,saved_at,refreshed_at) VALUES(?,?,?,?)").run(userId, id, Date.now(), Date.now());
+    const chosen = options?.language ? languageCode(options.language) : null;
+    if (chosen) sqlite.prepare("UPDATE user_saved_series SET language=? WHERE user_id=? AND series_id=?").run(chosen, userId, id);
     markSeen(userId, id, entry.members.map((member) => member.id));
     for (const work of selected) {
       const member = entry.members.find((candidate) => candidate.id === work.id)!;
@@ -373,6 +379,8 @@ export async function saveCatalogueSeries(
       sqlite.prepare("INSERT OR IGNORE INTO user_saved_series_works(user_id,series_id,book_id,work_id,introduced) VALUES(?,?,?,?,?)").run(userId, id, work.id, added.workId, Number(introduced));
       (work.audiobook ? audiobooks : ebookOnly).push({ bookId: work.id, workId: added.workId, unreleased: work.unreleased });
     }
+    // A placeholder the work already had without a cover takes the catalogue's (#900).
+    fillSeriesCovers(id, entry.members);
   })();
   if (options?.searchAudio || options?.searchEbooks) enqueueSeriesAcquisition(userId, id, audiobooks, options);
   if ((options?.searchAudio || options?.searchEbooks) && ebookOnly.length) enqueueSeriesAcquisition(userId, id, ebookOnly, { searchEbooks: true });
@@ -625,6 +633,7 @@ export async function refreshCatalogueSeries(id: string, options: { priority?: P
     for (const bookId of sqlite.prepare("SELECT book_id FROM series_catalogue_works WHERE series_id=?").pluck().all(id) as string[])
       if (!listed.has(bookId) && !sqlite.prepare("SELECT 1 FROM user_saved_series_works WHERE series_id=? AND book_id=?").get(id, bookId))
         sqlite.prepare("DELETE FROM series_catalogue_works WHERE series_id=? AND book_id=? AND NOT EXISTS(SELECT 1 FROM series_acquisition_jobs WHERE series_id=? AND book_id=?)").run(id, bookId, id, bookId);
+    fillSeriesCovers(id, entry.members);
   })();
   await adoptAudiobooks(entry, priority);
   sqlite.prepare("UPDATE user_saved_series SET refreshed_at=? WHERE series_id=?").run(Date.now(), id);

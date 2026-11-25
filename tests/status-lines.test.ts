@@ -337,3 +337,24 @@ test("a stalled download of a book that already has a copy: the line leads with 
   assert.equal(ALREADY_HAS_COPY_LINE, "This book already has a copy");
   assert.equal(withReason(ALREADY_HAS_COPY_LINE, downloadLine({ status: "downloading", progress: 0.0011 })), "This book already has a copy · Downloading to server · 0%");
 });
+
+// #901: a series ebook search waiting while Library Genesis limits requests says when it asks again; a torrent fetched
+// for its ebook ends as an ebook on the server.
+test("a series search waiting on Library Genesis limiting requests names the time; an ebook download ends as an ebook (#901)", async () => {
+  const { seriesSearchLine, finishedLine, LIBGEN_LIMITED_REASON } = await import("../src/status-lines.ts");
+  const at = Date.UTC(2026, 10, 25, 12, 5);
+  const time = (value: number) => (value === at ? "13:05" : "?");
+  assert.equal(
+    seriesSearchLine({ status: "pending", search: "ebook", retrying: true, reason: LIBGEN_LIMITED_REASON, retryAt: at, time }),
+    "Library Genesis is limiting requests, trying again at 13:05",
+  );
+  // An older server sends no time: the line of a search waiting to try again.
+  assert.equal(
+    seriesSearchLine({ status: "pending", search: "ebook", retrying: true, reason: LIBGEN_LIMITED_REASON }),
+    "Waiting to try again · Library Genesis is limiting requests",
+  );
+  assert.equal(seriesSearchLine({ status: "failed", search: "ebook", reason: LIBGEN_LIMITED_REASON }), "Ebook search failed · Library Genesis is limiting requests");
+  assert.equal(finishedLine({ entry: "download", backend: "torbox", file: "ebook" }), "Ebook on server");
+  assert.equal(finishedLine({ entry: "download", backend: "local", file: "ebook" }), "Ebook on server");
+  assert.equal(finishedLine({ entry: "download", backend: "torbox" }), "Audiobook streams from TorBox");
+});

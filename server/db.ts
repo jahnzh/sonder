@@ -128,7 +128,8 @@ if (
   );
 for (const [table, columns] of [
   ["audio_editions", ["language", "release_title"]],
-  ["acquisitions", ["work_id", "language", "narrator"]],
+  // `kind` (#901): "ebook" for a torrent fetched for its EPUB or PDF; null for an audiobook, as every older row.
+  ["acquisitions", ["work_id", "language", "narrator", "kind"]],
 ] as const) {
   const existing = new Set(
     (
@@ -172,6 +173,9 @@ if (!(sqlite.prepare("PRAGMA table_info(sessions)").all() as {name:string}[]).so
   sqlite.exec("ALTER TABLE sessions ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1");
 if (!(sqlite.prepare("PRAGMA table_info(user_saved_series)").all() as {name:string}[]).some(c => c.name === "refreshed_at"))
   sqlite.exec("ALTER TABLE user_saved_series ADD COLUMN refreshed_at INTEGER");
+// The language the user chose for the series when saving it (#897): the automatic pick takes only a release in it.
+if (!(sqlite.prepare("PRAGMA table_info(user_saved_series)").all() as {name:string}[]).some(c => c.name === "language"))
+  sqlite.exec("ALTER TABLE user_saved_series ADD COLUMN language TEXT");
 // Daily backups (#361): the identity of the file a run published (size is `bytes`), which retention checks before
 // it deletes anything; the run's claim on its day; when the file at the recorded name stopped being that file; and
 // the result of the retention that followed a successful run, with its reason when it failed.
@@ -250,11 +254,27 @@ sqlite.exec(SERIES_RESAVE_TABLE);
 if (!(sqlite.prepare("PRAGMA table_info(user_work_library_origin)").all() as { name: string }[]).some((c) => c.name === "catalogue_series_id"))
   sqlite.exec("ALTER TABLE user_work_library_origin ADD COLUMN catalogue_series_id TEXT");
 // A series search that could not reach its source is tried again by itself (#717): how often it was, and not before when.
+// What the queue's audio search found and chose, as JSON (#898); when the owner moved the job to the front of the
+// queue (Search now); and a search asked again for a book that has its audiobook or one on its way (no download).
 {
   const seriesJobColumns = new Set((sqlite.prepare("PRAGMA table_info(series_acquisition_jobs)").all() as { name: string }[]).map((c) => c.name));
-  for (const [column, type] of [["auto_retries", "INTEGER NOT NULL DEFAULT 0"], ["retry_at", "INTEGER"]] as const)
+  for (const [column, type] of [
+    ["auto_retries", "INTEGER NOT NULL DEFAULT 0"],
+    ["retry_at", "INTEGER"],
+    ["candidates", "TEXT"],
+    ["front_at", "INTEGER"],
+    ["search_only", "INTEGER NOT NULL DEFAULT 0"],
+  ] as const)
     if (!seriesJobColumns.has(column)) sqlite.exec(`ALTER TABLE series_acquisition_jobs ADD COLUMN ${column} ${type}`);
 }
+// A series pack (ADR 0027, #899): one acquisition that serves several books. `acquisition_packs` holds the series, the
+// volumes the pack covers and, once known, its audio files; `acquisition_works` one row per book it serves, with the
+// files the split gave the book and the audio edition made from them.
+sqlite.exec(`
+CREATE TABLE IF NOT EXISTS acquisition_packs(acquisition_id TEXT PRIMARY KEY REFERENCES acquisitions(id),series_id TEXT NOT NULL,series_name TEXT NOT NULL,volumes TEXT NOT NULL DEFAULT '[]',files TEXT,created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS acquisition_works(acquisition_id TEXT NOT NULL REFERENCES acquisitions(id),work_id TEXT NOT NULL REFERENCES works(id),position REAL,title TEXT NOT NULL,cover TEXT,status TEXT NOT NULL DEFAULT 'waiting' CHECK(status IN ('waiting','ready','choose')),files TEXT,book_id TEXT,updated_at INTEGER NOT NULL,PRIMARY KEY(acquisition_id,work_id));
+CREATE INDEX IF NOT EXISTS acquisition_works_work ON acquisition_works(work_id);
+`);
 // One-time copy of the single-account Hardcover key, state and queues to the admin (#15). The old rows stay for rollback.
 export function migrateHardcoverToUsers(): void {
   sqlite.transaction(() => {

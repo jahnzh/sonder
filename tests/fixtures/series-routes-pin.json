@@ -352,6 +352,16 @@
       "finished": 2,
       "total": 6,
       "nextBookId": "221"
+    },
+    "queue": {
+      "searching": null,
+      "otherSearching": false,
+      "waiting": 0,
+      "retrying": 0,
+      "stopped": 0,
+      "nextAt": null,
+      "paused": true,
+      "now": "<time>"
     }
   },
   "owner GET /api/series/sr-tides?language=fr": {
@@ -699,6 +709,16 @@
       "finished": 2,
       "total": 6,
       "nextBookId": "221"
+    },
+    "queue": {
+      "searching": null,
+      "otherSearching": false,
+      "waiting": 0,
+      "retrying": 0,
+      "stopped": 0,
+      "nextAt": null,
+      "paused": true,
+      "now": "<time>"
     }
   },
   "owner GET /api/hardcover/series/sr-tides": {
@@ -1294,6 +1314,16 @@
       "finished": 1,
       "total": 6,
       "nextBookId": "201"
+    },
+    "queue": {
+      "searching": null,
+      "otherSearching": false,
+      "waiting": 0,
+      "retrying": 0,
+      "stopped": 0,
+      "nextAt": null,
+      "paused": true,
+      "now": "<time>"
     }
   },
   "sam GET /api/series/sr-tides?language=fr": {
@@ -1597,6 +1627,16 @@
       "finished": 1,
       "total": 6,
       "nextBookId": "201"
+    },
+    "queue": {
+      "searching": null,
+      "otherSearching": false,
+      "waiting": 0,
+      "retrying": 0,
+      "stopped": 0,
+      "nextAt": null,
+      "paused": true,
+      "now": "<time>"
     }
   },
   "sam GET /api/hardcover/series/sr-tides": {

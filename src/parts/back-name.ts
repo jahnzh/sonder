@@ -31,6 +31,7 @@ export function pageName(route: Route): string {
       return "the book";
     case "series":
     case "series-add":
+    case "series-book":
       return "the series";
     case "get-magnet":
       return "Get audiobook";

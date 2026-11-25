@@ -99,6 +99,7 @@ for (const [size, viewport] of [["phone", { width: 390, height: 844 }], ["deskto
       const matched = pageEl.getByRole("list", { name: "Match" });
       await expect(matched.getByText("Quiet Harbour · Mira Sand")).toBeVisible();
       await expect(pageEl.getByText("Matched by hand")).toBeVisible();
+      await expect(pageEl.getByRole("link", { name: "Open on AudiobookDB" })).toHaveAttribute("href", "https://audiobookdb.org/books/bk-feral");
       // The imported chapter is minutes long, the release 11 h: not linked by itself. Picked by hand.
       const releases = pageEl.getByRole("list", { name: "Releases" });
       const recordingRow = releases.getByRole("button");

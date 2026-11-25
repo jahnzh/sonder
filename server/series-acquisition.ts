@@ -7,10 +7,27 @@ import * as s from "./schema.ts";
 import { acquire as defaultAcquire } from "./acquisitions.ts";
 import {
   autoAcquireSeriesVolume,
+  seriesAudioLanguage,
+  defaultDeps as defaultSeriesAudioDeps,
+  searchVolumeAudioCandidates,
   seriesVolumeRefs,
+  type SeriesAudioCandidate,
   type SeriesAudioSearchDeps,
 } from "./series-audio.ts";
-import { fetchTopKIntoEbookSet } from "./ebook-set.ts";
+import {
+  candidateKey,
+  readSeriesChoice,
+  resultFacts,
+  storedCandidate,
+  writeSeriesChoice,
+  type SeriesCandidateFacts,
+  type StoredSeriesCandidate,
+} from "./series-queue-store.ts";
+import { seriesQueueOrder } from "./series-queue-order.ts";
+import { fetchTopKIntoEbookSet, seriesEbookSources } from "./ebook-set.ts";
+import { prowlarrConfig } from "./services.ts";
+import { annasConfigured, zlibConfigured } from "./sources/shadow-libraries.ts";
+import { packServesWork, resetPackSearches, seriesPackStep } from "./series-pack-step.ts";
 import { retryWorkMediaAcquisition } from "./series-membership.ts";
 import {
   clearWorkMediaHold,
@@ -35,7 +52,7 @@ export const SERIES_SOURCE_RETRY_STEP_MS = 5 * 60_000;
  * have. Any other failure (no release found, a volume that does not match) waits for the owner's Retry.
  */
 export function isSourceReachFailure(message: string | null | undefined) {
-  return !!message && /could not be reached|did not answer|timed? ?out|is unavailable|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|fetch failed|socket hang up/i.test(message);
+  return !!message && /could not be reached|did not answer|timed? ?out|is unavailable|is limiting requests|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|fetch failed|socket hang up/i.test(message);
 }
 
 export type SeriesAcquisitionKind = "audio" | "ebook";
@@ -49,7 +66,11 @@ export type SeriesAcquisitionSkipReason =
   | "unreleased"
   | "has_audio"
   | "has_ebook"
-  | "no_permission";
+  | "no_permission"
+  /** The owner's Skip on the Series page (#898): no search or download for this book. */
+  | "owner"
+  /** The owner's Stop searching for the series (#898): the search had not started. */
+  | "stopped";
 
 export type AcquisitionStatus =
   | SeriesAcquisitionJobStatus
@@ -81,6 +102,7 @@ export function setSeriesAcquisitionDeps(overrides: SeriesAcquisitionDeps) {
 export function resetSeriesAcquisitionDeps() {
   deps = {};
   seriesWorkAcquireInFlight.clear();
+  resetPackSearches();
   // A test's own clock (`deps.now`) must not leave the next search's time behind for the next test.
   nextAcquisitionAt = 0;
 }
@@ -125,6 +147,12 @@ export function assertCanAcquireMedia(userId: number) {
 }
 
 export const SERIES_ACQUISITION_CANCELLED_ERROR = "cancelled";
+/** The owner skipped the book's search (#898). Stored as `failed`, as the table's four states allow; shown as skipped. */
+export const SERIES_ACQUISITION_SKIPPED_ERROR = "skipped";
+/** The owner stopped the series' waiting searches (#898). Stored as `failed`; shown as skipped. */
+export const SERIES_ACQUISITION_STOPPED_ERROR = "stopped";
+/** The outcomes the owner chose: not failures, never put back by the queue itself, and Search now undoes them. */
+export const SERIES_OWNER_OUTCOMES: readonly string[] = [SERIES_ACQUISITION_SKIPPED_ERROR, SERIES_ACQUISITION_STOPPED_ERROR];
 
 export type ManualSeriesReleaseClaim = {
   claimed: boolean;
@@ -289,7 +317,9 @@ function upsertJob(input: {
     input.status === "pending" &&
     (existing.status === "pending" ||
       existing.status === "searching" ||
-      existing.status === "done")
+      existing.status === "done" ||
+      // The owner's Skip and Stop searching (#898) hold until the owner's Search now or Resume, which set it directly.
+      (existing.status === "failed" && SERIES_OWNER_OUTCOMES.includes(existing.error ?? "")))
   )
     return existing.id;
   if (existing) {
@@ -301,9 +331,11 @@ function upsertJob(input: {
         status: input.status,
         error: input.error ?? null,
         updatedAt: now,
-        // A search set again (a Retry, the series added again) starts with its own tries again.
+        // A search set again (a Retry, the series added again) starts with its own tries again, in the queue's order.
         autoRetries: 0,
         retryAt: null,
+        frontAt: null,
+        searchOnly: 0,
       })
       .where(eq(s.seriesAcquisitionJobs.id, existing.id))
       .run();
@@ -369,7 +401,7 @@ export function resetStrandedSeriesAcquisitionClaims(now = Date.now()) {
 function catalogueVolumes(seriesId: string) {
   return sqlite
     .prepare(
-      `SELECT book_id AS bookId, title, position, unreleased, cover, narrators, length_ms AS lengthMs
+      `SELECT book_id AS bookId, title, position, unreleased, cover, narrators, length_ms AS lengthMs, language
        FROM series_catalogue_works WHERE series_id=? ORDER BY position IS NULL, position, book_id`,
     )
     .all(seriesId) as {
@@ -381,6 +413,8 @@ function catalogueVolumes(seriesId: string) {
     /** The narrators and length of the book's English releases on AudiobookDB (#721), for the ranking. */
     narrators: string;
     lengthMs: number | null;
+    /** The language the catalogue names for the book ("en" for an English one); null when it names none. */
+    language: string | null;
   }[];
 }
 
@@ -505,6 +539,7 @@ function presentationForJob(
     row.status === "failed" &&
     row.error !== "no_permission" &&
     row.error !== SERIES_ACQUISITION_CANCELLED_ERROR &&
+    !SERIES_OWNER_OUTCOMES.includes(row.error ?? "") &&
     worksWithFile(sqlite, kind, [row.workId]).has(row.workId)
   ) {
     return {
@@ -520,6 +555,14 @@ function presentationForJob(
       status: "skipped",
       error: null,
       skipReason: "no_permission",
+    };
+  }
+  if (row.status === "failed" && (row.error === SERIES_ACQUISITION_SKIPPED_ERROR || row.error === SERIES_ACQUISITION_STOPPED_ERROR)) {
+    return {
+      kind,
+      status: "skipped",
+      error: null,
+      skipReason: row.error === SERIES_ACQUISITION_SKIPPED_ERROR ? "owner" : "stopped",
     };
   }
   if (row.status === "failed" && row.error === SERIES_ACQUISITION_CANCELLED_ERROR) {
@@ -583,10 +626,11 @@ export function seriesWorkAcquisitions(
 }
 
 /**
- * The queue's order (ADR 0010): the pending jobs one at a time, oldest row first; a job put back by itself after a
- * source could not be reached waits until its `retry_at`. Activity's places in line read the same order.
+ * The queue's order (ADR 0010): the pending jobs one at a time, a job the owner moved to the front first, then the
+ * oldest row first (`seriesQueueOrder`); a job put back by itself after a source could not be reached waits until its
+ * `retry_at`. Activity's places in line read the same order.
  */
-export const SERIES_QUEUE_ORDER = "rowid";
+export const SERIES_QUEUE_ORDER = seriesQueueOrder();
 
 function nextPendingSeriesJob(now: number) {
   const row = sqlite
@@ -603,6 +647,14 @@ function nextPendingSeriesJob(now: number) {
 let tickQueue: Promise<void> | null = null;
 let nextAcquisitionAt = 0;
 
+/**
+ * When the queue starts its next search (#898): while it works through its jobs, not before the 30 s after the last
+ * one; `running` is false when no run is going (the next starts at the loop's next tick, at most 30 s away).
+ */
+export function seriesQueueTiming() {
+  return { running: !!tickQueue, nextAt: nextAcquisitionAt };
+}
+
 export async function tickSeriesAcquisition(
   acquire: typeof defaultAcquire = deps.acquire ?? defaultAcquire,
 ) {
@@ -611,10 +663,12 @@ export async function tickSeriesAcquisition(
     resetStaleSeriesAcquisitionJobs();
     for (;;) {
       const now = deps.now ?? Date.now;
-      const pending = nextPendingSeriesJob(now());
-      if (!pending) break;
+      if (!nextPendingSeriesJob(now())) break;
       const delay = Math.max(0, nextAcquisitionAt - now());
       if (delay) await (deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))))(delay);
+      // Read after the wait: Search now, Skip or Stop may have changed what comes next meanwhile (#898).
+      const pending = nextPendingSeriesJob(now());
+      if (!pending) break;
       await processJob(pending, acquire).catch(() => {});
       nextAcquisitionAt = now() + (deps.intervalMs ?? (process.env.NODE_ENV === "test" ? 0 : SERIES_ACQUISITION_TICK_MS));
     }
@@ -633,7 +687,7 @@ export const seriesAcquisitionLoop: BackgroundProcess = {
   runAtStart: true,
   pausedBy: "series-acquisition",
   start: resetStrandedSeriesAcquisitionClaims,
-  tick: () => tickSeriesAcquisition(defaultAcquire),
+  tick: () => tickSeriesAcquisition(),
 };
 
 function seriesJobStillActive(jobId: string) {
@@ -672,6 +726,8 @@ async function processJob(
         error: partialError,
         updatedAt: Date.now(),
         autoRetries: 0,
+        frontAt: null,
+        searchOnly: 0,
       })
       .where(
         and(
@@ -693,7 +749,11 @@ async function processJob(
         status: again ? "pending" : "failed",
         error: message,
         updatedAt: Date.now(),
-        ...(again ? { autoRetries: tries + 1, retryAt: now + (tries + 1) * SERIES_SOURCE_RETRY_STEP_MS } : {}),
+        ...(again ? {} : { frontAt: null, searchOnly: 0 }),
+        // A source that named when to try again (Library Genesis resting, #901) is not asked before then.
+        ...(again
+          ? { autoRetries: tries + 1, retryAt: Math.max(now + (tries + 1) * SERIES_SOURCE_RETRY_STEP_MS, Number((error as { retryAt?: unknown }).retryAt) || 0) }
+          : {}),
       })
       .where(
         and(
@@ -725,7 +785,9 @@ async function runAudioJob(
     setWorkMediaHold(job.userId, job.workId, "unreleased");
     return;
   }
-  if (workHasPlayableAudio(job.workId)) {
+  // A search asked again for a book with its audiobook (or one on its way) finds, and downloads nothing (#898).
+  const searchOnly = !!active.searchOnly;
+  if (!searchOnly && workHasPlayableAudio(job.workId)) {
     db.update(s.seriesAcquisitionJobs)
       .set({ error: "has_audio", updatedAt: Date.now() })
       .where(eq(s.seriesAcquisitionJobs.id, job.id))
@@ -754,19 +816,89 @@ async function runAudioJob(
     .where(eq(s.editions.workId, job.workId))
     .all()[0];
   if (!seriesJobStillActive(job.id)) return;
+  const expected = { narrators: parseNarrators(volume.narrators), lengthMs: volume.lengthMs };
+  // What the search found and chose, kept with the job for the Series page (#898): the sources' own facts of each
+  // result (its page, language, seeders) are read as the search goes.
+  const facts = new Map<string, SeriesCandidateFacts>();
+  const searchDeps = factsRecordingDeps(deps.seriesAudioDeps ?? defaultSeriesAudioDeps(), facts);
+  const keep = (candidates: SeriesAudioCandidate[], chosen: string | null, by: "queue" | "owner" = "queue", kept: StoredSeriesCandidate[] = []) => {
+    try {
+      writeSeriesChoice(job.id, {
+        at: Date.now(),
+        chosen,
+        by,
+        candidates: [...kept, ...candidates.map((candidate) => storedCandidate(candidate, facts.get(`${candidate.source}:${candidate.id}`), expected))],
+      });
+    } catch (error) {
+      // What was found is only shown: a failure to keep it never stops the search.
+      console.warn(`series queue: could not keep the candidates of ${job.id}: ${(error as Error).message}`);
+    }
+  };
+  if (searchOnly) {
+    const candidates = await searchVolumeAudioCandidates(ref, meta.name, author, refs, searchDeps);
+    if (!seriesAudioJobStillSearching(job.id)) return;
+    // The release downloaded for the book stays the chosen one, by whoever chose it.
+    const previous = readSeriesChoice(job.id);
+    const still = !!previous?.chosen && candidates.some((candidate) => candidateKey(candidate) === previous.chosen);
+    // A pack that serves the book (ADR 0027) is no find of the book's own search: it stays chosen while it serves it.
+    const pack = !still && previous?.chosen ? previous.candidates.find((candidate) => candidate.key === previous.chosen && candidate.kind === "compilation") : undefined;
+    if (pack && packServesWork(job.workId, pack.key)) keep(candidates, pack.key, previous!.by, [pack]);
+    else keep(candidates, still ? previous!.chosen : null, still ? previous!.by : "queue");
+    return;
+  }
+  let picked: string | null = null;
+  let sent = false;
   const wrappedAcquire = async (
     magnet: string,
     metadata: Parameters<typeof acquire>[1],
   ) => {
     if (!enterSeriesWorkAcquire(job.userId, job.workId))
       throw new Error("cancelled");
+    sent = true;
     try {
       return await acquire(magnet, metadata);
     } finally {
       leaveSeriesWorkAcquire(job.userId, job.workId);
     }
   };
-  await autoAcquireSeriesVolume(
+  // A pack of the series that holds this book, or one found for two or more waiting books, comes first (ADR 0027).
+  const packed = await seriesPackStep(
+    {
+      userId: job.userId,
+      seriesId: job.seriesId,
+      seriesName: meta.name,
+      author,
+      jobId: job.id,
+      workId: job.workId,
+      position: ref.position,
+      title: volume.title,
+      cover: volume.cover ?? edition?.cover,
+      // The pack is the search of every book it serves (#898): what the pack search found, and the pack chosen.
+      onPackChosen: (candidates, chosen, jobIds) => {
+        for (const jobId of jobIds) {
+          try {
+            writeSeriesChoice(jobId, {
+              at: Date.now(),
+              chosen: candidateKey(chosen),
+              by: "queue",
+              candidates: candidates.map((candidate) => storedCandidate(candidate, facts.get(`${candidate.source}:${candidate.id}`))),
+            });
+          } catch (error) {
+            console.warn(`series queue: could not keep the pack chosen for ${jobId}: ${(error as Error).message}`);
+          }
+        }
+      },
+    },
+    wrappedAcquire,
+    searchDeps,
+    deps.now,
+    () => seriesAudioJobStillSearching(job.id),
+  );
+  if (packed || !seriesAudioJobStillSearching(job.id)) return;
+  let found: SeriesAudioCandidate[] = [];
+  let searched = false;
+  try {
+    await autoAcquireSeriesVolume(
     job.userId,
     {
       seriesName: meta.name,
@@ -776,13 +908,45 @@ async function runAudioJob(
       allVolumes: refs,
       title: volume.title,
       cover: volume.cover ?? edition?.cover,
-      expected: { narrators: parseNarrators(volume.narrators), lengthMs: volume.lengthMs },
+      expected,
+      seriesLanguage: seriesAudioLanguage(job.userId, job.seriesId, volume.language),
+      bookId: volume.bookId,
+      onCandidates: (candidates, chosen) => {
+        searched = true;
+        found = candidates;
+        picked = chosen ? candidateKey(chosen) : null;
+      },
     },
     wrappedAcquire,
-    deps.seriesAudioDeps,
+    searchDeps,
     () => seriesAudioJobStillSearching(job.id),
   );
+  } finally {
+    // The pick counts as chosen once its download was asked for; one whose magnet could not be read was not.
+    // What an ended search found, nothing included, replaces what an earlier one did.
+    if (searched) keep(found, sent ? picked : null);
+  }
   if (!seriesAudioJobStillSearching(job.id)) return;
+}
+
+/** The search's sources, wrapped to note each result's own facts by `<source>:<id>` as they answer (#898). */
+function factsRecordingDeps(base: SeriesAudioSearchDeps, facts: Map<string, SeriesCandidateFacts>): SeriesAudioSearchDeps {
+  const note = (source: "abb" | "prowlarr", results: { id: string }[]) => {
+    for (const result of results) if (!facts.has(`${source}:${result.id}`)) facts.set(`${source}:${result.id}`, resultFacts(result));
+  };
+  return {
+    ...base,
+    abbSearch: async (query, page) => {
+      const response = await base.abbSearch(query, page);
+      note("abb", response.results);
+      return response;
+    },
+    prowlarrSearch: async (query) => {
+      const response = await base.prowlarrSearch(query);
+      note("prowlarr", response.results);
+      return response;
+    },
+  };
 }
 
 async function runEbookJob(
@@ -798,8 +962,20 @@ async function runEbookJob(
     return null;
   }
   const fetch = deps.fetchEbooks ?? fetchTopKIntoEbookSet;
-  const result = await fetch(job.workId);
+  const work = db.select({ year: s.works.year }).from(s.works).where(eq(s.works.id, job.workId)).get();
+  // Library Genesis, Prowlarr, then the public-domain sources for an old book (#901).
+  const result = await fetch(job.workId, "libgen", {
+    sources: seriesEbookSources({ year: work?.year ?? null }, { annas: annasConfigured(), zlib: zlibConfigured(), prowlarr: !!prowlarrConfig() }),
+    userId: job.userId,
+  });
   const failures = "failures" in result ? result.failures ?? [] : [];
+  // A Prowlarr download was started: its EPUB joins the book when it is complete.
+  if (result.started) return null;
+  // No edition was found while a source could not be asked (one limiting requests, or out of reach): the job goes back
+  // in the queue for later, not before the sources' rests end (#901).
+  const unreached = failures.find(isSourceReachFailure);
+  if (unreached && !result.downloaded.some((member) => member.status !== "rejected"))
+    throw Object.assign(new Error(unreached), { retryAt: "retryAt" in result ? result.retryAt : null });
   if (!result.downloaded.length && failures.length)
     throw new Error(failures[0]);
   if (failures.length) return failures.join("; ");

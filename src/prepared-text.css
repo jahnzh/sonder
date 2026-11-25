@@ -148,3 +148,52 @@
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
 }
+
+/* Pages mode (step 4 of #799): the loaded parts as one run of columns, a page a column wide, or two side by side.
+   The view turns the pages itself (prepared-view.ts); nothing here scrolls under the reader's finger. */
+.prepared-scroll[data-mode="pages"] {
+  position: relative;
+  overflow: hidden;
+  touch-action: none;
+}
+/* Keeps the band's sideways reach as far as the page shown (prepared-view.ts, setColumn); nothing is drawn. */
+.prepared-reach {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  visibility: hidden;
+  pointer-events: none;
+}
+/* The parts stand side by side, each a run of columns of its own in a box as wide as the whole pages it fills
+   (prepared-view.ts, `fit`): every part begins on a new page, and its pages are its own whatever parts are in the
+   page around it. */
+.prepared-scroll[data-mode="pages"] .prepared-text {
+  box-sizing: border-box;
+  display: flex;
+  height: 100%;
+  max-width: none;
+  margin: 0;
+}
+.prepared-scroll[data-mode="pages"] .prepared-text .prepared-part {
+  box-sizing: border-box;
+  flex: none;
+  width: calc(var(--prepared-pages, 1) * var(--prepared-step, 100%));
+  height: var(--prepared-page-height, 100%);
+  column-width: var(--prepared-column, auto);
+  column-fill: auto;
+}
+/* A picture never runs over a page's foot, and a heading is not left alone at one. */
+.prepared-scroll[data-mode="pages"] .prepared-text img {
+  max-height: var(--prepared-page-height, 100%);
+  width: auto;
+  break-inside: avoid;
+}
+.prepared-scroll[data-mode="pages"] .prepared-text :is(h1, h2, h3, h4, h5, h6) {
+  break-after: avoid;
+  break-inside: avoid;
+}
+/* The room a chapter file has above it is for the scroll: a part begins at a page's top. */
+.prepared-scroll[data-mode="pages"] .prepared-text .prepared-part > section:first-child[data-section] {
+  margin-top: 0;
+}

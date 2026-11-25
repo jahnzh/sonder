@@ -138,6 +138,8 @@ export const BACKUP_CLEANUP_STATUSES = ["done", "failed"] as const;
 export type BackupCleanupStatus = (typeof BACKUP_CLEANUP_STATUSES)[number];
 export const acquisitions = sqliteTable("acquisitions", {
   workId: text("work_id"),
+  /** "ebook" for a torrent fetched for its EPUB or PDF (#901); null for an audiobook. */
+  kind: text("kind"),
   language: text("language"),
   narrator: text("narrator"),
   id: text("id").primaryKey(),
@@ -155,6 +157,43 @@ export const acquisitions = sqliteTable("acquisitions", {
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
+/** A series pack (ADR 0027): the acquisition, its series, the volumes it covers and, once known, its audio files. */
+export const acquisitionPacks = sqliteTable("acquisition_packs", {
+  acquisitionId: text("acquisition_id")
+    .primaryKey()
+    .references(() => acquisitions.id),
+  seriesId: text("series_id").notNull(),
+  seriesName: text("series_name").notNull(),
+  /** JSON `[{ position, title }]`. */
+  volumes: text("volumes").notNull().default("[]"),
+  /** JSON `[{ key, name, path }]`, null until the pack is imported. */
+  files: text("files"),
+  createdAt: integer("created_at").notNull(),
+});
+export const PACK_WORK_STATUSES = ["waiting", "ready", "choose"] as const;
+export type PackWorkStatus = (typeof PACK_WORK_STATUSES)[number];
+/** A book a pack serves (ADR 0027): its files in the pack and the audio edition made from them. */
+export const acquisitionWorks = sqliteTable(
+  "acquisition_works",
+  {
+    acquisitionId: text("acquisition_id")
+      .notNull()
+      .references(() => acquisitions.id),
+    workId: text("work_id")
+      .notNull()
+      .references(() => works.id),
+    position: real("position"),
+    title: text("title").notNull(),
+    /** The book's own cover for its edition, as the series catalogue has it. */
+    cover: text("cover"),
+    status: text("status", { enum: PACK_WORK_STATUSES }).notNull().default("waiting"),
+    /** JSON list of the pack's file keys. */
+    files: text("files"),
+    bookId: text("book_id"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.acquisitionId, t.workId] }), index("acquisition_works_work").on(t.workId)],
+);
 export const mediaCopies = sqliteTable("media_copies", {
   trackId: text("track_id")
     .primaryKey()
@@ -272,7 +311,7 @@ export const userReaderEvents = sqliteTable("user_reader_events", { userId: inte
 export const seriesCatalogue = sqliteTable("series_catalogue", { id: text("id").primaryKey(), name: text("name").notNull(), author: text("author"), bookCount: integer("book_count") });
 /** A book of a series: an AudiobookDB book, or (`provider` openlibrary, `book_id` `openlibrary:<work>`) one with no audiobook yet. */
 export const seriesCatalogueWorks = sqliteTable("series_catalogue_works", { seriesId: text("series_id").notNull(), bookId: text("book_id").notNull(), workId: text("work_id"), title: text("title").notNull(), position: real("position"), cover: text("cover"), unreleased: integer("unreleased").notNull().default(0), positionLabel: text("position_label"), author: text("author"), provider: text("provider", { enum: ["audiobookdb", "openlibrary"] }).notNull().default("audiobookdb"), language: text("language"), narrators: text("narrators").notNull().default("[]"), lengthMs: integer("length_ms"), releaseDate: text("release_date") }, t => [primaryKey({ columns: [t.seriesId, t.bookId] })]);
-export const userSavedSeries = sqliteTable("user_saved_series", { userId: integer("user_id").notNull(), seriesId: text("series_id").notNull(), savedAt: integer("saved_at").notNull(), refreshedAt: integer("refreshed_at") }, t => [primaryKey({ columns: [t.userId, t.seriesId] })]);
+export const userSavedSeries = sqliteTable("user_saved_series", { userId: integer("user_id").notNull(), seriesId: text("series_id").notNull(), savedAt: integer("saved_at").notNull(), refreshedAt: integer("refreshed_at"), language: text("language") }, t => [primaryKey({ columns: [t.userId, t.seriesId] })]);
 export const userSavedSeriesWorks = sqliteTable("user_saved_series_works", { userId: integer("user_id").notNull(), seriesId: text("series_id").notNull(), bookId: text("book_id").notNull(), workId: text("work_id").notNull(), introduced: integer("introduced").notNull() }, t => [primaryKey({ columns: [t.userId, t.seriesId, t.bookId] })]);
 export const userSeriesSeenWorks = sqliteTable("user_series_seen_works", { userId: integer("user_id").notNull(), seriesId: text("series_id").notNull(), bookId: text("book_id").notNull(), acknowledgedAt: integer("acknowledged_at").notNull() }, t => [primaryKey({ columns: [t.userId, t.seriesId, t.bookId] })]);
 /** A saved series of the Hardcover tables, to be saved again by its name on AudiobookDB (`server/series-resave.ts`). */
@@ -291,6 +330,12 @@ export const seriesAcquisitionJobs = sqliteTable("series_acquisition_jobs", {
   autoRetries: integer("auto_retries").notNull().default(0),
   /** A search put back by itself waits until then; null for one that may run now. */
   retryAt: integer("retry_at"),
+  /** What the audio search found and which one was chosen, as JSON (`server/series-queue.ts`, #898). */
+  candidates: text("candidates"),
+  /** When the owner moved the job to the front of the queue (Search now, #898); null for the queue's own order. */
+  frontAt: integer("front_at"),
+  /** 1: a search asked again for a book with its audiobook (or one on its way): it finds, and downloads nothing. */
+  searchOnly: integer("search_only").notNull().default(0),
 });
 export const userWorkCompletion = sqliteTable("user_work_completion", { userId: integer("user_id").notNull(), workId: text("work_id").notNull(), status: text("status").notNull() }, t => [primaryKey({ columns: [t.userId, t.workId] })]);
 export const userWorkLibraryOrigin = sqliteTable(

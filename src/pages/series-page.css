@@ -95,3 +95,7 @@
 .series-page-beside-head > span {
   color: var(--muted);
 }
+/* The run line (#898): what the series queue does for the series, with Stop searching or Resume on the right. */
+.series-page-run > .part-button {
+  flex: none;
+}

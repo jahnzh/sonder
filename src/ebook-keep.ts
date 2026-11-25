@@ -6,6 +6,9 @@
 //
 // Pure functions of the stored `reader-file:<id>` record; the server must not import this file.
 
+/** Fired when an ebook's copy on this device (its EPUB file or its prepared text) or a choice of edition changed. */
+export const EBOOK_DEVICE_EVENT = "sonder:ebook-device-changed";
+
 export type ReaderFileRecord = { fingerprint?: string; blob?: Blob; opfs?: boolean; cache?: boolean } | undefined | null;
 
 /** Whether a stored copy is one the user chose to keep (not the reader's own cache). */

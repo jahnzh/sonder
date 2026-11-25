@@ -199,7 +199,7 @@ test("the Save series sheet's button: Save series and add N books, or Save serie
 
 test("the Save series request: the chosen books, plus every book already in the library, and the switches", () => {
   const model = seriesAddModel(hainish, sheetFacts({ manual: { "n:3": false, "b:9": true }, getAudio: true }));
-  assert.deepEqual(model.body, { id: "sr-hainish", bookIds: ["1", "21", "5", "9", "4"], searchAudio: true, searchEbooks: false });
+  assert.deepEqual(model.body, { id: "sr-hainish", bookIds: ["1", "21", "5", "9", "4"], searchAudio: true, searchEbooks: false, language: "en" });
   // With nothing chosen the request still links the book in the library.
   const none = { "n:1": false, "n:2": false, "n:3": false, "n:5": false };
   assert.deepEqual(seriesAddModel(hainish, sheetFacts({ manual: none })).body.bookIds, ["4"]);
