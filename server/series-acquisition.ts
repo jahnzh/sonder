@@ -787,6 +787,7 @@ async function runAudioJob(
     wrappedAcquire,
     deps.seriesAudioDeps,
     deps.now,
+    () => seriesAudioJobStillSearching(job.id),
   );
   if (packed || !seriesAudioJobStillSearching(job.id)) return;
   await autoAcquireSeriesVolume(

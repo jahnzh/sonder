@@ -357,3 +357,25 @@ test("Get with a pack for a book also gets the series' other books it holds that
   assert.equal(packRow(job.id, get(3)), undefined);
   assert.equal(getWorkMediaState(1, get(1))?.state, "available");
 });
+
+test("replacing a pack on its way from one book's Get sheet lets only that book go; the others keep the download", async () => {
+  const { replacePreviousAcquisition } = await import("../server/acquisitions.ts");
+  const REPLACE = "sr-replace-saga";
+  const book = (n: number) => `w-replace-${n}`;
+  seedSeries(REPLACE, "Replace Saga", 2, book);
+  const id = "replace-pack-acquisition";
+  db.insert(s.acquisitions)
+    .values({ id, hash: "9".repeat(40), magnet: magnet("9".repeat(40), "Replace"), backend: "local", remoteId: "9".repeat(40), title: "Replace Saga 1-2", author: "Ada Author", cover: "", workId: book(1), status: "downloading", progress: 0.4, createdAt: Date.now(), updatedAt: Date.now() })
+    .run();
+  db.insert(s.userAcquisitions).values({ userId: 1, acquisitionId: id }).run();
+  recordPack(id, { seriesId: REPLACE, seriesName: "Replace Saga", volumes: [1, 2].map((n) => ({ position: n, title: TITLES[n - 1] })), works: [1, 2].map((n) => ({ workId: book(n), position: n, title: TITLES[n - 1] })) });
+  assert.equal(getWorkMediaState(1, book(1))?.state, "queued");
+  const result = await replacePreviousAcquisition(1, id, magnet("8".repeat(40), "Another"), book(1));
+  assert.deepEqual(result, { action: "detached_shared" });
+  const pack = db.select().from(s.acquisitions).where(eq(s.acquisitions.id, id)).get()!;
+  assert.equal(pack.status, "downloading");
+  assert.equal(pack.workId, book(2));
+  assert.equal(packRow(id, book(1)), undefined);
+  assert.equal(getWorkMediaState(1, book(2))?.state, "queued");
+  assert.notEqual(getWorkMediaState(1, book(1))?.state, "queued");
+});

@@ -33,7 +33,7 @@ A title without a range ("Complete Series", "Box Set") is not taken as a pack: w
 
 ## Removing a book
 
-Removing a book of a series (`series-removal.ts`) removes its recording and its `acquisition_works` row only. Its files, and every other file of the pack, stay on disk while another book of the pack has a recording or still waits for one: the torrent keeps its files whole. When the last book of the pack is removed, every audio file of the pack goes with it (those of the books removed before too), unless a recording or a server copy still points at one. A pack on its way is cancelled only when its last book is removed. When the removed book was the acquisition's `work_id`, another book of the pack takes its place.
+Removing a book of a series (`series-removal.ts`) removes its recording and its `acquisition_works` row only. Its files, and every other file of the pack, stay on disk while another book of the pack has a recording or still waits for one: the torrent keeps its files whole. When the last book of the pack is removed, every audio file of the pack goes with it (those of the books removed before too), unless a recording or a server copy still points at one. A pack on its way is cancelled only when its last book is removed. When the removed book was the acquisition's `work_id`, another book of the pack takes its place. A new recording chosen on the Get sheet for one book of a pack on its way replaces the pack for that book alone: the book leaves the pack, which keeps downloading for the others (`replacePreviousAcquisition`).
 
 ## Considered options
 

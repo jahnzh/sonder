@@ -15,7 +15,7 @@ import { addTorrent, getTorrent, removeTorrent, transmission } from "./transmiss
 import { getTorrentHealth } from "./torrent-health.ts";
 import { audioPattern } from "./preview-file.ts";
 import { getWorkMediaState, trackWorkMediaState } from "./work-media-state.ts";
-import { assignWaitingPackWorks, importPack, isPackAcquisition, packOf, recordPack, type PackRequest } from "./acquisition-packs.ts";
+import { assignWaitingPackWorks, importPack, isPackAcquisition, leavePack, packOf, recordPack, type PackRequest } from "./acquisition-packs.ts";
 import { checkDownloadedLanguage } from "./series-language-check.ts";
 import {
   ACTIVE_ACQUISITION_STATUSES,
@@ -115,12 +115,16 @@ export async function acquire(
     // whole before (not a pack) stays as it is.
     const wasPack = isPackAcquisition(existing.id);
     if ((metadata.pack && (wasPack || existing.status !== "ready")) || (wasPack && metadata.workId)) {
-      const work = metadata.workId ? db.select().from(s.works).where(eq(s.works.id, metadata.workId)).get() : undefined;
+      const book = (workId: string) => {
+        const work = db.select().from(s.works).where(eq(s.works.id, workId)).get()!;
+        return { workId: work.id, position: null, title: work.title };
+      };
       const known = packOf(existing.id);
-      recordPack(
-        existing.id,
-        metadata.pack ?? { seriesId: known!.seriesId, seriesName: known!.seriesName, volumes: [], works: [{ workId: work!.id, position: null, title: work!.title }] },
-      );
+      const request = metadata.pack ?? { seriesId: known!.seriesId, seriesName: known!.seriesName, volumes: [], works: [book(metadata.workId!)] };
+      // A download on its way for one book that becomes a pack keeps serving that book.
+      if (!wasPack && existing.workId && !request.works.some((entry) => entry.workId === existing.workId))
+        request.works = [...request.works, book(existing.workId)];
+      recordPack(existing.id, request);
       if (existing.status === "ready") await assignWaitingPackWorks(existing.id);
       return db.select().from(s.acquisitions).where(eq(s.acquisitions.id, existing.id)).get()!;
     }
@@ -611,6 +615,8 @@ export async function replacePreviousAcquisition(
   userId: number,
   previousAcquisitionId: string,
   newMagnet: string,
+  /** The book the new download is for; a series pack that also serves other books only lets this one go. */
+  workId?: string,
 ): Promise<ReplacePreviousResult> {
   const previous = db
     .select()
@@ -620,6 +626,9 @@ export async function replacePreviousAcquisition(
   if (!previous) return { action: "skipped_same_hash" };
   const newHash = magnetHash(newMagnet);
   if (previous.hash === newHash) return { action: "skipped_same_hash" };
+  // A series pack that serves other books too keeps downloading for them (ADR 0027): only this book leaves it.
+  const leaving = workId ?? previous.workId;
+  if (leaving && isPackAcquisition(previous.id) && leavePack(previous.id, leaving).remaining > 0) return { action: "detached_shared" };
 
   const users = db
     .select()
@@ -699,6 +708,6 @@ export async function acquireReplacing(
   const previous = replaceActive && rest.workId ? activeWorkAcquisition(userId, rest.workId) : null;
   const job = await acquireFn(magnet, rest);
   if (!previous || job.status === "error") return job;
-  const result = await replacePreviousAcquisition(userId, previous.id, magnet);
+  const result = await replacePreviousAcquisition(userId, previous.id, magnet, rest.workId);
   return result.action === "skipped_same_hash" ? job : { ...job, replaced: result.action };
 }

@@ -15,7 +15,7 @@ import {
   type SeriesAudioSearchDeps,
 } from "./series-audio.ts";
 import { currentUserId, requireAdmin } from "./users.ts";
-import { getWorkMediaState, workHasPlayableAudio } from "./work-media-state.ts";
+import { getWorkMediaState, trackWorkMediaState, workHasPlayableAudio } from "./work-media-state.ts";
 
 /** A series' pack search runs once per user in this time, whatever the number of its books in the queue. */
 export const PACK_SEARCH_EVERY_MS = 6 * 3600_000;
@@ -78,6 +78,8 @@ export async function seriesPackStep(
   acquire: typeof acquireFn,
   deps?: SeriesAudioSearchDeps,
   now: () => number = Date.now,
+  /** False once the book's search was taken over (a manual release choice): nothing is acquired then. */
+  mayAcquire: () => boolean = () => true,
 ) {
   const book: PackBook = { workId: input.workId, position: input.position, title: input.title, cover: input.cover };
   const shared = packCovering(input.seriesId, input.position);
@@ -106,15 +108,24 @@ export async function seriesPackStep(
     volumes: volumes.filter((volume) => choice.covered.includes(volume.position)).map(({ position, title }) => ({ position, title })),
     works: books.map((row) => ({ workId: row.workId, position: row.position, title: row.title, cover: row.cover })),
   };
-  await acquire(magnet, {
-    title: choice.candidate.title,
-    author: input.author,
-    cover: primary.cover ?? undefined,
-    workId: primary.workId,
-    narrator: choice.candidate.narrator,
-    userId: input.userId,
-    pack,
-  });
+  if (!mayAcquire()) throw new Error("cancelled");
+  try {
+    await acquire(magnet, {
+      title: choice.candidate.title,
+      author: input.author,
+      cover: primary.cover ?? undefined,
+      workId: primary.workId,
+      narrator: choice.candidate.narrator,
+      userId: input.userId,
+      pack,
+    });
+  } catch (error) {
+    // As a book's own pick: an acquire that failed leaves its acquisition failed for the books (their Retry), and one
+    // that failed before recording any still tracks the book. The other books keep their own searches.
+    (deps?.log ?? console.warn)(`pack acquire: ${(error as Error).message}`);
+    trackWorkMediaState(input.userId, input.workId);
+    return books.some((row) => row.workId === input.workId);
+  }
   // The other books the pack holds need no search of their own.
   const others = books.filter((row) => row.workId !== input.workId).map((row) => row.jobId);
   if (others.length)

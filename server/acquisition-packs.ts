@@ -322,10 +322,26 @@ export async function joinPack(acquisitionId: string, userId: number, book: Pack
 }
 
 /**
- * The work is removed from the user's library (`series-removal.ts`): its row in every pack that served it goes. A
- * pack that still serves another book stays, and takes another of its books as `work_id` when it was this one; the
- * acquisitions of which no book is left are returned, as plain acquisitions again, for the caller to detach, with the
- * local paths of all their audio files (`leftovers`), which no book uses any more.
+ * A book leaves one pack: its row goes. A pack that still serves another book takes another of its books as
+ * `work_id` when it was this one; a pack with no book left is a plain acquisition again (its pack row goes), and the
+ * local paths of all its audio files are returned as `leftovers`, which no book uses any more.
+ */
+export function leavePack(acquisitionId: string, workId: string) {
+  db.delete(s.acquisitionWorks).where(and(eq(s.acquisitionWorks.acquisitionId, acquisitionId), eq(s.acquisitionWorks.workId, workId))).run();
+  const rest = packWorks(acquisitionId);
+  if (!rest.length) {
+    const leftovers = (packFiles(acquisitionId) ?? []).flatMap((file) => (file.path ? [file.path] : []));
+    db.delete(s.acquisitionPacks).where(eq(s.acquisitionPacks.acquisitionId, acquisitionId)).run();
+    return { remaining: 0, leftovers };
+  }
+  const job = db.select().from(s.acquisitions).where(eq(s.acquisitions.id, acquisitionId)).get();
+  if (job?.workId === workId) db.update(s.acquisitions).set({ workId: rest[0].workId }).where(eq(s.acquisitions.id, acquisitionId)).run();
+  return { remaining: rest.length, leftovers: [] as string[] };
+}
+
+/**
+ * The work is removed from the user's library (`series-removal.ts`): it leaves every pack that served it
+ * (`leavePack`). Returns the local paths of the audio files of the packs it was the last book of.
  */
 export function leavePacks(workId: string) {
   const ids = db
@@ -334,21 +350,7 @@ export function leavePacks(workId: string) {
     .where(eq(s.acquisitionWorks.workId, workId))
     .all()
     .map((row) => row.id);
-  const emptied: string[] = [];
-  const leftovers: string[] = [];
-  for (const id of ids) {
-    db.delete(s.acquisitionWorks).where(and(eq(s.acquisitionWorks.acquisitionId, id), eq(s.acquisitionWorks.workId, workId))).run();
-    const rest = packWorks(id);
-    if (!rest.length) {
-      for (const file of packFiles(id) ?? []) if (file.path) leftovers.push(file.path);
-      db.delete(s.acquisitionPacks).where(eq(s.acquisitionPacks.acquisitionId, id)).run();
-      emptied.push(id);
-      continue;
-    }
-    const job = db.select().from(s.acquisitions).where(eq(s.acquisitions.id, id)).get();
-    if (job?.workId === workId) db.update(s.acquisitions).set({ workId: rest[0].workId }).where(eq(s.acquisitions.id, id)).run();
-  }
-  return { left: ids, emptied, leftovers };
+  return { leftovers: ids.flatMap((id) => leavePack(id, workId).leftovers) };
 }
 
 /** Whether a local path (as given, or its real path) is a file of a pack a book still uses: has its recording from, or waits for. */
