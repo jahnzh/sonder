@@ -346,10 +346,12 @@ function cancelUserWorkDownloads(
   userId: number,
   workId: string,
   torrentCancels: TorrentCancel[],
+  packLeftovers: string[],
 ) {
   // The work leaves every series pack that served it (ADR 0027). A pack that still serves another book is not
-  // cancelled; one that served only this work is this work's download again and is detached below.
-  leavePacks(workId);
+  // cancelled; one that served only this work is this work's download again and is detached below, and its files
+  // (also those of books removed before) are deleted with this work's.
+  packLeftovers.push(...leavePacks(workId).leftovers);
   const jobs = db
     .select({ job: s.acquisitions })
     .from(s.userAcquisitions)
@@ -599,6 +601,7 @@ async function finalizeEditionDeletes(
   editionDeletePlans: EditionDeletePlan[],
   torrentCancels: TorrentCancel[],
   skippedPaths: string[],
+  packLeftovers: string[] = [],
 ) {
   const fileErrors: string[] = [];
   const pathsToUnlink: string[] = [];
@@ -641,6 +644,11 @@ async function finalizeEditionDeletes(
       ids: [hash],
       "delete-local-data": true,
     }).catch(() => {});
+  }
+  // The files of a pack no book uses any more (ADR 0027), unless a recording or a copy still points at one.
+  for (const leftover of packLeftovers) {
+    const managed = managedMediaPath(leftover);
+    if (managed && !pathsToUnlink.includes(managed) && !pathReferencedElsewhere(managed, new Set())) pathsToUnlink.push(managed);
   }
   for (const path of pathsToUnlink) {
     // A file of a series pack stays while another book of the pack uses it (ADR 0027).
@@ -699,12 +707,13 @@ export async function removeSavedSeries(
   const torrentCancels: TorrentCancel[] = [];
   const skippedPaths: string[] = [];
   const editionDeletePlans: EditionDeletePlan[] = [];
+  const packLeftovers: string[] = [];
 
   sqlite.transaction(() => {
     if (selected.length) {
       for (const bookId of selected) {
         const work = saved.find((row) => row.bookId === bookId)!;
-        cancelUserWorkDownloads(userId, work.workId, torrentCancels);
+        cancelUserWorkDownloads(userId, work.workId, torrentCancels, packLeftovers);
         removeUserWorkFromLibrary(userId, work.workId);
         audioOutcomes.push(
           ...removeUserWorkAudio(
@@ -756,6 +765,7 @@ export async function removeSavedSeries(
     editionDeletePlans,
     torrentCancels,
     skippedPaths,
+    packLeftovers,
   );
 
   return {

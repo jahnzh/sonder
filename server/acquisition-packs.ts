@@ -324,7 +324,8 @@ export async function joinPack(acquisitionId: string, userId: number, book: Pack
 /**
  * The work is removed from the user's library (`series-removal.ts`): its row in every pack that served it goes. A
  * pack that still serves another book stays, and takes another of its books as `work_id` when it was this one; the
- * acquisitions of which no book is left are returned, as plain acquisitions again, for the caller to detach.
+ * acquisitions of which no book is left are returned, as plain acquisitions again, for the caller to detach, with the
+ * local paths of all their audio files (`leftovers`), which no book uses any more.
  */
 export function leavePacks(workId: string) {
   const ids = db
@@ -334,10 +335,12 @@ export function leavePacks(workId: string) {
     .all()
     .map((row) => row.id);
   const emptied: string[] = [];
+  const leftovers: string[] = [];
   for (const id of ids) {
     db.delete(s.acquisitionWorks).where(and(eq(s.acquisitionWorks.acquisitionId, id), eq(s.acquisitionWorks.workId, workId))).run();
     const rest = packWorks(id);
     if (!rest.length) {
+      for (const file of packFiles(id) ?? []) if (file.path) leftovers.push(file.path);
       db.delete(s.acquisitionPacks).where(eq(s.acquisitionPacks.acquisitionId, id)).run();
       emptied.push(id);
       continue;
@@ -345,7 +348,7 @@ export function leavePacks(workId: string) {
     const job = db.select().from(s.acquisitions).where(eq(s.acquisitions.id, id)).get();
     if (job?.workId === workId) db.update(s.acquisitions).set({ workId: rest[0].workId }).where(eq(s.acquisitions.id, id)).run();
   }
-  return { left: ids, emptied };
+  return { left: ids, emptied, leftovers };
 }
 
 /** Whether a local path (as given, or its real path) is a file of a pack a book still uses: has its recording from, or waits for. */

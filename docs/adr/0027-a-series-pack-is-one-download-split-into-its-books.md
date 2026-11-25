@@ -33,7 +33,7 @@ A title without a range ("Complete Series", "Box Set") is not taken as a pack: w
 
 ## Removing a book
 
-Removing a book of a series (`series-removal.ts`) removes its recording and its `acquisition_works` row only. Its files, and every other file of the pack, stay on disk while another book of the pack has a recording or still waits for one; the files of the last book are deleted with it, as a single book's are. A pack on its way is cancelled only when its last book is removed. When the removed book was the acquisition's `work_id`, another book of the pack takes its place.
+Removing a book of a series (`series-removal.ts`) removes its recording and its `acquisition_works` row only. Its files, and every other file of the pack, stay on disk while another book of the pack has a recording or still waits for one: the torrent keeps its files whole. When the last book of the pack is removed, every audio file of the pack goes with it (those of the books removed before too), unless a recording or a server copy still points at one. A pack on its way is cancelled only when its last book is removed. When the removed book was the acquisition's `work_id`, another book of the pack takes its place.
 
 ## Considered options
 
@@ -46,5 +46,5 @@ Removing a book of a series (`series-removal.ts`) removes its recording and its 
 
 - A local pack is imported when the whole torrent is downloaded, not book by book.
 - Activity shows a pack once, under the book it was chosen for.
-- Files of the pack that belong to no book stay on disk after the last book is removed, as a torrent's other files do today.
+- Files of the pack that are not audio stay on disk after the last book is removed, as a torrent's other files do today.
 - Issue: #899.
