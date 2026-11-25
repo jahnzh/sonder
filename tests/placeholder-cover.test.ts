@@ -62,7 +62,7 @@ const coverOfWork = (workId: string) => sqlite.prepare("SELECT e.cover FROM audi
 
 test("coverOf reads the images array: the first https url, url before sourceUrl; the other shapes stay", () => {
   const book = (extra: Record<string, unknown>) => abdb.readBook({ id: "b", title: "T", ...extra })!.cover;
-  assert.equal(book({ images: IMAGES("d938") }), "https://cdn.audiobookdb.org/d938");
+  assert.equal(book({ images: IMAGES("d938") }), "https://cdn.audiobookdb.org/d938/medium.webp");
   assert.equal(book({ images: [{ url: "http://insecure.example/a.jpg" }, { url: null, sourceUrl: "https://example.org/b.jpg" }, { url: "https://example.org/c.jpg" }] }), "https://example.org/b.jpg");
   assert.equal(book({ images: [{ sourceUrl: "https://example.org/only-source.jpg" }] }), "https://example.org/only-source.jpg");
   assert.equal(book({ images: [] }), null);
@@ -70,10 +70,10 @@ test("coverOf reads the images array: the first https url, url before sourceUrl;
   assert.equal(book({ cover: { url: "https://example.org/cover.jpg" }, images: IMAGES("d938") }), "https://example.org/cover.jpg");
   assert.equal(book({ thumbnail: "https://example.org/t.jpg" }), "https://example.org/t.jpg");
   const series = abdb.readSeries(SERIES(withImages))!;
-  assert.deepEqual(series.members.map((member) => member.book.cover), ["bk-dcc1", "bk-dcc2", "bk-dcc3"].map((id) => `https://cdn.audiobookdb.org/${id}`));
+  assert.deepEqual(series.members.map((member) => member.book.cover), ["bk-dcc1", "bk-dcc2", "bk-dcc3"].map((id) => `https://cdn.audiobookdb.org/${id}/medium.webp`));
   // The Discover list's summary takes the series' own images, else its first book's.
-  assert.equal(abdb.readSeriesSummary({ id: "s", name: "S", images: IMAGES("series") })!.cover, "https://cdn.audiobookdb.org/series");
-  assert.equal(abdb.readSeriesSummary({ id: "s", name: "S", books: [{ id: "b", title: "T", images: IMAGES("first") }] })!.cover, "https://cdn.audiobookdb.org/first");
+  assert.equal(abdb.readSeriesSummary({ id: "s", name: "S", images: IMAGES("series") })!.cover, "https://cdn.audiobookdb.org/series/medium.webp");
+  assert.equal(abdb.readSeriesSummary({ id: "s", name: "S", books: [{ id: "b", title: "T", images: IMAGES("first") }] })!.cover, "https://cdn.audiobookdb.org/first/medium.webp");
 });
 
 test("a series saved while AudiobookDB's covers were not read: the refresh gives its placeholders the covers, and keeps every other cover", async () => {
@@ -88,16 +88,16 @@ test("a series saved while AudiobookDB's covers were not read: the refresh gives
 
   control.series.set("sr-dcc", SERIES(withImages) as never);
   await catalogue.refreshCatalogueSeries("sr-dcc", { priority: "interactive", fresh: true });
-  assert.deepEqual(coverOfWork(works[0]), ["https://cdn.audiobookdb.org/bk-dcc1"]);
-  assert.deepEqual(coverOfWork(works[1]), ["https://cdn.audiobookdb.org/bk-dcc2"], "the old generic cover is replaced");
+  assert.deepEqual(coverOfWork(works[0]), ["https://cdn.audiobookdb.org/bk-dcc1/medium.webp"]);
+  assert.deepEqual(coverOfWork(works[1]), ["https://cdn.audiobookdb.org/bk-dcc2/medium.webp"], "the old generic cover is replaced");
   assert.deepEqual(coverOfWork(works[2]), ["https://mine.example/dcc3.jpg"], "a cover somebody set stays");
 
   // The Series page and the library show them.
   const page = (await call(admin, "GET", "/api/series/sr-dcc?language=en")).json() as { works: { id: string; cover: string | null }[] };
-  assert.deepEqual(page.works.map((work) => work.cover), ["bk-dcc1", "bk-dcc2", "bk-dcc3"].map((id) => `https://cdn.audiobookdb.org/${id}`));
+  assert.deepEqual(page.works.map((work) => work.cover), ["bk-dcc1", "bk-dcc2", "bk-dcc3"].map((id) => `https://cdn.audiobookdb.org/${id}/medium.webp`));
   const library = (await call(admin, "GET", "/api/library")).json() as { workId: string; cover: string }[];
   const shown = (workId: string) => library.find((work) => work.workId === workId)?.cover;
-  assert.equal(shown(works[0]), "https://cdn.audiobookdb.org/bk-dcc1");
+  assert.equal(shown(works[0]), "https://cdn.audiobookdb.org/bk-dcc1/medium.webp");
   assert.equal(shown(works[2]), "https://mine.example/dcc3.jpg");
 });
 
@@ -107,13 +107,13 @@ test("saving a series again fills a placeholder that had no cover, and a real re
   sqlite.prepare("INSERT INTO recordings(id,edition_id) VALUES('rec-real','ed-real')").run();
   sqlite.prepare("INSERT INTO tracks(id,recording_id,title,track_index,duration,source,source_type) VALUES('tr-real','rec-real','P',0,10,'/media/r.mp3','local')").run();
   // A real edition (it has a track) with no cover is not a placeholder: the catalogue's cover is not its own.
-  assert.equal(fillPlaceholderCover("w-real", "https://cdn.audiobookdb.org/x"), 0);
+  assert.equal(fillPlaceholderCover("w-real", "https://cdn.audiobookdb.org/x/medium.webp"), 0);
   assert.deepEqual(coverOfWork("w-real"), [""]);
   assert.equal(fillPlaceholderCover("work-abdb-bk-dcc1", "http://insecure.example/x.jpg"), 0, "only an https address");
 
   sqlite.prepare("UPDATE audio_editions SET cover='' WHERE work_id='work-abdb-bk-dcc1'").run();
   assert.equal((await call(admin, "POST", "/api/series", { id: "sr-dcc", bookIds: ["bk-dcc1"], searchAudio: false, searchEbooks: false })).statusCode, 200);
-  assert.deepEqual(coverOfWork("work-abdb-bk-dcc1"), ["https://cdn.audiobookdb.org/bk-dcc1"]);
+  assert.deepEqual(coverOfWork("work-abdb-bk-dcc1"), ["https://cdn.audiobookdb.org/bk-dcc1/medium.webp"]);
 });
 
 test("the startup backfill reads the cached series answer and fills what is empty once; nothing is read when nothing is empty", async () => {
@@ -123,10 +123,10 @@ test("the startup backfill reads the cached series answer and fills what is empt
   const filled = await backfillPlaceholderCovers();
   assert.ok(filled >= 3, `filled ${filled}`);
   assert.equal(control.calls.length, 0, "the cached answer is read, AudiobookDB is not asked");
-  assert.deepEqual(coverOfWork("work-abdb-bk-dcc1"), ["https://cdn.audiobookdb.org/bk-dcc1"]);
-  assert.deepEqual(coverOfWork("work-abdb-bk-dcc2"), ["https://cdn.audiobookdb.org/bk-dcc2"]);
+  assert.deepEqual(coverOfWork("work-abdb-bk-dcc1"), ["https://cdn.audiobookdb.org/bk-dcc1/medium.webp"]);
+  assert.deepEqual(coverOfWork("work-abdb-bk-dcc2"), ["https://cdn.audiobookdb.org/bk-dcc2/medium.webp"]);
   assert.deepEqual(coverOfWork("work-abdb-bk-dcc3"), ["https://mine.example/dcc3.jpg"]);
-  assert.equal(sqlite.prepare("SELECT cover FROM series_catalogue_works WHERE series_id='sr-dcc' AND book_id='bk-dcc1'").pluck().get(), "https://cdn.audiobookdb.org/bk-dcc1");
+  assert.equal(sqlite.prepare("SELECT cover FROM series_catalogue_works WHERE series_id='sr-dcc' AND book_id='bk-dcc1'").pluck().get(), "https://cdn.audiobookdb.org/bk-dcc1/medium.webp");
   now += 60_000;
   assert.equal(await backfillPlaceholderCovers(), 0);
   assert.equal(control.calls.length, 0);
@@ -139,5 +139,21 @@ test("a work linked to a book alone gets the book's cover when it is linked agai
   sqlite.prepare("INSERT INTO recordings(id,edition_id) VALUES('recording-placeholder-w-solo','placeholder-w-solo')").run();
   const { linkWork } = await import("../server/catalogue-links.ts");
   await linkWork("w-solo", { provider: "audiobookdb", id: "bk-dcc2" }, "manual");
-  assert.deepEqual(coverOfWork("w-solo"), ["https://cdn.audiobookdb.org/bk-dcc2"]);
+  assert.deepEqual(coverOfWork("w-solo"), ["https://cdn.audiobookdb.org/bk-dcc2/medium.webp"]);
+});
+
+test("a cover stored as AudiobookDB's image folder (an address that answers 404) is repaired to its medium image", async () => {
+  const { repairAudiobookDbCoverAddresses } = await import("../server/placeholder-cover.ts");
+  const { audiobookDbImage } = await import("../server/audiobookdb.ts");
+  assert.equal(audiobookDbImage("https://cdn.audiobookdb.org/abc"), "https://cdn.audiobookdb.org/abc/medium.webp");
+  assert.equal(audiobookDbImage("https://cdn.audiobookdb.org/abc/large.jpg"), "https://cdn.audiobookdb.org/abc/large.jpg");
+  assert.equal(audiobookDbImage("https://covers.openlibrary.org/b/id/1-L.jpg"), "https://covers.openlibrary.org/b/id/1-L.jpg");
+  sqlite.prepare("INSERT INTO works(id,title,author,description,genre,year) VALUES('w-repair','Repair','A','','',2020)").run();
+  sqlite.prepare("INSERT INTO audio_editions(id,work_id,cover,narrator,rating,source_label) VALUES('placeholder-w-repair','w-repair','https://cdn.audiobookdb.org/fold',' ',0,'Ebook')").run();
+  sqlite.prepare("INSERT INTO audio_editions(id,work_id,cover,narrator,rating,source_label) VALUES('ed-w-repair','w-repair','https://cdn.audiobookdb.org/fold/small.jpg',' ',0,'Own')").run();
+  assert.ok(repairAudiobookDbCoverAddresses() >= 1);
+  const cover = (id: string) => sqlite.prepare("SELECT cover FROM audio_editions WHERE id=?").pluck().get(id);
+  assert.equal(cover("placeholder-w-repair"), "https://cdn.audiobookdb.org/fold/medium.webp");
+  assert.equal(cover("ed-w-repair"), "https://cdn.audiobookdb.org/fold/small.jpg", "a file address is left as it is");
+  assert.equal(repairAudiobookDbCoverAddresses(), 0, "a second run changes nothing");
 });

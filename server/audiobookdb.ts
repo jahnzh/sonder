@@ -174,10 +174,22 @@ export function coverOf(entry: Json): string | null {
     if (url) return url;
   }
   for (const image of arrayOf(entry.images)) {
-    const url = https(isObject(image) ? image.url : image) ?? (isObject(image) ? https(image.sourceUrl) : null);
-    if (url) return url;
+    const url = https(isObject(image) ? image.url : image);
+    if (url) return audiobookDbImage(url);
+    const source = isObject(image) ? https(image.sourceUrl) : null;
+    if (source) return source;
   }
   return null;
+}
+
+/**
+ * An image of AudiobookDB's CDN is named by a folder (`https://cdn.audiobookdb.org/<hash>`), which answers 404; its
+ * sizes are files in it: `small`, `medium`, `large` and `detail`, as `.jpg` and `.webp` (seen on its book pages,
+ * 25 Nov 2026). The app shows covers at tile and row size, so a folder address becomes its `medium.webp` (~50 kB).
+ * Any other address is kept as it is.
+ */
+export function audiobookDbImage(url: string): string {
+  return /^https:\/\/cdn\.audiobookdb\.org\/[^/?#]+\/?$/.test(url) ? `${url.replace(/\/$/, "")}/medium.webp` : url;
 }
 function languagesOf(entry: Json): string[] {
   const values = [entry.language, ...arrayOf(entry.languages)];
