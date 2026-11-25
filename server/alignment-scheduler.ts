@@ -198,46 +198,68 @@ export class AlignmentScheduler {
     return (row.claimed_at ?? 0) >= this.now() - CLAIM_STALE_MS;
   }
 
+  /** The last failed read of the queue, so a cause that repeats every round is logged once. */
+  private lastFailure: string | null = null;
+
+  private noteFailure(what: string, error: unknown) {
+    const message = `${what}: ${error instanceof Error ? error.message : String(error)}`;
+    if (message === this.lastFailure) return;
+    this.lastFailure = message;
+    console.error(`alignment scheduler: ${message}; no job is admitted until it reads again`);
+  }
+
+  /**
+   * One admission round. It never throws: it runs from the tick and from a timer after a run ends, where an
+   * error nobody catches ends the server. A queue that cannot be read (the database is full or locked) admits
+   * nothing this round, and the next round tries again; runs already started carry on.
+   */
   private admit() {
-    if (!this.deps.held()) {
-      const now = this.now();
-      // Live foreign claims (another instance that may still be alive) occupy capacity until they go stale.
-      let reserved = 0;
-      const reservedRecordings = new Set<string>();
-      let reservedLocal = 0;
-      for (const candidate of this.deps.candidates()) {
-        if (this.inFlight.size + reserved >= admittedBooks()) break;
-        const generation = candidate.generation ?? "";
-        if (this.inFlight.has(candidate.id)) continue;
-        const running = [...this.inFlight.values()].map(({ candidate }) => candidate);
-        // One acoustic lease per recording: two editions of one recording never encode it twice at once.
-        if (
-          running.some((other) => other.recordingId === candidate.recordingId) ||
-          reservedRecordings.has(candidate.recordingId)
-        )
-          continue;
-        if (
-          candidate.local &&
-          running.filter((other) => other.local).length + reservedLocal >= ALIGNMENT_LOCAL_WORKER_JOBS
-        )
-          continue;
-        const wait = this.retryAfter.get(candidate.id);
-        if (wait && wait.generation === generation && wait.until > now) continue;
-        if (!this.claim(candidate.id, generation)) {
-          if (this.holdsLiveForeignClaim(candidate.id, generation)) {
-            reserved++;
-            reservedRecordings.add(candidate.recordingId);
-            if (candidate.local) reservedLocal++;
-          }
-          continue;
-        }
-        this.start(candidate, generation);
-      }
+    try {
+      if (!this.deps.held()) this.admitCandidates();
+      this.lastFailure = null;
+    } catch (error) {
+      this.noteFailure("could not read the reading sync queue", error);
     }
     if (!this.inFlight.size) {
       this.retryAfter.clear();
       this.stopHeartbeat();
       for (const resolve of this.waiters.splice(0)) resolve();
+    }
+  }
+
+  private admitCandidates() {
+    const now = this.now();
+    // Live foreign claims (another instance that may still be alive) occupy capacity until they go stale.
+    let reserved = 0;
+    const reservedRecordings = new Set<string>();
+    let reservedLocal = 0;
+    for (const candidate of this.deps.candidates()) {
+      if (this.inFlight.size + reserved >= admittedBooks()) break;
+      const generation = candidate.generation ?? "";
+      if (this.inFlight.has(candidate.id)) continue;
+      const running = [...this.inFlight.values()].map(({ candidate }) => candidate);
+      // One acoustic lease per recording: two editions of one recording never encode it twice at once.
+      if (
+        running.some((other) => other.recordingId === candidate.recordingId) ||
+        reservedRecordings.has(candidate.recordingId)
+      )
+        continue;
+      if (
+        candidate.local &&
+        running.filter((other) => other.local).length + reservedLocal >= ALIGNMENT_LOCAL_WORKER_JOBS
+      )
+        continue;
+      const wait = this.retryAfter.get(candidate.id);
+      if (wait && wait.generation === generation && wait.until > now) continue;
+      if (!this.claim(candidate.id, generation)) {
+        if (this.holdsLiveForeignClaim(candidate.id, generation)) {
+          reserved++;
+          reservedRecordings.add(candidate.recordingId);
+          if (candidate.local) reservedLocal++;
+        }
+        continue;
+      }
+      this.start(candidate, generation);
     }
   }
 
@@ -253,7 +275,13 @@ export class AlignmentScheduler {
         this.release(fence);
         if (epoch !== this.epoch) return;
         this.inFlight.delete(candidate.id);
-        const active = this.deps.stillActive(candidate.id);
+        let active = true;
+        try {
+          active = this.deps.stillActive(candidate.id);
+        } catch (error) {
+          // Unreadable: treat the job as still active, so it waits its retry and the queue decides next round.
+          this.noteFailure(`could not read job ${candidate.id}`, error);
+        }
         // Capacity freed: jobs that were turned away may start now.
         if (fence.leased || !active) this.retryAfter.clear();
         if (active) this.retryAfter.set(candidate.id, { generation, until: this.now() + ADMISSION_RETRY_MS });
@@ -282,6 +310,7 @@ export class AlignmentScheduler {
     this.epoch++;
     this.inFlight.clear();
     this.retryAfter.clear();
+    this.lastFailure = null;
     this.stopHeartbeat();
     for (const resolve of this.waiters.splice(0)) resolve();
     if (restart) this.owner = randomUUID();

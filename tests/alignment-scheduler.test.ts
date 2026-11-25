@@ -628,3 +628,67 @@ test("resume while a section is in flight starts a fresh generation so the late 
   assert.equal(done.generation, afterResume.generation);
   assert.ok(done.sectionsDone.length > 0);
 });
+
+test("a listing of jobs that throws leaves the scheduler alive, admits nothing, and admits again once it reads (#850)", async () => {
+  reset();
+  // The server's own scheduler stays out of the way; this one is driven by hand.
+  setPaused("alignment", true);
+  const id = (await create("c")).id;
+  const generation = alignmentJob(id).generation!;
+  let broken = true;
+  let statusBroken = false;
+  const started: string[] = [];
+  const scheduler = new AlignmentScheduler({
+    candidates: () => {
+      if (broken) throw new Error("database or disk is full");
+      return ["queued", "copying", "processing"].includes(alignmentJob(id).status)
+        ? [{ id, generation, recordingId: "rec-c", local: false }]
+        : [];
+    },
+    held: () => false,
+    stillActive: () => {
+      if (statusBroken) throw new Error("database or disk is full");
+      return false;
+    },
+    run: async () => {
+      started.push(id);
+      // The listing fails again while this run ends: the admission after it runs from a timer, outside any handler.
+      broken = true;
+      statusBroken = true;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    },
+  });
+  const logged: string[] = [];
+  const consoleError = console.error;
+  console.error = (...args: unknown[]) => void logged.push(args.map(String).join(" "));
+  try {
+    await scheduler.pump();
+    await scheduler.pump();
+    await scheduler.pump();
+    assert.deepEqual(started, [], "nothing is admitted while the listing throws");
+    assert.equal(scheduler.running().length, 0);
+    assert.equal(claim(id).claim_owner, null, "no claim was taken");
+    assert.equal(logged.length, 1, "the same cause is logged once");
+    assert.match(logged[0], /database or disk is full/);
+
+    broken = false;
+    await scheduler.pump();
+    assert.deepEqual(started, [id], "the next round admits again");
+    assert.equal(claim(id).claim_owner, null, "the run released its claim");
+
+    // The admission after the run ended met a failing listing and a failing status read, and nothing escaped.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(scheduler.running().length, 0);
+
+    broken = false;
+    statusBroken = false;
+    started.length = 0;
+    scheduler.reset();
+    await scheduler.pump();
+    assert.deepEqual(started, [id], "and it admits again after those failures too");
+  } finally {
+    console.error = consoleError;
+    putAlignmentJob({ ...alignmentJob(id), status: "cancelled", error: null });
+    setPaused("alignment", false);
+  }
+});
