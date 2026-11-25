@@ -14,7 +14,7 @@ import type {
 import type { AlignmentPoolStatus } from "../src/reading-types.ts";
 import type { PausableProcess } from "./activity-pause-model.ts";
 import type { TorrentState } from "./transmission.ts";
-import { workCovers } from "./work-cover.ts";
+import { idList, workCovers } from "./work-cover.ts";
 
 const MINUTE = 60_000;
 
@@ -109,6 +109,11 @@ export type ActivityDraft = Omit<ActivityItem, "stuck" | "blockedBy" | "permanen
    * `superseded` and still offers its `stuckActions`. Nothing is cancelled automatically.
    */
   superseded?: boolean;
+  /**
+   * The item concerns a book that is not in the library of the user who reads Activity (removed from it, or never in
+   * it, #881). It stays listed and keeps its actions, but a failure of it calls for no attention.
+   */
+  outsideLibrary?: boolean;
 };
 
 /** A service a source probes (torrent client, alignment workers), listed as a process of type "service". */
@@ -139,7 +144,11 @@ export type ReportContext = {
 export type LoadContext = { userId: number };
 
 /** The book an item concerns, read with its row: the work, its audio edition (never a placeholder's) and cover. */
-export type ItemWork = { workId: string; bookId: string | null; cover: string };
+export type ItemWork = {
+  workId: string; bookId: string | null; cover: string;
+  /** Some audio edition of the work is in the user's library; one the user removed (#881) or never added is not. */
+  inLibrary: boolean;
+};
 
 /**
  * `rows` with the work each concerns (`workOf` gives its id, or null for a row with none), read by the cover rule of
@@ -148,11 +157,16 @@ export type ItemWork = { workId: string; bookId: string | null; cover: string };
 export function withWorks<Row>(
   sqlite: ActivityDeps["sqlite"], userId: number, rows: Row[], workOf: (row: Row) => string | null,
 ): Array<Row & { work: ItemWork | null }> {
-  const covers = workCovers(sqlite, userId, rows.flatMap((row) => workOf(row) ?? []));
+  const workIds = rows.flatMap((row) => workOf(row) ?? []);
+  const covers = workCovers(sqlite, userId, workIds);
+  const owned = new Set((workIds.length ? sqlite.prepare(
+    `SELECT DISTINCT e.work_id AS workId FROM audio_editions e JOIN user_library u ON u.book_id=e.id
+      WHERE u.user_id=? AND e.work_id IN (SELECT value FROM json_each(?))`,
+  ).all(userId, idList(workIds)) as { workId: string }[] : []).map((row) => row.workId));
   return rows.map((row) => {
     const workId = workOf(row);
     const found = workId ? covers.get(workId) : undefined;
-    return { ...row, work: workId && found ? { workId, ...found } : null };
+    return { ...row, work: workId && found ? { workId, ...found, inLibrary: owned.has(workId) } : null };
   });
 }
 
