@@ -6,6 +6,27 @@ import net from "node:net";
 import { randomUUID } from "node:crypto";
 
 /**
+ * The levels of a committed check (#905). `land`, what lands a change on main: install, build, the unit suite and the
+ * browser smoke set (the tests tagged @smoke) in Chromium. `full`, the nightly: the whole browser suite in every
+ * project.
+ */
+export const CHECK_LEVELS = ["land", "full"];
+export const SMOKE_TAG = "@smoke";
+
+/** The level a check runs at: --level, else --full or SONDER_CHECK_FULL=1 (full), else SONDER_CHECK_LEVEL, else land. */
+export function checkLevel(options = {}, env = process.env) {
+  if (options.level) return options.level;
+  if (options.full || env.SONDER_CHECK_FULL === "1") return "full";
+  return CHECK_LEVELS.includes(env.SONDER_CHECK_LEVEL) ? env.SONDER_CHECK_LEVEL : "land";
+}
+
+/** What the browser stage passes to Playwright at a level: the smoke set in Chromium, or everything. */
+export function browserLevelArgs(level, scope) {
+  if (level === "land") return ["--project=chromium", `--grep=${SMOKE_TAG}`];
+  return scope === "chromium" ? ["--project=chromium"] : [];
+}
+
+/**
  * Parse CLI arguments for check-local runner.
  * Rejects unknown or missing arguments strictly.
  */
@@ -20,6 +41,7 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
     full: false,
     maxReruns: null,
     repeatChanged: false,
+    level: null,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -34,6 +56,14 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
       options.full = true;
     } else if (arg === "--repeat-changed") {
       options.repeatChanged = true;
+    } else if (arg === "--level" || arg.startsWith("--level=")) {
+      const inline = arg.startsWith("--level=");
+      if (!inline && (i + 1 >= argv.length || argv[i + 1].startsWith("--"))) {
+        return { ok: false, error: "Missing required value for --level option" };
+      }
+      const val = inline ? arg.slice("--level=".length) : argv[++i];
+      if (!CHECK_LEVELS.includes(val)) return { ok: false, error: `--level must be one of ${CHECK_LEVELS.join(", ")}` };
+      options.level = val;
     } else if (arg === "--ref") {
       if (i + 1 >= argv.length || argv[i + 1].startsWith("--")) {
         return { ok: false, error: "Missing required value for --ref option" };

@@ -20,7 +20,8 @@
     },
     "recentSeconds": 240,
     "probeTtlSeconds": 10,
-    "barSeconds": 1800
+    "barSeconds": 1800,
+    "smokeSeconds": 300
   },
   "lisa": {
     "host": "lisa",

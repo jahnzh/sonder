@@ -128,7 +128,7 @@ async function withoutAudio(page: Page, workId: string, after: () => boolean = (
   });
 }
 
-test("from the Book page: the search with title and author, rows from both sources, a tap sends nothing, Get closes to the Book page with the download's line", async ({ page }) => {
+test("from the Book page: the search with title and author, rows from both sources, a tap sends nothing, Get closes to the Book page with the download's line", { tag: "@smoke" }, async ({ page }) => {
   expect((await page.request.put(`/api/works/${WAR.workId}/library`)).ok()).toBe(true);
   const asked = await sources(page);
   await withoutAudio(page, WAR.workId, () => asked.posts.length > 0);

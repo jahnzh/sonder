@@ -4,7 +4,7 @@ How a coordinator watches CI, stays reachable when unattended, handles its worke
 
 ## Watch a running check yourself
 
-A completion watcher (`kill -0 $PID` loop, `npm run ci:run` / runner exit) never fires for a hung check, so a hang looks like "still running". Look at every live check, not at its notification. Start checks with `npm run ci:run <sha>` (or `npm run ci:run -- --status` to list the queue and each host's last probe); do not start `ci:ssh` / `ci:deck` directly. A plain `git push` of a branch starts its check by itself once the push has landed (#504): look at `--status` before starting one by hand for a commit you have just pushed. A push through `scripts/orca-ship.sh` starts none.
+A completion watcher (`kill -0 $PID` loop, `npm run ci:run` / runner exit) never fires for a hung check, so a hang looks like "still running". Look at every live check, not at its notification. Start checks with `npm run ci:run <sha>` (or `npm run ci:run -- --status` to list the queue and each host's last probe); do not start `ci:ssh` / `ci:deck` directly. A push starts no check (#905): start the land check yourself on the merged tip.
 
 1. Note the start time and the expected totals. Sharded browser stage: complete check about 10 minutes on WSL and 12 on lisa; install 10 s, build 10 to 40 s, unit 90 to 150 s, browser about 5 minutes. A serial browser stage (`SONDER_BROWSER_SHARDS=1`, filtered runs, hosts under 8 CPUs) takes 12 to 25 minutes.
 2. At every heartbeat read, for each check: `ps -o etimes= -p <pid>` (age), `cut -d' ' -f1 /proc/loadavg` on the host over ssh, and `tail check.log` in the run directory (`/tmp/sonder-ci-*` on WSL, `~/sonder-ci-tmp/sonder-ci-*` on lisa).
@@ -40,10 +40,12 @@ Run `bash scripts/orca/worker-done.sh <run_id> <msg_id> <worktree path>`. It pri
 
 - Merge `origin/main` into the branch by hand, conflict by conflict, and run the tests before committing the merge. A scripted conflict resolution once cut a file short and the damage was committed.
 - Start the check on the merged tip. A check on a tip that cannot be merged proves nothing about what lands.
-- A failed check is never run again to get a pass: `scripts/ci-run.sh` refuses a commit that already failed. Find out why it failed. Three tests written off as unreliable on 2026-11-15 were defects in the app; reproduce with `scripts/stress-spec.sh` (see "Stress a browser test" in `docs/LOCAL_CHECKS.md`).
+- A failure is judged at once: fix it, or, for a test that passes when rerun alone (the check does that rerun), note it as flaky and land. A check cut off by time with no failure does not hold landing. Never run a failed check again to get a pass. `scripts/stress-spec.sh` stays a tool for chasing a flaky test (see "Stress a browser test" in `docs/LOCAL_CHECKS.md`).
 - Review as `AGENTS.md` "Main flow" says: fix what can happen in the owner's setup, answer the rest in one line.
 
 ## Landing
+
+The coordinator lands a run's work after one land check of the merged tip (`npm run ci:run <sha>`), deploys at once (`scripts/deploy-prod.sh`) and closes the issues it delivers, without asking the owner (#905). It asks him only for an account or a product choice he would notice. The full browser suite runs nightly and never holds a landing; its failures arrive as `needs-triage` issues (`artifacts/ci/nightly/latest.json`).
 
 `scripts/orca-land.sh` removes the worktree and deletes branches that share the landed tip. When a running worker's branch starts from that tip (a follow-up built on the branch being landed), land with `gh pr merge <n> --merge` instead and remove the worktree later.
 
@@ -69,7 +71,7 @@ Before `gh pr merge` or `scripts/orca-land.sh`, read the issue body and comments
 
 ## Deploys
 
-- Run `node scripts/alignment-status.mjs` (or query `alignment_jobs`) for queued, copying or processing jobs before `scripts/deploy-prod.sh`. A restart kills the running job; tell the owner first.
+- Run `node scripts/alignment-status.mjs` (or query `alignment_jobs`) for queued, copying or processing jobs before `scripts/deploy-prod.sh`. A restart kills the running job: deploy when none runs, or name the job the deploy stopped in the report.
 - Pass `--marker <string in the new code>`, `--marker-file <path in the image>` or `--no-marker`; the script refuses a deploy with none.
 - The reader live check (`verify-integrated-reader.mjs`) picks its own recording and map: one whose saved position is clear of the end of the book and whose map carries the check's sequence (#431; rule in `README.md`). With none it is reported as `live check skipped: ... (no suitable recording: ...)`, which is not a failure; a failed request during selection (other than a 404/410 map) is a failure, never a skip; on a partially mapped book it can fail without a regression (#349). Re-run it on a warm server before treating it as a failure of the deploy.
 

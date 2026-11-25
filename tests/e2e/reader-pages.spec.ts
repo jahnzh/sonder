@@ -88,7 +88,7 @@ const placeOf = (room: Locator) =>
   });
 const checkpoint = async (page: Page, ebook: string) => (await (await page.request.get(`/api/reader/${ebook}`)).json()).checkpoint;
 
-test("each page opens from the reader and its back button returns to the same place in the reader", async ({ page }) => {
+test("each page opens from the reader and its back button returns to the same place in the reader", { tag: "@smoke" }, async ({ page }) => {
   const { book, ebook, title } = await fixture(page, "Pages back");
   const room = await openStandalone(page, ebook);
   // Two pages on, so the place is not the book's start.

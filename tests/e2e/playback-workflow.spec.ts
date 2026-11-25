@@ -333,7 +333,7 @@ test("playback opens the reader and title page; downloaded sources can be switch
   await page.screenshot({path:"artifacts/playback-versions-mobile.png",fullPage:true});
 });
 
-test("switching audiobook versions resumes each recording's own checkpoint",async({page})=>{
+test("switching audiobook versions resumes each recording's own checkpoint", { tag: "@smoke" },async({page})=>{
   await instrument(page);
   const title=unique("Release choice");
   const id=await importBook(page,{title,author:"Version QA",file:{name:"Chapter.mp3",mimeType:"audio/mpeg",buffer:readFileSync("server/demo/alice-01.mp3")}});

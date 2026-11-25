@@ -500,6 +500,28 @@ test("the browser stage's limit is 1.5 times the estimate it is given, else 40 m
     assert.equal(browserStageLimitMs({SONDER_BROWSER_ESTIMATE_SECONDS: "soon"}), 2400000);
 });
 
+test("a check at level land runs the smoke set in Chromium; at level full, or with --full, the whole suite (#905)", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const env = {PATH: `${fixture.binDir}:${process.env.PATH}`, STUB_NPM_LOG: fixture.npmLogPath};
+        const browserArgv = () => readNpmLogs(fixture.npmLogPath).filter((run) => run.argv[1] === "test:browser").at(-1).argv.slice(3);
+        const land = await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env});
+        assert.equal(land.report.level, "land");
+        assert.deepEqual(browserArgv(), ["--reporter=list,json", "--project=chromium", "--grep=@smoke"]);
+        const full = await runCheckLocal(["--silent", "--level", "full"], {cwd: fixture.repoDir, env});
+        assert.equal(full.report.level, "full");
+        assert.deepEqual(browserArgv(), ["--reporter=list,json"]);
+        await runCheckLocal(["--silent", "--full"], {cwd: fixture.repoDir, env});
+        assert.deepEqual(browserArgv(), ["--reporter=list,json"]);
+        await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, SONDER_CHECK_LEVEL: "full"}});
+        assert.deepEqual(browserArgv(), ["--reporter=list,json"]);
+        const wrong = await runCheckLocal(["--silent", "--level", "nightly"], {cwd: fixture.repoDir, env});
+        assert.equal(wrong.ok, false);
+    } finally {
+        fixture.cleanup();
+    }
+});
+
 test("a state-leaking fixture passes once but fails the repeated changed-spec stage", async () => {
     const fixture = setupGitFixture();
     try {
@@ -516,7 +538,7 @@ test('leaves state behind', () => {
 });
 `);
         commitFixture(fixture, "add state-leaking spec");
-        const result = await runCheckLocal(["--silent", "--repeat-changed"], {
+        const result = await runCheckLocal(["--silent", "--repeat-changed", "--level", "full"], {
             cwd: fixture.repoDir,
             env: {
                 PATH: `${fixture.binDir}:${process.env.PATH}`,
@@ -621,7 +643,7 @@ for (const title of ['first', 'second']) test(title, ({}, info) => fs.appendFile
         }
         commitFixture(fixture, "add two specs");
         const stateFile = path.join(fixture.tempBase, "test-order");
-        const result = await runCheckLocal(["--silent", "--repeat-changed"], {
+        const result = await runCheckLocal(["--silent", "--repeat-changed", "--level", "full"], {
             cwd: fixture.repoDir,
             env: {
                 PATH: `${fixture.binDir}:${process.env.PATH}`,
@@ -701,7 +723,7 @@ test("1. Stage order: executes npm ci -> npm run build -> npm test -> npm run te
         assert.deepEqual(logs[0].argv, ["ci"]);
         assert.deepEqual(logs[1].argv, ["run", "build"]);
         assert.deepEqual(logs[2].argv, ["test"]);
-        assert.deepEqual(logs[3].argv, ["run", "test:browser", "--", "--reporter=list,json"]);
+        assert.deepEqual(logs[3].argv, ["run", "test:browser", "--", "--reporter=list,json", "--project=chromium", "--grep=@smoke"]);
         assert.equal(logs[3].env.PLAYWRIGHT_JSON_OUTPUT_NAME, path.join(result.outputDir, "playwright-results.json"));
         // Verify build preceded browser
         assert.ok(logs[1].timestamp <= logs[3].timestamp, "Build must run before browser tests");
@@ -802,7 +824,7 @@ test("2c. Failed unit tests still run browser tests and preserve the unit exit c
         assert.deepEqual(logs[0].argv, ["ci"]);
         assert.deepEqual(logs[1].argv, ["run", "build"]);
         assert.deepEqual(logs[2].argv, ["test"]);
-        assert.deepEqual(logs[3].argv, ["run", "test:browser", "--", "--reporter=list,json"]);
+        assert.deepEqual(logs[3].argv, ["run", "test:browser", "--", "--reporter=list,json", "--project=chromium", "--grep=@smoke"]);
         const report = result.report;
         assert.equal(report.result, "failed");
         assert.equal(report.failedStage, "unit");
@@ -1484,7 +1506,7 @@ test("known failures: all browser failures listed -> passed_with_known_failures,
         assert.equal(report.knownFailures.listedPassed.length, 0);
         assert.match(report.knownFailures.summary, /^passed_with_known_failures: 2 known failures/);
         const logs = readNpmLogs(fixture.npmLogPath);
-        assert.deepEqual(logs[3].argv, ["run", "test:browser", "--", "--reporter=list,json"]);
+        assert.deepEqual(logs[3].argv, ["run", "test:browser", "--", "--reporter=list,json", "--project=chromium", "--grep=@smoke"]);
         assert.equal(logs[3].env.PLAYWRIGHT_JSON_OUTPUT_NAME, path.join(result.outputDir, "playwright-results.json"));
         assert.equal(logs[2].env.PLAYWRIGHT_JSON_OUTPUT_NAME, undefined, "only the browser stage writes the report");
         assert.ok(fs.existsSync(path.join(result.outputDir, "playwright-results.json")));
@@ -1664,7 +1686,7 @@ test("known failures: without the flag knownFailures is absent but the browser J
         assert.equal(result.report.result, "failed");
         assert.equal("knownFailures" in result.report, false);
         const logs = readNpmLogs(fixture.npmLogPath);
-        assert.deepEqual(logs[3].argv, ["run", "test:browser", "--", "--reporter=list,json"]);
+        assert.deepEqual(logs[3].argv, ["run", "test:browser", "--", "--reporter=list,json", "--project=chromium", "--grep=@smoke"]);
         assert.equal(logs[3].env.PLAYWRIGHT_JSON_OUTPUT_NAME, path.join(result.outputDir, "playwright-results.json"));
     }
     finally {

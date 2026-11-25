@@ -31,6 +31,8 @@ import {
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_BAR_SECONDS = 1800;
+// What the browser smoke set takes on lisa (the host whose speed is 1), unless `dispatch.smokeSeconds` says otherwise.
+export const DEFAULT_SMOKE_SECONDS = 300;
 // Of a spec's time in the full stage, what its chromium run is when the stage runs chromium alone (lisa: 2,943 s of 7,901).
 const CHROMIUM_SHARE = 0.4;
 
@@ -53,11 +55,13 @@ const longest = (parts, weightOf) => Math.max(0, ...parts.map((files) => files.r
  * `scope` the browser stage's scope ("full", "chromium", "skip"), `repeatChanged` whether the check repeats the
  * changed specs (off unless asked for), `host` the entry's `estimate` object.
  */
-export function estimateOnHost({ suite, changed, scope, repeatChanged = false }, host) {
+export function estimateOnHost({ suite, changed, scope, repeatChanged = false, level = "full", smokeSeconds = DEFAULT_SMOKE_SECONDS }, host) {
   const { fixedSeconds = 0, speed = 1, shards = 1, startSeconds = 60 } = host;
   const seconds = new Map(suite.map((entry) => [entry.file, entry.seconds]));
   let browser = 0;
-  if (scope !== "skip" && suite.length) {
+  // At level land the browser stage is the smoke set in Chromium, one run (#905).
+  if (level === "land") browser = scope === "skip" ? 0 : Math.round(smokeSeconds * speed + startSeconds);
+  else if (scope !== "skip" && suite.length) {
     const share = scope === "chromium" ? CHROMIUM_SHARE : 1;
     browser = Math.round(longest(partitionSpecs(suite.map((entry) => entry.file), shards, (file) => seconds.get(file)), (file) => seconds.get(file)) * share * speed + startSeconds);
   }
@@ -129,6 +133,8 @@ const minutes = (seconds) => `${(seconds / 60).toFixed(1)}min`;
 /** The lines the dispatcher prints, and the hosts that fit: `ids` in order, `config` the parsed ci-hosts.json. */
 export function estimateLines(commit, ids, config, env = process.env) {
   const bar = barSeconds(config, env);
+  // The bar is the land check's (#905): a full check (the nightly) is estimated but never held to it.
+  const held = (commit.level ?? "land") === "land";
   if (commit.error) return { lines: [`estimate none: ${commit.error}; no host is judged`], fits: ids, over: [], bar };
   const lines = [];
   const fits = [];
@@ -140,9 +146,9 @@ export function estimateLines(commit, ids, config, env = process.env) {
       fits.push(id);
       continue;
     }
-    const estimate = estimateOnHost(commit, host);
+    const estimate = estimateOnHost({ smokeSeconds: config.dispatch?.smokeSeconds ?? DEFAULT_SMOKE_SECONDS, ...commit, level: commit.level ?? "land" }, host);
     lines.push(`estimate ${id} ${minutes(estimate.seconds)} fixed=${estimate.fixed}s browser=${estimate.browser}s repeat=${estimate.repeat}s${commit.changed.length ? ` changed_specs=${commit.changed.length}` : ""}`);
-    (estimate.seconds <= bar ? fits : over).push(id);
+    (!held || estimate.seconds <= bar ? fits : over).push(id);
   }
   // `judged`: hosts with figures that fit. A host without figures is not evidence that the check fits anywhere.
   const judged = fits.filter((id) => config[id]?.estimate);
@@ -159,12 +165,16 @@ export function estimateLines(commit, ids, config, env = process.env) {
 export function compareWithReport(commit, id, config, report, where = "<the check's report folder>") {
   const host = config[id]?.estimate;
   if (!host || commit.error || !report || !String(report.result ?? "").startsWith("passed")) return [];
-  const estimate = estimateOnHost(commit, host);
+  // A report from before the levels (#905) names none: it checked the whole suite.
+  const level = commit.level ?? report.level ?? "full";
+  const estimate = estimateOnHost({ smokeSeconds: config.dispatch?.smokeSeconds ?? DEFAULT_SMOKE_SECONDS, ...commit, level }, host);
   const took = (names) => Math.round((report.stages ?? []).filter((stage) => names.includes(stage.name) && stage.status !== "skipped").reduce((sum, stage) => sum + (stage.durationMs ?? 0), 0) / 1000);
   const sha = String(report.sha ?? "").slice(0, 7);
   const table = `node scripts/spec-seconds.mjs ${where}/playwright-results.json "${id}, ${sha}, ${new Date().toISOString().slice(0, 10)}"`;
   // The table holds the seconds of the host whose speed is 1; another host's own figure is its speed.
-  const browserFix = host.speed === 1
+  const browserFix = level === "land"
+    ? `Set dispatch.smokeSeconds in scripts/ci-hosts.json (lisa's seconds for the smoke set; it is ${config.dispatch?.smokeSeconds ?? DEFAULT_SMOKE_SECONDS})`
+    : host.speed === 1
     ? `Refresh the table of times from this check: ${table}`
     : `Set estimate.speed for ${id} in scripts/ci-hosts.json (it is ${host.speed}), or, when the suite changed, refresh the table from a check on the host whose speed is 1`;
   const lines = [];
@@ -195,13 +205,18 @@ if (isDirectCli) {
     for (const line of compareWithReport(readCommit(process.cwd(), sha), id, config, report, path.dirname(reportFile ?? ""))) console.log(line);
     process.exit(0);
   }
-  const [sha, list] = process.argv.slice(2);
-  if (!sha) {
-    console.error("Usage: node scripts/check-estimate.mjs <sha> [host ids]");
+  // node scripts/check-estimate.mjs <sha> [host ids] [--level land|full]
+  const args = process.argv.slice(2);
+  const at = args.indexOf("--level");
+  const level = at >= 0 ? args.splice(at, 2)[1] : "land";
+  const [sha, list] = args;
+  if (!sha || !["land", "full"].includes(level)) {
+    console.error("Usage: node scripts/check-estimate.mjs <sha> [host ids] [--level land|full]");
     process.exit(2);
   }
   const config = JSON.parse(fs.readFileSync(process.env.SONDER_CI_HOST_CONFIG || path.join(HERE, "ci-hosts.json"), "utf8"));
   const ids = (list || [...(config.dispatch?.order ?? []), ...(config.dispatch?.fallback ?? [])].join(",")).split(",").map((id) => id.trim()).filter(Boolean);
-  const result = estimateLines(readCommit(process.cwd(), sha), ids, config);
+  const commit = readCommit(process.cwd(), sha);
+  const result = estimateLines(commit.error ? commit : { ...commit, level }, ids, config);
   for (const line of result.lines) console.log(line);
 }

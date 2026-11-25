@@ -30,7 +30,6 @@ case "$1" in
     [[ -n \${STUB_LSREMOTE_FAIL_BEFORE:-} ]] && { echo "fatal: unable to access remote" >&2; exit 128; }
     cat "$STUB_DIR/before.txt"; exit 0 ;;
   push)
-    echo "wrapper=\${SONDER_PUSH_CI_WRAPPER:-}" >"$STUB_DIR/push-env.txt"
     echo "remote: pre-push hook output" >&2
     echo "To example.invalid:sonder.git" >&2
     if [[ \${STUB_PUSH_EXIT:-0} != 0 ]]; then
@@ -315,19 +314,3 @@ test("results are written under the temp artifact root, not the repository's", a
   assert.ok(await waitFor(() => invocations(fx).length === 1));
 });
 
-test("the push carries the wrapper's mark, so the pre-push hook leaves the dispatch to the wrapper (#504)", async () => {
-  const fx = setup([[SHA_A, "main"]], [[SHA_B, "main"]]);
-  const r = run(fx, ["origin", "main"]);
-  assert.equal(r.status, 0, r.stderr);
-  assert.equal(fs.readFileSync(path.join(fx.dir, "push-env.txt"), "utf8").trim(), "wrapper=1");
-  // The wrapper itself still dispatches, once.
-  assert.equal(dispatchLines(r.stdout).length, 1);
-  assert.ok(await waitFor(() => invocations(fx).length === 1));
-});
-
-test("SONDER_SKIP_PUSH_CI=1 pushes without the wrapper's mark", () => {
-  const fx = setup([[SHA_A, "main"]], [[SHA_B, "main"]]);
-  const r = run(fx, ["origin", "main"], { SONDER_SKIP_PUSH_CI: "1" });
-  assert.equal(r.status, 0, r.stderr);
-  assert.equal(fs.readFileSync(path.join(fx.dir, "push-env.txt"), "utf8").trim(), "wrapper=");
-});

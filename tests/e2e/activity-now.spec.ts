@@ -243,7 +243,7 @@ const failure = (id: string, actions: Array<"retry" | "discard">, permanent: boo
     error: permanent ? "The backup cannot be written." : "socket hang up", facts: { kind: "backup", status: "failed" },
   });
 
-test("Discard asks first, can be cancelled without a request, and removes the item, sending its id", async ({ page }) => {
+test("Discard asks first, can be cancelled without a request, and removes the item, sending its id", { tag: "@smoke" }, async ({ page }) => {
   let present = true;
   const requests: unknown[] = [];
   await routeAnswer(page, () => answer(present ? [failure("backup:1", ["discard"], true)] : []));

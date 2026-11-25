@@ -76,7 +76,7 @@ async function nothingOfTheOldShell(page: Page) {
   await expect(page.locator(".topbar, .sidebar, .sidebar-backdrop, .profile-button, .offline-banner, .mobile-nav")).toHaveCount(0);
 }
 
-test("phone: the tab bar under the mini player holds the four places, each adding one history entry", async ({ page }) => {
+test("phone: the tab bar under the mini player holds the four places, each adding one history entry", { tag: "@smoke" }, async ({ page }) => {
   await page.setViewportSize(PHONE);
   await importAudio(page, `Shell phone ${Date.now()}`);
   await page.goto("/#library");
@@ -126,7 +126,7 @@ test("desktop: the rail with Sonder, the four places and no top bar, each place 
   await everyPlaceAddsOneEntry(page);
 });
 
-test("the offline line: on the Library, a Book page and Settings, not on Activity, gone when the connection returns", async ({ page, context }) => {
+test("the offline line: on the Library, a Book page and Settings, not on Activity, gone when the connection returns", { tag: "@smoke" }, async ({ page, context }) => {
   await page.setViewportSize(PHONE);
   const title = `Shell offline ${Date.now()}`;
   const book = await importAudio(page, title);

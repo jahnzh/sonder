@@ -23,15 +23,11 @@
 # background checks later report (that goes to the commit status and the
 # result files).
 #
-# The pre-push hook arranges the committed check for a plain `git push` (#504):
-# it leaves a job behind that starts the check when the push has landed. A
-# push made through this wrapper carries SONDER_PUSH_CI_WRAPPER=1, so the hook
-# leaves the dispatch to the wrapper, which knows what changed on the remote.
+# A plain `git push` starts no check (#905); this wrapper is the explicit way to
+# push and start one.
 #
 # Environment:
-#   SONDER_SKIP_PUSH_CI=1      plain `git push`, no snapshot, no dispatch, here
-#                              and in the pre-push hook
-#                              (mirrors SONDER_SKIP_PREPUSH=1)
+#   SONDER_SKIP_PUSH_CI=1      plain `git push`, no snapshot, no dispatch
 #   SONDER_PUSH_CI_REMOTE      remote to snapshot (default origin)
 #   SONDER_PUSH_CI_GIT         git binary for ls-remote and push (default git)
 #   SONDER_PUSH_CI_RUNNER      entry point started in the background (default
@@ -63,7 +59,7 @@ if ! BEFORE=$("$GIT" ls-remote --heads "$REMOTE"); then
   echo "ci-push: cannot list remote '$REMOTE' before the push; pushing without dispatching a check" >&2
 fi
 
-SONDER_PUSH_CI_WRAPPER=1 "$GIT" push "$@"
+"$GIT" push "$@"
 PUSH_STATUS=$?
 [[ $PUSH_STATUS -eq 0 ]] || exit "$PUSH_STATUS"
 [[ $SNAPSHOT_OK -eq 1 ]] || exit 0

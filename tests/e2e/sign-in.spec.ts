@@ -340,7 +340,7 @@ test("signing in from a deep link lands on it, and the request sheet leaves the 
   await page.context().close();
 });
 
-test("signing in without an address asked for lands on the Library", async ({ browser }) => {
+test("signing in without an address asked for lands on the Library", { tag: "@smoke" }, async ({ browser }) => {
   const page = await fresh(browser);
   await page.goto(base);
   await signIn(page);

@@ -428,6 +428,7 @@ test("a passing run starts the container with the fixed flags and posts ci/deck"
     `--volume ${f.remote}:/pilot:rw`,
     " mcr.microsoft.com/playwright:v1.64.1-noble bash -lc ",
     `npm run check -- --ref ${f.first} --known-failures tests/known-failures.wsl-host.json --output-dir /pilot/runs/`,
+    "/report --level land",
   ])
     assert.ok(call.includes(flag), `missing ${flag} in: ${call}`);
   assert.doesNotMatch(call, /--cap-drop/);

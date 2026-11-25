@@ -27,6 +27,8 @@ import {
   terminateProcessTree,
   browserStageLimitMs,
   slowestSoFar,
+  checkLevel,
+  browserLevelArgs,
   stopProcessesUnder,
   CHECKOUT_DIR_FILE,
   preserveArtifacts,
@@ -247,8 +249,11 @@ Options:
                          SONDER_CHECK_REPEAT_CHANGED=1 does the same. A tool for chasing a
                          flaky test, not a gate.
   --bail                 Stop after the first failed stage
-  --full                 Always run the whole browser suite (default: the scope follows the
-                         changed files; SONDER_CHECK_FULL=1 does the same). See docs/LOCAL_CHECKS.md.
+  --level <land|full>    land (default): install, build, unit and the browser smoke set
+                         (tests tagged @smoke) in Chromium, the check that lands a change.
+                         full: the whole browser suite in every project, the nightly.
+                         SONDER_CHECK_LEVEL sets it too. See docs/LOCAL_CHECKS.md.
+  --full                 The same as --level full (SONDER_CHECK_FULL=1 does the same).
   --silent               Suppress live stage streaming output to console
   -h, --help             Show this help message
 
@@ -647,10 +652,12 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     const stageDefinitions = [...STAGE_DEFINITIONS, ...(repeatChanged ? changedBrowserStages(changedBrowserSpecs.files, changedParts) : [])];
     let changedPartsBy = "the count of tests";
     // The browser stage scope follows the changed files (#34); --full or SONDER_CHECK_FULL=1 runs everything.
-    const selection = selectBrowserScope(changedFiles.files, {
-      full: options.full || process.env.SONDER_CHECK_FULL === "1",
-    });
-    if (!options.silent) console.log(`[check-local] Browser stage scope: ${selection.scope} (${selection.reason})`);
+    // The level (#905): land runs the smoke set in Chromium, full the whole suite in every project.
+    const level = checkLevel(options, {...process.env, ...overrides.env});
+    const selection = level === "full"
+      ? {scope: "full", reason: "level full: the whole suite"}
+      : selectBrowserScope(changedFiles.files);
+    if (!options.silent) console.log(`[check-local] Level ${level}; browser stage scope: ${selection.scope} (${selection.reason})`);
     let firstFailedStage = null;
     let toleratedStage = null;
     let gate = null;
@@ -759,7 +766,7 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       // with a known-failures list that same report is also used to classify failures.
       const jsonReport = stageDef.name === "browser";
       const stageArgs = jsonReport
-        ? [...stageDef.args, "--", "--reporter=list,json", ...(selection.scope === "chromium" ? ["--project=chromium"] : [])]
+        ? [...stageDef.args, "--", "--reporter=list,json", ...browserLevelArgs(level, selection.scope)]
         : stageDef.args;
       const stageEnv = {...childEnv, ...(stageDef.name.startsWith("browser") ? shardSetting : {}), ...(stageDef.name === "unit" ? workerPython : {}), ...stageDef.env, NODE_ENV: stageDef.name === "build" ? "production" : "test"};
       if (jsonReport) stageEnv.PLAYWRIGHT_JSON_OUTPUT_NAME = playwrightReportPath;
@@ -956,6 +963,7 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       artifactError,
       failedStage: blockingStage ? blockingStage.name : null,
       changedBrowserSpecs: { baseRef: "origin/main", baseSha: changedBrowserSpecs.base, files: changedBrowserSpecs.files },
+      level,
       selection: { browser: selection.scope, reason: selection.reason, baseSha: changedFiles.base, changedFileCount: changedFiles.files.length },
       browserSlowestTests,
       ...(browserSlowestError ? {browserSlowestError} : {}),
