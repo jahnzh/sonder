@@ -4,18 +4,10 @@
     {
       "project": "chromium",
       "file": "tests/e2e/playback-workflow.spec.ts",
-      "title": "touch seeking \u203a releasing a fine-seek gesture keeps the exact previewed destination",
+      "title": "touch seeking › releasing a fine-seek gesture keeps the exact previewed destination",
       "kind": "environment",
       "reason": "Fails on every WSL host run and not locally; cause not found",
       "issue": 37
-    },
-    {
-      "project": "chromium",
-      "file": "tests/e2e/reader-frame.spec.ts",
-      "title": "a failed event probe enables scripts while the content defences still block them",
-      "kind": "environment",
-      "reason": "Fails on the WSL host's chromium on a clean main (482967b, run sonder-ci-20261102T163427Z-15096) and not locally, on the Deck, or on WSL firefox/webkit; cause not found",
-      "issue": 145
     }
   ]
 }

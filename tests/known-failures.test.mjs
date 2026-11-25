@@ -26,7 +26,6 @@ const SEEK = "tests/e2e/playback-workflow.spec.ts";
 /** Every triple here must stay in tests/known-failures.wsl-host.json; the file may add more. */
 const WSL_HOST_REQUIRED_ENTRIES = [
     {project: "chromium", file: "tests/e2e/playback-workflow.spec.ts", title: "touch seeking › releasing a fine-seek gesture keeps the exact previewed destination"},
-    {project: "chromium", file: "tests/e2e/reader-frame.spec.ts", title: "a failed event probe enables scripts while the content defences still block them"},
 ];
 
 const knownFailureKey = ({project, file, title}) => `${project}\0${file}\0${title}`;
