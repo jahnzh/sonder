@@ -201,8 +201,8 @@ async function load(id: string): Promise<PreparedBook> {
   const one = async (index: number) => {
     const address = `${base}/parts/${index}`;
     // A kept book's part is on this device (#805): its address names the output, so the kept copy is the server's.
-    const kept = await keptPart(address).catch(() => null);
-    if (kept !== null) return kept;
+    const copy = await keptPart(address).catch(() => null);
+    if (copy !== null) return copy;
     const response = await fetch(address);
     if (response.ok) return response.text();
     const answer = (await response.json().catch(() => ({}))) as { error?: string; code?: string };

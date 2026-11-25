@@ -16,6 +16,7 @@ import {
   shownEdition,
 } from "../ebook-choice";
 import { removeEbookFromDevice, setDeviceEbookChoice, useDeviceEbookChoice, useEbookDeviceCopy } from "../ebook-device-copy";
+import { removeKeptText } from "../keep-text-store";
 import { checkingNote, type EbookSetMember } from "../ebook-set";
 import { Button } from "../parts/Button";
 import { ChoiceGroup } from "../parts/ChoiceRow";
@@ -179,6 +180,8 @@ export function EbookPage({
     setConfirming(false);
     try {
       await removeEbookFromDevice(shown.id);
+      // Its kept prepared text (#805) is the same copy of the edition: it goes too.
+      await removeKeptText(shown.id);
       setDeviceNote({ text: "Removed from this device.", failed: false });
     } catch (error) {
       setDeviceNote({ text: (error as Error).message, failed: true });
