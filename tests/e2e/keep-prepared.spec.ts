@@ -90,7 +90,7 @@ test("a kept book reads offline in the new view at its place, with its pictures;
   expect(record).toMatchObject({ id: ebookId, key: manifest.key, fingerprint: manifest.fingerprint, parts: manifest.parts.length, pictures: [expect.stringMatching(/^\d+\.png$/)] });
   const base = `/api/reader/${encodeURIComponent(ebookId)}/prepared`;
   expect(await keptPaths(page, ebookId)).toEqual(
-    [base, ...manifest.parts.map((part: { index: number }) => `${base}/${manifest.key}/parts/${part.index}`), `${base}/${manifest.key}/pictures/${record.pictures[0]}`].sort(),
+    [`${base}/${manifest.key}/manifest`, ...manifest.parts.map((part: { index: number }) => `${base}/${manifest.key}/parts/${part.index}`), `${base}/${manifest.key}/pictures/${record.pictures[0]}`].sort(),
   );
 
   // The service worker controls the page, so the app opens without a connection.

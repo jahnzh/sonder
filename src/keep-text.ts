@@ -1,10 +1,11 @@
 /**
  * The prepared text a kept book keeps on this device (#805, step 6 of #799): the rules, as plain data.
  *
- * Keep on this device keeps an EPUB's prepared output (ADR 0025): its manifest, every part and every picture, under
- * the addresses the server serves them at, in the Cache Storage cache `KEPT_TEXT_CACHE`; the service worker answers a
- * part or a picture from there before asking the server (their addresses name the output's key and never change),
- * and the reader takes the manifest from there when the server does not answer. A record `reader-text:<id>` in the
+ * Keep on this device keeps an EPUB's prepared output (ADR 0025): every part and every picture under the addresses
+ * the server serves them at, and the manifest under its output's `keptManifestAddress`, in the Cache Storage cache
+ * `KEPT_TEXT_CACHE`. The reader reads a kept part from there before asking the server and the service worker answers
+ * a kept picture likewise (their addresses name the output's key and never change); the reader takes the kept
+ * manifest when the server does not answer. A record `reader-text:<id>` in the
  * shared device database says the output is whole: it is written after every file is in the cache.
  *
  * No React, no `window`, no Dexie, no fetch. The server must not import this file: the production image copies only
@@ -42,6 +43,11 @@ export const preparedAddress = (id: string) => `/api/reader/${encodeURIComponent
 /** The address one prepared output is served under (`PreparedBook.base`). */
 export const preparedBase = (id: string, key: string) => `${preparedAddress(id)}/${key}`;
 export const partAddress = (base: string, index: number) => `${base}/parts/${index}`;
+/**
+ * Where the kept cache holds an output's manifest (no route of the server's): under its own key, so a save of another
+ * output never overwrites the manifest the record still names, and a save that stops leaves the kept one readable.
+ */
+export const keptManifestAddress = (base: string) => `${base}/manifest`;
 export const pictureAddress = (base: string, name: string) => `${base}/pictures/${name}`;
 
 /**
@@ -73,6 +79,18 @@ export function keptTextMatches(record: Pick<KeptTextRecord, "key" | "fingerprin
 export function noticeAnswer(record: Pick<KeptTextRecord, "key" | "fingerprint" | "stale"> | null | undefined, manifest: Pick<PreparedManifest, "key" | "fingerprint">): "stale" | null {
   if (!record || record.stale) return null;
   return record.key === manifest.key && record.fingerprint === manifest.fingerprint ? null : "stale";
+}
+
+/**
+ * Whether a failed answer while keeping a text is a refusal, which waits for Retry (and a library read that changed),
+ * rather than a network failure, tried again at the next run: a 4xx other than a timeout or a rate limit, and the
+ * server's own failure to prepare the book (a 5xx it answered itself). Asked again at every run that would fail
+ * again, and as a network failure it would stop the saves of the books after it in each run. A gateway's 502, 503 or
+ * 504 (the server is down or restarting) is a network failure.
+ */
+export function textSaveRefused(status: number): boolean {
+  if (status >= 400 && status < 500) return status !== 408 && status !== 429;
+  return status >= 500 && status !== 502 && status !== 503 && status !== 504;
 }
 
 /** Whether a cached address is part of an edition's kept text, whatever its output (manifest, part or picture). */

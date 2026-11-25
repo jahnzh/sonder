@@ -9,12 +9,14 @@ import {
   belongsToEdition,
   keptTextMatches,
   noticeAnswer,
+  keptManifestAddress,
   partAddress,
   pictureAddress,
   pictureNames,
   preparedAddress,
   preparedBase,
   replacedOutput,
+  textSaveRefused,
 } from "../src/keep-text.ts";
 
 const KEY = "0123456789abcdef";
@@ -26,6 +28,9 @@ test("addresses: the manifest, a part and a picture of an output, as the server 
   assert.equal(base, `/api/reader/ed%201/prepared/${KEY}`);
   assert.equal(partAddress(base, 3), `/api/reader/ed%201/prepared/${KEY}/parts/3`);
   assert.equal(pictureAddress(base, "0.jpg"), `/api/reader/ed%201/prepared/${KEY}/pictures/0.jpg`);
+  // The kept manifest is held under its own output, so a save of another output never overwrites the one kept.
+  assert.equal(keptManifestAddress(base), `/api/reader/ed%201/prepared/${KEY}/manifest`);
+  assert.equal(replacedOutput(keptManifestAddress(preparedBase("ed 1", OTHER)), "ed 1", KEY), true);
 });
 
 test("pictures: a part's own pictures by name, once each, in order; nothing outside the output", () => {
@@ -70,8 +75,12 @@ test("removal: an edition's addresses, every output of it; a replaced output's, 
   assert.equal(belongsToEdition("/api/reader/ed%201/prepared-refused", "ed 1"), false);
   assert.equal(replacedOutput(`/api/reader/ed%201/prepared/${OTHER}/parts/0`, "ed 1", KEY), true);
   assert.equal(replacedOutput(`/api/reader/ed%201/prepared/${KEY}/parts/0`, "ed 1", KEY), false);
-  // The manifest's address is the current one's: it is written again, not removed.
-  assert.equal(replacedOutput("/api/reader/ed%201/prepared", "ed 1", KEY), false);
+  assert.equal(replacedOutput(keptManifestAddress(base), "ed 1", KEY), false);
+});
+
+test("a failed answer: a refusal or the server's failure to prepare waits for Retry; a timeout, a limit or a gateway is tried again", () => {
+  for (const status of [400, 401, 403, 404, 410, 500, 501, 507]) assert.equal(textSaveRefused(status), true, String(status));
+  for (const status of [408, 429, 502, 503, 504]) assert.equal(textSaveRefused(status), false, String(status));
 });
 
 test("the cache: the service worker answers pictures from it, and Reset this device leaves it", () => {

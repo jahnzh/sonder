@@ -233,9 +233,10 @@ test("needs with prepared text: the chosen EPUB's text is one more file; a stale
   // The reader saw the server answer another output: the kept one still reads, and the next run replaces it.
   const stale = keptNeeds(recording("r1", 1), tracks, [], { ...reading(), ebooks: [keptEpub], texts: [{ ...textOf(keptEpub), stale: true }] });
   assert.deepEqual([stale.text?.complete, stale.complete, stale.size], [false, false, 601_000]);
-  // The kept EPUB is another file than the text was made from (the reader replaced the file): saved again.
-  const other = keptNeeds(recording("r1", 1), tracks, [], { ...reading(), ebooks: [{ ...keptEpub, fingerprint: "fp-new" }], texts: [textOf(keptEpub)] });
-  assert.equal(other.text?.complete, false);
+  // A kept EPUB of another file than the text's (the server's file changed and the text was saved anew) does not hold
+  // the text back: a changed file is seen by the stale mark, not by the EPUB copy, which Keep does not fetch again.
+  const other = keptNeeds(recording("r1", 1), tracks, [], { ...reading(), ebooks: [keptEpub], texts: [{ ...textOf(keptEpub), fingerprint: "fp-new" }] });
+  assert.deepEqual([other.text?.complete, other.complete], [true, true]);
   // Another edition's text does not count for the chosen one; a PDF has none.
   assert.equal(keptNeeds(null, [], [], { ...reading({ editions: [epub("e1"), epub("e2")], deviceChoice: "e2" }), texts: [textOf(keptEpub)] }).text?.complete, false);
   assert.equal(keptNeeds(null, [], [], reading({ editions: [epub("p1", { format: "pdf" })] })).text, null);

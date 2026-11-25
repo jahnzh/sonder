@@ -12,6 +12,7 @@ import { readerTextKey } from "./keep";
 import {
   KEPT_TEXT_CACHE,
   belongsToEdition,
+  keptManifestAddress,
   keptTextMatches,
   noticeAnswer,
   partAddress,
@@ -20,9 +21,10 @@ import {
   preparedAddress,
   preparedBase,
   replacedOutput,
+  textSaveRefused,
   type KeptTextRecord,
 } from "./keep-text";
-import { authDB } from "./lib";
+import { api, authDB, localDB } from "./lib";
 
 const changed = (id: string) => window.dispatchEvent(new CustomEvent(EBOOK_DEVICE_EVENT, { detail: { id } }));
 
@@ -36,9 +38,9 @@ async function readRecord(id: string): Promise<KeptTextRecord | null> {
   return (((await authDB.preferences.get(readerTextKey(id)).catch(() => undefined))?.value as KeptTextRecord | undefined) ?? null);
 }
 
-/** A refusal of the source (4xx other than a timeout or a rate limit): the save waits for Retry. A 401 is a sign-out. */
+/** A failed answer as the saver classes it (`textSaveRefused`): a refusal waits for Retry; a 401 is a sign-out. */
 function refusal(message: string, status: number) {
-  const refused = status >= 400 && status < 500 && status !== 408 && status !== 429;
+  const refused = textSaveRefused(status);
   return Object.assign(new Error(message), { refused, status, ...(refused ? { failure: status === 401 ? "signed-out" : "source" } : {}) });
 }
 
@@ -85,7 +87,11 @@ export async function keepText(ebookId: string, signal: AbortSignal): Promise<vo
     size += (await file(pictureAddress(base, name))).size;
   }
   signal.throwIfAborted();
-  await cache.put(preparedAddress(ebookId), new Response(manifestText, { headers: { "Content-Type": "application/json; charset=utf-8" } }));
+  // What the user saved, so the book opens offline without the EPUB's details too (`loadPreparedReader`).
+  const state = await api(`/reader/${encodeURIComponent(ebookId)}/state`, { signal }).catch(() => null);
+  if (state) await localDB.preferences.put({ key: `reader-state:${ebookId}`, value: state }).catch(() => {});
+  // The manifest under its own output's address: the record that names an earlier output still finds its own.
+  await cache.put(keptManifestAddress(base), new Response(manifestText, { headers: { "Content-Type": "application/json; charset=utf-8" } }));
   const record: KeptTextRecord = { id: ebookId, key: manifest.key, fingerprint: manifest.fingerprint, parts: manifest.parts.length, pictures: [...pictures], size, at: Date.now() };
   await authDB.preferences.put({ key: readerTextKey(ebookId), value: record });
   // The output this one replaces goes now that the new one is whole.
@@ -103,10 +109,15 @@ export async function keptManifest(id: string): Promise<PreparedManifest | null>
   const record = await readRecord(id);
   if (!record) return null;
   const cache = await keptCache();
-  const response = await cache?.match(preparedAddress(id)).catch(() => undefined);
+  const response = await cache?.match(keptManifestAddress(preparedBase(id, record.key))).catch(() => undefined);
   if (!response) return null;
   const manifest = (await response.json().catch(() => null)) as PreparedManifest | null;
   return manifest && keptTextMatches(record, manifest) ? manifest : null;
+}
+
+/** The output this device keeps of an edition (its key), or null: the reader looks for its parts here only then. */
+export async function keptTextKey(id: string): Promise<string | null> {
+  return (await readRecord(id))?.key ?? null;
 }
 
 /** A kept part's HTML by its address, or null: the reader reads a kept book's parts from here before the server. */
@@ -136,7 +147,7 @@ export async function listKeptTexts(ids?: readonly string[]): Promise<HeldText[]
   const held: HeldText[] = [];
   for (const row of rows) {
     const record = row!.value as KeptTextRecord;
-    if (!record?.key || !(await cache?.match(preparedAddress(record.id)).catch(() => undefined))) continue;
+    if (!record?.key || !(await cache?.match(keptManifestAddress(preparedBase(record.id, record.key))).catch(() => undefined))) continue;
     held.push({ id: record.id, key: record.key, fingerprint: record.fingerprint, size: record.size, ...(record.stale ? { stale: true } : {}) });
   }
   return held;

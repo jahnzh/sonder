@@ -525,7 +525,7 @@ async function removePlan(plan: Pick<DeviceBook, "recordingIds" | "ebookIds" | "
   for (const id of plan.ebookIds) {
     await removeEbookFromDevice(id);
     await removeOfflineEbook(id);
-    await removeKeptText(id);
+    await removeKeptText(id).catch(() => {});
   }
   for (const key of plan.mapKeys) await localDB.preferences.delete(key).catch(() => {});
   window.dispatchEvent(new Event("sonder:downloads-changed"));

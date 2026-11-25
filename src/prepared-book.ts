@@ -7,7 +7,7 @@
 // cached for good.
 import type { PreparedManifest } from "../server/prepared-text";
 import { ApiError, api } from "./lib";
-import { keptManifest, keptPart, noticePreparedAnswer } from "./keep-text-store";
+import { keptManifest, keptPart, keptTextKey, noticePreparedAnswer } from "./keep-text-store";
 
 export type { PreparedManifest };
 
@@ -194,14 +194,16 @@ async function loadManifest(id: string): Promise<PreparedManifest> {
 async function load(id: string): Promise<PreparedBook> {
   const manifest = await loadManifest(id);
   const base = `/api/reader/${encodeURIComponent(id)}/prepared/${manifest.key}`;
+  // This output is kept on this device (#805): its parts are read from there.
+  const kept = (await keptTextKey(id).catch(() => null)) === manifest.key;
   const parts = new Map<number, Promise<string>>();
   const failed = new Set<number>();
   /** The parts that arrived, oldest first. */
-  const kept: number[] = [];
+  const arrived: number[] = [];
   const one = async (index: number) => {
     const address = `${base}/parts/${index}`;
     // A kept book's part is on this device (#805): its address names the output, so the kept copy is the server's.
-    const copy = await keptPart(address).catch(() => null);
+    const copy = kept ? await keptPart(address).catch(() => null) : null;
     if (copy !== null) return copy;
     const response = await fetch(address);
     if (response.ok) return response.text();
@@ -224,9 +226,9 @@ async function load(id: string): Promise<PreparedBook> {
         parts.set(index, part);
         part.then(
           () => {
-            kept.push(index);
+            arrived.push(index);
             // The text of parts read long ago is let go: the browser's own cache answers for them again.
-            while (kept.length > PARTS_KEPT) parts.delete(kept.shift()!);
+            while (arrived.length > PARTS_KEPT) parts.delete(arrived.shift()!);
           },
           () => failed.add(index),
         );

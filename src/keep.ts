@@ -152,7 +152,7 @@ export type KeptNeeds = {
   ebook: { id: string; complete: boolean; size: number } | null;
   /**
    * The chosen EPUB's prepared text (#805): what the new reading view reads offline. Complete when this device keeps a
-   * prepared output of it that the reader has not seen replaced, made from the kept EPUB's file when one is kept.
+   * prepared output of it that the reader has not seen replaced.
    */
   text: { id: string; complete: boolean; size: number } | null;
   /**
@@ -197,8 +197,8 @@ export const readerMapKey = (ebookId: string, recordingId: string) => `reader-ma
  *   not count;
  * - the chosen EPUB by the Ebook page's rule (`chosenEbook`), complete when this device keeps `reader-file:<id>`;
  *   a PDF is never needed; only while `keepEpub` (`KEEP_EPUB_FILE`);
- * - the chosen EPUB's prepared text (#805), complete when this device keeps `reader-text:<id>`, not stale, and made
- *   from the kept EPUB's file when one is kept (a file the reader replaced has text of its own);
+ * - the chosen EPUB's prepared text (#805), complete when this device keeps `reader-text:<id>` and the reader has not
+ *   seen the server answer another output (a changed file, or the book prepared anew) since;
  * - the pair's map when the read says it is ready or partly ready, complete when `reader-map:<ebookId>:<recordingId>`
  *   matches that job and the kept EPUB's fingerprint (`cachedMapMatches`, the reader's own rule), or the kept
  *   text's where no EPUB file is kept.
@@ -227,7 +227,8 @@ export function keptNeeds(
   const held = chosen ? reading!.ebooks.find((copy) => copy.id === chosen.id) ?? null : null;
   const ebook = chosen && keepEpub ? { id: chosen.id, complete: !!held, size: held?.size ?? 0 } : null;
   const heldText = chosen ? reading!.texts?.find((copy) => copy.id === chosen.id) ?? null : null;
-  const textComplete = !!heldText && !heldText.stale && (!held || held.fingerprint === heldText.fingerprint);
+  // A changed file is seen by the reader, whose answer from the server marks the kept text stale.
+  const textComplete = !!heldText && !heldText.stale;
   const text = chosen ? { id: chosen.id, complete: textComplete, size: heldText?.size ?? 0 } : null;
   // The file the map is matched against: the kept EPUB's, or where none is kept the kept text's.
   const fingerprint = held?.fingerprint ?? (textComplete ? heldText!.fingerprint : undefined);
