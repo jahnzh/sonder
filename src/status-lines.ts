@@ -332,7 +332,19 @@ export type SeriesSearchFacts = {
   retrying?: boolean;
   /** The stored reason of a failure, or of the last try of a search that waits to try again. */
   reason?: string | null;
+  /** When a waiting search tries again (#901): a source that limits requests names it. */
+  retryAt?: number | null;
+  /** The time of day as the device writes it; the default is the device's own. */
+  time?: (at: number) => string;
 };
+
+/** The sentence the server stores while Library Genesis limits requests (server/sources/libgen-client.ts, #901). */
+export const LIBGEN_LIMITED_REASON = "Library Genesis is limiting requests.";
+
+/** The time of day as the device writes it (13:05). */
+export function clockTime(at: number) {
+  return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
 
 /** 1st, 2nd, 3rd, 4th, … 11th, 12th, 13th, 21st. */
 export function ordinal(n: number): string {
@@ -354,10 +366,13 @@ export function searchReason(reason: string | null | undefined): string {
  * A series search's line. A finished search for the audiobook has none: the download it starts takes over the row.
  * A failure names the search and its reason; a waiting search says where it is in the queue (#717).
  */
-export function seriesSearchLine({ status, search, place, retrying, reason }: SeriesSearchFacts): string | null {
+export function seriesSearchLine({ status, search, place, retrying, reason, retryAt, time = clockTime }: SeriesSearchFacts): string | null {
   const file = search === "ebook" ? "Ebook" : "Audiobook";
   switch (status) {
     case "pending":
+      // Library Genesis limits requests (#901): the line says when the search asks again.
+      if (retrying && retryAt && (reason ?? "").startsWith(LIBGEN_LIMITED_REASON.slice(0, -1)))
+        return `Library Genesis is limiting requests, trying again at ${time(retryAt)}`;
       if (retrying) return withReason("Waiting to try again", searchReason(reason));
       return place && place > 0 ? `Waiting${DOT}${ordinal(place)} in line` : "Waiting for series search";
     case "searching":

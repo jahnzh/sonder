@@ -182,7 +182,7 @@ function movingLine(item: ActivityItem): string | null {
       // A waiting search says where it is in the queue, or that it waits to try its source again (#717).
       return seriesSearchLine({
         status: facts.status as SeriesSearchFacts["status"], search: facts.search, place: facts.place,
-        retrying: !!facts.retryAt, reason: item.error,
+        retrying: !!facts.retryAt, reason: item.error, retryAt: facts.retryAt,
       });
     case "ebook-set":
       return ebookCheckLine(

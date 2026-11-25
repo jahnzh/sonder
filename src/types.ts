@@ -378,8 +378,14 @@ export type ReleaseSourceStatus = {
   error?: string;
 };
 export type EbookResult = {
+  /** The file's md5 on Library Genesis; for another source a 32-hex key of the edition there. */
   md5: string;
-  source: "libgen";
+  /** Where it is listed (#901); an older server answers Library Genesis's without it. */
+  source: "libgen" | "prowlarr" | "standardebooks" | "gutenberg";
+  /** A Prowlarr release's indexer and seeders, and whether TorBox has it cached. */
+  indexer?: string;
+  seeders?: number | null;
+  cached?: boolean;
   title: string;
   authors: string[];
   extension: "epub" | "pdf";

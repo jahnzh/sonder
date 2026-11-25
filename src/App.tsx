@@ -806,6 +806,7 @@ function LibraryApp({
                 workId={getEbookSheet}
                 online={online}
                 libgenUrl={settings?.libgenUrl || null}
+                prowlarrConfigured={settings ? !!settings.prowlarrConfigured : null}
                 onChanged={refresh}
               />
             )}
