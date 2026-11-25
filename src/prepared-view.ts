@@ -301,8 +301,12 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
    * number of pages then (`fit`), so the left pages are the even columns whatever parts are in the page.
    */
   const pageOfColumn = (column: number) => (spread ? column - (column % 2) : column);
-  /** The column a part begins in: where its box begins. */
-  const startOf = (element: HTMLElement) => columnAt(element.getBoundingClientRect().left);
+  /**
+   * The column a part begins in: where its box begins. A part's box begins at a page's left edge, its margin
+   * included, so it is counted from the run's left edge in whole pages (`columnAt` takes a place in the text, after
+   * the margin, and would count every part but the first a page early).
+   */
+  const startOf = (element: HTMLElement) => Math.max(0, Math.round((element.getBoundingClientRect().left - text.getBoundingClientRect().left) / geometry().step));
   /**
    * Gives a part the box of the whole pages its text fills. The pages are counted, not measured: laid out one page
    * wide, the part's columns run on beyond its box, and how far they reach is a whole number of pages. With two pages
@@ -476,7 +480,12 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
     return before;
   };
   const holdOn = (id: string | null = firstInView()) => {
-    if (pages) return markPage();
+    // In pages mode every move marks its own place (a turn the page's top, a jump the sentence jumped to): only a
+    // page without one (the first shown of a part opened alone) is marked here.
+    if (pages) {
+      if (!pageMark || !text.contains(pageMark.startContainer)) markPage();
+      return;
+    }
     const box = id ? boxOf(elementsOf(id)) : null;
     anchor = id && box ? { id, offset: box.top - bandTop() } : null;
   };
@@ -800,7 +809,7 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
   // In pages mode the text's own box never changes size, so a picture or a font that arrives late and moves the
   // columns is heard here: the page shown is found again by its place in the text.
   const late = () => {
-    if (disposed || !pages || low < 0) return;
+    if (disposed || !pages || low < 0 || scroller.clientHeight === 0) return;
     fitAll();
     keepPage();
     tell(firstOnPage());
@@ -986,7 +995,9 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
       const words = wordsOf(id);
       const page = words ? pageFor(words) : null;
       if (page === null || page === startColumn || page < 0 || page >= columns()) return false;
-      setColumn(page);
+      // Not a move of the reader's: a turn by hand that waits for its part is not dropped for it.
+      setColumn(page, false);
+      markPage();
       reported = firstOnPage();
       tell(reported);
       fill();
@@ -1149,13 +1160,14 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
           if (!placing) fill();
         },
         tap: { down, move, up, cancel },
-        wheel(event) {
+        wheel(event, turning) {
           gesture();
           const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? scroller.clientHeight : 1;
           if (!pages) return scroller.scrollBy(0, event.deltaY * unit);
           const now = performance.now();
           if (Math.abs(event.deltaY * unit) < 4 || now - wheeled < WHEEL_TURN_MS) return;
           wheeled = now;
+          turning?.();
           turnPage(event.deltaY > 0 ? 1 : -1);
         },
       };

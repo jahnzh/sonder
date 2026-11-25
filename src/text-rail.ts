@@ -56,8 +56,8 @@ export type RailSeam = {
   letGo(): void;
   /** The text's own rule for a press (a tap, a swipe), for a touch the rail did not take. */
   tap: { down(event: PointerEvent): void; move(event: PointerEvent): void; up(event: PointerEvent): void; cancel(): void };
-  /** A wheel over the rail scrolls the text. */
-  wheel(event: WheelEvent): void;
+  /** A wheel over the rail scrolls the text, or in pages mode turns a page (`turning` is called just before it turns). */
+  wheel(event: WheelEvent, turning?: () => void): void;
 };
 
 export type RailOptions = {
