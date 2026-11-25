@@ -238,6 +238,8 @@ export const alignmentSource = defineSource<AlignmentRow[], AlignmentProbe>({
         },
         error: unknown ?? job.error, changedAt: row.updated_at, dependsOn: job.hostId ? hostId(job.hostId) : null,
         actions: readingSyncActions(job),
+        // A failed sync of a book that is not in the library calls for no attention (#881).
+        outsideLibrary: !!row.work && !row.work.inLibrary,
       };
     });
     const jobsOn = (host: string) => drafts.filter((draft) => draft.host === host && draft.state === "running").map((draft) => draft.title);

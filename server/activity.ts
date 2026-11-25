@@ -83,7 +83,7 @@ export function buildActivity(input: ActivityInput): ActivityResponse {
 
   const items: ActivityItem[] = [];
   for (const { draft, source } of drafts) {
-    const { changedAt, permanent, dependsOn, actions, stuckReason, stuckActions, superseded, ...item } = draft;
+    const { changedAt, permanent, dependsOn, actions, stuckReason, stuckActions, superseded, outsideLibrary, ...item } = draft;
     if (item.state === "done" && now - item.updatedAt > FINISHED_VISIBLE_MS) continue;
     const waiting = item.state === "running" || item.state === "queued";
     const blockedBy = waiting && dependsOn && downService.has(dependsOn) ? dependsOn : null;
@@ -102,8 +102,10 @@ export function buildActivity(input: ActivityInput): ActivityResponse {
     }
     const offered = [...(actions ?? [])];
     if (stalled) for (const action of stuckActions ?? []) if (!offered.includes(action)) offered.push(action);
-    // The one place the rule is decided for server work (#514): failed in the last seven days, stuck or blocked.
-    const attention = (item.state === "failed" && now - item.updatedAt <= ATTENTION_FAILURE_MS) || !!stuck || !!blockedBy;
+    // The one place the rule is decided for server work (#514): failed in the last seven days, stuck or blocked. Work of a
+    // book that is not in the reader's library calls for none (#881): it stays listed with its actions, and when the book
+    // is added back it counts again by the same rule.
+    const attention = !outsideLibrary && ((item.state === "failed" && now - item.updatedAt <= ATTENTION_FAILURE_MS) || !!stuck || !!blockedBy);
     items.push({ ...item, permanent: !!permanent, actions: offered, stuck, blockedBy, attention, ...(moot ? { superseded: true as const } : {}) });
   }
 

@@ -36,6 +36,7 @@ const REASON = "The rebuild was rejected: it mapped none of the text. The previo
 run("INSERT INTO works(id,title,author,description,genre,year) VALUES('w1','Speaker for the Dead','Card','','',1986)");
 run("INSERT INTO audio_editions(id,work_id,cover,narrator,rating,source_label) VALUES('ed1','w1','','',0,'')");
 run("INSERT INTO ebook_editions(id,work_id,format,source) VALUES('eb1','w1','epub','x')");
+run("INSERT INTO user_library(user_id,book_id,status,added_at) VALUES(1,'ed1','unread',?)", now); // a sync of a book outside the library calls for no attention (#881)
 const job = (id: string, data: Record<string, unknown>, age = MIN) => {
   run("INSERT INTO recordings(id,edition_id) VALUES(?,'ed1')", `rec-${id}`);
   run("INSERT INTO alignment_jobs(id,ebook_id,recording_id,data,updated_at) VALUES(?,'eb1',?,?,?)",
