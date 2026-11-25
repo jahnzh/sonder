@@ -13,6 +13,7 @@ import {
   LINE_EPUB,
   LINE_EPUB_CHECKED,
   LINE_PDF,
+  LINE_TORRENT,
 } from "../src/pages/get-ebook-rows";
 import type { EbookResult, LibraryWork } from "../src/types";
 
@@ -31,17 +32,35 @@ const result = (n: number, over: Partial<EbookResult> = {}): EbookResult => ({
   ...over,
 });
 
-test("an edition's first line is its title; the second its format in capitals, size, language and year", () => {
+test("an edition's first line is its title; the second its format in capitals, size, language, year and source", () => {
   const row = editionRow(result(1), new Set());
   assert.equal(row.id, `libgen-${md5(1)}`);
   assert.equal(row.first, "Snow Crash");
-  assert.equal(row.second, "EPUB · 1.2 MB · English · 2003");
+  assert.equal(row.second, "EPUB · 1.2 MB · English · 2003 · Library Genesis");
   assert.equal(row.edge, null);
   assert.equal(row.disabled, false);
-  assert.equal(editionRow(result(2, { extension: "pdf", size: "4.1 MB", year: "2000" }), new Set()).second, "PDF · 4.1 MB · English · 2000");
+  assert.equal(editionRow(result(2, { extension: "pdf", size: "4.1 MB", year: "2000" }), new Set()).second, "PDF · 4.1 MB · English · 2000 · Library Genesis");
   // What the source does not give is left out.
-  assert.equal(editionRow(result(3, { size: null, language: null, year: "  " }), new Set()).second, "EPUB");
-  assert.equal(editionRow(result(4, { language: "Spanish", year: null }), new Set()).second, "EPUB · 1.2 MB · Spanish");
+  assert.equal(editionRow(result(3, { size: null, language: null, year: "  " }), new Set()).second, "EPUB · Library Genesis");
+  assert.equal(editionRow(result(4, { language: "Spanish", year: null }), new Set()).second, "EPUB · 1.2 MB · Spanish · Library Genesis");
+  // An older server's file without its source is Library Genesis's.
+  assert.equal(editionRow(result(5, { source: undefined as unknown as "libgen" }), new Set()).id, `libgen-${md5(5)}`);
+});
+
+test("each row names its source (#901): a Prowlarr release its indexer and seeders, a public-domain edition its site", () => {
+  const prowlarr = editionRow(result(1, { source: "prowlarr", indexer: "1337x", seeders: 36, language: null, year: "2023", size: "9.4 MB", url: "https://1337x.to/torrent/5794961/" }), new Set());
+  assert.equal(prowlarr.id, `prowlarr-${md5(1)}`);
+  assert.equal(prowlarr.second, "EPUB · 9.4 MB · 2023 · 1337x via Prowlarr · 36 seeders");
+  assert.equal(editionRow(result(2, { source: "prowlarr", seeders: 1, indexer: " " }), new Set()).second.endsWith("Prowlarr · 1 seeder"), true);
+  assert.equal(editionRow(result(3, { source: "standardebooks" }), new Set()).second.endsWith(" · Standard Ebooks"), true);
+  assert.equal(editionRow(result(4, { source: "gutenberg" }), new Set()).second.endsWith(" · Project Gutenberg"), true);
+  assert.deepEqual(editionSourceLink(prowlarr.result), { text: "On 1337x", href: "https://1337x.to/torrent/5794961/" });
+  assert.deepEqual(editionSourceLink(result(5, { source: "standardebooks", url: "https://standardebooks.org/ebooks/jane-austen/pride-and-prejudice" })), {
+    text: "On Standard Ebooks",
+    href: "https://standardebooks.org/ebooks/jane-austen/pride-and-prejudice",
+  });
+  assert.equal(getEditionLine({ extension: "epub", source: "prowlarr" }, null), LINE_TORRENT);
+  assert.equal(LINE_TORRENT, "Downloaded as a torrent first. It joins the book when the download ends.");
 });
 
 test("an edition the work already has reads Already added and is off", () => {
@@ -62,13 +81,18 @@ test("an edition the work already has reads Already added and is off", () => {
   assert.equal(addedEditions(null).size, 0);
 });
 
-test("EPUBs come before PDFs, each in Library Genesis's order; a file listed twice is one row", () => {
+test("EPUBs come before PDFs, each in the order given; a file listed twice is one row; one md5 at two sources is two rows", () => {
   const rows = editionRows(
     [result(1, { extension: "pdf" }), result(2), result(3, { extension: "pdf" }), result(4), result(2)],
     new Set(),
   );
   assert.deepEqual(rows.map((row) => row.id), [2, 4, 1, 3].map((n) => `libgen-${md5(n)}`));
   assert.deepEqual(rows.map((row) => row.second.split(" · ")[0]), ["EPUB", "EPUB", "PDF", "PDF"]);
+  assert.equal(editionRows([result(1), result(1, { source: "gutenberg" })], new Set()).length, 2);
+  // Library Genesis, libgen.rs and Anna’s Archive name a file by its md5: one row, the first source's (#901).
+  const same = editionRows([result(1), result(1, { source: "libgenrs" }), result(1, { source: "annas" })], new Set());
+  assert.deepEqual(same.map((row) => [row.id, row.result.source]), [[`libgen-${md5(1)}`, "libgen"]]);
+  assert.equal(editionRow(result(2, { source: "annas" }), new Set([`libgen-${md5(2)}`])).disabled, true);
 });
 
 test("the line under Get this edition: nothing chosen, an EPUB with and without a recording, a PDF", () => {

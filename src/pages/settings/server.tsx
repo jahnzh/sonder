@@ -122,10 +122,28 @@ async function patchSettings(body: Record<string, string>) {
   await api("/settings", { method: "PATCH", body: JSON.stringify(body) });
 }
 
-/** TorBox, Prowlarr, AudioBookBay, Library Genesis, AudiobookDB and Open Library (the administrator's). */
+/** TorBox, Prowlarr, AudioBookBay, Library Genesis, Anna’s Archive, Z-Library, AudiobookDB and Open Library (the administrator's). */
 export function ConnectionsPage({ user, settings, onSaved, notify }: Props) {
   const admin = user.role === "admin";
-  const [testing, setTesting] = useState<"" | "torbox" | "prowlarr">("");
+  const [testing, setTesting] = useState<"" | "torbox" | "prowlarr" | "annas" | "zlib">("");
+  // What the last check of Anna’s Archive's key and Z-Library's account said (#901), shown in its group.
+  const [checked, setChecked] = useState<{ annas?: string; zlib?: string }>({});
+  const check = async (service: "annas" | "zlib") => {
+    setTesting(service);
+    try {
+      if (service === "annas") {
+        await api("/annas/test", { method: "POST" });
+        setChecked((was) => ({ ...was, annas: "The key signed in and searched." }));
+      } else {
+        const result = await api<{ line: string }>("/zlib/test", { method: "POST" });
+        setChecked((was) => ({ ...was, zlib: result.line }));
+      }
+    } catch (error) {
+      setChecked((was) => ({ ...was, [service]: (error as Error).message }));
+    } finally {
+      setTesting("");
+    }
+  };
   // Saves one field; the settings are read again so the statuses follow.
   const save = (body: Record<string, string>, done = "Saved.") => async () => {
     try {
@@ -204,6 +222,50 @@ export function ConnectionsPage({ user, settings, onSaved, notify }: Props) {
           </Group>
           <Group caption="Library Genesis">
             <FieldRow label="Mirror address" name="Library Genesis address" type="url" required saved={settings?.libgenUrl ?? ""} placeholder="https://libgen.li" onSave={saveField("libgenUrl")} />
+          </Group>
+          <Group caption="Anna’s Archive">
+            <Row label="Status" value={settings?.annasConfigured ? "Key saved" : "Not set up"} />
+            <FieldRow label="Address" name="Anna’s Archive address" type="url" saved={settings?.annasUrl ?? ""} placeholder="https://annas-archive.gl" onSave={saveField("annasUrl")} />
+            <FieldRow label="Member key" name="Anna’s Archive key" type="password" secret isSet={settings?.annasConfigured} onSave={saveField("annas", "Anna’s Archive key saved.")} />
+            {checked.annas && <Row label="Check" value={checked.annas} />}
+            {settings?.annasConfigured && (
+              <ActionsRow>
+                <Button kind="secondary" disabled={testing === "annas"} aria-label="Test Anna’s Archive" onClick={() => void check("annas")}>
+                  {testing === "annas" ? "Testing…" : "Test"}
+                </Button>
+                <Button
+                  kind="quiet"
+                  className="settings-failed-action"
+                  aria-label="Remove the Anna’s Archive key"
+                  onClick={() => void save({ annas: "" }, "Anna’s Archive key removed.")().catch(() => {})}
+                >
+                  Remove
+                </Button>
+              </ActionsRow>
+            )}
+          </Group>
+          <Group caption="Z-Library">
+            <Row label="Status" value={settings?.zlibConfigured ? "Account saved" : "Not set up"} />
+            <FieldRow label="Address" name="Z-Library address" type="url" saved={settings?.zlibUrl ?? ""} placeholder="https://z-library.sk" onSave={saveField("zlibUrl")} />
+            <FieldRow label="Email" name="Z-Library email" type="text" secret isSet={settings?.zlibSaved?.email} onSave={saveField("zlibEmail", "Z-Library email saved.")} />
+            <FieldRow label="Password" name="Z-Library password" type="password" secret isSet={settings?.zlibSaved?.password} onSave={saveField("zlibPassword", "Z-Library password saved.")} />
+            <FieldRow label="Remember-me token" name="Z-Library remember-me token" type="password" secret isSet={settings?.zlibSaved?.token} onSave={saveField("zlibToken", "Z-Library token saved.")} />
+            {checked.zlib && <Row label="Check" value={checked.zlib} />}
+            {settings?.zlibConfigured && (
+              <ActionsRow>
+                <Button kind="secondary" disabled={testing === "zlib"} aria-label="Test Z-Library" onClick={() => void check("zlib")}>
+                  {testing === "zlib" ? "Testing…" : "Test"}
+                </Button>
+                <Button
+                  kind="quiet"
+                  className="settings-failed-action"
+                  aria-label="Remove the Z-Library account"
+                  onClick={() => void save({ zlibEmail: "", zlibPassword: "", zlibToken: "" }, "Z-Library account removed.")().catch(() => {})}
+                >
+                  Remove
+                </Button>
+              </ActionsRow>
+            )}
           </Group>
         </>
       )}

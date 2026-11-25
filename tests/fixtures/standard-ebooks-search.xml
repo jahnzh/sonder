@@ -1,0 +1,339 @@
+<?xml version="1.0" encoding="utf-8"?>
+<?xml-stylesheet href="https://standardebooks.org/feeds/opds/style" type="text/xsl"?>
+	<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:schema="http://schema.org/" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">
+		<script xmlns="http://www.w3.org/1999/xhtml" src="https://standardebooks.org/scripts/xslt-polyfill.min.js"/>
+		<id>https://standardebooks.org/feeds/opds/all?query=tolstoy&amp;page=1&amp;per-page=12</id>
+		<link href="https://standardebooks.org/feeds/opds/all?query=tolstoy&amp;page=1&amp;per-page=12" rel="self" type="application/atom+xml;profile=opds-catalog; charset=utf-8"/>
+		<link rel="first" href="https://standardebooks.org/feeds/opds/all?query=tolstoy&amp;page=1&amp;per-page=12" type="application/atom+xml;profile=opds-catalog; charset=utf-8"/>
+						<link rel="last" href="https://standardebooks.org/feeds/opds/all?query=tolstoy&amp;page=1&amp;per-page=12" type="application/atom+xml;profile=opds-catalog; charset=utf-8"/>
+		<link rel="search" href="https://standardebooks.org/opensearch" type="application/opensearchdescription+xml" title="Standard Ebooks"/>
+		<link href="https://standardebooks.org/ebooks/ebooks?query=tolstoy&amp;page=1&amp;per-page=12" rel="alternate" type="application/xhtml+xml"/>
+		<opensearch:totalResults>9</opensearch:totalResults>
+		<opensearch:startIndex>1</opensearch:startIndex>
+		<opensearch:itemsPerPage>12</opensearch:itemsPerPage>
+		<link href="https://standardebooks.org/feeds/opds" rel="start" type="application/atom+xml;profile=opds-catalog;kind=navigation; charset=utf-8"/>
+		<link href="https://standardebooks.org/feeds/opds/all" rel="http://opds-spec.org/crawlable" type="application/atom+xml;profile=opds-catalog;kind=acquisition; charset=utf-8"/>
+		<title>Search Results</title>
+		<subtitle>Results for “tolstoy”</subtitle>
+		<icon>https://standardebooks.org/images/logo.png</icon>
+		<updated>2026-11-25T12:32:14Z</updated>
+		<author>
+			<name>Standard Ebooks</name>
+			<uri>https://standardebooks.org</uri>
+		</author>
+					<entry>
+	<id>https://standardebooks.org/ebooks/leo-tolstoy/the-power-of-darkness/louise-maude_aylmer-maude</id>
+	<dc:identifier>https://standardebooks.org/ebooks/leo-tolstoy/the-power-of-darkness/louise-maude_aylmer-maude</dc:identifier>
+	<title>The Power of Darkness</title>
+			<author>
+			<name>Leo Tolstoy</name>
+			<uri>https://standardebooks.org/ebooks/leo-tolstoy</uri>
+							<schema:alternateName>Lev Nikolayevich Tolstoy</schema:alternateName>
+										<schema:sameAs>https://en.wikipedia.org/wiki/Leo_Tolstoy</schema:sameAs>
+										<schema:sameAs>https://id.loc.gov/authorities/names/n79068416.html</schema:sameAs>
+					</author>
+		<published>2022-01-20T19:35:39Z</published>
+	<dc:issued>2022-01-20T19:35:39Z</dc:issued>
+	<updated>2026-11-15T03:04:01Z</updated>
+	<dc:language>en-GB</dc:language>
+	<dc:publisher>Standard Ebooks</dc:publisher>
+	<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+	<summary type="text">Two Russian peasants tragically succumb to selfish, immoral temptations.</summary>
+	<content type="html">&lt;p&gt;&lt;i&gt;The Power of Darkness&lt;/i&gt; is a five-act drama that follows the downfall of the peasants Anísya and Nikíta as they succumb to a series of sordid temptations, from adultery and drunkenness to outright murder. Written in 1886 but suppressed by censors until 1902, the play is a realist portrayal of some of the darkest elements of Russian peasant life. Similar to some other late &lt;a href=&quot;https://standardebooks.org/ebooks/leo-tolstoy&quot;&gt;Tolstoy&lt;/a&gt; works, like &lt;a href=&quot;https://standardebooks.org/ebooks/leo-tolstoy/resurrection/louise-maude&quot;&gt;&lt;i&gt;Resurrection&lt;/i&gt;&lt;/a&gt;, the play’s psychological exploration of human depravity is accompanied by a sharp social critique of the Russian Empire and its role in perpetuating poverty and ignorance among its lowest and most marginalized classes.&lt;/p&gt;</content>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Russian drama--Translations into English"/>
+				<category scheme="https://standardebooks.org/vocab/subjects" term="Drama"/>
+		<link href="https://standardebooks.org/ebooks/leo-tolstoy/the-power-of-darkness/louise-maude_aylmer-maude/downloads/cover.jpg" rel="http://opds-spec.org/image" type="image/jpeg"/>
+	<link href="https://standardebooks.org/ebooks/leo-tolstoy/the-power-of-darkness/louise-maude_aylmer-maude/downloads/cover-thumbnail.jpg" rel="http://opds-spec.org/image/thumbnail" type="image/jpeg"/>
+	<link href="https://standardebooks.org/ebooks/leo-tolstoy/the-power-of-darkness/louise-maude_aylmer-maude" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+			<link href="https://standardebooks.org/ebooks/leo-tolstoy/the-power-of-darkness/louise-maude_aylmer-maude/downloads/leo-tolstoy_the-power-of-darkness_louise-maude-aylmer-maude.epub?source=feed" length="686479" rel="http://opds-spec.org/acquisition/open-access" title="Recommended compatible epub" type="application/epub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/the-power-of-darkness/louise-maude_aylmer-maude/downloads/leo-tolstoy_the-power-of-darkness_louise-maude-aylmer-maude_advanced.epub?source=feed" length="1458483" rel="http://opds-spec.org/acquisition/open-access" title="Advanced epub" type="application/epub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/the-power-of-darkness/louise-maude_aylmer-maude/downloads/leo-tolstoy_the-power-of-darkness_louise-maude-aylmer-maude.kepub.epub?source=feed" length="560237" rel="http://opds-spec.org/acquisition/open-access" title="Kobo Kepub epub" type="application/kepub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/the-power-of-darkness/louise-maude_aylmer-maude/downloads/leo-tolstoy_the-power-of-darkness_louise-maude-aylmer-maude.azw3?source=feed" length="662067" rel="http://opds-spec.org/acquisition/open-access" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/the-power-of-darkness/louise-maude_aylmer-maude/text/single-page" length="378486" rel="http://opds-spec.org/acquisition/open-access" title="XHTML" type="application/xhtml+xml" />
+	</entry>
+					<entry>
+	<id>https://standardebooks.org/ebooks/leo-tolstoy/what-is-art/aylmer-maude</id>
+	<dc:identifier>https://standardebooks.org/ebooks/leo-tolstoy/what-is-art/aylmer-maude</dc:identifier>
+	<title>What Is Art?</title>
+			<author>
+			<name>Leo Tolstoy</name>
+			<uri>https://standardebooks.org/ebooks/leo-tolstoy</uri>
+							<schema:alternateName>Lev Nikolayevich Tolstoy</schema:alternateName>
+										<schema:sameAs>https://en.wikipedia.org/wiki/Leo_Tolstoy</schema:sameAs>
+										<schema:sameAs>https://id.loc.gov/authorities/names/n79068416.html</schema:sameAs>
+					</author>
+		<published>2021-12-06T23:30:26Z</published>
+	<dc:issued>2021-12-06T23:30:26Z</dc:issued>
+	<updated>2026-11-15T03:04:03Z</updated>
+	<dc:language>en-GB</dc:language>
+	<dc:publisher>Standard Ebooks</dc:publisher>
+	<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+	<summary type="text">Leo Tolstoy outlines his philosophy of aesthetics.</summary>
+	<content type="html">&lt;p&gt;&lt;i&gt;What Is Art?&lt;/i&gt; is an 1897 philosophical treatise by &lt;a href=&quot;https://standardebooks.org/ebooks/leo-tolstoy&quot;&gt;Leo Tolstoy&lt;/a&gt; that lays out his philosophy of aesthetics. Rejecting notions of aesthetics that center around beauty, Tolstoy instead posits that art is defined by its role in transmitting feelings between human beings. Furthermore, he argues that the quality of art is not assessed by the pleasure it gives, but whether the feelings the art evokes align with the meaning of life revealed by a given society’s religious perception. In line with his spiritual views set out in &lt;a href=&quot;https://standardebooks.org/ebooks/leo-tolstoy/the-kingdom-of-god-is-within-you/leo-wiener&quot;&gt;&lt;i&gt;The Kingdom of God Is Within You&lt;/i&gt;&lt;/a&gt;, Tolstoy argues that the proper purpose of art is to transmit feelings of human unity and “to set up, in place of the existing reign of force, that kingdom of God, i.e. of love, which we all recognize to be the highest aim of human life.”&lt;/p&gt;
+			&lt;p&gt;Tolstoy makes a number of unconventional aesthetic judgments in the course of the book, dismissing such works as Wagner’s operas, &lt;a href=&quot;https://standardebooks.org/ebooks/william-shakespeare/romeo-and-juliet&quot;&gt;&lt;i&gt;Romeo and Juliet&lt;/i&gt;&lt;/a&gt;, and his own past works like &lt;a href=&quot;https://standardebooks.org/ebooks/leo-tolstoy/war-and-peace/louise-maude_aylmer-maude&quot;&gt;&lt;i&gt;War and Peace&lt;/i&gt;&lt;/a&gt; and &lt;a href=&quot;https://standardebooks.org/ebooks/leo-tolstoy/anna-karenina/constance-garnett&quot;&gt;&lt;i&gt;Anna Karenina&lt;/i&gt;&lt;/a&gt; as “bad art.” In turn, he praises such works as &lt;a href=&quot;https://standardebooks.org/ebooks/charles-dickens&quot;&gt;Dickens’&lt;/a&gt; &lt;a href=&quot;https://standardebooks.org/ebooks/charles-dickens/a-christmas-carol&quot;&gt;&lt;i&gt;A Christmas Carol&lt;/i&gt;&lt;/a&gt; and &lt;a href=&quot;https://standardebooks.org/ebooks/victor-hugo&quot;&gt;Hugo’s&lt;/a&gt; &lt;a href=&quot;https://standardebooks.org/ebooks/victor-hugo/les-miserables/isabel-f-hapgood&quot;&gt;&lt;i&gt;Les Misérables&lt;/i&gt;&lt;/a&gt; as “examples of the highest art, flowing from the love of God and the love of man.”&lt;/p&gt;</content>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Arts--Philosophy"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Arts and morals"/>
+				<category scheme="https://standardebooks.org/vocab/subjects" term="Philosophy"/>
+		<link href="https://standardebooks.org/ebooks/leo-tolstoy/what-is-art/aylmer-maude/downloads/cover.jpg" rel="http://opds-spec.org/image" type="image/jpeg"/>
+	<link href="https://standardebooks.org/ebooks/leo-tolstoy/what-is-art/aylmer-maude/downloads/cover-thumbnail.jpg" rel="http://opds-spec.org/image/thumbnail" type="image/jpeg"/>
+	<link href="https://standardebooks.org/ebooks/leo-tolstoy/what-is-art/aylmer-maude" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+			<link href="https://standardebooks.org/ebooks/leo-tolstoy/what-is-art/aylmer-maude/downloads/leo-tolstoy_what-is-art_aylmer-maude.epub?source=feed" length="571143" rel="http://opds-spec.org/acquisition/open-access" title="Recommended compatible epub" type="application/epub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/what-is-art/aylmer-maude/downloads/leo-tolstoy_what-is-art_aylmer-maude_advanced.epub?source=feed" length="768698" rel="http://opds-spec.org/acquisition/open-access" title="Advanced epub" type="application/epub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/what-is-art/aylmer-maude/downloads/leo-tolstoy_what-is-art_aylmer-maude.kepub.epub?source=feed" length="490073" rel="http://opds-spec.org/acquisition/open-access" title="Kobo Kepub epub" type="application/kepub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/what-is-art/aylmer-maude/downloads/leo-tolstoy_what-is-art_aylmer-maude.azw3?source=feed" length="650423" rel="http://opds-spec.org/acquisition/open-access" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/what-is-art/aylmer-maude/text/single-page" length="628770" rel="http://opds-spec.org/acquisition/open-access" title="XHTML" type="application/xhtml+xml" />
+	</entry>
+					<entry>
+	<id>https://standardebooks.org/ebooks/leo-tolstoy/resurrection/louise-maude</id>
+	<dc:identifier>https://standardebooks.org/ebooks/leo-tolstoy/resurrection/louise-maude</dc:identifier>
+	<title>Resurrection</title>
+			<author>
+			<name>Leo Tolstoy</name>
+			<uri>https://standardebooks.org/ebooks/leo-tolstoy</uri>
+							<schema:alternateName>Lev Nikolayevich Tolstoy</schema:alternateName>
+										<schema:sameAs>https://en.wikipedia.org/wiki/Leo_Tolstoy</schema:sameAs>
+										<schema:sameAs>https://id.loc.gov/authorities/names/n79068416.html</schema:sameAs>
+					</author>
+		<published>2021-09-06T02:52:23Z</published>
+	<dc:issued>2021-09-06T02:52:23Z</dc:issued>
+	<updated>2026-11-24T04:36:32Z</updated>
+	<dc:language>en-GB</dc:language>
+	<dc:publisher>Standard Ebooks</dc:publisher>
+	<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+	<summary type="text">A Russian landlord makes reparations to the woman he wronged in his youth.</summary>
+	<content type="html">&lt;p&gt;&lt;i&gt;Resurrection&lt;/i&gt;, the last full-length novel written by &lt;a href=&quot;https://standardebooks.org/ebooks/leo-tolstoy&quot;&gt;Leo Tolstoy&lt;/a&gt;, was published in 1899 after ten years in the making. A humanitarian cause—the pacifist Doukhobor sect, persecuted by the Russian government, needed funds to emigrate to Canada—prompted Tolstoy to finish the novel and dedicate its ensuing revenues to alleviate their plight. Ultimately, Tolstoy’s actions were credited with helping hundreds of Doukhobors emigrate to Canada.&lt;/p&gt;
+			&lt;p&gt;The novel centers on the relationship between Nekhlúdoff, a Russian landlord, and Máslova, a prostitute whose life took a turn for the worse after Nekhlúdoff wronged her ten years prior to the novel’s events. After Nekhlúdoff happens to sit in the jury for a trial in which Máslova is accused of poisoning a merchant, Nekhlúdoff begins to understand the harm he has inflicted upon Máslova—and the harm that the Russian state and society inflicts upon the poor and marginalized—as he embarks on a quest to alleviate Máslova’s suffering.&lt;/p&gt;
+			&lt;p&gt;Nekhlúdoff’s process of spiritual awakening in &lt;i&gt;Resurrection&lt;/i&gt; serves as a framing for many of the novel’s religious and political themes, such as the hypocrisy of State Christianity and the injustice of the penal system, which were also the subject of Tolstoy’s nonfiction treatise on Christian anarchism, &lt;a href=&quot;https://standardebooks.org/ebooks/leo-tolstoy/the-kingdom-of-god-is-within-you/leo-wiener&quot;&gt;&lt;i&gt;The Kingdom of God Is Within You&lt;/i&gt;&lt;/a&gt;. The novel also explores the “single tax” economic theory propounded by the American economist &lt;a href=&quot;https://standardebooks.org/ebooks/henry-george&quot;&gt;Henry George&lt;/a&gt;, which drives a major subplot in the novel concerning the management of Nekhlúdoff’s estates.&lt;/p&gt;</content>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Atonement--Fiction"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Russia--Social conditions--1801-1917--Fiction"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Aristocracy (Social class)--Russia--Fiction"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Prostitutes--Russia--Fiction"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Trials (Murder)--Russia--Fiction"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Change--Religious aspects--Fiction"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Social justice--Russia--Fiction"/>
+				<category scheme="https://standardebooks.org/vocab/subjects" term="Fiction"/>
+		<link href="https://standardebooks.org/ebooks/leo-tolstoy/resurrection/louise-maude/downloads/cover.jpg" rel="http://opds-spec.org/image" type="image/jpeg"/>
+	<link href="https://standardebooks.org/ebooks/leo-tolstoy/resurrection/louise-maude/downloads/cover-thumbnail.jpg" rel="http://opds-spec.org/image/thumbnail" type="image/jpeg"/>
+	<link href="https://standardebooks.org/ebooks/leo-tolstoy/resurrection/louise-maude" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+			<link href="https://standardebooks.org/ebooks/leo-tolstoy/resurrection/louise-maude/downloads/leo-tolstoy_resurrection_louise-maude.epub?source=feed" length="960039" rel="http://opds-spec.org/acquisition/open-access" title="Recommended compatible epub" type="application/epub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/resurrection/louise-maude/downloads/leo-tolstoy_resurrection_louise-maude_advanced.epub?source=feed" length="948405" rel="http://opds-spec.org/acquisition/open-access" title="Advanced epub" type="application/epub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/resurrection/louise-maude/downloads/leo-tolstoy_resurrection_louise-maude.kepub.epub?source=feed" length="911545" rel="http://opds-spec.org/acquisition/open-access" title="Kobo Kepub epub" type="application/kepub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/resurrection/louise-maude/downloads/leo-tolstoy_resurrection_louise-maude.azw3?source=feed" length="1111610" rel="http://opds-spec.org/acquisition/open-access" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/resurrection/louise-maude/text/single-page" length="1166598" rel="http://opds-spec.org/acquisition/open-access" title="XHTML" type="application/xhtml+xml" />
+	</entry>
+					<entry>
+	<id>https://standardebooks.org/ebooks/leo-tolstoy/short-fiction/various-translators</id>
+	<dc:identifier>https://standardebooks.org/ebooks/leo-tolstoy/short-fiction/various-translators</dc:identifier>
+	<title>Short Fiction</title>
+			<author>
+			<name>Leo Tolstoy</name>
+			<uri>https://standardebooks.org/ebooks/leo-tolstoy</uri>
+							<schema:alternateName>Lev Nikolayevich Tolstoy</schema:alternateName>
+										<schema:sameAs>https://en.wikipedia.org/wiki/Leo_Tolstoy</schema:sameAs>
+										<schema:sameAs>https://id.loc.gov/authorities/names/n79068416.html</schema:sameAs>
+					</author>
+		<published>2021-04-27T00:44:58Z</published>
+	<dc:issued>2021-04-27T00:44:58Z</dc:issued>
+	<updated>2026-11-15T03:03:59Z</updated>
+	<dc:language>en-GB</dc:language>
+	<dc:publisher>Standard Ebooks</dc:publisher>
+	<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+	<summary type="text">A collection of all of the short stories and novellas written by Leo Tolstoy.</summary>
+	<content type="html">&lt;p&gt;While perhaps best known for his novels &lt;a href=&quot;https://standardebooks.org/ebooks/leo-tolstoy/war-and-peace/louise-maude_aylmer-maude&quot;&gt;&lt;i&gt;War and Peace&lt;/i&gt;&lt;/a&gt; and &lt;a href=&quot;https://standardebooks.org/ebooks/leo-tolstoy/anna-karenina/constance-garnett&quot;&gt;&lt;i&gt;Anna Karenina&lt;/i&gt;&lt;/a&gt;, the Russian author and religious thinker &lt;a href=&quot;https://standardebooks.org/ebooks/leo-tolstoy&quot;&gt;Leo Tolstoy&lt;/a&gt; was also a prolific author of short fiction. This Standard Ebooks edition compiles all of Tolstoy’s short stories and novellas written from 1852 up to his death, arranged in order of their original publication.&lt;/p&gt;
+			&lt;p&gt;The stories in this collection vary enormously in size and scope, from short, page-length fables composed for the education of schoolchildren, to full novellas like “Family Happiness.” Readers who are familiar with Tolstoy’s life and religious experiences—as detailed, for example, in his spiritual memoir &lt;a href=&quot;https://standardebooks.org/ebooks/leo-tolstoy/a-confession/aylmer-maude&quot;&gt;&lt;i&gt;A Confession&lt;/i&gt;&lt;/a&gt;—may be able to trace the events of Tolstoy’s life through the changing subjects of these stories. Some early stories, like “The Raid” and the “Sevastopol” sketches, draw from Tolstoy’s experiences in the Caucasian War and the Crimean War when he served in the Imperial Russian Army, while other early stories like “Recollections of a Scorer” and “Two Hussars” reflect Tolstoy’s personal struggle with gambling addiction.&lt;/p&gt;
+			&lt;p&gt;Later stories in the collection, written during and after Tolstoy’s 1870s conversion to Christian anarcho-pacifism (a spiritual and religious philosophy described in detail in his treatise &lt;a href=&quot;https://standardebooks.org/ebooks/leo-tolstoy/the-kingdom-of-god-is-within-you/leo-wiener&quot;&gt;&lt;i&gt;The Kingdom of God Is Within You&lt;/i&gt;&lt;/a&gt;), frequently reflect either Tolstoy’s own experiences in spiritual struggle (e.g. “The Death of Ivan Ilyitch”) or his interpretation of the New Testament (e.g. “The Forged Coupon”), or both. Many later stories, like “Three Questions” and “How Much Land Does a Man Need?” are explicitly didactic in nature and are addressed to a popular audience to promote his religious ideals and views on social and economic justice.&lt;/p&gt;</content>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Short stories"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Russia--Fiction"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Russia--Social life and customs--Fiction"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Short stories, Russian--Translations into English"/>
+				<category scheme="https://standardebooks.org/vocab/subjects" term="Fiction"/>
+			<category scheme="https://standardebooks.org/vocab/subjects" term="Shorts"/>
+		<link href="https://standardebooks.org/ebooks/leo-tolstoy/short-fiction/various-translators/downloads/cover.jpg" rel="http://opds-spec.org/image" type="image/jpeg"/>
+	<link href="https://standardebooks.org/ebooks/leo-tolstoy/short-fiction/various-translators/downloads/cover-thumbnail.jpg" rel="http://opds-spec.org/image/thumbnail" type="image/jpeg"/>
+	<link href="https://standardebooks.org/ebooks/leo-tolstoy/short-fiction/various-translators" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+			<link href="https://standardebooks.org/ebooks/leo-tolstoy/short-fiction/various-translators/downloads/leo-tolstoy_short-fiction_various-translators.epub?source=feed" length="2258755" rel="http://opds-spec.org/acquisition/open-access" title="Recommended compatible epub" type="application/epub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/short-fiction/various-translators/downloads/leo-tolstoy_short-fiction_various-translators_advanced.epub?source=feed" length="2084607" rel="http://opds-spec.org/acquisition/open-access" title="Advanced epub" type="application/epub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/short-fiction/various-translators/downloads/leo-tolstoy_short-fiction_various-translators.kepub.epub?source=feed" length="2195283" rel="http://opds-spec.org/acquisition/open-access" title="Kobo Kepub epub" type="application/kepub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/short-fiction/various-translators/downloads/leo-tolstoy_short-fiction_various-translators.azw3?source=feed" length="3155235" rel="http://opds-spec.org/acquisition/open-access" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/short-fiction/various-translators/text/single-page" length="4248019" rel="http://opds-spec.org/acquisition/open-access" title="XHTML" type="application/xhtml+xml" />
+	</entry>
+					<entry>
+	<id>https://standardebooks.org/ebooks/leo-tolstoy/hadji-murad/aylmer-maude</id>
+	<dc:identifier>https://standardebooks.org/ebooks/leo-tolstoy/hadji-murad/aylmer-maude</dc:identifier>
+	<title>Hadji Murád</title>
+			<author>
+			<name>Leo Tolstoy</name>
+			<uri>https://standardebooks.org/ebooks/leo-tolstoy</uri>
+							<schema:alternateName>Lev Nikolayevich Tolstoy</schema:alternateName>
+										<schema:sameAs>https://en.wikipedia.org/wiki/Leo_Tolstoy</schema:sameAs>
+										<schema:sameAs>https://id.loc.gov/authorities/names/n79068416.html</schema:sameAs>
+					</author>
+		<published>2020-10-08T23:23:54Z</published>
+	<dc:issued>2020-10-08T23:23:54Z</dc:issued>
+	<updated>2026-11-15T03:03:59Z</updated>
+	<dc:language>en-US</dc:language>
+	<dc:publisher>Standard Ebooks</dc:publisher>
+	<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+	<summary type="text">The legendary warrior Hadji Murád struggles to free his family against the backdrop of Russian imperialism in Chechnya and Dagestan.</summary>
+	<content type="html">&lt;p&gt;In this short novel, &lt;a href=&quot;https://standardebooks.org/ebooks/leo-tolstoy&quot;&gt;Tolstoy&lt;/a&gt; fictionalizes the final days of Hadji Murád, a legendary Avar separatist who fought against, and later with, Russia, as the Russian Empire was struggling to annex Chechnya and the surrounding land in the late 1840s.&lt;/p&gt;
+			&lt;p&gt;The novel opens with the narrator finding a thistle crushed in a blooming field, which reminds him of Hadji Murád and his tragic tale. As the narrator recounts the story, the reader is quickly thrust into the rich, colorful history of the Caucuses, and its people’s fight against Russian imperialism.&lt;/p&gt;
+			&lt;p&gt;Hadji Murád is portrayed as a legendary and imposing, yet friendly and approachable figure. Despite his reputation, it seems that his best days are behind him; as the novel opens, Murád is fleeing Shamil, a powerful imam who has captured Murád’s family. Murád finds himself thrust between the invading Russians on one side, and Shamil’s vengeance on the other.&lt;/p&gt;
+			&lt;p&gt;As Murád and his tiny but loyal group of warriors try to forge alliances in their attempt to rescue Murád’s family, they quickly find themselves politically outclassed. The Russians are Murád’s enemies, yet only they can help him in his struggle against Shamil; and after years of losses incurred by Murád’s guerrilla tactics, the Russians would like his help but cannot trust him. Shamil, on the other hand, is a deep link to the region’s complex web of tribal blood feuds, vengeances, reprisals, and quarrels over honor. He’s one of the few powers left standing between the Russians and their control of the Caucuses, but Murád, having crossed him, can’t rescue his family from Shamil’s clutches without the help of the Russians.&lt;/p&gt;
+			&lt;p&gt;Murád’s impossible position, the contradiction between his legendary past and his limping, dignified, and ultimately powerless present, and the struggle against a mighty empire by a people torn by internecine conflict, form the major thematic threads of the novel.&lt;/p&gt;
+			&lt;p&gt;The novel was one of the last that Tolstoy finished before his death, and was only published posthumously in 1912. Tolstoy himself served in the Crimean War, and the war scenes portrayed in the novel echo his personal experiences. As the story progresses, Tolstoy characterizes various real-life historical personalities besides Hadji Murád and Shamil, including Emperor Nicholas I, Mikhail Loris-Melikov, and Count Vorontsov-Dashkov, making this a fascinating piece of historical fiction. Despite this being such a late entry in Tolstoy’s corpus, it has been highly praised by critics both contemporary and modern, with the famous critic Harold Bloom going so far as to say that &lt;i&gt;Hadji Murád&lt;/i&gt; is “my personal touchstone for the sublime of prose fiction, to me the best story in the world, or at least the best I have ever read.”&lt;/p&gt;</content>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Tolstoy, Leo, graf, 1828-1910--Translations into English."/>
+				<category scheme="https://standardebooks.org/vocab/subjects" term="Fiction"/>
+		<link href="https://standardebooks.org/ebooks/leo-tolstoy/hadji-murad/aylmer-maude/downloads/cover.jpg" rel="http://opds-spec.org/image" type="image/jpeg"/>
+	<link href="https://standardebooks.org/ebooks/leo-tolstoy/hadji-murad/aylmer-maude/downloads/cover-thumbnail.jpg" rel="http://opds-spec.org/image/thumbnail" type="image/jpeg"/>
+	<link href="https://standardebooks.org/ebooks/leo-tolstoy/hadji-murad/aylmer-maude" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+			<link href="https://standardebooks.org/ebooks/leo-tolstoy/hadji-murad/aylmer-maude/downloads/leo-tolstoy_hadji-murad_aylmer-maude.epub?source=feed" length="767608" rel="http://opds-spec.org/acquisition/open-access" title="Recommended compatible epub" type="application/epub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/hadji-murad/aylmer-maude/downloads/leo-tolstoy_hadji-murad_aylmer-maude_advanced.epub?source=feed" length="798961" rel="http://opds-spec.org/acquisition/open-access" title="Advanced epub" type="application/epub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/hadji-murad/aylmer-maude/downloads/leo-tolstoy_hadji-murad_aylmer-maude.kepub.epub?source=feed" length="677540" rel="http://opds-spec.org/acquisition/open-access" title="Kobo Kepub epub" type="application/kepub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/hadji-murad/aylmer-maude/downloads/leo-tolstoy_hadji-murad_aylmer-maude.azw3?source=feed" length="777393" rel="http://opds-spec.org/acquisition/open-access" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/hadji-murad/aylmer-maude/text/single-page" length="405921" rel="http://opds-spec.org/acquisition/open-access" title="XHTML" type="application/xhtml+xml" />
+	</entry>
+					<entry>
+	<id>https://standardebooks.org/ebooks/leo-tolstoy/war-and-peace/louise-maude_aylmer-maude</id>
+	<dc:identifier>https://standardebooks.org/ebooks/leo-tolstoy/war-and-peace/louise-maude_aylmer-maude</dc:identifier>
+	<title>War and Peace</title>
+			<author>
+			<name>Leo Tolstoy</name>
+			<uri>https://standardebooks.org/ebooks/leo-tolstoy</uri>
+							<schema:alternateName>Lev Nikolayevich Tolstoy</schema:alternateName>
+										<schema:sameAs>https://en.wikipedia.org/wiki/Leo_Tolstoy</schema:sameAs>
+										<schema:sameAs>https://id.loc.gov/authorities/names/n79068416.html</schema:sameAs>
+					</author>
+		<published>2020-07-28T21:53:09Z</published>
+	<dc:issued>2020-07-28T21:53:09Z</dc:issued>
+	<updated>2026-11-15T03:04:02Z</updated>
+	<dc:language>en-US</dc:language>
+	<dc:publisher>Standard Ebooks</dc:publisher>
+	<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+	<summary type="text">The story of five families in Russia during the Napoleonic Wars.</summary>
+	<content type="html">&lt;p&gt;Against the backdrop of the Napoleonic Wars, five aristocratic families in Russia are transformed by the vagaries of life, by war, and by the intersection of their lives with each other. Hundreds of characters populate &lt;i&gt;War and Peace&lt;/i&gt;, many of them historical persons, including Napoleon and Tsar Alexander I, and all of them come to life under &lt;a href=&quot;https://standardebooks.org/ebooks/leo-tolstoy&quot;&gt;Tolstoy’s&lt;/a&gt; deft hand.&lt;/p&gt;
+			&lt;p&gt;&lt;i&gt;War and Peace&lt;/i&gt; is generally considered to be Tolstoy’s masterpiece, a pinnacle of Russian literature, and one of history’s great novels. Tolstoy himself refused to call it that, saying it was “not a novel, even less is it a poem, and still less a historical chronicle.” It contains elements of history, narrative, and philosophy, the latter increasing in quantity as the book moves towards its climax. Whatever it is called, it is a triumph whose breadth and depth is perhaps unmatched in literature.&lt;/p&gt;
+			&lt;p&gt;This Standard Ebooks edition restores the Russian given names that were anglicized by the Maudes in their translation, the use of Russian patronymics and diminutives that they eliminated, and Tolstoy’s original four-book structure.&lt;/p&gt;</content>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Historical fiction"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="War stories"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Napoleonic Wars, 1800-1815--Campaigns--Russia--Fiction"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Russia--History--Alexander I, 1801-1825--Fiction"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Aristocracy (Social class)--Russia--Fiction"/>
+				<category scheme="https://standardebooks.org/vocab/subjects" term="Fiction"/>
+		<link href="https://standardebooks.org/ebooks/leo-tolstoy/war-and-peace/louise-maude_aylmer-maude/downloads/cover.jpg" rel="http://opds-spec.org/image" type="image/jpeg"/>
+	<link href="https://standardebooks.org/ebooks/leo-tolstoy/war-and-peace/louise-maude_aylmer-maude/downloads/cover-thumbnail.jpg" rel="http://opds-spec.org/image/thumbnail" type="image/jpeg"/>
+	<link href="https://standardebooks.org/ebooks/leo-tolstoy/war-and-peace/louise-maude_aylmer-maude" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+			<link href="https://standardebooks.org/ebooks/leo-tolstoy/war-and-peace/louise-maude_aylmer-maude/downloads/leo-tolstoy_war-and-peace_louise-maude-aylmer-maude.epub?source=feed" length="2424919" rel="http://opds-spec.org/acquisition/open-access" title="Recommended compatible epub" type="application/epub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/war-and-peace/louise-maude_aylmer-maude/downloads/leo-tolstoy_war-and-peace_louise-maude-aylmer-maude_advanced.epub?source=feed" length="3096173" rel="http://opds-spec.org/acquisition/open-access" title="Advanced epub" type="application/epub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/war-and-peace/louise-maude_aylmer-maude/downloads/leo-tolstoy_war-and-peace_louise-maude-aylmer-maude.kepub.epub?source=feed" length="2493332" rel="http://opds-spec.org/acquisition/open-access" title="Kobo Kepub epub" type="application/kepub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/war-and-peace/louise-maude_aylmer-maude/downloads/leo-tolstoy_war-and-peace_louise-maude-aylmer-maude.azw3?source=feed" length="3117454" rel="http://opds-spec.org/acquisition/open-access" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/war-and-peace/louise-maude_aylmer-maude/text/single-page" length="3661583" rel="http://opds-spec.org/acquisition/open-access" title="XHTML" type="application/xhtml+xml" />
+	</entry>
+					<entry>
+	<id>https://standardebooks.org/ebooks/leo-tolstoy/anna-karenina/constance-garnett</id>
+	<dc:identifier>https://standardebooks.org/ebooks/leo-tolstoy/anna-karenina/constance-garnett</dc:identifier>
+	<title>Anna Karenina</title>
+			<author>
+			<name>Leo Tolstoy</name>
+			<uri>https://standardebooks.org/ebooks/leo-tolstoy</uri>
+							<schema:alternateName>Lev Nikolayevich Tolstoy</schema:alternateName>
+										<schema:sameAs>https://en.wikipedia.org/wiki/Leo_Tolstoy</schema:sameAs>
+										<schema:sameAs>https://id.loc.gov/authorities/names/n79068416.html</schema:sameAs>
+					</author>
+		<published>2020-05-21T23:28:02Z</published>
+	<dc:issued>2020-05-21T23:28:02Z</dc:issued>
+	<updated>2026-11-15T03:03:58Z</updated>
+	<dc:language>en-US</dc:language>
+	<dc:publisher>Standard Ebooks</dc:publisher>
+	<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+	<summary type="text">A socialite starts an affair with a cavalry officer, against a backdrop of wealthy family life in Imperialist Russia.</summary>
+	<content type="html">&lt;p&gt;Anna Karenina is certainly somewhat unhappy in her life, but presents a strong and vivacious character when called in to smooth over a major crack that’s appeared in her brother’s marriage. Unfortunately, the very visit designed to help her brother introduces her to Count Alexei Vronsky and sets in motion a chain of events that will ripple through families and the unforgiving society of wealthy Moscow and St. Petersburg.&lt;/p&gt;
+			&lt;p&gt;Initially serialized over five years in &lt;i&gt;The Russian Messenger&lt;/i&gt;, &lt;i&gt;Anna Karenina&lt;/i&gt; was first published as a two-volume novel in 1878. It was &lt;a href=&quot;https://standardebooks.org/ebooks/leo-tolstoy&quot;&gt;Leo Tolstoy’s&lt;/a&gt; second novel, coming after &lt;a href=&quot;https://standardebooks.org/ebooks/leo-tolstoy/war-and-peace/louise-maude_aylmer-maude&quot;&gt;&lt;i&gt;War and Peace&lt;/i&gt;&lt;/a&gt; and further cementing his role as the primary Russian author of his age. Tolstoy drew on his aristocratic upbringing to set the scene for the novel, and it’s widely believed that he wrote his own experiences and struggles with religion (documented in &lt;a href=&quot;https://standardebooks.org/ebooks/leo-tolstoy/a-confession/aylmer-maude&quot;&gt;&lt;i&gt;A Confession&lt;/i&gt;&lt;/a&gt;) into the central character of Konstantin Levin.&lt;/p&gt;
+			&lt;p&gt;This edition compiles into a single volume the 1901 English translation by Constance Garnett.&lt;/p&gt;</content>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Adultery--Fiction"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Didactic fiction"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Love stories"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Married women--Fiction"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Russia--Fiction"/>
+				<category scheme="https://standardebooks.org/vocab/subjects" term="Fiction"/>
+		<link href="https://standardebooks.org/ebooks/leo-tolstoy/anna-karenina/constance-garnett/downloads/cover.jpg" rel="http://opds-spec.org/image" type="image/jpeg"/>
+	<link href="https://standardebooks.org/ebooks/leo-tolstoy/anna-karenina/constance-garnett/downloads/cover-thumbnail.jpg" rel="http://opds-spec.org/image/thumbnail" type="image/jpeg"/>
+	<link href="https://standardebooks.org/ebooks/leo-tolstoy/anna-karenina/constance-garnett" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+			<link href="https://standardebooks.org/ebooks/leo-tolstoy/anna-karenina/constance-garnett/downloads/leo-tolstoy_anna-karenina_constance-garnett.epub?source=feed" length="1367410" rel="http://opds-spec.org/acquisition/open-access" title="Recommended compatible epub" type="application/epub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/anna-karenina/constance-garnett/downloads/leo-tolstoy_anna-karenina_constance-garnett_advanced.epub?source=feed" length="1254022" rel="http://opds-spec.org/acquisition/open-access" title="Advanced epub" type="application/epub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/anna-karenina/constance-garnett/downloads/leo-tolstoy_anna-karenina_constance-garnett.kepub.epub?source=feed" length="1377277" rel="http://opds-spec.org/acquisition/open-access" title="Kobo Kepub epub" type="application/kepub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/anna-karenina/constance-garnett/downloads/leo-tolstoy_anna-karenina_constance-garnett.azw3?source=feed" length="1748385" rel="http://opds-spec.org/acquisition/open-access" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/anna-karenina/constance-garnett/text/single-page" length="2248422" rel="http://opds-spec.org/acquisition/open-access" title="XHTML" type="application/xhtml+xml" />
+	</entry>
+					<entry>
+	<id>https://standardebooks.org/ebooks/leo-tolstoy/the-kingdom-of-god-is-within-you/leo-wiener</id>
+	<dc:identifier>https://standardebooks.org/ebooks/leo-tolstoy/the-kingdom-of-god-is-within-you/leo-wiener</dc:identifier>
+	<title>The Kingdom of God Is Within You</title>
+			<author>
+			<name>Leo Tolstoy</name>
+			<uri>https://standardebooks.org/ebooks/leo-tolstoy</uri>
+							<schema:alternateName>Lev Nikolayevich Tolstoy</schema:alternateName>
+										<schema:sameAs>https://en.wikipedia.org/wiki/Leo_Tolstoy</schema:sameAs>
+										<schema:sameAs>https://id.loc.gov/authorities/names/n79068416.html</schema:sameAs>
+					</author>
+		<published>2016-12-02T22:34:11Z</published>
+	<dc:issued>2016-12-02T22:34:11Z</dc:issued>
+	<updated>2026-11-24T04:36:32Z</updated>
+	<dc:language>en-US</dc:language>
+	<dc:publisher>Standard Ebooks</dc:publisher>
+	<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+	<summary type="text">Tolstoy describes true Christianity as a non-hierarchical, nonviolent, non-coercive pursuit, and criticizes institutional Christianity as a deceptive corruption.</summary>
+	<content type="html">&lt;p&gt;&lt;i&gt;The Kingdom of God Is Within You&lt;/i&gt; is the most influential work of Christian anarchism. It might be considered the founding work of that tradition if it didn’t itself claim to merely be pointing out Christian anarchism as the plain meaning of the gospels.&lt;/p&gt;
+			&lt;p&gt;&lt;a href=&quot;https://standardebooks.org/ebooks/leo-tolstoy&quot;&gt;Tolstoy&lt;/a&gt; argues that institutional Christianity with its doctrines, church hierarchies, and ritual practices, is anti-Christian. Christ, he says, explicitly told his followers to reject doctrines, church institutions and hierarchies, and ritual practices, and instead to love truth, to honor God, and to treat all people as your family and as you would want to be treated.&lt;/p&gt;
+			&lt;p&gt;Tolstoy says that a Christian cannot participate in the political system, which is based on the use of violence to enforce the separation of people and the privileging of some people over others, and at the same time follow Jesus in his command to love your neighbor.&lt;/p&gt;</content>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Christianity--Controversial literature"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Evil, Non-resistance to"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Nonviolence--Religious aspects--Christianity"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Government, Resistance to--Religious aspects--Christianity"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Christianity--Essence, genius, nature"/>
+				<category scheme="https://standardebooks.org/vocab/subjects" term="Nonfiction"/>
+			<category scheme="https://standardebooks.org/vocab/subjects" term="Philosophy"/>
+			<category scheme="https://standardebooks.org/vocab/subjects" term="Spirituality"/>
+		<link href="https://standardebooks.org/ebooks/leo-tolstoy/the-kingdom-of-god-is-within-you/leo-wiener/downloads/cover.jpg" rel="http://opds-spec.org/image" type="image/jpeg"/>
+	<link href="https://standardebooks.org/ebooks/leo-tolstoy/the-kingdom-of-god-is-within-you/leo-wiener/downloads/cover-thumbnail.jpg" rel="http://opds-spec.org/image/thumbnail" type="image/jpeg"/>
+	<link href="https://standardebooks.org/ebooks/leo-tolstoy/the-kingdom-of-god-is-within-you/leo-wiener" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+			<link href="https://standardebooks.org/ebooks/leo-tolstoy/the-kingdom-of-god-is-within-you/leo-wiener/downloads/leo-tolstoy_the-kingdom-of-god-is-within-you_leo-wiener.epub?source=feed" length="812569" rel="http://opds-spec.org/acquisition/open-access" title="Recommended compatible epub" type="application/epub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/the-kingdom-of-god-is-within-you/leo-wiener/downloads/leo-tolstoy_the-kingdom-of-god-is-within-you_leo-wiener_advanced.epub?source=feed" length="769557" rel="http://opds-spec.org/acquisition/open-access" title="Advanced epub" type="application/epub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/the-kingdom-of-god-is-within-you/leo-wiener/downloads/leo-tolstoy_the-kingdom-of-god-is-within-you_leo-wiener.kepub.epub?source=feed" length="688921" rel="http://opds-spec.org/acquisition/open-access" title="Kobo Kepub epub" type="application/kepub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/the-kingdom-of-god-is-within-you/leo-wiener/downloads/leo-tolstoy_the-kingdom-of-god-is-within-you_leo-wiener.azw3?source=feed" length="927159" rel="http://opds-spec.org/acquisition/open-access" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/the-kingdom-of-god-is-within-you/leo-wiener/text/single-page" length="843312" rel="http://opds-spec.org/acquisition/open-access" title="XHTML" type="application/xhtml+xml" />
+	</entry>
+					<entry>
+	<id>https://standardebooks.org/ebooks/leo-tolstoy/a-confession/aylmer-maude</id>
+	<dc:identifier>https://standardebooks.org/ebooks/leo-tolstoy/a-confession/aylmer-maude</dc:identifier>
+	<title>A Confession</title>
+			<author>
+			<name>Leo Tolstoy</name>
+			<uri>https://standardebooks.org/ebooks/leo-tolstoy</uri>
+							<schema:alternateName>Lev Nikolayevich Tolstoy</schema:alternateName>
+										<schema:sameAs>https://en.wikipedia.org/wiki/Leo_Tolstoy</schema:sameAs>
+										<schema:sameAs>https://id.loc.gov/authorities/names/n79068416.html</schema:sameAs>
+					</author>
+		<published>2015-11-26T20:18:10Z</published>
+	<dc:issued>2015-11-26T20:18:10Z</dc:issued>
+	<updated>2026-11-15T03:03:57Z</updated>
+	<dc:language>en-GB</dc:language>
+	<dc:publisher>Standard Ebooks</dc:publisher>
+	<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+	<summary type="text">A brief meditation on depression, philosophy, religion, and the meaning of life.</summary>
+	<content type="html">&lt;p&gt;&lt;a href=&quot;https://standardebooks.org/ebooks/leo-tolstoy&quot;&gt;Leo Tolstoy&lt;/a&gt; wrote this short meditation on sadness and the meaning of life when he was middle aged. He had already completed his masterworks, &lt;a href=&quot;https://standardebooks.org/ebooks/leo-tolstoy/anna-karenina/constance-garnett&quot;&gt;&lt;i&gt;Anna Karenina&lt;/i&gt;&lt;/a&gt; and &lt;a href=&quot;https://standardebooks.org/ebooks/leo-tolstoy/war-and-peace/louise-maude_aylmer-maude&quot;&gt;&lt;i&gt;War and Peace&lt;/i&gt;&lt;/a&gt;, reared fourteen children, and gained fame and acclaim in Russia as a man of letters. But despite having attained that success, he still found himself unhappy and always returning to the disturbing idea that all achievement is meaningless.&lt;/p&gt;
+			&lt;p&gt;&lt;i&gt;A Confession&lt;/i&gt; is his attempt to put these thoughts in words as he teetered on the brink of suicide. It forms the first in a four-volume series that included &lt;i&gt;A Criticism of Dogmatic Theology&lt;/i&gt;, &lt;i&gt;The Gospel in Brief&lt;/i&gt;, and &lt;i&gt;What I Believe&lt;/i&gt; (also known as &lt;i&gt;My Religion&lt;/i&gt; or &lt;i&gt;My Faith&lt;/i&gt;).&lt;/p&gt;</content>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Tolstoy, Leo, graf, 1828-1910--Religion"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Faith"/>
+			<category scheme="http://purl.org/dc/terms/LCSH" term="Christianity"/>
+				<category scheme="https://standardebooks.org/vocab/subjects" term="Philosophy"/>
+			<category scheme="https://standardebooks.org/vocab/subjects" term="Spirituality"/>
+		<link href="https://standardebooks.org/ebooks/leo-tolstoy/a-confession/aylmer-maude/downloads/cover.jpg" rel="http://opds-spec.org/image" type="image/jpeg"/>
+	<link href="https://standardebooks.org/ebooks/leo-tolstoy/a-confession/aylmer-maude/downloads/cover-thumbnail.jpg" rel="http://opds-spec.org/image/thumbnail" type="image/jpeg"/>
+	<link href="https://standardebooks.org/ebooks/leo-tolstoy/a-confession/aylmer-maude" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+			<link href="https://standardebooks.org/ebooks/leo-tolstoy/a-confession/aylmer-maude/downloads/leo-tolstoy_a-confession_aylmer-maude.epub?source=feed" length="641270" rel="http://opds-spec.org/acquisition/open-access" title="Recommended compatible epub" type="application/epub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/a-confession/aylmer-maude/downloads/leo-tolstoy_a-confession_aylmer-maude_advanced.epub?source=feed" length="594209" rel="http://opds-spec.org/acquisition/open-access" title="Advanced epub" type="application/epub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/a-confession/aylmer-maude/downloads/leo-tolstoy_a-confession_aylmer-maude.kepub.epub?source=feed" length="535691" rel="http://opds-spec.org/acquisition/open-access" title="Kobo Kepub epub" type="application/kepub+zip" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/a-confession/aylmer-maude/downloads/leo-tolstoy_a-confession_aylmer-maude.azw3?source=feed" length="604589" rel="http://opds-spec.org/acquisition/open-access" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook" />
+				<link href="https://standardebooks.org/ebooks/leo-tolstoy/a-confession/aylmer-maude/text/single-page" length="240479" rel="http://opds-spec.org/acquisition/open-access" title="XHTML" type="application/xhtml+xml" />
+	</entry>
+			</feed>

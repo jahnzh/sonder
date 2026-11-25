@@ -314,6 +314,12 @@ export type Settings = {
   name: string;
   authenticated?: boolean;
   libgenUrl: string;
+  /** Anna’s Archive and Z-Library (#901): their addresses, and whether a key or an account is saved. Absent from an older server. */
+  annasUrl?: string;
+  annasConfigured?: boolean;
+  zlibUrl?: string;
+  zlibConfigured?: boolean;
+  zlibSaved?: { email: boolean; password: boolean; token: boolean };
   localConfigured: boolean;
   storageLabel: string;
   prowlarrUrl?: string;
@@ -378,8 +384,14 @@ export type ReleaseSourceStatus = {
   error?: string;
 };
 export type EbookResult = {
+  /** The file's md5 on Library Genesis; for another source a 32-hex key of the edition there. */
   md5: string;
-  source: "libgen";
+  /** Where it is listed (#901); an older server answers Library Genesis's without it. */
+  source: "libgen" | "annas" | "zlib" | "libgenrs" | "prowlarr" | "standardebooks" | "gutenberg";
+  /** A Prowlarr release's indexer and seeders, and whether TorBox has it cached. */
+  indexer?: string;
+  seeders?: number | null;
+  cached?: boolean;
   title: string;
   authors: string[];
   extension: "epub" | "pdf";
@@ -510,7 +522,8 @@ export type ActivityItem = {
  */
 export type ActivityFacts =
   /** A download: where it is fetched (`local`, `torbox`, `copy`; null when the row has none). */
-  | { kind: "acquisition"; status: string; backend: string | null }
+  /** `file` is "ebook" for a torrent fetched for its EPUB or PDF (#901); absent for an audiobook. */
+  | { kind: "acquisition"; status: string; backend: string | null; file?: "ebook" }
   | { kind: "server-copy"; status: string }
   /** A series search for the audiobook or for the ebook of a work. */
   | {

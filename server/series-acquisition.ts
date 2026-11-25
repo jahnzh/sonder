@@ -24,7 +24,9 @@ import {
   type StoredSeriesCandidate,
 } from "./series-queue-store.ts";
 import { seriesQueueOrder } from "./series-queue-order.ts";
-import { fetchTopKIntoEbookSet } from "./ebook-set.ts";
+import { fetchTopKIntoEbookSet, seriesEbookSources } from "./ebook-set.ts";
+import { prowlarrConfig } from "./services.ts";
+import { annasConfigured, zlibConfigured } from "./sources/shadow-libraries.ts";
 import { packServesWork, resetPackSearches, seriesPackStep } from "./series-pack-step.ts";
 import { retryWorkMediaAcquisition } from "./series-membership.ts";
 import {
@@ -50,7 +52,7 @@ export const SERIES_SOURCE_RETRY_STEP_MS = 5 * 60_000;
  * have. Any other failure (no release found, a volume that does not match) waits for the owner's Retry.
  */
 export function isSourceReachFailure(message: string | null | undefined) {
-  return !!message && /could not be reached|did not answer|timed? ?out|is unavailable|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|fetch failed|socket hang up/i.test(message);
+  return !!message && /could not be reached|did not answer|timed? ?out|is unavailable|is limiting requests|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|fetch failed|socket hang up/i.test(message);
 }
 
 export type SeriesAcquisitionKind = "audio" | "ebook";
@@ -748,7 +750,10 @@ async function processJob(
         error: message,
         updatedAt: Date.now(),
         ...(again ? {} : { frontAt: null, searchOnly: 0 }),
-        ...(again ? { autoRetries: tries + 1, retryAt: now + (tries + 1) * SERIES_SOURCE_RETRY_STEP_MS } : {}),
+        // A source that named when to try again (Library Genesis resting, #901) is not asked before then.
+        ...(again
+          ? { autoRetries: tries + 1, retryAt: Math.max(now + (tries + 1) * SERIES_SOURCE_RETRY_STEP_MS, Number((error as { retryAt?: unknown }).retryAt) || 0) }
+          : {}),
       })
       .where(
         and(
@@ -957,8 +962,20 @@ async function runEbookJob(
     return null;
   }
   const fetch = deps.fetchEbooks ?? fetchTopKIntoEbookSet;
-  const result = await fetch(job.workId);
+  const work = db.select({ year: s.works.year }).from(s.works).where(eq(s.works.id, job.workId)).get();
+  // Library Genesis, Prowlarr, then the public-domain sources for an old book (#901).
+  const result = await fetch(job.workId, "libgen", {
+    sources: seriesEbookSources({ year: work?.year ?? null }, { annas: annasConfigured(), zlib: zlibConfigured(), prowlarr: !!prowlarrConfig() }),
+    userId: job.userId,
+  });
   const failures = "failures" in result ? result.failures ?? [] : [];
+  // A Prowlarr download was started: its EPUB joins the book when it is complete.
+  if (result.started) return null;
+  // No edition was found while a source could not be asked (one limiting requests, or out of reach): the job goes back
+  // in the queue for later, not before the sources' rests end (#901).
+  const unreached = failures.find(isSourceReachFailure);
+  if (unreached && !result.downloaded.some((member) => member.status !== "rejected"))
+    throw Object.assign(new Error(unreached), { retryAt: "retryAt" in result ? result.retryAt : null });
   if (!result.downloaded.length && failures.length)
     throw new Error(failures[0]);
   if (failures.length) return failures.join("; ");

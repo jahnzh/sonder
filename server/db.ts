@@ -128,7 +128,8 @@ if (
   );
 for (const [table, columns] of [
   ["audio_editions", ["language", "release_title"]],
-  ["acquisitions", ["work_id", "language", "narrator"]],
+  // `kind` (#901): "ebook" for a torrent fetched for its EPUB or PDF; null for an audiobook, as every older row.
+  ["acquisitions", ["work_id", "language", "narrator", "kind"]],
 ] as const) {
   const existing = new Set(
     (

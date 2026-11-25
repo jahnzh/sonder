@@ -31,7 +31,8 @@ import {
   type ProbeSession,
 } from "./ebook-set-ctc-session.ts";
 import { normalizeReaderText } from "../src/reading-types.ts";
-import { searchEbooks, saveEbook } from "./ebooks.ts";
+import { ebookEditionId, searchEbooks, saveEbook, type EbookResult, type EbookSource } from "./ebooks.ts";
+import { publicDomainAge } from "./sources/public-domain.ts";
 import { iso3 } from "./language.ts";
 import { ebookSetCheckEnded, ebookSetCheckStarted } from "./ebook-set-activity.ts";
 
@@ -65,6 +66,8 @@ export type EbookSetAnchorSample = AnchorSampleScore;
 export type EbookSetDeps = {
   search?: typeof searchEbooks;
   save?: typeof saveEbook;
+  /** Start a Prowlarr book release's download for the work (#901). */
+  startTorrent?: typeof startEbookTorrent;
   anchorSample?: (input: {
     audioPath: string;
     fragmentTexts: string[];
@@ -790,10 +793,53 @@ export function reevaluateEbookSetForWork(workId: string) {
   });
 }
 
+/** Which sources are set up in Settings: Anna's Archive's key, Z-Library's account, Prowlarr. */
+export type ConfiguredSources = { annas: boolean; zlib: boolean; prowlarr: boolean };
+
+/**
+ * The sources the series ebook search asks, in order (#901): Library Genesis, Anna's Archive and Z-Library when set
+ * up, the other Library Genesis family, Prowlarr's book indexers when connected, then Standard Ebooks and Project
+ * Gutenberg for a book old enough to be in the public domain.
+ */
+export function seriesEbookSources(work: { year: number | null }, configured: ConfiguredSources, now = new Date()): EbookSource[] {
+  return [
+    "libgen",
+    ...(configured.annas ? (["annas"] as const) : []),
+    ...(configured.zlib ? (["zlib"] as const) : []),
+    "libgenrs",
+    ...(configured.prowlarr ? (["prowlarr"] as const) : []),
+    ...(publicDomainAge(work.year, now) ? (["standardebooks", "gutenberg"] as const) : []),
+  ];
+}
+
+/** Start the download of a Prowlarr book release for the work (#901); its EPUB joins the set when it is complete. */
+async function startEbookTorrent(file: EbookResult, work: { id: string; title: string; author: string }, userId: number) {
+  const [{ prowlarrMagnet }, { acquire }] = await Promise.all([import("./services.ts"), import("./acquisitions.ts")]);
+  const job = await acquire(await prowlarrMagnet(`prowlarr-${file.md5}`), {
+    kind: "ebook",
+    workId: work.id,
+    title: work.title,
+    author: work.author,
+    userId,
+  });
+  return { id: job.id };
+}
+
+/** What a fetch gave: the editions checked, the failures on the way, and a Prowlarr download it started (#901). */
+export type EbookSetFetch = {
+  downloaded: { id: string; status: EbookSetMemberStatus }[];
+  skipped: "limit" | null;
+  failures?: string[];
+  started?: string | null;
+  /** When a source that limited requests on the way may be asked again (the latest such); absent when none did. */
+  retryAt?: number | null;
+};
+
 export async function fetchTopKIntoEbookSet(
   workId: string,
   source: "libgen" = "libgen",
-) {
+  options: { sources?: EbookSource[]; userId?: number } = {},
+): Promise<EbookSetFetch> {
   const work = db
     .select()
     .from(s.works)
@@ -805,74 +851,124 @@ export async function fetchTopKIntoEbookSet(
   if (!remaining) return { downloaded: [], skipped: "limit" as const };
   const search = deps.search ?? searchEbooks;
   const save = deps.save ?? saveEbook;
-  const { files } = await search(source, `${work.title} ${work.author}`);
-  const filtered = files.filter(
-    (f) =>
-      f.extension === "epub" &&
-      cheapTitleAuthorMatch(work, { title: f.title, authors: f.authors }),
-  );
+  const startTorrent = deps.startTorrent ?? startEbookTorrent;
   // One edition at a time (#718): the next is fetched only when this one fails the narration check (rejected), or
   // its download or check fails. One accepted or held (no audio or no worker yet: not failed) ends the fetch. Each
   // check has its own probe session, released before the next download, so the pool lease is never held across a
-  // LibGen transfer (MEDIUM-1).
+  // LibGen transfer (MEDIUM-1). The sources are asked in order (#901) until one gives that edition; a source that
+  // fails (Library Genesis limiting requests) is a failure of its own and the next source is asked.
   const failures: string[] = [];
   const downloaded: { id: string; status: EbookSetMemberStatus }[] = [];
+  let started: string | null = null;
+  let retryAt: number | null = null;
+  // A source's failure, with the time it named to be asked again (one limiting requests).
+  const failed = (error: unknown) => {
+    failures.push((error as Error).message);
+    const at = Number((error as { retryAt?: unknown }).retryAt);
+    if (Number.isFinite(at) && at > 0) retryAt = Math.max(retryAt ?? 0, at);
+  };
+  const found = () => downloaded.some((member) => member.status !== "rejected");
   try {
-    for (const file of filtered) {
-      if (downloaded.length >= remaining) break;
-      const ebookId = `${file.source}-${file.md5}`;
-      const already = db
-        .select()
-        .from(s.workEbookSetMembers)
-        .where(eq(s.workEbookSetMembers.workId, workId))
-        .all()
-        .some((m) => m.ebookId === ebookId);
-      if (already) continue;
-      let saved: { id: string };
+    for (const from of options.sources ?? [source]) {
+      if (found() || started || downloaded.length >= remaining) break;
+      let files: EbookResult[];
       try {
-        saved = await save({ ...file, workId });
-      } catch (saveError) {
-        const message = (saveError as Error).message;
-        const existingRow = db
-          .select()
-          .from(s.ebookEditions)
-          .where(eq(s.ebookEditions.id, ebookId))
-          .get();
-        if (!existingRow || existingRow.workId !== workId) {
-          failures.push(message);
+        files = (await search(from, `${work.title} ${work.author}`)).files;
+      } catch (searchError) {
+        // Only the one source asked: its failure is the fetch's, as before.
+        if (!options.sources) throw searchError;
+        // The libgen.rs family is often out of reach for good (it did not answer while this was built): that alone does
+        // not hold a search in the queue; it is logged, and the next source is asked.
+        if (from === "libgenrs" && /could not be reached|did not respond/.test((searchError as Error).message)) {
+          console.warn(`ebook search ${workId}: ${(searchError as Error).message}`);
           continue;
         }
-        saved = { id: ebookId };
-      }
-      let status: EbookSetMemberStatus;
-      try {
-        status = await withProbeSession(workId, async (probe) =>
-          (
-            await evaluateEbookSetMember(
-              workId,
-              saved.id,
-              {
-                sourceTitle: file.title,
-                sourceAuthor: file.authors.join(", ") || null,
-                language: file.language,
-              },
-              probe,
-            )
-          ).status,
-        );
-      } catch (evaluateError) {
-        failures.push((evaluateError as Error).message);
-        dropOrphanEbookEdition(saved.id, workId);
+        failed(searchError);
         continue;
       }
-      downloaded.push({ id: saved.id, status });
-      if (status !== "rejected") break;
+      const filtered = files.filter(
+        (f) =>
+          f.extension === "epub" &&
+          // A torrent's title names its author (Prowlarr gives no author of its own).
+          cheapTitleAuthorMatch(work, { title: f.title, authors: f.authors.length ? f.authors : from === "prowlarr" ? [f.title] : [] }),
+      );
+      if (from === "prowlarr") {
+        // A torrent is not checked here: its download is started, and its EPUB joins the set when complete. One
+        // Prowlarr download per book: one on its way is waited for; a finished one (its edition was not taken, or the
+        // search would not run) is not started again, and the next source is asked.
+        const earlier = sqlite
+          .prepare(
+            `SELECT id, status FROM acquisitions WHERE kind='ebook' AND work_id=? AND status NOT IN ('error','cancelled')
+             ORDER BY updated_at DESC LIMIT 1`,
+          )
+          .get(workId) as { id: string; status: string } | undefined;
+        if (earlier) {
+          if (earlier.status !== "ready") started = earlier.id;
+          continue;
+        }
+        const release = filtered[0];
+        if (!release) continue;
+        try {
+          started = (await startTorrent(release, work, options.userId ?? 1)).id;
+        } catch (startError) {
+          failed(startError);
+        }
+        continue;
+      }
+      for (const file of filtered) {
+        if (downloaded.length >= remaining || found()) break;
+        const ebookId = ebookEditionId(file);
+        const already = db
+          .select()
+          .from(s.workEbookSetMembers)
+          .where(eq(s.workEbookSetMembers.workId, workId))
+          .all()
+          .some((m) => m.ebookId === ebookId);
+        if (already) continue;
+        let saved: { id: string };
+        try {
+          saved = await save({ ...file, workId });
+        } catch (saveError) {
+          const existingRow = db
+            .select()
+            .from(s.ebookEditions)
+            .where(eq(s.ebookEditions.id, ebookId))
+            .get();
+          if (!existingRow || existingRow.workId !== workId) {
+            failed(saveError);
+            continue;
+          }
+          saved = { id: ebookId };
+        }
+        let status: EbookSetMemberStatus;
+        try {
+          status = await withProbeSession(workId, async (probe) =>
+            (
+              await evaluateEbookSetMember(
+                workId,
+                saved.id,
+                {
+                  sourceTitle: file.title,
+                  sourceAuthor: file.authors.join(", ") || null,
+                  language: file.language,
+                },
+                probe,
+              )
+            ).status,
+          );
+        } catch (evaluateError) {
+          failures.push((evaluateError as Error).message);
+          dropOrphanEbookEdition(saved.id, workId);
+          continue;
+        }
+        downloaded.push({ id: saved.id, status });
+      }
     }
   } finally {
     const { syncEbookSetConsensus } = await import("./ebook-set-consensus.ts");
     await syncEbookSetConsensus(workId);
   }
-  return { downloaded, skipped: null, failures };
+  return { downloaded, skipped: null, failures, started, retryAt };
 }
 
 export function workHasRecording(workId: string) {

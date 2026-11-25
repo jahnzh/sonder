@@ -322,9 +322,10 @@ test("desktop layout and server/device distinction remain usable without overflo
   await expect(
     page.getByRole("heading", { name: "TorBox", exact: true }),
   ).toBeVisible();
+  // Anna’s Archive is a source again, with its member key (#901).
   await expect(
     page.getByRole("heading", { name: "Anna’s Archive", exact: true }),
-  ).toHaveCount(0);
+  ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Library Genesis", exact: true }),
   ).toBeVisible();

@@ -78,17 +78,19 @@ function preparePackAware(database: Database, packs: string, plain: string) {
  * `acquisition_works` rows, any other's its `work_id`.
  */
 function latestUserAcquisitions(database: Database, userId: number, workIds: Iterable<string>) {
-  const latest = (link: string) => `SELECT workId,id,status,updatedAt FROM (
+  // A torrent fetched for its ebook (#901) is not the work's audio on its way; a database from before packs has
+  // no `kind` either, so its plain form reads every acquisition as before.
+  const latest = (link: string, ebookFilter = "") => `SELECT workId,id,status,updatedAt FROM (
          SELECT json_each.value AS workId,a.id,a.status,a.updated_at AS updatedAt,
            ROW_NUMBER() OVER (PARTITION BY json_each.value ORDER BY a.updated_at DESC,a.rowid DESC) AS n
          FROM user_acquisitions u JOIN acquisitions a ON a.id=u.acquisition_id
            JOIN json_each(?) ON ${link}
-         WHERE u.user_id=?
+         WHERE u.user_id=?${ebookFilter}
        ) WHERE n=1`;
   const rows = preparePackAware(
     database,
     latest(`(a.work_id=json_each.value AND NOT EXISTS(SELECT 1 FROM acquisition_works p WHERE p.acquisition_id=a.id))
-             OR EXISTS(SELECT 1 FROM acquisition_works p WHERE p.acquisition_id=a.id AND p.work_id=json_each.value)`),
+             OR EXISTS(SELECT 1 FROM acquisition_works p WHERE p.acquisition_id=a.id AND p.work_id=json_each.value)`, " AND a.kind IS NOT 'ebook'"),
     latest("a.work_id=json_each.value"),
   ).all(ids(workIds), userId) as LatestAcquisition[];
   return new Map(rows.map((row) => [row.workId, row]));
@@ -176,7 +178,7 @@ export function materialiseWorkMediaStates(
     const paired = preparePackAware(
       database,
       pairs(`SELECT a.id AS acquisitionId,a.work_id AS workId FROM acquisitions a
-               WHERE a.work_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM acquisition_works p WHERE p.acquisition_id=a.id)
+               WHERE a.work_id IS NOT NULL AND a.kind IS NOT 'ebook' AND NOT EXISTS(SELECT 1 FROM acquisition_works p WHERE p.acquisition_id=a.id)
              UNION SELECT acquisition_id,work_id FROM acquisition_works`),
       pairs(plain),
     ).all() as { userId: number; workId: string }[];

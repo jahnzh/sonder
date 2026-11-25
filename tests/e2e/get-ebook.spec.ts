@@ -1,8 +1,9 @@
 // @projects firefox
 // The Get ebook sheet (#604, spec #600; boards GetEbook.dc.html, BookGetting.dc.html): `#book/<workId>/get/ebook`,
 // opened from the Book page's Ebook row and the Ebook page's Get another edition, on a reload and from a link (Close
-// to the Book page); the search with the title and author; Library Genesis's answer routed (the suite's server cannot
-// reach it): EPUBs before PDFs, "Already added" off; Get this edition sending the md5 with the workId, closing to the
+// to the Book page); the search with the title and author; each source's answer routed (the suite's server cannot
+// reach them): EPUBs before PDFs, "Already added" off; every source's editions in one list, each row naming its source,
+// with one failing source on its own line (Library Genesis limiting requests, asked again at the time it names, #901); Get this edition sending the md5 with the workId, closing to the
 // Book page with the edition in its Ebook row and, for an EPUB of a book with a recording, "Checking against the
 // narration"; a book outside the library sending the PUT first; a refusal above the button; a failing Library
 // Genesis with Retry; nothing found; Search on Library Genesis opening the mirror with the words; the
@@ -85,16 +86,33 @@ async function answerWith(route: Route, json: unknown) {
   else await route.fulfill({ json }).catch(() => {});
 }
 
-type Asked = { searches: string[]; posts: unknown[]; order: string[]; saved: { id: string; ebookSet?: { status: string } }[] };
+type Asked = {
+  /** The words Library Genesis was asked for. */
+  searches: string[];
+  /** Every source asked, in order. */
+  sources: string[];
+  posts: unknown[];
+  order: string[];
+  saved: { id: string; ebookSet?: { status: string } }[];
+};
+/** The sources the sheet asks while Prowlarr is not connected (the suite's server has none), as its line names them. */
+const SOURCES_LINE = "From Library Genesis, Library Genesis (libgen.rs), Standard Ebooks and Project Gutenberg.";
 
 /**
- * Library Genesis answered by the test, and Get this edition's POST: refused when `save` says so, otherwise a real
- * EPUB imported into the book.
+ * Library Genesis answered by the test (the other sources list nothing unless `others` answers them), and Get this
+ * edition's POST: refused when `save` says so, otherwise a real EPUB imported into the book.
  */
-async function libgen(page: Page, options: { search?: (q: string) => unknown; save?: () => unknown } = {}) {
-  const asked: Asked = { searches: [], posts: [], order: [], saved: [] };
+async function libgen(
+  page: Page,
+  options: { search?: (q: string) => unknown; others?: (source: string, q: string) => unknown; save?: () => unknown } = {},
+) {
+  const asked: Asked = { searches: [], sources: [], posts: [], order: [], saved: [] };
   await page.route("**/api/discover/ebooks?*", async (route) => {
-    const q = new URL(route.request().url()).searchParams.get("q") || "";
+    const params = new URL(route.request().url()).searchParams;
+    const q = params.get("q") || "";
+    const source = params.get("source") || "libgen";
+    asked.sources.push(source);
+    if (source !== "libgen") return answerWith(route, (await options.others?.(source, q)) ?? { files: [], website: "" });
     asked.searches.push(q);
     await answerWith(route, await (options.search ? options.search(q) : { files: FILES, website: "https://libgen.li" }));
   });
@@ -177,12 +195,13 @@ test("from the Book page: title and author searched, EPUBs before PDFs, a tap se
   await expect(rows(page)).toHaveCount(4);
   await expect(sheet(page).getByRole("heading", { name: "Editions · 4" })).toBeVisible();
   await expect(sheet(page).getByRole("button", { name: "About Editions" })).toBeVisible();
-  // EPUBs first, each in Library Genesis's order; the title, then format, size, language and year.
-  await expect(rows(page).nth(0)).toHaveAccessibleName("Snow Crash EPUB · 1.2 MB · English · 2003");
-  await expect(rows(page).nth(1)).toHaveAccessibleName("Snow Crash EPUB · 0.9 MB · English · 2008");
-  await expect(rows(page).nth(2)).toHaveAccessibleName("Snow Crash EPUB · 2.3 MB · Spanish · 2010");
-  await expect(rows(page).nth(3)).toHaveAccessibleName("Snow Crash PDF · 4.1 MB · English · 2000");
-  await expect(sheet(page).getByText("From Library Genesis.", { exact: true })).toBeVisible();
+  // EPUBs first, each in Library Genesis's order; the title, then format, size, language, year and source.
+  await expect(rows(page).nth(0)).toHaveAccessibleName("Snow Crash EPUB · 1.2 MB · English · 2003 · Library Genesis");
+  await expect(rows(page).nth(1)).toHaveAccessibleName("Snow Crash EPUB · 0.9 MB · English · 2008 · Library Genesis");
+  await expect(rows(page).nth(2)).toHaveAccessibleName("Snow Crash EPUB · 2.3 MB · Spanish · 2010 · Library Genesis");
+  await expect(rows(page).nth(3)).toHaveAccessibleName("Snow Crash PDF · 4.1 MB · English · 2000 · Library Genesis");
+  await expect(sheet(page).getByText(SOURCES_LINE, { exact: true })).toBeVisible();
+  expect([...asked.sources].sort()).toEqual(["gutenberg", "libgen", "libgenrs", "standardebooks"]);
   // No language button and no Load more.
   await expect(sheet(page).getByRole("button", { name: /^Language/ })).toHaveCount(0);
   await expect(sheet(page).getByRole("button", { name: /Load more/ })).toHaveCount(0);
@@ -389,8 +408,8 @@ test("a failing Library Genesis with Retry, nothing found, and Search on Library
   const failure = sheet(page).getByRole("status").filter({ hasText: "Library Genesis could not be searched." });
   await expect(failure).toContainText("Library Genesis returned 503. Try another mirror in Settings.");
   await expect(rows(page)).toHaveCount(0);
-  // The failure stands in place of the sources line; it is not the sheet's error.
-  await expect(sheet(page).getByText("From Library Genesis.", { exact: true })).toHaveCount(0);
+  // The failure is Library Genesis's own line above the sources line; it is not the sheet's error.
+  await expect(sheet(page).getByText(SOURCES_LINE, { exact: true })).toBeVisible();
   await expect(sheet(page).getByRole("alert")).toHaveCount(0);
   fails = false;
   await sheet(page).getByRole("button", { name: "Retry Library Genesis", exact: true }).click();
@@ -429,6 +448,78 @@ test("a failing Library Genesis with Retry, nothing found, and Search on Library
   await expect.poll(() => asked.searches.length).toBe(asks + 1);
   expect(asked.searches.at(-1)).toBe("Snow Crash");
   await expect(rows(page)).toHaveCount(4);
+});
+
+test("every source's editions in one list, each naming its source; a limiting Library Genesis on its own line, asked again at its time (#901)", async ({ page }) => {
+  const book = await bookWithRecording(page, unique("Pride and Prejudice"));
+  // Prowlarr connected, as the settings say (the suite's server has none).
+  await page.route(/\/api\/settings$/, async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...(await response.json()), prowlarrConfigured: true } }).catch(() => {});
+  });
+  const standard = edition(7, {
+    source: "standardebooks",
+    title: "Pride and Prejudice",
+    authors: ["Jane Austen"],
+    size: "812 kB",
+    year: "2014",
+    url: "https://standardebooks.org/ebooks/jane-austen/pride-and-prejudice",
+  });
+  const gutenberg = edition(8, { source: "gutenberg", title: "Pride and Prejudice", authors: ["Jane Austen"], size: null, year: null, language: "English", url: "https://www.gutenberg.org/ebooks/1342" });
+  const torrent = edition(9, {
+    source: "prowlarr",
+    title: "Pride and Prejudice by Jane Austen EPUB",
+    authors: [],
+    language: null,
+    size: "1.4 MB",
+    year: "2023",
+    indexer: "1337x",
+    seeders: 12,
+    url: "https://1337x.to/torrent/1/",
+  });
+  // Library Genesis limits requests at first and names a time two seconds on; then it answers.
+  let limited = true;
+  const asked = await libgen(page, {
+    search: () => (limited ? { limited: true } : { files: [edition(1, { title: "Pride and Prejudice", year: "1813" })], website: "" }),
+    others: (source) => ({ files: source === "standardebooks" ? [standard] : source === "gutenberg" ? [gutenberg] : [torrent], website: "" }),
+  });
+  await page.route("**/api/discover/ebooks?source=libgen*", async (route) => {
+    if (!limited) return route.fallback();
+    asked.searches.push(new URL(route.request().url()).searchParams.get("q") || "");
+    limited = false;
+    await route
+      .fulfill({ status: 503, headers: { "Retry-After": "2" }, json: { error: "Library Genesis is limiting requests.", code: "source_limited", retryable: true, retryAfterMs: 2000 } })
+      .catch(() => {});
+  });
+  await page.goto(`/#book/${book.workId}/get/ebook`);
+  // The others' rows show while Library Genesis's line says when it is asked again.
+  const failure = sheet(page).getByRole("status").filter({ hasText: "Library Genesis is limiting requests" });
+  await expect(failure).toHaveText(/^Library Genesis is limiting requests, trying again at \d{1,2}[:.]\d{2}( ?[AP]M)?\.Retry$/);
+  await expect(failure.getByRole("button", { name: "Retry Library Genesis", exact: true })).toBeVisible();
+  await expect(rows(page)).toHaveCount(3);
+  await expect(rows(page).nth(0)).toHaveAccessibleName("Pride and Prejudice by Jane Austen EPUB EPUB · 1.4 MB · 2023 · 1337x via Prowlarr · 12 seeders");
+  await expect(rows(page).nth(1)).toHaveAccessibleName("Pride and Prejudice EPUB · 812 kB · English · 2014 · Standard Ebooks");
+  await expect(rows(page).nth(2)).toHaveAccessibleName("Pride and Prejudice EPUB · English · Project Gutenberg");
+  await expect(sheet(page).getByText("From Library Genesis, Library Genesis (libgen.rs), Prowlarr, Standard Ebooks and Project Gutenberg.", { exact: true })).toBeVisible();
+  // Without a tap it is asked again at its time, and its row joins the others; its line goes.
+  await expect(rows(page)).toHaveCount(4, { timeout: 10_000 });
+  await expect(failure).toHaveCount(0);
+  expect(asked.searches.length).toBe(2);
+  await expect(rows(page).nth(0)).toHaveAccessibleName("Pride and Prejudice EPUB · 1.2 MB · English · 1813 · Library Genesis");
+  // A public-domain row's own page, and Get this edition sends its source.
+  await rows(page).nth(2).click();
+  await expect(sheet(page).locator(".part-sheet-foot").getByRole("link")).toHaveAccessibleName("On Standard Ebooks");
+  await expect(sheet(page).getByText("Saved on the server, then checked against the narration.", { exact: true })).toBeVisible();
+  // A Prowlarr release says it is a torrent first.
+  await rows(page).nth(1).click();
+  await expect(sheet(page).getByText("Downloaded as a torrent first. It joins the book when the download ends.", { exact: true })).toBeVisible();
+  await expect(sheet(page).locator(".part-sheet-foot").getByRole("link")).toHaveAccessibleName("On 1337x");
+  await rows(page).nth(2).click();
+  await getButton(page).click();
+  await expect.poll(() => asked.posts.length).toBe(1);
+  expect(asked.posts[0]).toEqual({ ...standard, workId: book.workId });
+  await expect(page).toHaveURL(new RegExp(`#book/${book.workId}$`));
 });
 
 test("the address is the administrator's: someone else gets the Book page", async ({ page }) => {
@@ -473,7 +564,7 @@ for (const size of [
     expect(source.height).toBe(44);
     const line = await box(sheet(page).getByText(lineText, { exact: true }));
     const editions = await box(sheet(page).getByRole("heading", { name: "Editions · 4" }));
-    const note = await box(sheet(page).getByText("From Library Genesis.", { exact: true }));
+    const note = await box(sheet(page).getByText(SOURCES_LINE, { exact: true }));
     expect([close.width, close.height]).toEqual([44, 44]);
     expect(field.height).toBe(44);
     expect([cover.width, cover.height]).toEqual([56, 56]);
