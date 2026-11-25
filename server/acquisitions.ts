@@ -16,6 +16,7 @@ import { getTorrentHealth } from "./torrent-health.ts";
 import { audioPattern } from "./preview-file.ts";
 import { getWorkMediaState, trackWorkMediaState } from "./work-media-state.ts";
 import { assignWaitingPackWorks, importPack, isPackAcquisition, packOf, recordPack, type PackRequest } from "./acquisition-packs.ts";
+import { checkDownloadedLanguage } from "./series-language-check.ts";
 import {
   ACTIVE_ACQUISITION_STATUSES,
   isActiveAcquisitionStatus,
@@ -302,11 +303,14 @@ function createBook(
       updatedAt: Date.now(),
     });
   })();
+  // A series book whose files carry an ASIN of another language is marked once the download is done (#897).
+  void checkDownloadedLanguage(job.id).catch((error) => console.warn(`series language check: ${(error as Error).message}`));
 }
 /** A pack is downloaded (ADR 0027): each of its books gets its own recording, and the acquisition is ready. */
 async function finishPack(job: Acquisition, files: Parameters<typeof importPack>[1]) {
   const bookId = await importPack(job, files);
   setAcquisitionStatus(job.id, "ready", { progress: 1, error: null, bookId, updatedAt: Date.now() });
+  void checkDownloadedLanguage(job.id).catch((error) => console.warn(`series language check: ${(error as Error).message}`));
 }
 const processing = new Set<string>();
 // Completed files that fail validation won't change on the next refresh, so these end the job.

@@ -402,7 +402,7 @@ function oneCandidateDeps(hash: string): SeriesAudioSearchDeps {
   return {
     abbSearch: (async () => ({ results: [], page: 1, nextPage: null, website: "" })) as SeriesAudioSearchDeps["abbSearch"],
     prowlarrSearch: (async () => ({
-      results: [{ id: "p1", title: "Saga 01 Volume One", infoHash: hash, size: "1 GB", format: "M4B" }],
+      results: [{ id: "p1", title: "Saga 01 Volume One [English]", infoHash: hash, size: "1 GB", format: "M4B" }],
       page: 1,
       nextPage: null,
     })) as SeriesAudioSearchDeps["prowlarrSearch"],

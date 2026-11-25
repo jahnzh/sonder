@@ -11,6 +11,7 @@ import {
   packCoverage,
   pickSeriesPack,
   searchSeriesPackCandidates,
+  seriesAudioLanguage,
   type SeriesAudioSearchDeps,
 } from "./series-audio.ts";
 import { currentUserId, requireAdmin } from "./users.ts";
@@ -91,7 +92,7 @@ export async function seriesPackStep(
   if (last !== undefined && now() - last < PACK_SEARCH_EVERY_MS) return false;
   packSearchedAt.set(key, now());
   const volumes = seriesVolumes(input.seriesId);
-  const language = volumes.find((volume) => volume.position === input.position)?.language ?? null;
+  const language = seriesAudioLanguage(input.userId, input.seriesId, volumes.find((volume) => volume.position === input.position)?.language);
   const candidates = await searchSeriesPackCandidates(input.seriesName, input.author, volumes, deps);
   const choice = pickSeriesPack(candidates, volumes, input.seriesName, new Set(waiting.map((row) => row.position)), language);
   if (!choice) return false;

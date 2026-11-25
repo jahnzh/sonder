@@ -172,6 +172,9 @@ if (!(sqlite.prepare("PRAGMA table_info(sessions)").all() as {name:string}[]).so
   sqlite.exec("ALTER TABLE sessions ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1");
 if (!(sqlite.prepare("PRAGMA table_info(user_saved_series)").all() as {name:string}[]).some(c => c.name === "refreshed_at"))
   sqlite.exec("ALTER TABLE user_saved_series ADD COLUMN refreshed_at INTEGER");
+// The language the user chose for the series when saving it (#897): the automatic pick takes only a release in it.
+if (!(sqlite.prepare("PRAGMA table_info(user_saved_series)").all() as {name:string}[]).some(c => c.name === "language"))
+  sqlite.exec("ALTER TABLE user_saved_series ADD COLUMN language TEXT");
 // Daily backups (#361): the identity of the file a run published (size is `bytes`), which retention checks before
 // it deletes anything; the run's claim on its day; when the file at the recorded name stopped being that file; and
 // the result of the retention that followed a successful run, with its reason when it failed.

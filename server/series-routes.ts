@@ -46,9 +46,9 @@ export function registerSeriesRoutes(app: FastifyInstance) {
   });
   app.post("/api/series", async (req) => {
     const body = z
-      .object({ id: catalogueId, bookIds: z.array(catalogueId).max(1000), searchAudio: z.boolean().optional(), searchEbooks: z.boolean().optional() })
+      .object({ id: catalogueId, bookIds: z.array(catalogueId).max(1000), searchAudio: z.boolean().optional(), searchEbooks: z.boolean().optional(), language })
       .parse(req.body ?? {});
-    return saveCatalogueSeries(currentUserId(req), body.id, body.bookIds, { searchAudio: body.searchAudio, searchEbooks: body.searchEbooks });
+    return saveCatalogueSeries(currentUserId(req), body.id, body.bookIds, { searchAudio: body.searchAudio, searchEbooks: body.searchEbooks, language: body.language });
   });
   app.delete("/api/series/:id", async (req) => {
     const { id } = params.parse(req.params);

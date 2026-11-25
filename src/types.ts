@@ -55,7 +55,7 @@ export type Book = {
   sourceLabel: string;
   mediaState?: {
     state: "missing" | "queued" | "failed" | "available";
-    holdReason?: "unreleased" | "empty_search" | null;
+    holdReason?: "unreleased" | "empty_search" | "another_language" | null;
     acquisitionId?: string | null;
   } | null;
 };
@@ -251,7 +251,7 @@ export type MetadataApplied = {
 };
 export type WorkMediaState = {
   state: "missing" | "queued" | "failed" | "available";
-  holdReason: "unreleased" | "empty_search" | null;
+  holdReason: "unreleased" | "empty_search" | "another_language" | null;
   /**
    * The acquisition behind a queued or failed state. Its status, progress and error are shown to
    * the administrator only, as `/api/acquisitions` is; for anyone else they are null.

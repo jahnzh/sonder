@@ -5,6 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { NEW_MARK, seriesPageModel, withoutNew, type SeriesPageSeries, type SeriesPageWork } from "../src/pages/series-model.ts";
 import {
+  ANOTHER_LANGUAGE_LINE,
   NEEDS_ADMIN_LINE,
   NO_AUDIOBOOK_LINE,
   NO_CONNECTION_LINE,
@@ -441,4 +442,16 @@ test("no connection: the No connection card where the refresh error would stand;
   // A row without a button keeps its chevron; nothing is off that has no button.
   const plain = seriesPageModel(series([book("5", 1)]), { ...facts(libraryOf(libraryWork("work-5", { recordings: [] }))), offline: true });
   assert.deepEqual(plain.books.map((row) => [row.chevron, row.actionOff]), [[true, false]]);
+});
+
+test("a recording in another language than the series' is not shown as done: the row says Another language (#897)", () => {
+  const library = libraryOf(libraryWork("work-1", { mediaState: { state: "available", holdReason: "another_language", acquisition: null } }));
+  const model = seriesPageModel(series([book("1", 1)]), facts(library));
+  assert.equal(model.books[0].line, ANOTHER_LANGUAGE_LINE);
+  assert.equal(ANOTHER_LANGUAGE_LINE, "Another language");
+  // A book the user has started keeps its place line.
+  const started = libraryOf(libraryWork("work-1", { mediaState: { state: "available", holdReason: "another_language", acquisition: null }, recordings: [recording("work-1-rec", place("work-1-rec", 2, 100))] }));
+  assert.notEqual(seriesPageModel(series([book("1", 1)]), facts(started)).books[0].line, ANOTHER_LANGUAGE_LINE);
+  // Without the hold the line is the usual one.
+  assert.notEqual(seriesPageModel(series([book("1", 1)]), facts(libraryOf(libraryWork("work-1")))).books[0].line, ANOTHER_LANGUAGE_LINE);
 });

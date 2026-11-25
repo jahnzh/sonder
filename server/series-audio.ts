@@ -5,6 +5,10 @@ import {
   prowlarrReleaseSearch,
   torboxCachedHashes,
 } from "./services.ts";
+import { sqlite } from "./db.ts";
+import { audiobookDbBook, audiobookDbByAsin, audiobookDbRelease } from "./audiobookdb.ts";
+import { findAsin } from "./catalogue-links.ts";
+import { languageCode, languagesNamed, releaseLanguageFits, type LanguageVerdict } from "./release-language.ts";
 import {
   getWorkMediaState,
   markWorkEmptySearch,
@@ -33,7 +37,18 @@ export type SeriesAudioCandidate = {
   cached?: boolean;
   /** The release's length where the source names one (milliseconds). */
   lengthMs?: number | null;
+  /** The language the source names: AudioBookBay's "Language" field. Prowlarr's results name none (#897). */
+  language?: string | null;
+  /** An Audible ASIN in the title, and what AudiobookDB says of it (`resolveCandidateAsins`). */
+  asin?: string | null;
+  asinCheck?: AsinCheck;
 };
+
+/**
+ * What AudiobookDB says of the ASIN in a candidate's title (#897): "same" is the wanted book in the series' language,
+ * "other_language" a release in another language, "other_book" another book, "unknown" no answer or no language.
+ */
+export type AsinCheck = "same" | "other_language" | "other_book" | "unknown";
 
 /**
  * What the book's English releases on AudiobookDB say (#721): their narrators and length. A candidate read by one of
@@ -163,21 +178,76 @@ export function buildVolumeSearchQueries(input: {
   return [...new Set(base.map((query) => query.trim()))];
 }
 
+/** The wanted language when the series names none: English, as the series page's own default. */
+export const DEFAULT_SERIES_LANGUAGE = "en";
+
+/**
+ * The language the automatic pick takes (#897): the one the user chose for the series when saving it, else the
+ * language of the book's catalogue release, else English.
+ */
+export function seriesAudioLanguage(userId: number, seriesId: string, catalogueLanguage: string | null | undefined): string {
+  const saved = sqlite.prepare("SELECT language FROM user_saved_series WHERE user_id=? AND series_id=?").pluck().get(userId, seriesId) as string | null | undefined;
+  return languageCode(saved) ?? languageCode(catalogueLanguage) ?? DEFAULT_SERIES_LANGUAGE;
+}
+
+/**
+ * Whether a candidate is in the series' language (#897): its source's language, else the language of the release its
+ * ASIN names, else the language its title marks ("[FR]", "Français", "Deutsch"; a language word that is the book's or the
+ * series' own title, "The Dutch House", is no mark). "other" is never picked automatically; "unnamed" only with
+ * evidence of the wanted edition (`candidateIsWantedEdition`). The one rule, reused by the series packs.
+ */
+export function candidateLanguageFits(
+  candidate: Pick<SeriesAudioCandidate, "title" | "language" | "asinCheck">,
+  language: string | null | undefined = DEFAULT_SERIES_LANGUAGE,
+  ownTitles: readonly string[] = [],
+): LanguageVerdict {
+  if (candidate.asinCheck === "other_language") return "other";
+  const verdict = releaseLanguageFits(candidate, language, ownTitles);
+  return verdict === "unnamed" && candidate.asinCheck === "same" ? "fits" : verdict;
+}
+
+/** The evidence that a candidate with no language named is the wanted edition: its narrator, its length or its ASIN. */
+export function candidateIsWantedEdition(candidate: SeriesAudioCandidate, expected?: SeriesAudioExpectation | null) {
+  if (candidate.asinCheck === "same") return true;
+  if (!expected) return false;
+  if (narratorMatches(candidate.narrator, expected.narrators)) return true;
+  // A release title that says who reads it ("read by Jefferson Mays") counts as the narrator.
+  const title = ` ${normalizeSeriesAudioTitle(candidate.title)} `;
+  if (expected.narrators.some((name) => { const key = normalizeSeriesAudioTitle(name); return key.length > 4 && title.includes(` ${key} `); })) return true;
+  return lengthMatches(candidate.lengthMs, expected.lengthMs);
+}
+/** A candidate's length is the release's within the tolerance the ranking has always used. */
+export function lengthMatches(candidateMs: number | null | undefined, expectedMs: number | null | undefined) {
+  return !!candidateMs && !!expectedMs && Math.abs(candidateMs - expectedMs) <= Math.max(120_000, expectedMs * 0.03);
+}
+
 export function rankSeriesAudioCandidate(candidate: SeriesAudioCandidate, expected?: SeriesAudioExpectation | null) {
   let score = candidate.kind === "plain" ? 100 : candidate.kind === "episodic" ? 10 : -100;
   if (candidate.cached) score += 50;
   if (expected && narratorMatches(candidate.narrator, expected.narrators)) score += 20;
-  if (expected?.lengthMs && candidate.lengthMs && Math.abs(candidate.lengthMs - expected.lengthMs) <= Math.max(120_000, expected.lengthMs * 0.03)) score += 10;
+  if (lengthMatches(candidate.lengthMs, expected?.lengthMs)) score += 10;
+  if (candidate.asinCheck === "same") score += 20;
   if (/m4b|mp3/i.test(`${candidate.format || ""} ${candidate.title}`)) score += 2;
   return score;
 }
 
+/**
+ * The candidate the queue downloads by itself (#897): a plain release, in the series' language (a source or title that
+ * names another is never picked), and one that names no language only with evidence it is the wanted edition. Null
+ * leaves the book for the user to choose.
+ */
 export function pickAutoAcquireCandidate(
   candidates: SeriesAudioCandidate[],
   expected?: SeriesAudioExpectation | null,
+  language: string | null | undefined = DEFAULT_SERIES_LANGUAGE,
+  ownTitles: readonly string[] = [],
 ): SeriesAudioCandidate | null {
   const list = candidates
-    .filter((candidate) => isAutoAcquireKind(candidate.kind) && candidate.hash)
+    .filter((candidate) => {
+      if (!isAutoAcquireKind(candidate.kind) || !candidate.hash || candidate.asinCheck === "other_book") return false;
+      const verdict = candidateLanguageFits(candidate, language, ownTitles);
+      return verdict === "fits" || (verdict === "unnamed" && candidateIsWantedEdition(candidate, expected));
+    })
     .sort(
       (a, b) => rankSeriesAudioCandidate(b, expected) - rankSeriesAudioCandidate(a, expected),
     );
@@ -253,6 +323,7 @@ export type SeriesAudioSearchDeps = {
       size?: string | null;
       format?: string | null;
       narrator?: string | null;
+      language?: string | null;
     }[];
     page: number;
     nextPage: number | null;
@@ -272,8 +343,59 @@ export type SeriesAudioSearchDeps = {
   abbMagnetLink: typeof abbMagnet;
   prowlarrMagnetLink: typeof prowlarrMagnet;
   cachedHashes: typeof torboxCachedHashes;
+  /** What AudiobookDB says of an Audible ASIN: its book and the language of its release (#897). Absent: the real one. */
+  asinRelease?: (asin: string) => Promise<AsinRelease | null>;
   log?: (message: string) => void;
 };
+
+export type AsinRelease = { bookId: string | null; language: string | null };
+
+/** `GET /audiobooks/external/audible/{ASIN}`, then the release's language (`GET /releases/{id}`); background priority, cached. */
+export async function audiobookDbAsinRelease(asin: string): Promise<AsinRelease | null> {
+  const hit = await audiobookDbByAsin(asin, { priority: "background" });
+  if (!hit) return null;
+  if (hit.releaseId) {
+    const release = await audiobookDbRelease(hit.releaseId, { priority: "background", bookId: hit.bookId });
+    if (release.language) return { bookId: release.bookId ?? hit.bookId, language: release.language };
+  }
+  const book = await audiobookDbBook(hit.bookId, { priority: "background" });
+  return { bookId: hit.bookId, language: book.languages.length === 1 ? book.languages[0] : null };
+}
+
+/** The most ASINs one search looks up: each is a provider call, spaced by the provider's own limiter. */
+const MAX_ASIN_LOOKUPS = 6;
+
+/**
+ * Looks up the ASIN in the title of each candidate that could still be picked (#897). The release's language decides:
+ * another language than the series' is never picked, the same one is the evidence of the wanted edition, an ASIN of
+ * another book is not this book. A lookup that fails leaves the candidate "unknown" (language not known).
+ */
+export async function resolveCandidateAsins(
+  candidates: SeriesAudioCandidate[],
+  options: { language: string | null | undefined; bookId?: string | null; ownTitles?: readonly string[] },
+  deps: Pick<SeriesAudioSearchDeps, "asinRelease" | "log">,
+) {
+  const lookup = deps.asinRelease ?? audiobookDbAsinRelease;
+  const wanted = languageCode(options.language) ?? DEFAULT_SERIES_LANGUAGE;
+  let lookups = 0;
+  for (const candidate of candidates) {
+    if (!isAutoAcquireKind(candidate.kind) || !candidate.hash) continue;
+    candidate.asin = findAsin([candidate.title]);
+    if (!candidate.asin) continue;
+    candidate.asinCheck = "unknown";
+    if (candidateLanguageFits(candidate, wanted, options.ownTitles) === "other" || lookups >= MAX_ASIN_LOOKUPS) continue;
+    lookups++;
+    const found = await withProviderRetry(`AudiobookDB ASIN ${candidate.asin}`, () => lookup(candidate.asin!), deps.log, 2);
+    if (!found) continue;
+    if (options.bookId && found.bookId && found.bookId !== options.bookId) candidate.asinCheck = "other_book";
+    else if (!found.language) candidate.asinCheck = "unknown";
+    else if (languagesNamed(found.language).includes(wanted)) candidate.asinCheck = "same";
+    else {
+      candidate.asinCheck = "other_language";
+      candidate.language = found.language;
+    }
+  }
+}
 
 const defaultDeps = (): SeriesAudioSearchDeps => ({
   abbSearch: abbReleaseSearch,
@@ -318,6 +440,7 @@ export async function searchVolumeAudioCandidates(
             size: result.size,
             format: result.format,
             narrator: result.narrator,
+            language: result.language,
             kind: classifySeriesAudioKind(result.title),
             query,
           });
@@ -388,6 +511,10 @@ export async function autoAcquireSeriesVolume(
     language?: string | null;
     /** The book's English releases on AudiobookDB, for the ranking (#721). */
     expected?: SeriesAudioExpectation | null;
+    /** The language of the series (#897): the pick takes only a release in it. English when absent. */
+    seriesLanguage?: string | null;
+    /** The book's id on the catalogue: an ASIN of another book is not this one. */
+    bookId?: string | null;
   },
   acquire: (
     magnet: string,
@@ -415,7 +542,10 @@ export async function autoAcquireSeriesVolume(
     input.allVolumes,
     deps,
   );
-  const chosen = pickAutoAcquireCandidate(candidates, input.expected);
+  const ownTitles = [input.title, input.volume.title, input.seriesName];
+  const seriesLanguage = input.seriesLanguage || DEFAULT_SERIES_LANGUAGE;
+  await resolveCandidateAsins(candidates, { language: seriesLanguage, bookId: input.bookId, ownTitles }, deps);
+  const chosen = pickAutoAcquireCandidate(candidates, input.expected, seriesLanguage, ownTitles);
   if (!chosen?.hash) {
     markWorkEmptySearch(userId, input.workId);
     return getWorkMediaState(userId, input.workId);
@@ -539,14 +669,6 @@ export async function autoAcquireSeriesVolumes(
  * its books is `server/series-pack.ts`.
  */
 
-/**
- * The language rule's hook (#897): whether a candidate is in the series' language. It accepts every candidate until
- * that rule is merged; the pack step calls it on each pack.
- */
-export function languageFits(_candidate: Pick<SeriesAudioCandidate, "title" | "format">, _language?: string | null) {
-  return true;
-}
-
 const PACK_RANGE =
   /(?:\bbooks?|\bbks?|\bvols?|\bvolumes?|\bparts?|#)\s*0*(\d{1,3})\s*(?:-|–|—|to|thru|through|&|and)\s*(?:#|books?\s*)?0*(\d{1,3})\b/i;
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -619,7 +741,7 @@ export async function searchSeriesPackCandidates(
         const response = await deps.abbSearch(query, page);
         next = response.nextPage;
         for (const result of response.results)
-          add({ source: "abb", id: result.id, title: result.title, size: result.size, format: result.format, narrator: result.narrator, kind: "compilation", query });
+          add({ source: "abb", id: result.id, title: result.title, size: result.size, format: result.format, narrator: result.narrator, language: result.language, kind: "compilation", query });
       }
     }, log);
     await withProviderRetry(`Prowlarr pack "${query}"`, async () => {
@@ -657,7 +779,7 @@ export type SeriesPackChoice = {
 };
 
 /**
- * The pack the queue takes (ADR 0027): one in the series' language (`languageFits`) that covers at least two of the
+ * The pack the queue takes (ADR 0027): one not in another language (`candidateLanguageFits`) that covers at least two of the
  * waiting books; the one covering the most of them, then TorBox's cached copy and the per-book ranking. Null when
  * no pack covers two.
  */
@@ -666,10 +788,12 @@ export function pickSeriesPack(
   volumes: readonly { position: number; title: string }[],
   seriesName: string,
   wanted: ReadonlySet<number>,
-  language?: string | null,
+  language: string | null | undefined = DEFAULT_SERIES_LANGUAGE,
 ): SeriesPackChoice | null {
+  const ownTitles = [seriesName, ...volumes.map((volume) => volume.title)];
   const options = candidates.flatMap((candidate) => {
-    if (!candidate.hash || !languageFits(candidate, language)) return [];
+    // A pack whose source or title names another language is never taken; one that names none is (#897's rule).
+    if (!candidate.hash || candidateLanguageFits(candidate, language, ownTitles) === "other") return [];
     const covered = packCoverage(candidate.title, volumes, seriesName);
     if (!covered) return [];
     const hits = covered.filter((position) => wanted.has(position));

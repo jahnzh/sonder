@@ -16,7 +16,8 @@ export type WorkMediaStateValue =
   | "failed"
   | "available";
 
-export type WorkMediaHoldReason = "unreleased" | "empty_search";
+/** "another_language": the downloaded recording is a release in another language than its series' (#897). */
+export type WorkMediaHoldReason = "unreleased" | "empty_search" | "another_language";
 
 export type WorkMediaState = {
   state: WorkMediaStateValue;

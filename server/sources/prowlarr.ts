@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AudiobookRelease } from "../../src/types.ts";
+import { titleLanguageName } from "../release-language.ts";
 import { torrentToMagnet } from "./torrent.ts";
 
 export const PROWLARR_CATEGORIES = [3030, 7000];
@@ -111,7 +112,8 @@ export function parseProwlarrResults(items: unknown): {
         title: item.title.replace(/\s+/g, " ").trim(),
         author: "",
         url: infoUrl,
-        language: null,
+        // Prowlarr names no language: only a mark in the title says one ("[FR]", "Français"), as the manual list shows it (#897).
+        language: titleLanguageName(item.title),
         narrator: null,
         format: releaseFormat(item.title),
         bitrate: bitrate ? `${bitrate} Kbps` : null,

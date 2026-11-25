@@ -59,7 +59,7 @@ export type SeriesAddModel = {
   /** "What is found downloads to your server." while a Get switch is on. */
   note: string | null;
   /** `POST /api/series`. */
-  body: { id: string; bookIds: string[]; searchAudio: boolean; searchEbooks: boolean };
+  body: { id: string; bookIds: string[]; searchAudio: boolean; searchEbooks: boolean; language: string };
 };
 
 const keyOf = (work: Pick<SeriesAddWork, "id" | "position">) => (work.position === null ? `b:${work.id}` : `n:${work.position}`);
@@ -163,6 +163,6 @@ export function seriesAddModel(
       ? { label: addButtonLabel(chosen.length), disabled: chosen.length === 0 }
       : { label: saveButtonLabel(chosen.length), disabled: false },
     note: searchAudio || searchEbooks ? GET_NOTE : null,
-    body: { id: series.id, bookIds, searchAudio, searchEbooks },
+    body: { id: series.id, bookIds, searchAudio, searchEbooks, language: normalizeSeriesLanguage(language) || "en" },
   };
 }
