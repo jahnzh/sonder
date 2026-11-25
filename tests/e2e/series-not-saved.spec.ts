@@ -97,7 +97,7 @@ test("a book's series line opens a series that is not saved; Back to the book; S
   const posted = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/series");
   await sheet.getByRole("button", { name: "Save series", exact: true }).click();
   const body = (await posted).postDataJSON();
-  expect(body).toEqual({ id: "702", bookIds: ["501"], searchAudio: false, searchEbooks: false });
+  expect(body).toEqual({ id: "702", bookIds: ["501"], searchAudio: false, searchEbooks: false, language: "en" });
   await expect(sheet).toHaveCount(0);
   await expect(page).toHaveURL(/#series\/702$/);
   await expect(region(page).getByText(/^Bea South · \d+ of 1 finished$/)).toBeVisible();
