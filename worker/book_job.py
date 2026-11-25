@@ -51,6 +51,36 @@ STATE_BYTES = 64 * 1024
 # How long cancel, fetch and idle end wait for the job's thread to stop before the session is kept as stuck.
 STOP_WAIT_S = 30.0
 STATES = ("queued", "decoding", "encoding", "anchoring", "aligning", "finishing") + TERMINAL
+# How often the encode writes how much audio it has encoded (`audioSecondsEncoded`). A track's count moves only
+# when the whole track is done, and one M4B of 23.6 h takes hours on lisa's CPU: without this the job looks stuck.
+ENCODE_PROGRESS_S = 15.0
+SAMPLE_RATE = 16000
+
+
+def encode_progress(job, done_samples, work, every=None, clock=time.monotonic):
+    """`on_progress(position, end)` for `encode_tracks`: records the audio encoded so far, in whole seconds of the
+    recording (`audioSecondsEncoded` of `audioSecondsTotal`), at most every `every` seconds. `done_samples` are
+    the samples of the tracks whose emissions were complete before this encode; `work` the tracks it encodes,
+    in order. The totals are written at once."""
+    every = ENCODE_PROGRESS_S if every is None else every
+    starts = []
+    total = done_samples
+    for track in work:
+        starts.append(total)
+        total += track["samples"]
+    total_seconds = int(total // SAMPLE_RATE)
+    last = {"at": clock(), "seconds": int(done_samples // SAMPLE_RATE)}
+    job.progress(audioSecondsEncoded=last["seconds"], audioSecondsTotal=total_seconds)
+
+    def on_progress(position, end):
+        seconds = min(total_seconds, int((starts[position] + end) // SAMPLE_RATE))
+        now = clock()
+        if seconds == last["seconds"] or (now - last["at"] < every and seconds < total_seconds):
+            return
+        last.update(at=now, seconds=seconds)
+        job.progress(audioSecondsEncoded=seconds)
+
+    return on_progress
 
 
 class JobConflict(Exception):
@@ -709,6 +739,9 @@ class WorkerStages:
             job.update(state="encoding")
             work = [{"index": i, "pcm": str(decoded_dir / decoded[i]["pcm"]), "samples": decoded[i]["samples"],
                      "decode": decoded[i], "identity": identities[i]} for i in missing]
+            done_samples = sum(int((read_json(emission_paths(emissions_dir, i)[1]) or {}).get("samples") or 0)
+                               for i in range(len(tracks)) if i not in missing)
+            on_progress = encode_progress(job, done_samples, work)
             queue = encode_queue(self.device)
             waited = time.monotonic()
             encoded = {"count": len(tracks) - len(missing)}
@@ -739,7 +772,7 @@ class WorkerStages:
                         monitor.start()
                     try:
                         stats = encode_tracks(model, work, emissions_dir, None, should_stop=should_stop,
-                                              on_track=on_encoded,
+                                              on_track=on_encoded, on_progress=on_progress,
                                               admit=None if gate is None else lambda: gate.hold_background(
                                                   should_stop, on_wait=job.gate_wait))
                     finally:

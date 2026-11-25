@@ -309,6 +309,12 @@ export type BookJobCounts = {
   resumeQueuePosition?: number;
   /** The encode waits for the worker's window requests. */
   waitingForWindowRequests?: boolean;
+  /**
+   * While encoding: whole seconds of the recording's audio encoded so far, of `audioSecondsTotal`. A track's count
+   * moves only when the whole track is done, so a book of one long file reports its encode by these.
+   */
+  audioSecondsEncoded?: number;
+  audioSecondsTotal?: number;
 };
 // A pool host's configured id (ADR 0013): "wsl" and "lisa" by default. "steamdeck" only appears on jobs stored
 // before the Steam Deck left the pool (#279).

@@ -468,8 +468,15 @@ export function failedLine(facts: FailedFacts): string {
   }
 }
 
-/** A running reading sync step with the worker's file count, where it reports one ("Encoding audio · 24 of 43 files"). */
-export function withFileCount(line: string, files: { done: number; total: number } | null | undefined): string {
+/**
+ * A running reading sync step with the worker's count, where it reports one: the share of the audio encoded where the
+ * worker reports it ("Encoding audio · 21%", so a book of one long file moves), else the file count ("Encoding audio ·
+ * 24 of 43 files").
+ */
+export function withFileCount(
+  line: string, files: { done: number; total: number } | null | undefined, audio?: { done: number; total: number } | null,
+): string {
+  if (audio && audio.total > 0) return `${line}${DOT}${Math.floor(Math.min(1, Math.max(0, audio.done / audio.total)) * 100)}%`;
   return files && files.total > 0 ? `${line}${DOT}${files.done} of ${files.total} files` : line;
 }
 

@@ -229,6 +229,8 @@ test("Now's lines: a series search, and the finished and failed forms with their
 
   assert.equal(withFileCount("Encoding audio", { done: 24, total: 43 }), "Encoding audio · 24 of 43 files");
   assert.equal(withFileCount("Aligning text", null), "Aligning text");
+  assert.equal(withFileCount("Encoding audio", { done: 0, total: 1 }, { done: 17300, total: 84845 }), "Encoding audio · 20%",
+    "a book of one long file moves by the audio encoded");
   assert.equal(withReason("Downloading to server · 77%", "Blocked by Torrent client"), "Downloading to server · 77% · Blocked by Torrent client");
   assert.equal(withReason("Copying audio", null), "Copying audio");
 });

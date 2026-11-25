@@ -198,7 +198,7 @@ function movingLine(item: ActivityItem): string | null {
           coverage: facts.coverage, progress: item.progress, wholeBook: facts.wholeBook, stage: facts.stage,
         },
       });
-      return line && item.state === "running" ? withFileCount(line, facts.files) : line;
+      return line && item.state === "running" ? withFileCount(line, facts.files, facts.audio) : line;
     }
     default:
       return null;

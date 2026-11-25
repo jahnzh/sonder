@@ -1073,3 +1073,12 @@ test("the options say which runner a Prepare starts; with whole-book jobs a chap
   assert.equal((await alignmentOptions("book-ebook", off.recordingId)).bookJobs, false);
   await assert.rejects(createAlignment("book-ebook", off.recordingId), /Match ebook sections to audio chapters before preparing sync/);
 });
+
+test("a one-file encode moves the job's share and counts by the audio encoded, where the worker reports it", () => {
+  const { bookJobCounts, bookJobProgress } = bookJob;
+  const progress = { tracksTotal: 1, tracksDecoded: 1, tracksEncoded: 0, encodeQueuePosition: 0, audioSecondsEncoded: 42422, audioSecondsTotal: 84845 };
+  assert.deepEqual(bookJobCounts({ progress }), progress, "the audio seconds are kept with the counts");
+  assert.ok(Math.abs(bookJobProgress({ state: "encoding", progress }) - (0.2 + 0.5 * 42422 / 84845)) < 1e-9);
+  assert.equal(bookJobProgress({ state: "encoding", progress: { tracksTotal: 1, tracksEncoded: 0 } }), 0.2, "an older worker: by finished tracks");
+  assert.deepEqual(bookJobCounts({ progress: { audioSecondsEncoded: 1.5, audioSecondsTotal: -1 } }), {}, "a value that is not a count is left out");
+});

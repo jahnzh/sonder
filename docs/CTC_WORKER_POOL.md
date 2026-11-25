@@ -579,7 +579,11 @@ turn to resume) → `decoding` → `encoding` →
 `tracksTotal`, `tracksDecoded`, `tracksEncoded`; `diskReservedBytes`, the
 job's current disk reservation; `resumeQueuePosition` (`1…`) while a retained
 job waits for its turn after a restart; `encodeQueuePosition` while
-encoding (`0` holds the encoder, `1…` waiting behind it);
+encoding (`0` holds the encoder, `1…` waiting behind it); `audioSecondsEncoded` of
+`audioSecondsTotal` while encoding, whole seconds of the recording's audio encoded
+(tracks finished before a restart included), written at most every 15 s
+(`ENCODE_PROGRESS_S`): a track's count moves only when the whole track is done,
+and a book of one 23.6 h M4B encodes for hours on lisa's CPU;
 `waitingForWindowRequests` (`true` while the encode waits for the window
 endpoints' gate, `false` once it got it again) with `gateWaitSeconds`, how long
 the current wait has lasted; then `groupsTotal`, `groupsDone` and
@@ -916,10 +920,11 @@ worker under one worker lease. Unset, nothing of the window runner changes.
 * **Reading sync page.** Each poll also stores the worker's counts for its stage
   in `bookJob.counts` (`tracksTotal`, `tracksDecoded`, `tracksEncoded`,
   `groupsTotal`, `groupsDone`, `encodeQueuePosition`, `resumeQueuePosition`,
-  `waitingForWindowRequests`; a count that is not a non-negative integer is left
+  `audioSecondsEncoded`, `audioSecondsTotal`, `waitingForWindowRequests`; a count that is not a non-negative integer is left
   out). The Reading sync page (`#book/<workId>/sync`, #540) shows a running
   whole-book job as its steps with the count of the running one (`runPoint` in
-  `src/pages/reading-sync-model.ts`), for example "24 of 43 files",
+  `src/pages/reading-sync-model.ts`), for example "24 of 43 files"
+  (or "20%" of the audio while encoding, where the worker reports it),
   "1 of 2 files", "1 book ahead", "34 of 83 parts", and its pause button reads
   "Pause": the worker's job is cancelled at once.
 * **Start, poll, fetch, publish.** The start request carries the ebook's

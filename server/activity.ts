@@ -8,12 +8,12 @@ import type { BackgroundProcess } from "./background-runner.ts";
 import type { ActivityHealth, ActivityItem, ActivityProcess, ActivityResponse } from "../src/types.ts";
 import { PAUSABLE_PROCESSES, PAUSE_EFFECT, isPausable } from "./activity-pause-model.ts";
 import {
-  ChangeTracker, activityFailure, formatAge,
+  ChangeTracker, activityFailure, formatAge, stuckMultiplier,
   type ActivityDeps, type ActivityService, type ActivitySource, type ProbeResult,
 } from "./activity-source.ts";
 import { ACTIVITY_SOURCES } from "./activity-sources.ts";
 
-export { ChangeTracker, formatAge, type ActivityDeps } from "./activity-source.ts";
+export { ChangeTracker, formatAge, stuckMultiplier, type ActivityDeps } from "./activity-source.ts";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -28,11 +28,6 @@ export const ATTENTION_FAILURE_MS = 7 * DAY;
 const UNTRACKED_PROCESSES = [
   { id: "imports", label: "Imports" },
 ];
-
-export function stuckMultiplier(raw: string | undefined | null) {
-  const value = Number(raw);
-  return Number.isFinite(value) && value >= 0.25 && value <= 10 ? value : 1;
-}
 
 /** One source with the rows it read and what its probe returned. */
 export type SourceSnapshot = { source: ActivitySource<unknown, unknown>; rows: unknown; probe: ProbeResult<unknown> };
@@ -83,11 +78,11 @@ export function buildActivity(input: ActivityInput): ActivityResponse {
 
   const items: ActivityItem[] = [];
   for (const { draft, source } of drafts) {
-    const { changedAt, permanent, dependsOn, actions, stuckReason, stuckActions, superseded, outsideLibrary, ...item } = draft;
+    const { changedAt, quietLimitMs, permanent, dependsOn, actions, stuckReason, stuckActions, superseded, outsideLibrary, ...item } = draft;
     if (item.state === "done" && now - item.updatedAt > FINISHED_VISIBLE_MS) continue;
     const waiting = item.state === "running" || item.state === "queued";
     const blockedBy = waiting && dependsOn && downService.has(dependsOn) ? dependsOn : null;
-    const threshold = source.stuckAfterMs * multiplier;
+    const threshold = quietLimitMs === null ? Infinity : (quietLimitMs ?? source.stuckAfterMs) * multiplier;
     let stuck: ActivityItem["stuck"] = null;
     let stalled = false;
     let moot = false;

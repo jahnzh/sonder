@@ -29,6 +29,7 @@ if READY:
     import book_align
     import book_audio
     import book_encode
+    import book_job
     import book_match
     from book_job import BOOK_ENGINE, BookJobs, WorkerStages
     from book_session import DiskBudget, SessionRegistry
@@ -722,6 +723,39 @@ class Pipeline(PipelineFixture):
         status = jobs.status(holder)
         self.assertGreaterEqual(status["stageTimings"]["gateWait"], 0.3)
         self.assertIs(status["progress"]["waitingForWindowRequests"], False)
+
+    def test_a_one_file_book_reports_the_audio_encoded_while_its_file_count_stays_at_0(self):
+        # The stuck-looking job of 25 Nov: one M4B, "Encoding audio · 0 of 1 files" for hours while lisa encoded it.
+        model = FakeModel()
+        release = threading.Event()
+        second = threading.Event()
+        inner = model.model
+
+        def slow(wave):
+            if model.calls >= 1:  # the second window waits until the test has read the status
+                second.set()
+                release.wait(30)
+            return inner(wave)
+
+        model.model = slow
+        jobs = self.jobs(model)
+        request = {**self.request, "tracks": self.tracks[:1]}  # one track of 40 s: two 20 s windows
+        with mock.patch.object(book_job, "ENCODE_PROGRESS_S", 0.0), \
+                mock.patch.object(book_align, "plan_groups", lambda longform, should_stop=None:
+                                  self.plan(longform.em.shape[0])):
+            jobs.start(request)
+            try:
+                self.assertTrue(second.wait(30))
+                status = jobs.status("book-1")
+            finally:
+                release.set()
+            self.assertEqual(status["state"], "encoding", status)
+            self.assertEqual(status["progress"]["tracksEncoded"], 0)
+            self.assertEqual(status["progress"]["audioSecondsTotal"], 40)
+            self.assertEqual(status["progress"]["audioSecondsEncoded"], 20, "the first window's core is reported")
+            final = self.wait(jobs)
+        self.assertEqual(final["state"], "done", final)
+        self.assertEqual(final["progress"]["audioSecondsEncoded"], 40)
 
     def test_cancel_during_the_encode_releases_everything(self):
         model = FakeModel()

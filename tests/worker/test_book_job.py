@@ -964,5 +964,42 @@ class ResultDisk(unittest.TestCase):
         self.assertEqual(jobs.result("job-1")["outcome"], "language_not_supported")
 
 
+class EncodeProgress(unittest.TestCase):
+    """A one-file book reports how much of its audio is encoded, not only "0 of 1 files" for hours."""
+
+    class Recorder:
+        def __init__(self):
+            self.writes = []
+
+        def progress(self, **changes):
+            self.writes.append(changes)
+
+    def test_seconds_encoded_are_written_at_most_every_interval_and_at_the_end(self):
+        job, clock = self.Recorder(), Clock()
+        rate = book_job.SAMPLE_RATE
+        # 600 s already encoded by an earlier run, then one track of 84,845 s (The Butcher's Masquerade's M4B).
+        on_progress = book_job.encode_progress(job, 600 * rate, [{"samples": 84845 * rate}], every=15, clock=clock)
+        self.assertEqual(job.writes, [{"audioSecondsEncoded": 600, "audioSecondsTotal": 85445}])
+        on_progress(0, 20 * rate)  # the first batch, at once: not written
+        self.assertEqual(len(job.writes), 1)
+        clock.now += 15
+        on_progress(0, 40 * rate)
+        self.assertEqual(job.writes[-1], {"audioSecondsEncoded": 640})
+        clock.now += 1
+        on_progress(0, 60 * rate)  # within the interval
+        self.assertEqual(len(job.writes), 2)
+        on_progress(0, 84845 * rate)  # the last window is always written
+        self.assertEqual(job.writes[-1], {"audioSecondsEncoded": 85445})
+
+    def test_positions_count_from_the_start_of_their_track(self):
+        job, clock = self.Recorder(), Clock()
+        rate = book_job.SAMPLE_RATE
+        on_progress = book_job.encode_progress(job, 0, [{"samples": 100 * rate}, {"samples": 50 * rate}], every=0,
+                                               clock=clock)
+        on_progress(1, 20 * rate)
+        self.assertEqual(job.writes[-1], {"audioSecondsEncoded": 120})
+        self.assertEqual(job.writes[0]["audioSecondsTotal"], 150)
+
+
 if __name__ == "__main__":
     unittest.main()

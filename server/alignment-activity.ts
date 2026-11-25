@@ -6,12 +6,59 @@
 import type { ActivityHealth, ActivityHostRestart, ActivityItemAction, ActivityState } from "../src/types.ts";
 import { BOOK_ENGINE, bookWorkerJobId, type AlignmentJob, type AlignmentPoolHostWork, type AlignmentPoolStatus } from "../src/reading-types.ts";
 import {
-  activityFailure, clamp01, defineSource, itemWork, offeredActions, stateFrom, withWorks,
+  activityFailure, clamp01, defineSource, formatAge, itemWork, offeredActions, stateFrom, stuckMultiplier, withWorks,
   type ActivityAction, type ActivityActionContext, type ActivityService, type ItemWork,
 } from "./activity-source.ts";
 import { readEbookIdsByWork } from "./ebook-chosen.ts";
 
 const MINUTE = 60_000;
+/** A running item is stuck when nothing about it changed for this long (scaled by the settings multiplier). */
+export const ALIGNMENT_STUCK_AFTER_MS = 20 * MINUTE;
+/**
+ * How long a whole-book stage that reports nothing until it ends (anchoring, the last pass, the text check after the
+ * encode, a worker without in-file encode progress) may go without a change before the job is stuck: far longer
+ * than the stages that report as they go, so a full-length book on the CPU host is not called stuck while it works.
+ */
+export const QUIET_STAGE_MS = 2 * 60 * MINUTE;
+
+/**
+ * How a whole-book job's worker stage reports: `moving` reports as it goes (decoding and aligning by their counts,
+ * encoding by the audio encoded), so the source's threshold holds; `quiet` reports nothing until it ends
+ * (QUIET_STAGE_MS); `waiting` waits for another book's encode, a turn to resume or the window requests, and is not
+ * stuck by itself. Null when the job has no worker stage of this run (the older engine, or no worker yet).
+ */
+export type BookStagePace = "moving" | "quiet" | "waiting";
+export function bookStagePace(state: string | null, counts: Record<string, unknown>): BookStagePace | null {
+  const count = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0);
+  switch (state) {
+    case null: return null;
+    case "decoding":
+    case "aligning":
+      return "moving";
+    case "queued":
+      return count(counts.resumeQueuePosition) ? "waiting" : "quiet";
+    case "encoding":
+      if (counts.waitingForWindowRequests === true || count(counts.encodeQueuePosition)) return "waiting";
+      return count(counts.audioSecondsTotal) && count(counts.audioSecondsEncoded) < count(counts.audioSecondsTotal) ? "moving" : "quiet";
+    default:
+      return "quiet";
+  }
+}
+
+/** The quiet limit (`ActivityDraft.quietLimitMs`) of a pace: undefined keeps the source's threshold. */
+function quietLimit(pace: BookStagePace | null): number | null | undefined {
+  return pace === "waiting" ? null : pace === "quiet" ? QUIET_STAGE_MS : undefined;
+}
+
+/**
+ * A running whole-book job whose worker reported no change for longer than its stage allows: Activity calls it stuck
+ * and offers Retry, which starts it again from the beginning. The same rule as Activity's (`buildActivity`), so a
+ * Retry is accepted exactly while the row offers it.
+ */
+export function bookJobStalled(job: Pick<ParsedAlignment, "status" | "pace">, changedAt: number, now: number, multiplier: number) {
+  if (job.status !== "processing" || !job.pace || job.pace === "waiting") return false;
+  return now - changedAt > (quietLimit(job.pace) ?? ALIGNMENT_STUCK_AFTER_MS) * multiplier;
+}
 
 export const ALIGNMENT_ACTIVITY_STATES: Record<AlignmentJob["status"], ActivityState> = {
   queued: "queued",
@@ -66,11 +113,14 @@ const ITEM_PREFIX = "alignment:";
 /** Retry or Resume of a reading sync: refused unless the stored job offers it, then the reading sync route's resume. */
 const resumeJob = (name: "retry" | "resume"): ActivityAction => async (id, { deps, log }) => {
   const rowId = id.slice(ITEM_PREFIX.length);
-  const row = deps.sqlite.prepare("SELECT data FROM alignment_jobs WHERE id = ?").get(rowId) as { data: string } | undefined;
+  const row = deps.sqlite.prepare("SELECT data, updated_at FROM alignment_jobs WHERE id = ?").get(rowId) as { data: string; updated_at: number } | undefined;
   if (!row) throw activityFailure(404, "This reading sync could not be found.");
   const job = parseAlignment(row.data, rowId);
-  const reason = name === "retry" ? "Only a reading sync that stopped can be retried." : "Only a paused reading sync can be resumed.";
-  if (!readingSyncActions(job).includes(name)) throw activityFailure(409, reason);
+  const reason = name === "retry" ? "Only a reading sync that stopped or is stuck can be retried." : "Only a paused reading sync can be resumed.";
+  // A stuck whole-book job is retried while it still runs: the new run replaces it, and its worker's job is cancelled.
+  const stuck = name === "retry" && readingSyncActions({ ...job, status: "error" }).includes("retry")
+    && bookJobStalled(job, row.updated_at, (deps.now ?? Date.now)(), stuckMultiplier(deps.getSetting("activityStuckMultiplier")));
+  if (!stuck && !readingSyncActions(job).includes(name)) throw activityFailure(409, reason);
   log.info({ action: `activity.${name}`, alignmentId: rowId }, name === "retry" ? "Reading sync started again" : "Reading sync resumed");
   return { ok: true, result: await deps.resumeAlignment(rowId) };
 };
@@ -102,6 +152,10 @@ type ParsedAlignment = {
   /** The worker's stage of this run, with its file counts where it counts files (#514). */
   stage: string | null;
   files: { done: number; total: number } | null;
+  /** While encoding, the seconds of the recording's audio encoded, where the worker reports them. */
+  audio: { done: number; total: number } | null;
+  /** How the stage reports, for the stuck rule (`bookStagePace`). */
+  pace: BookStagePace | null;
   /** A member's map projected from its ebook set's consensus (#325). */
   projected: boolean;
   /** Queued by itself (the backfill, an ebook-set check or new audio), not by a Prepare (#718). */
@@ -116,16 +170,21 @@ type ParsedAlignment = {
  * A worker job of an earlier generation (before a Resume) is not this run's, and one still starting has not reported
  * a stage.
  */
-function workerStage(job: Record<string, any>, rowId: string): Pick<ParsedAlignment, "stage" | "files"> {
+function workerStage(job: Record<string, any>, rowId: string): Pick<ParsedAlignment, "stage" | "files" | "audio" | "pace"> {
   const worker = job.status === "processing" ? job.bookJob : null;
   const own = worker && typeof worker === "object" && typeof worker.state === "string"
     && worker.id === bookWorkerJobId({ id: typeof job.id === "string" ? job.id : rowId, generation: typeof job.generation === "string" ? job.generation : undefined });
-  if (!own || worker.state === "starting") return { stage: null, files: null };
+  if (!own || worker.state === "starting") return { stage: null, files: null, audio: null, pace: null };
   const counts = (worker.counts && typeof worker.counts === "object" ? worker.counts : {}) as Record<string, unknown>;
   const count = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0);
   const done = worker.state === "decoding" ? count(counts.tracksDecoded) : worker.state === "encoding" ? count(counts.tracksEncoded) : null;
   const total = count(counts.tracksTotal);
-  return { stage: worker.state, files: done !== null && total > 0 ? { done: Math.min(done, total), total } : null };
+  const audioTotal = count(counts.audioSecondsTotal);
+  return {
+    stage: worker.state, files: done !== null && total > 0 ? { done: Math.min(done, total), total } : null,
+    audio: worker.state === "encoding" && audioTotal > 0 ? { done: Math.min(count(counts.audioSecondsEncoded), audioTotal), total: audioTotal } : null,
+    pace: bookStagePace(worker.state, counts),
+  };
 }
 
 function parseAlignment(data: string, rowId: string): ParsedAlignment {
@@ -145,7 +204,7 @@ function parseAlignment(data: string, rowId: string): ParsedAlignment {
   } catch (error) {
     return {
       status: "error", progress: null, createdAt: null, hostId: null, outcome: null, rebuild: false,
-      coverage: null, wholeBook: false, stage: null, files: null, projected: false, background: false, unreadable: true,
+      coverage: null, wholeBook: false, stage: null, files: null, audio: null, pace: null, projected: false, background: false, unreadable: true,
       error: `The job record could not be read: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
@@ -196,7 +255,7 @@ function poolServices(pool: AlignmentProbe | null, failure: string | null, jobsO
 export const alignmentSource = defineSource<AlignmentRow[], AlignmentProbe>({
   kind: "alignment",
   process: { id: "alignment", label: "Reading sync queue" },
-  stuckAfterMs: 20 * MINUTE,
+  stuckAfterMs: ALIGNMENT_STUCK_AFTER_MS,
   load: (sqlite, { userId }) => {
     const rows = sqlite.prepare(
       `SELECT a.id, a.ebook_id, a.recording_id, w.title, a.data, a.updated_at, w.id AS work_id,
@@ -219,7 +278,7 @@ export const alignmentSource = defineSource<AlignmentRow[], AlignmentProbe>({
     const status = await deps.poolStatus();
     return { ...status, restarts: deps.workerHosts?.restarts() };
   },
-  report(rows, probe) {
+  report(rows, probe, { now }) {
     const drafts = rows.map((row) => {
       const job = parseAlignment(row.data, row.id);
       const { state, unknown } = alignmentActivityState(job);
@@ -232,12 +291,18 @@ export const alignmentSource = defineSource<AlignmentRow[], AlignmentProbe>({
         ...itemWork(row.work),
         facts: {
           kind: "alignment" as const, status: job.status, outcome: job.outcome, coverage: job.coverage, wholeBook: job.wholeBook,
-          stage: job.stage, files: job.files,
+          stage: job.stage, files: job.files, audio: job.audio,
           // A projected map is the set's consensus read through this edition: no sync of the edition of its own.
           spare: !!row.spare && !job.projected, background: job.background,
         },
         error: unknown ?? job.error, changedAt: row.updated_at, dependsOn: job.hostId ? hostId(job.hostId) : null,
         actions: readingSyncActions(job),
+        // A whole-book job's stage decides how long it may go quiet; once stuck, the line names the host and Retry runs it again.
+        ...(job.pace ? {
+          quietLimitMs: quietLimit(job.pace),
+          stuckReason: `No progress on ${job.hostId ?? "the worker"} for ${formatAge(now - row.updated_at)}`,
+          stuckActions: readingSyncActions({ ...job, status: "error" }),
+        } : {}),
         // A failed sync of a book that is not in the library calls for no attention (#881).
         outsideLibrary: !!row.work && !row.work.inLibrary,
       };
