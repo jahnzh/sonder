@@ -171,6 +171,15 @@ test("the media state's forms: not released yet, an empty search, a failed downl
   assert.equal(mediaStateLine({ state: "available", holdReason: null }), null);
 });
 
+test("a recording in another language than its series' says so on the Audiobook row, not as an ordinary download (#897)", () => {
+  const held = work({ mediaState: { state: "available", holdReason: "another_language", acquisition: null } });
+  const line = bookModel(held, { admin: true }).audiobook.line;
+  assert.match(line, /(^| · )Another language$/);
+  assert.doesNotMatch(bookModel(work({ mediaState: { state: "available", holdReason: null, acquisition: null } }), { admin: true }).audiobook.line, /Another language/);
+  assert.equal(mediaStateLine({ state: "available", holdReason: "another_language" }), "Another language");
+  assert.equal(mediaStateLine({ state: "missing", holdReason: "another_language" }), "Another language");
+});
+
 test("a PDF-only book: Read off, the PDF line, Needs an EPUB once there is a recording", () => {
   const pdfOnly = bookModel(work({ ebooks: [ebook("p1", "pdf")] }), { admin: true });
   assert.equal(pdfOnly.readEbookId, null);

@@ -59,6 +59,12 @@ test("each recording is a choice: narrator, then language and length, and a mark
   assert.equal(recordingDetail({ language: null, duration: 0, faults: {} }), "");
 });
 
+test("the recording of a work held as another language says so on its Choice row (#897)", () => {
+  const choices = recordingChoices([recording({}), recording({ recordingId: "r2", language: null, duration: 40 * 60 })], "r2");
+  assert.deepEqual(choices.map((choice) => choice.detail), ["English · 9 h 12 min", "40 min · Another language"]);
+  assert.equal(audiobookRowLine({ narrator: "Ray Porter", duration: 3600, serverStored: true, tracks: [{ sourceType: "local" }] }, true), "Ray Porter · 1 h · On server · Another language");
+});
+
 test("the book dialog's Audiobook row: narrator, length and where the recording stands", () => {
   const torbox = { sourceType: "torbox" as const };
   assert.equal(audiobookRowLine({ narrator: "Ray Porter", duration: 9 * 3600 + 12 * 60, serverStored: true, tracks: [torbox] }), "Ray Porter · 9 h 12 min · On server");

@@ -3,7 +3,7 @@
 // ASIN is read as `catalogue-links.ts` reads it to link the release (`workRecordings`), the language is that release's.
 import { sqlite } from "./db.ts";
 import { workRecordings } from "./catalogue-links.ts";
-import { languageCode, languagesNamed } from "./release-language.ts";
+import { namesLanguage } from "./release-language.ts";
 import { audiobookDbAsinRelease, seriesAudioLanguage, type AsinRelease } from "./series-audio.ts";
 import { setWorkMediaHold } from "./work-media-state.ts";
 
@@ -42,11 +42,11 @@ export async function checkDownloadedLanguage(
     if (!series) continue;
     const asin = workRecordings(row.workId).find((recording) => recording.asin && (!row.editionId || recording.editionId === row.editionId))?.asin;
     if (!asin) continue;
-    const wanted = languageCode(seriesAudioLanguage(row.userId, series.seriesId, series.language))!;
+    const wanted = seriesAudioLanguage(row.userId, series.seriesId, series.language);
     try {
       const found = await lookup(asin);
       if (!found?.language) continue;
-      if (languagesNamed(found.language).includes(wanted)) continue;
+      if (namesLanguage(found.language, wanted)) continue;
       setWorkMediaHold(row.userId, row.workId, "another_language");
       marked.push(row.workId);
     } catch (error) {
