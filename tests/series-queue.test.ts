@@ -375,6 +375,13 @@ test("a pack the queue takes for two waiting books is the chosen release of each
     const row = await bookOf(bookId);
     assert.deepEqual([row.acquisition?.audio?.found, row.acquisition?.audio?.chosen], [1, true], bookId);
   }
+  // Search again finds the book's own releases; the pack serving it stays its chosen one, by the queue.
+  await post("/works/bk-201/acquisition/again", { kind: "audio" });
+  await tickSeriesAcquisition();
+  const again = await detail("bk-201");
+  assert.deepEqual([again.choice.chosen, again.choice.by], [HASH.pack, "queue"]);
+  assert.deepEqual(again.choice.candidates.map((candidate: { id: string }) => candidate.id).sort(), ["first-en", "first-en-2", "first-fr", "saga-pack", "saga-set"]);
+  assert.equal(acquired.length, 1, "Search again downloads nothing");
 });
 
 test("Search again for a book with its audiobook on its way finds the releases again and downloads nothing", async () => {

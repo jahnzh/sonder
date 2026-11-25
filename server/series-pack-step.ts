@@ -153,6 +153,16 @@ export async function seriesPackStep(
   return mine;
 }
 
+/** Whether the pack with this info hash, on its way or done, serves the work (ADR 0027). */
+export function packServesWork(workId: string, hash: string) {
+  return !!sqlite
+    .prepare(
+      `SELECT 1 FROM acquisition_works w JOIN acquisitions a ON a.id = w.acquisition_id
+        WHERE w.work_id = ? AND lower(a.hash) = lower(?) AND a.status NOT IN ('error','cancelled')`,
+    )
+    .get(workId, hash);
+}
+
 /** A book of a pack as the Get sheet names it. */
 export type PackBookView = { position: number; title: string; workId: string | null; hasAudio: boolean; gets: boolean };
 export type PackView = { seriesId: string; seriesName: string; from: number; to: number; books: PackBookView[] };

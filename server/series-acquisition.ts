@@ -21,10 +21,11 @@ import {
   storedCandidate,
   writeSeriesChoice,
   type SeriesCandidateFacts,
+  type StoredSeriesCandidate,
 } from "./series-queue-store.ts";
 import { seriesQueueOrder } from "./series-queue-order.ts";
 import { fetchTopKIntoEbookSet } from "./ebook-set.ts";
-import { resetPackSearches, seriesPackStep } from "./series-pack-step.ts";
+import { packServesWork, resetPackSearches, seriesPackStep } from "./series-pack-step.ts";
 import { retryWorkMediaAcquisition } from "./series-membership.ts";
 import {
   clearWorkMediaHold,
@@ -815,13 +816,13 @@ async function runAudioJob(
   // result (its page, language, seeders) are read as the search goes.
   const facts = new Map<string, SeriesCandidateFacts>();
   const searchDeps = factsRecordingDeps(deps.seriesAudioDeps ?? defaultSeriesAudioDeps(), facts);
-  const keep = (candidates: SeriesAudioCandidate[], chosen: string | null, by: "queue" | "owner" = "queue") => {
+  const keep = (candidates: SeriesAudioCandidate[], chosen: string | null, by: "queue" | "owner" = "queue", kept: StoredSeriesCandidate[] = []) => {
     try {
       writeSeriesChoice(job.id, {
         at: Date.now(),
         chosen,
         by,
-        candidates: candidates.map((candidate) => storedCandidate(candidate, facts.get(`${candidate.source}:${candidate.id}`), expected)),
+        candidates: [...kept, ...candidates.map((candidate) => storedCandidate(candidate, facts.get(`${candidate.source}:${candidate.id}`), expected))],
       });
     } catch (error) {
       // What was found is only shown: a failure to keep it never stops the search.
@@ -834,7 +835,10 @@ async function runAudioJob(
     // The release downloaded for the book stays the chosen one, by whoever chose it.
     const previous = readSeriesChoice(job.id);
     const still = !!previous?.chosen && candidates.some((candidate) => candidateKey(candidate) === previous.chosen);
-    keep(candidates, still ? previous!.chosen : null, still ? previous!.by : "queue");
+    // A pack that serves the book (ADR 0027) is no find of the book's own search: it stays chosen while it serves it.
+    const pack = !still && previous?.chosen ? previous.candidates.find((candidate) => candidate.key === previous.chosen && candidate.kind === "compilation") : undefined;
+    if (pack && packServesWork(job.workId, pack.key)) keep(candidates, pack.key, previous!.by, [pack]);
+    else keep(candidates, still ? previous!.chosen : null, still ? previous!.by : "queue");
     return;
   }
   let picked: string | null = null;
