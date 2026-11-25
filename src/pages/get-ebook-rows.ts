@@ -15,7 +15,8 @@ export const EBOOK_SOURCE_NAMES: Record<EbookSourceId, string> = {
   standardebooks: "Standard Ebooks",
   gutenberg: "Project Gutenberg",
 };
-const sourceOf = (result: Pick<EbookResult, "source">): EbookSourceId => (result.source && result.source in EBOOK_SOURCE_NAMES ? result.source : "libgen");
+/** A result's source; an older server's Library Genesis file has none. */
+export const sourceOf = (result: Pick<EbookResult, "source">): EbookSourceId => (result.source && result.source in EBOOK_SOURCE_NAMES ? result.source : "libgen");
 
 /** Where the row's edition is listed: the source, or a Prowlarr release's indexer with its seeders. */
 export function editionSource(result: Pick<EbookResult, "source" | "indexer" | "seeders">) {

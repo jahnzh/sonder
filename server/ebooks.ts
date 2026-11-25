@@ -29,6 +29,7 @@ import { pipeline } from "node:stream/promises";
 import {
   createLibgenClient,
   LibgenLimitedError,
+  LIBGEN_USER_AGENT,
   type LibgenTiming,
 } from "./sources/libgen-client.ts";
 import {
@@ -45,12 +46,6 @@ import {
 // Standard Ebooks and Project Gutenberg are the sources (#901).
 export type EbookSource = "libgen" | "prowlarr" | "standardebooks" | "gutenberg";
 export const EBOOK_SOURCES = ["libgen", "prowlarr", "standardebooks", "gutenberg"] as const satisfies readonly EbookSource[];
-export const EBOOK_SOURCE_NAMES: Record<EbookSource, string> = {
-  libgen: "Library Genesis",
-  prowlarr: "Prowlarr",
-  standardebooks: "Standard Ebooks",
-  gutenberg: "Project Gutenberg",
-};
 export type EbookResult = {
   /** The file's md5 on Library Genesis; for another source a 32-hex key of the edition there. */
   md5: string;
@@ -68,8 +63,7 @@ export type EbookResult = {
   seeders?: number | null;
   cached?: boolean;
 };
-const userAgent =
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36";
+const userAgent = LIBGEN_USER_AGENT;
 // The test suites ask fake mirrors many times in a row: no spacing, no waits, no rest.
 const testTiming: LibgenTiming = { spacing: { search: 0, download: 0 }, waits: [0, 0], mirrorsPerRequest: 2, rests: [0] };
 /** The one Library Genesis client (#901): the Get sheet and the series queue share its spacing and rests. */

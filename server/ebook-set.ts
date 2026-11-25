@@ -871,7 +871,19 @@ export async function fetchTopKIntoEbookSet(
           cheapTitleAuthorMatch(work, { title: f.title, authors: f.authors.length ? f.authors : from === "prowlarr" ? [f.title] : [] }),
       );
       if (from === "prowlarr") {
-        // A torrent is not checked here: its download is started, and its EPUB joins the set when complete.
+        // A torrent is not checked here: its download is started, and its EPUB joins the set when complete. One
+        // Prowlarr download per book: one on its way is waited for; a finished one (its edition was not taken, or the
+        // search would not run) is not started again, and the next source is asked.
+        const earlier = sqlite
+          .prepare(
+            `SELECT id, status FROM acquisitions WHERE kind='ebook' AND work_id=? AND status NOT IN ('error','cancelled')
+             ORDER BY updated_at DESC LIMIT 1`,
+          )
+          .get(workId) as { id: string; status: string } | undefined;
+        if (earlier) {
+          if (earlier.status !== "ready") started = earlier.id;
+          continue;
+        }
         const release = filtered[0];
         if (!release) continue;
         try {

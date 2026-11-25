@@ -114,7 +114,7 @@ test("Standard Ebooks' recorded search: one EPUB per book, its file named from i
     coverUrl: "https://standardebooks.org/ebooks/leo-tolstoy/the-power-of-darkness/louise-maude_aylmer-maude/downloads/cover-thumbnail.jpg",
     url: "https://standardebooks.org/ebooks/leo-tolstoy/the-power-of-darkness/louise-maude_aylmer-maude",
   });
-  assert.match(files[0].size!, /^\d+ kB$|^\d+\.\d MB$/);
+  assert.match(files[0].size!, /^\d+(\.\d+)? (KB|MB)$/);
   assert.match(files[0].year!, /^\d{4}$/);
   // Every recommended EPUB in the feed is the one derived from its book page.
   const feedLinks = [...STANDARD_EBOOKS.matchAll(/href="([^"]+\.epub\?source=feed)"[^>]*title="Recommended compatible epub"/g)].map((m) => m[1]);
@@ -334,4 +334,88 @@ test("a series ebook job whose sources limited requests goes back in the queue f
   const item = activity.items.find((entry: { id: string }) => entry.id.endsWith("job-dcc"));
   assert.equal(item.facts.retryAt, job.retryAt);
   assert.equal(item.error, LIBGEN_LIMITED);
+});
+
+const { chooseEbookFile, idleLimit } = await import("../server/ebook-torrents.ts");
+
+test("a torrent's ebook: its one EPUB, else its PDF; of a collection only the file named after the book", () => {
+  const files = (...names: string[]) => names.map((name) => ({ name }));
+  assert.equal(chooseEbookFile(files("PHM/cover.jpg", "PHM/Project Hail Mary.mobi", "PHM/Project Hail Mary.epub"), "Project Hail Mary")?.name, "PHM/Project Hail Mary.epub");
+  assert.equal(chooseEbookFile(files("PHM/Project Hail Mary.pdf", "PHM/readme.txt"), "Project Hail Mary")?.name, "PHM/Project Hail Mary.pdf");
+  assert.equal(chooseEbookFile(files("a.mobi", "b.azw3"), "Anything"), null);
+  const series = files(
+    "Dinniman - Dungeon Crawler Carl/01 - Dungeon Crawler Carl.epub",
+    "Dinniman - Dungeon Crawler Carl/02 - Carl's Doomsday Scenario.epub",
+    "Dinniman - Dungeon Crawler Carl/05 - The Butcher's Masquerade.epub",
+  );
+  assert.equal(chooseEbookFile(series, "The Butcher's Masquerade")?.name, series[2].name);
+  assert.equal(chooseEbookFile(series, "Carl's Doomsday Scenario")?.name, series[1].name);
+  // No file of the collection is this book: nothing, rather than another book.
+  assert.equal(chooseEbookFile(series, "The Gate of the Feral Gods"), null);
+});
+
+test("a transfer that stops sending fails after its idle limit", async () => {
+  const limited = idleLimit(30);
+  limited.write("PK");
+  await assert.rejects(
+    new Promise((resolve, reject) => {
+      limited.on("error", reject);
+      limited.on("end", resolve);
+      limited.resume();
+    }),
+    /stalled/,
+  );
+});
+
+test("Get this edition of a Prowlarr release already fetched for another book fetches it again for this one", async () => {
+  addWork("work-phm-2", "Project Hail Mary", "Andy Weir", 2021);
+  const before = db.select().from(s.acquisitions).all().find((row) => row.kind === "ebook" && row.status === "ready");
+  assert.ok(before, "the earlier test's download is ready");
+  const epub = await readerFixture({ title: "Project Hail Mary again" });
+  const hash = before.hash;
+  handler = (url) => {
+    if (url.host === "127.0.0.1:9696" && url.pathname === "/api/v1/search") return Response.json(PROWLARR);
+    if (url.hostname === "api.torbox.app") {
+      const path = url.pathname;
+      const data = path.endsWith("checkcached")
+        ? (url.searchParams.get("hash") ?? "").split(",").filter((asked) => asked === hash).map((asked) => ({ hash: asked }))
+        : path.endsWith("createtorrent")
+          ? { torrent_id: 78 }
+          : path.endsWith("mylist")
+            ? { download_present: true, files: [{ id: 3, name: "PHM/Project Hail Mary.epub" }] }
+            : "https://store.torbox.fixture/phm2.epub";
+      return Response.json({ success: true, data });
+    }
+    if (url.href === "https://store.torbox.fixture/phm2.epub") return new Response(new Uint8Array(epub), { headers: { "Content-Length": String(epub.length) } });
+    throw new Error(`Unexpected request: ${url}`);
+  };
+  const release = (await app.inject("/api/discover/ebooks?source=prowlarr&q=project+hail+mary")).json().files[0];
+  const got = await app.inject({ method: "POST", url: "/api/ebooks", payload: { ...release, workId: "work-phm-2" } });
+  assert.equal(got.statusCode, 200, got.body);
+  assert.equal(got.json().acquisition.id, before.id);
+  await refreshAcquisition(before.id);
+  const row = db.select().from(s.acquisitions).where(eq(s.acquisitions.id, before.id)).get()!;
+  assert.equal(row.status, "ready", row.error ?? "");
+  assert.equal(row.workId, "work-phm-2");
+  assert.equal(db.select().from(s.ebookEditions).where(eq(s.ebookEditions.workId, "work-phm-2")).all().length, 1);
+});
+
+test("the series search tries a book's Prowlarr download once: a finished one sends it to the next source", async () => {
+  const workId = "work-phm-2";
+  const order: string[] = [];
+  let startedAgain = 0;
+  setEbookSetDeps({
+    search: async (source) => {
+      order.push(source);
+      return { files: source === "prowlarr" ? parseProwlarrEbooks(PROWLARR).files : [], website: "" };
+    },
+    startTorrent: async () => {
+      startedAgain++;
+      return { id: "x" };
+    },
+  });
+  const result = await fetchTopKIntoEbookSet(workId, "libgen", { sources: ["libgen", "prowlarr", "standardebooks"] });
+  assert.equal(startedAgain, 0);
+  assert.equal(result.started ?? null, null);
+  assert.deepEqual(order, ["libgen", "prowlarr", "standardebooks"]);
 });

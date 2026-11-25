@@ -18,9 +18,8 @@ import { Sheet } from "../parts/Sheet";
 import { InfoMark } from "../parts/Tooltip";
 import { tip } from "../tooltip-texts";
 import type { EbookResult } from "../types";
-import { addedEditions, editionSourceLink, getEditionLine } from "./get-ebook-rows";
+import { addedEditions, editionSourceLink, getEditionLine, sourceOf } from "./get-ebook-rows";
 
-const sourceOfRow = (result: EbookResult): EbookSourceId => result.source || "libgen";
 import {
   EBOOK_SOURCE_NAMES,
   ebookAnswered,
@@ -160,6 +159,10 @@ export function GetEbookSheet({ workId, online, libgenUrl, prowlarrConfigured, o
       const keep = chosen;
       run(text);
       if (initial && keep) setChosen(keep);
+    } else {
+      // Back or Forward to an entry left while a source was still searching: that source is asked again.
+      const unsettled = Object.entries(initial.search.sources ?? {}).filter(([, state]) => state?.status === "searching");
+      for (const [source] of unsettled) retry(source as EbookSourceId);
     }
   }, [work, prowlarrConfigured]);
 
@@ -214,7 +217,7 @@ export function GetEbookSheet({ workId, online, libgenUrl, prowlarrConfigured, o
       const wait = error instanceof ApiError && error.code === "source_limited" ? error.retryAfter : undefined;
       if (live.current && wait) {
         const at = Date.now() + wait * 1000;
-        setRefusal(limitedText(sourceOfRow(chosenRow.result), clockTime(at)));
+        setRefusal(limitedText(sourceOf(chosenRow.result), clockTime(at)));
         setGetAgain({ id: chosenRow.id, at });
       } else if (live.current) setRefusal((error as Error).message || NOT_SAVED);
       // A book added before the refusal stays added: the Book page shows it in the library.

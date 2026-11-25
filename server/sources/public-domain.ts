@@ -11,6 +11,7 @@
 // entries are `urn:gutenberg:<number>`; the EPUB of book <number> is `https://www.gutenberg.org/ebooks/<number>.epub3.images`.
 import { createHash } from "node:crypto";
 import { XMLParser } from "fast-xml-parser";
+import { formatBytes } from "./prowlarr.ts";
 
 export type PublicDomainSource = "standardebooks" | "gutenberg";
 
@@ -57,9 +58,6 @@ const list = (value: unknown): Node[] => (Array.isArray(value) ? value : value ?
 /** The key a public-domain edition is stored under (`<source>-<key>`), from its page: 32 hex like a Library Genesis md5. */
 export const publicDomainKey = (page: string) => createHash("md5").update(page).digest("hex");
 
-function formatBytes(bytes: number) {
-  return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} kB`;
-}
 
 function entries(xml: string): Node[] {
   const feed = (parser.parse(xml) as Node).feed as Node | undefined;

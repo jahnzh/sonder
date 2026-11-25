@@ -4,7 +4,8 @@ import { randomUUID } from "node:crypto";
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { Readable } from "node:stream";
-import { chooseEbookFile, importTorrentEbook, InvalidEbookFileError } from "./ebook-torrents.ts";
+import { chooseEbookFile, ebookFilePattern, idleLimit, importTorrentEbook, InvalidEbookFileError } from "./ebook-torrents.ts";
+import { pipeline } from "node:stream/promises";
 import { and, eq, inArray } from "drizzle-orm";
 import { parseFile } from "music-metadata";
 import { audioParseOptions, normalizeChapters, type Chapter } from "./chapters.ts";
@@ -109,8 +110,12 @@ export async function acquire(
     .from(s.acquisitions)
     .where(eq(s.acquisitions.hash, hash))
     .get();
-  // A failed or cancelled download of the same torrent starts again; any other is joined.
-  if (existing && existing.status !== "error" && existing.status !== "cancelled") {
+  // A retry of the same torrent (no kind given) stays what it was.
+  const kind = metadata.kind ? (metadata.kind === "ebook" ? "ebook" : null) : (existing?.kind ?? null);
+  // A failed or cancelled download of the same torrent starts again; any other is joined. A finished ebook download
+  // starts again too (#901): its file is imported into the book asked for now, which joining would not do.
+  const again = existing && (existing.status === "error" || existing.status === "cancelled" || (kind === "ebook" && existing.status === "ready"));
+  if (existing && !again) {
     db.insert(s.userAcquisitions).values({ userId: metadata.userId ?? 1, acquisitionId: existing.id }).onConflictDoNothing().run();
     if (existing.bookId) {
       db.delete(s.userHiddenLibrary).where(and(eq(s.userHiddenLibrary.userId, metadata.userId ?? 1), eq(s.userHiddenLibrary.bookId, existing.bookId))).run();
@@ -120,8 +125,6 @@ export async function acquire(
   }
   ensureMediaStorage();
   const id = existing?.id || randomUUID();
-  // A retry of the same torrent (no kind given) stays what it was.
-  const kind = metadata.kind ? (metadata.kind === "ebook" ? "ebook" : null) : (existing?.kind ?? null);
   const title =
     metadata.title ||
     new URL(magnet).searchParams.get("dn") ||
@@ -297,6 +300,11 @@ function createBook(
 const processing = new Set<string>();
 // Completed files that fail validation won't change on the next refresh, so these end the job.
 class InvalidTorrentError extends Error {}
+/** Why a torrent gives no file for its book: it has no ebook, or a collection names none of its files after the book. */
+const noEbookFile = (files: readonly { name: string }[]) =>
+  files.some((file) => ebookFilePattern.test(file.name))
+    ? "This torrent holds several ebooks and none is named after the book."
+    : "This torrent contains no EPUB or PDF file.";
 /** The finished torrent's ebook joins its book (#901); the download is then ready, with no audio edition. */
 async function importEbookOf(job: Acquisition, file: Readable, name: string) {
   try {
@@ -347,13 +355,19 @@ export async function refreshAcquisition(id: string) {
       });
       if (job.kind === "ebook") {
         // Only the chosen file has to be complete; the torrent's other files may still arrive.
-        const wanted = torrent.files.filter((_, index) => torrent.fileStats[index]?.wanted !== false);
-        const file = chooseEbookFile(wanted);
+        const files = torrent.files.map((entry, index) => ({ ...entry, index }));
+        const file = chooseEbookFile(files, job.title);
         if (!file) {
           // The file list is known once the metadata has come.
-          if (torrent.files.length) throw new InvalidTorrentError("This torrent contains no EPUB or PDF file.");
+          if (torrent.files.length) throw new InvalidTorrentError(noEbookFile(files));
           return;
         }
+        // Only the book's file is fetched: the torrent's other files (a collection's other books) are not wanted.
+        const others = files.filter((entry) => entry.index !== file.index && torrent.fileStats[entry.index]?.wanted !== false);
+        if (others.length)
+          await transmission("torrent-set", { ids: [job.hash], "files-unwanted": others.map((entry) => entry.index) }).catch(
+            (error: Error) => console.warn(`ebook torrent ${job.id}: other files still wanted: ${error.message}`),
+          );
         if (file.bytesCompleted < file.length) return;
         const path = resolveTorrentFile(torrent.downloadDir, file.name);
         if (!existsSync(path) || statSync(path).size !== file.length) return;
@@ -410,10 +424,10 @@ export async function refreshAcquisition(id: string) {
       };
       if (!torrent.download_present) return;
       if (job.kind === "ebook") {
-        const file = chooseEbookFile(torrent.files || []);
-        if (!file) throw new InvalidTorrentError("This torrent contains no EPUB or PDF file.");
+        const file = chooseEbookFile(torrent.files || [], job.title);
+        if (!file) throw new InvalidTorrentError(noEbookFile(torrent.files || []));
         // Loaded here: the ebook module loads the reader's, which the download queue does not need otherwise.
-        const { publicFetch } = await import("./ebooks.ts");
+        const { publicFetch, ebookTimeouts } = await import("./ebooks.ts");
         const response = await publicFetch(await torboxUrl(Number(job.remoteId), file.id), {
           headers: { "Accept-Encoding": "identity" },
         });
@@ -421,11 +435,12 @@ export async function refreshAcquisition(id: string) {
           await response.body?.cancel().catch(() => {});
           throw new Error("TorBox did not give the ebook file. The download can retry shortly.");
         }
-        await importEbookOf(
-          job,
-          Readable.fromWeb(response.body as import("node:stream/web").ReadableStream),
-          file.short_name || file.name,
+        // A transfer that stops sending fails after a minute, so it does not hold the queue (it is tried again).
+        const limited = idleLimit(ebookTimeouts.idle);
+        pipeline(Readable.fromWeb(response.body as import("node:stream/web").ReadableStream), limited).catch((error: Error) =>
+          limited.destroy(error),
         );
+        await importEbookOf(job, limited, file.short_name || file.name);
         return;
       }
       const files = (torrent.files || [])

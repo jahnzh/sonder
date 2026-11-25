@@ -300,7 +300,14 @@ function serverEntry(item: ActivityItem, now: number, spares: Map<string, { tota
     cover: notBook ? null : item.cover,
     entry,
     // A series search is about the file it looks for ("Ebook on server" has the Ebook icon, ActivityFailedSave.dc.html).
-    icon: notBook || saveAgain || metadataMatch ? "server" : item.facts.kind === "series-acquisition" ? item.facts.search : ICON_OF[entry] ?? null,
+    icon: notBook || saveAgain || metadataMatch
+      ? "server"
+      : item.facts.kind === "series-acquisition"
+        ? item.facts.search
+        : // A torrent fetched for its ebook (#901) is about the ebook.
+          item.facts.kind === "acquisition" && item.facts.file === "ebook"
+          ? "ebook"
+          : ICON_OF[entry] ?? null,
     line: line ?? item.detail ?? "",
     failed: failed || notBook,
     progress: group === "progress" && !item.stuck && !item.superseded ? item.progress : null,
