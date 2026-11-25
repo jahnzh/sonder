@@ -22,6 +22,7 @@ import {
   searchAudiobookDbBooks,
   type CatalogueBook,
   type CatalogueRelease,
+  audiobookDbPageUrl,
 } from "./audiobookdb.ts";
 import { openLibraryWork, openLibraryWorkUrl, refreshOpenLibraryEntry, searchOpenLibrary } from "./openlibrary.ts";
 import { googleBooksUrl, googleBooksVolume, refreshGoogleBooksEntry } from "./googlebooks.ts";
@@ -312,7 +313,7 @@ export type WorkLink = {
   /** The other AudiobookDB entries of the same work (#754), each with its number of releases. */
   duplicates: WorkDuplicate[];
 };
-export type WorkDuplicate = { id: string; title: string; releases: number };
+export type WorkDuplicate = { id: string; title: string; releases: number; url: string };
 type LinkRow = { provider: MainCatalogueProvider; externalId: string; title: string; author: string; seriesId: string | null; seriesName: string | null; seriesPosition: string | null; seriesSort: number | null; matchedBy: WorkLink["matchedBy"] };
 export function workLink(workId: string): WorkLink | null {
   const row = sqlite
@@ -329,14 +330,15 @@ export function workLink(workId: string): WorkLink | null {
     author: row.author,
     series: row.seriesName ? { id: row.seriesId, name: row.seriesName, position: row.seriesPosition, sort: row.seriesSort } : null,
     matchedBy: row.matchedBy,
-    url: row.provider === "openlibrary" ? openLibraryWorkUrl(row.externalId) : "https://audiobookdb.org",
+    url: row.provider === "openlibrary" ? openLibraryWorkUrl(row.externalId) : audiobookDbPageUrl("book", row.externalId),
     duplicates: row.provider === "audiobookdb" ? workDuplicates(workId) : [],
   };
 }
 export function workDuplicates(workId: string): WorkDuplicate[] {
-  return sqlite
+  const rows = sqlite
     .prepare("SELECT external_id AS id,title,releases FROM work_catalogue_duplicates WHERE work_id=? AND provider='audiobookdb' ORDER BY releases DESC,linked_at,external_id")
-    .all(workId) as WorkDuplicate[];
+    .all(workId) as Omit<WorkDuplicate, "url">[];
+  return rows.map((row) => ({ ...row, url: audiobookDbPageUrl("book", row.id) }));
 }
 /** Every AudiobookDB entry the work is: its main link first, then its duplicates. Empty without an AudiobookDB link. */
 export function workEntryIds(workId: string): string[] {
