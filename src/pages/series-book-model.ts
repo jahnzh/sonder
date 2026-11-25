@@ -153,7 +153,11 @@ export function seriesBookModel(search: SeriesWorkSearch): SeriesBookModel {
       }
     : null;
   const ebook = search.ebook
-    ? { line: searchLine(search.ebook, "ebook", null, false, false), steering: searchSteering(search.ebook, search.ebook.status === "done") }
+    ? {
+        line: searchLine(search.ebook, "ebook", null, false, false),
+        // An ebook search downloads what it finds: Search again only after a failure (a done one finds the book's ebook).
+        steering: { ...searchSteering(search.ebook, search.ebook.status === "done"), ...(search.ebook.status === "failed" ? {} : { again: false }) },
+      }
     : null;
   return { title: search.title, audio, ebook };
 }

@@ -140,12 +140,14 @@ export const seriesAcquisitionSource = defineSource<SeriesJobRow[]>({
       sqlite.prepare(
         // The queue's order (`SERIES_QUEUE_ORDER` in `server/series-acquisition.ts`): the places in line follow it.
         `SELECT j.id, u.username AS user, j.kind, w.title, j.status, j.error, j.updated_at, j.retry_at, w.id AS work_id,
-                j.series_id, j.book_id
+                j.series_id, j.book_id, j.user_id AS owner_id
            FROM series_acquisition_jobs j LEFT JOIN users u ON u.id = j.user_id LEFT JOIN works w ON w.id = j.work_id
           ORDER BY ${seriesQueueOrder("j")}`,
-      ).all() as Array<Omit<SeriesJobRow, "work"> & { work_id: string | null }>,
+      ).all() as Array<Omit<SeriesJobRow, "work"> & { work_id: string | null; owner_id: number }>,
       (row) => row.work_id,
-    ).filter((row) => !failedButHasFile(sqlite, row)).map((row): SeriesJobRow => row).concat(resaveRows(sqlite), metadataMatchRows(sqlite, userId)),
+    )
+      // The Series page is the saved series of the one reading (#898): another user's search opens its book as before.
+      .map(({ owner_id, ...row }) => (owner_id === userId ? row : { ...row, series_id: null, book_id: null })).filter((row) => !failedButHasFile(sqlite, row)).map((row): SeriesJobRow => row).concat(resaveRows(sqlite), metadataMatchRows(sqlite, userId)),
   report(rows, _probe, context) {
     const now = context?.now ?? Date.now();
     // The search running now is first in line; the waiting jobs that may run follow in the queue's order.

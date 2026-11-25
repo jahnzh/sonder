@@ -311,7 +311,9 @@ function upsertJob(input: {
     input.status === "pending" &&
     (existing.status === "pending" ||
       existing.status === "searching" ||
-      existing.status === "done")
+      existing.status === "done" ||
+      // The owner's Skip and Stop searching (#898) hold until the owner's Search now or Resume, which set it directly.
+      (existing.status === "failed" && SERIES_OWNER_OUTCOMES.includes(existing.error ?? "")))
   )
     return existing.id;
   if (existing) {
@@ -808,12 +810,12 @@ async function runAudioJob(
   // result (its page, language, seeders) are read as the search goes.
   const facts = new Map<string, SeriesCandidateFacts>();
   const searchDeps = factsRecordingDeps(deps.seriesAudioDeps ?? defaultSeriesAudioDeps(), facts);
-  const keep = (candidates: SeriesAudioCandidate[], chosen: string | null) => {
+  const keep = (candidates: SeriesAudioCandidate[], chosen: string | null, by: "queue" | "owner" = "queue") => {
     try {
       writeSeriesChoice(job.id, {
         at: Date.now(),
         chosen,
-        by: "queue",
+        by,
         candidates: candidates.map((candidate) => storedCandidate(candidate, facts.get(`${candidate.source}:${candidate.id}`), expected)),
       });
     } catch (error) {
@@ -824,8 +826,10 @@ async function runAudioJob(
   if (searchOnly) {
     const candidates = await searchVolumeAudioCandidates(ref, meta.name, author, refs, searchDeps);
     if (!seriesAudioJobStillSearching(job.id)) return;
-    const previous = readSeriesChoice(job.id)?.chosen ?? null;
-    keep(candidates, candidates.some((candidate) => candidateKey(candidate) === previous) ? previous : null);
+    // The release downloaded for the book stays the chosen one, by whoever chose it.
+    const previous = readSeriesChoice(job.id);
+    const still = !!previous?.chosen && candidates.some((candidate) => candidateKey(candidate) === previous.chosen);
+    keep(candidates, still ? previous!.chosen : null, still ? previous!.by : "queue");
     return;
   }
   let picked: string | null = null;
@@ -844,6 +848,7 @@ async function runAudioJob(
     }
   };
   let found: SeriesAudioCandidate[] = [];
+  let searched = false;
   try {
     await autoAcquireSeriesVolume(
     job.userId,
@@ -857,6 +862,7 @@ async function runAudioJob(
       cover: volume.cover ?? edition?.cover,
       expected,
       onCandidates: (candidates, chosen) => {
+        searched = true;
         found = candidates;
         picked = chosen ? candidateKey(chosen) : null;
       },
@@ -867,7 +873,8 @@ async function runAudioJob(
   );
   } finally {
     // The pick counts as chosen once its download was asked for; one whose magnet could not be read was not.
-    if (found.length || picked) keep(found, sent ? picked : null);
+    // What an ended search found, nothing included, replaces what an earlier one did.
+    if (searched) keep(found, sent ? picked : null);
   }
   if (!seriesAudioJobStillSearching(job.id)) return;
 }

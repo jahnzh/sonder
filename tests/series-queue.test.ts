@@ -232,9 +232,9 @@ test("found but none chosen (only a set), and nothing found, are told apart", as
   assert.equal(first.acquisition?.audio?.found, 1);
   assert.equal(first.acquisition?.audio?.chosen, false);
   assert.equal((await detail("bk-201")).choice.chosen, null);
-  // The second volume's search found nothing: no list kept, and the hold says so.
+  // The second volume's search found nothing: an empty list kept, and the hold says so.
   const second = await bookOf("bk-202");
-  assert.equal(second.acquisition?.audio?.found, null);
+  assert.equal(second.acquisition?.audio?.found, 0);
   assert.equal(getWorkMediaState(1, second.workId)?.holdReason, "empty_search");
   assert.equal(acquired.length, 0);
 });
@@ -364,4 +364,54 @@ test("Search again for a book with its audiobook on its way finds the releases a
   // The release on its way stays the chosen one.
   assert.equal(after.choice.chosen, before.chosen);
   assert.ok(after.choice.at >= before.at);
+});
+
+test("a search run again that finds nothing replaces what an earlier one found", async () => {
+  results = [RESULTS[2]];
+  await saveSeries(["bk-201"], { searchAudio: true });
+  await tickSeriesAcquisition();
+  assert.equal((await bookOf("bk-201")).acquisition?.audio?.found, 1);
+  results = [];
+  await post("/works/bk-201/acquisition/again", { kind: "audio" });
+  await tickSeriesAcquisition();
+  assert.equal((await bookOf("bk-201")).acquisition?.audio?.found, 0);
+  assert.deepEqual((await detail("bk-201")).choice.candidates, []);
+});
+
+test("the owner's choice stays the owner's after Search again", async () => {
+  await saveSeries(["bk-201"], { searchAudio: true });
+  await tickSeriesAcquisition();
+  await post("/works/bk-201/acquisition/choose", { key: HASH.french });
+  await post("/works/bk-201/acquisition/again", { kind: "audio" });
+  await tickSeriesAcquisition();
+  const choice = (await detail("bk-201")).choice;
+  assert.deepEqual([choice.chosen, choice.by], [HASH.french, "owner"]);
+});
+
+test("a skip holds when the series asks for the book again by itself; Search now undoes it", async () => {
+  await saveSeries(["bk-201"], { searchAudio: true, searchEbooks: true });
+  await tickSeriesAcquisition();
+  await post("/works/bk-201/acquisition/skip", { kind: "ebook" });
+  const { enqueueSeriesAcquisition } = await import("../server/series-acquisition.ts");
+  const workId = (await bookOf("bk-201")).workId;
+  enqueueSeriesAcquisition(1, SERIES_ID, [{ bookId: "bk-201", workId, unreleased: false }], { searchEbooks: true });
+  await tickSeriesAcquisition();
+  assert.equal((await bookOf("bk-201")).acquisition?.ebook?.skipReason, "owner");
+});
+
+test("an ebook search that runs now cannot be skipped: it downloads as it searches", async () => {
+  let open!: () => void;
+  const opened = new Promise<void>((resolve) => (open = resolve));
+  setSeriesAcquisitionDeps({
+    fetchEbooks: async () => {
+      await opened;
+      return { downloaded: [], skipped: null, failures: [] as string[] };
+    },
+  });
+  await saveSeries(["bk-201"], { searchEbooks: true });
+  for (let tries = 0; tries < 200 && (await bookOf("bk-201")).acquisition?.ebook?.status !== "searching"; tries++)
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  const refused = await app.inject({ method: "POST", url: `/api/series/${SERIES_ID}/works/bk-201/acquisition/skip`, payload: { kind: "ebook" } });
+  assert.equal(refused.statusCode, 409);
+  open();
 });

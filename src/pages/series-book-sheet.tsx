@@ -36,21 +36,26 @@ export function SeriesBookSheet({ seriesId, bookId, cover, online, onChanged }: 
   const address = useAddress();
   const path = `/series/${encodeURIComponent(seriesId)}/works/${encodeURIComponent(bookId)}/acquisition`;
   const [search, setSearch] = useState<SeriesWorkSearch | null>(null);
-  const [error, setError] = useState("");
+  // An action's failure stays until the next action; a read's failure until the next read that is answered.
+  const [actionError, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const error = actionError || loadError;
   const [busy, setBusy] = useState(false);
   const [picked, setPicked] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       setSearch(await api<SeriesWorkSearch>(path, { cache: "no-store" }));
+      setLoadError("");
     } catch (reason) {
-      setError((reason as Error).message);
+      setLoadError((reason as Error).message);
     }
   }, [path]);
   useEffect(() => {
     setSearch(null);
     setPicked(null);
     setError("");
+    setLoadError("");
     void load();
   }, [load]);
   const isMoving = moving(search);

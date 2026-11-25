@@ -16,6 +16,7 @@ import {
 import { seriesQueueOrder } from "./series-queue-order.ts";
 import { markOwnerChoice, parseSeriesChoice, type StoredSeriesChoice } from "./series-queue-store.ts";
 import { rememberAbbSlugs, savedSeriesWork, selectSeriesWorkRelease } from "./series-release-search.ts";
+import { prowlarrRelease, prowlarrReleaseSearch } from "./services.ts";
 import { clearWorkMediaHold, getWorkMediaState, workHasActiveQueuedAcquisition, workHasPlayableAudio } from "./work-media-state.ts";
 
 const KINDS: readonly SeriesAcquisitionKind[] = ["audio", "ebook"];
@@ -90,8 +91,11 @@ export function seriesQueueOverview(userId: number, seriesId: string, now = Date
   const pending = jobs.filter((job) => job.status === "pending");
   const timing = seriesQueueTiming();
   const paused = !seriesAcquisitionTickerEnabled();
-  // The queue waits out its 30 s between searches only while a run goes; with none running the loop's next tick starts it.
-  const nextAt = !paused && !anySearching && pending.length && timing.running ? Math.max(now, timing.nextAt) : null;
+  // The queue waits out its 30 s between searches only while a run goes; with none running the loop's next tick starts
+  // it. The time is the series' own only when its search is the next the queue starts (1st in line).
+  const places = queuePlaces(now);
+  const seriesNext = pending.some((job) => places.get(job.id) === 1);
+  const nextAt = !paused && !anySearching && seriesNext && timing.running ? Math.max(now, timing.nextAt) : null;
   return {
     searching: searching ? { bookId: searching.bookId, kind: searching.kind } : null,
     otherSearching: anySearching && !searching,
@@ -179,7 +183,10 @@ export function seriesWorkSearch(userId: number, seriesId: string, bookId: strin
   };
 }
 
-const kick = () => void tickSeriesAcquisition().catch(() => {});
+/** Starts the queue at once, unless it is switched off on Activity's Server page (or by its environment flag). */
+const kick = () => {
+  if (seriesAcquisitionTickerEnabled()) void tickSeriesAcquisition().catch(() => {});
+};
 
 /** Stop searching for this series: its waiting searches are stopped; a search running now is not cut off. */
 export function stopSeriesSearches(userId: number, seriesId: string, now = Date.now()) {
@@ -221,6 +228,12 @@ export function skipSeriesWork(userId: number, seriesId: string, bookId: string,
   for (const name of kindsOf(kind)) {
     const job = bookJob(userId, seriesId, bookId, work.workId, name);
     if (!job) continue;
+    // An ebook search downloads as it searches: once it runs it cannot be skipped. A running audio search downloads
+    // only after it has searched, and asks first whether it still may.
+    if (name === "ebook" && job.status === "searching") {
+      if (kind) throw fail(409, "This ebook search is running now. Skip it once it has ended.");
+      continue;
+    }
     skipped += sqlite
       .prepare("UPDATE series_acquisition_jobs SET status='failed', error=?, front_at=NULL, retry_at=NULL, search_only=0, updated_at=? WHERE id=?")
       .run(SERIES_ACQUISITION_SKIPPED_ERROR, now, job.id).changes;
@@ -303,6 +316,7 @@ export async function chooseSeriesCandidate(
   if (!job || !candidate) throw fail(404, "This release is not among what the search found. Search again.");
   // A release the queue's search found may be chosen as one from the Get sheet's search is.
   if (candidate.source === "abb") rememberAbbSlugs([{ id: candidate.id }]);
+  else await refreshProwlarrLink(candidate);
   const result = await selectSeriesWorkRelease(userId, seriesId, bookId, {
     source: candidate.source,
     id: candidate.id,
@@ -311,6 +325,28 @@ export async function chooseSeriesCandidate(
   });
   markOwnerChoice(job.id, candidate);
   return { ...result, search: seriesWorkSearch(userId, seriesId, bookId) };
+}
+
+/**
+ * A Prowlarr result's download link is kept for 6 hours after its search (and not over a restart). A release found
+ * longer ago is looked for again by its title: Prowlarr's ids are the same for the same result.
+ */
+async function refreshProwlarrLink(candidate: { id: string; title: string }) {
+  try {
+    prowlarrRelease(candidate.id);
+    return;
+  } catch (error) {
+    void (error as Error).message;
+  }
+  await prowlarrReleaseSearch(candidate.title).catch((error: Error) => {
+    throw fail(409, `${error.message} Search again, then choose.`);
+  });
+  try {
+    prowlarrRelease(candidate.id);
+  } catch (error) {
+    void (error as Error).message;
+    throw fail(409, "Prowlarr no longer lists this release. Search again, then choose.");
+  }
 }
 
 /** The Get sheet's select for a series book (`selectSeriesWorkRelease`): the release is the book's chosen one too. */
