@@ -143,7 +143,8 @@ test("each row's line: a failure first, then a place, then a book on its way, el
   assert.deepEqual(
     rows.map((row) => row.line),
     [
-      SERIES_SEARCH_FAILED_LINE,
+      // The failure names its search (#898).
+      "Audiobook search failed",
       "Chapter 2 · 18 min left",
       "Finished",
       "Downloading to server · 42%",
@@ -228,7 +229,8 @@ test("Retry: each failed series search kind, or the download; the chevron only o
   const rows = seriesPageModel(series(works), facts(library)).books;
   assert.deepEqual(rows[0].action, { kind: "retry-search", kinds: ["audio", "ebook"] });
   assert.deepEqual(rows[1].action, { kind: "retry-search", kinds: ["ebook"] });
-  assert.equal(rows[2].line, SERIES_SEARCH_FAILED_LINE);
+  // A refusal's code is no reason a person reads (#898).
+  assert.equal(rows[2].line, "Ebook search failed");
   assert.equal(rows[2].action, null);
   assert.deepEqual(rows[3].action, { kind: "retry-download" });
   // A failed row still opens its book.

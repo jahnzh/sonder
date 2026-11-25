@@ -7,9 +7,21 @@ import * as s from "./schema.ts";
 import { acquire as defaultAcquire } from "./acquisitions.ts";
 import {
   autoAcquireSeriesVolume,
+  defaultDeps as defaultSeriesAudioDeps,
+  searchVolumeAudioCandidates,
   seriesVolumeRefs,
+  type SeriesAudioCandidate,
   type SeriesAudioSearchDeps,
 } from "./series-audio.ts";
+import {
+  candidateKey,
+  readSeriesChoice,
+  resultFacts,
+  storedCandidate,
+  writeSeriesChoice,
+  type SeriesCandidateFacts,
+} from "./series-queue-store.ts";
+import { seriesQueueOrder } from "./series-queue-order.ts";
 import { fetchTopKIntoEbookSet } from "./ebook-set.ts";
 import { retryWorkMediaAcquisition } from "./series-membership.ts";
 import {
@@ -49,7 +61,11 @@ export type SeriesAcquisitionSkipReason =
   | "unreleased"
   | "has_audio"
   | "has_ebook"
-  | "no_permission";
+  | "no_permission"
+  /** The owner's Skip on the Series page (#898): no search or download for this book. */
+  | "owner"
+  /** The owner's Stop searching for the series (#898): the search had not started. */
+  | "stopped";
 
 export type AcquisitionStatus =
   | SeriesAcquisitionJobStatus
@@ -125,6 +141,12 @@ export function assertCanAcquireMedia(userId: number) {
 }
 
 export const SERIES_ACQUISITION_CANCELLED_ERROR = "cancelled";
+/** The owner skipped the book's search (#898). Stored as `failed`, as the table's four states allow; shown as skipped. */
+export const SERIES_ACQUISITION_SKIPPED_ERROR = "skipped";
+/** The owner stopped the series' waiting searches (#898). Stored as `failed`; shown as skipped. */
+export const SERIES_ACQUISITION_STOPPED_ERROR = "stopped";
+/** The outcomes the owner chose: not failures, never put back by the queue itself, and Search now undoes them. */
+export const SERIES_OWNER_OUTCOMES: readonly string[] = [SERIES_ACQUISITION_SKIPPED_ERROR, SERIES_ACQUISITION_STOPPED_ERROR];
 
 export type ManualSeriesReleaseClaim = {
   claimed: boolean;
@@ -301,9 +323,11 @@ function upsertJob(input: {
         status: input.status,
         error: input.error ?? null,
         updatedAt: now,
-        // A search set again (a Retry, the series added again) starts with its own tries again.
+        // A search set again (a Retry, the series added again) starts with its own tries again, in the queue's order.
         autoRetries: 0,
         retryAt: null,
+        frontAt: null,
+        searchOnly: 0,
       })
       .where(eq(s.seriesAcquisitionJobs.id, existing.id))
       .run();
@@ -505,6 +529,7 @@ function presentationForJob(
     row.status === "failed" &&
     row.error !== "no_permission" &&
     row.error !== SERIES_ACQUISITION_CANCELLED_ERROR &&
+    !SERIES_OWNER_OUTCOMES.includes(row.error ?? "") &&
     worksWithFile(sqlite, kind, [row.workId]).has(row.workId)
   ) {
     return {
@@ -520,6 +545,14 @@ function presentationForJob(
       status: "skipped",
       error: null,
       skipReason: "no_permission",
+    };
+  }
+  if (row.status === "failed" && (row.error === SERIES_ACQUISITION_SKIPPED_ERROR || row.error === SERIES_ACQUISITION_STOPPED_ERROR)) {
+    return {
+      kind,
+      status: "skipped",
+      error: null,
+      skipReason: row.error === SERIES_ACQUISITION_SKIPPED_ERROR ? "owner" : "stopped",
     };
   }
   if (row.status === "failed" && row.error === SERIES_ACQUISITION_CANCELLED_ERROR) {
@@ -583,10 +616,11 @@ export function seriesWorkAcquisitions(
 }
 
 /**
- * The queue's order (ADR 0010): the pending jobs one at a time, oldest row first; a job put back by itself after a
- * source could not be reached waits until its `retry_at`. Activity's places in line read the same order.
+ * The queue's order (ADR 0010): the pending jobs one at a time, a job the owner moved to the front first, then the
+ * oldest row first (`seriesQueueOrder`); a job put back by itself after a source could not be reached waits until its
+ * `retry_at`. Activity's places in line read the same order.
  */
-export const SERIES_QUEUE_ORDER = "rowid";
+export const SERIES_QUEUE_ORDER = seriesQueueOrder();
 
 function nextPendingSeriesJob(now: number) {
   const row = sqlite
@@ -603,6 +637,14 @@ function nextPendingSeriesJob(now: number) {
 let tickQueue: Promise<void> | null = null;
 let nextAcquisitionAt = 0;
 
+/**
+ * When the queue starts its next search (#898): while it works through its jobs, not before the 30 s after the last
+ * one; `running` is false when no run is going (the next starts at the loop's next tick, at most 30 s away).
+ */
+export function seriesQueueTiming() {
+  return { running: !!tickQueue, nextAt: nextAcquisitionAt };
+}
+
 export async function tickSeriesAcquisition(
   acquire: typeof defaultAcquire = deps.acquire ?? defaultAcquire,
 ) {
@@ -611,10 +653,12 @@ export async function tickSeriesAcquisition(
     resetStaleSeriesAcquisitionJobs();
     for (;;) {
       const now = deps.now ?? Date.now;
-      const pending = nextPendingSeriesJob(now());
-      if (!pending) break;
+      if (!nextPendingSeriesJob(now())) break;
       const delay = Math.max(0, nextAcquisitionAt - now());
       if (delay) await (deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))))(delay);
+      // Read after the wait: Search now, Skip or Stop may have changed what comes next meanwhile (#898).
+      const pending = nextPendingSeriesJob(now());
+      if (!pending) break;
       await processJob(pending, acquire).catch(() => {});
       nextAcquisitionAt = now() + (deps.intervalMs ?? (process.env.NODE_ENV === "test" ? 0 : SERIES_ACQUISITION_TICK_MS));
     }
@@ -633,7 +677,7 @@ export const seriesAcquisitionLoop: BackgroundProcess = {
   runAtStart: true,
   pausedBy: "series-acquisition",
   start: resetStrandedSeriesAcquisitionClaims,
-  tick: () => tickSeriesAcquisition(defaultAcquire),
+  tick: () => tickSeriesAcquisition(),
 };
 
 function seriesJobStillActive(jobId: string) {
@@ -672,6 +716,8 @@ async function processJob(
         error: partialError,
         updatedAt: Date.now(),
         autoRetries: 0,
+        frontAt: null,
+        searchOnly: 0,
       })
       .where(
         and(
@@ -693,6 +739,7 @@ async function processJob(
         status: again ? "pending" : "failed",
         error: message,
         updatedAt: Date.now(),
+        ...(again ? {} : { frontAt: null, searchOnly: 0 }),
         ...(again ? { autoRetries: tries + 1, retryAt: now + (tries + 1) * SERIES_SOURCE_RETRY_STEP_MS } : {}),
       })
       .where(
@@ -725,7 +772,9 @@ async function runAudioJob(
     setWorkMediaHold(job.userId, job.workId, "unreleased");
     return;
   }
-  if (workHasPlayableAudio(job.workId)) {
+  // A search asked again for a book with its audiobook (or one on its way) finds, and downloads nothing (#898).
+  const searchOnly = !!active.searchOnly;
+  if (!searchOnly && workHasPlayableAudio(job.workId)) {
     db.update(s.seriesAcquisitionJobs)
       .set({ error: "has_audio", updatedAt: Date.now() })
       .where(eq(s.seriesAcquisitionJobs.id, job.id))
@@ -754,19 +803,49 @@ async function runAudioJob(
     .where(eq(s.editions.workId, job.workId))
     .all()[0];
   if (!seriesJobStillActive(job.id)) return;
+  const expected = { narrators: parseNarrators(volume.narrators), lengthMs: volume.lengthMs };
+  // What the search found and chose, kept with the job for the Series page (#898): the sources' own facts of each
+  // result (its page, language, seeders) are read as the search goes.
+  const facts = new Map<string, SeriesCandidateFacts>();
+  const searchDeps = factsRecordingDeps(deps.seriesAudioDeps ?? defaultSeriesAudioDeps(), facts);
+  const keep = (candidates: SeriesAudioCandidate[], chosen: string | null) => {
+    try {
+      writeSeriesChoice(job.id, {
+        at: Date.now(),
+        chosen,
+        by: "queue",
+        candidates: candidates.map((candidate) => storedCandidate(candidate, facts.get(`${candidate.source}:${candidate.id}`), expected)),
+      });
+    } catch (error) {
+      // What was found is only shown: a failure to keep it never stops the search.
+      console.warn(`series queue: could not keep the candidates of ${job.id}: ${(error as Error).message}`);
+    }
+  };
+  if (searchOnly) {
+    const candidates = await searchVolumeAudioCandidates(ref, meta.name, author, refs, searchDeps);
+    if (!seriesAudioJobStillSearching(job.id)) return;
+    const previous = readSeriesChoice(job.id)?.chosen ?? null;
+    keep(candidates, candidates.some((candidate) => candidateKey(candidate) === previous) ? previous : null);
+    return;
+  }
+  let picked: string | null = null;
+  let sent = false;
   const wrappedAcquire = async (
     magnet: string,
     metadata: Parameters<typeof acquire>[1],
   ) => {
     if (!enterSeriesWorkAcquire(job.userId, job.workId))
       throw new Error("cancelled");
+    sent = true;
     try {
       return await acquire(magnet, metadata);
     } finally {
       leaveSeriesWorkAcquire(job.userId, job.workId);
     }
   };
-  await autoAcquireSeriesVolume(
+  let found: SeriesAudioCandidate[] = [];
+  try {
+    await autoAcquireSeriesVolume(
     job.userId,
     {
       seriesName: meta.name,
@@ -776,13 +855,41 @@ async function runAudioJob(
       allVolumes: refs,
       title: volume.title,
       cover: volume.cover ?? edition?.cover,
-      expected: { narrators: parseNarrators(volume.narrators), lengthMs: volume.lengthMs },
+      expected,
+      onCandidates: (candidates, chosen) => {
+        found = candidates;
+        picked = chosen ? candidateKey(chosen) : null;
+      },
     },
     wrappedAcquire,
-    deps.seriesAudioDeps,
+    searchDeps,
     () => seriesAudioJobStillSearching(job.id),
   );
+  } finally {
+    // The pick counts as chosen once its download was asked for; one whose magnet could not be read was not.
+    if (found.length || picked) keep(found, sent ? picked : null);
+  }
   if (!seriesAudioJobStillSearching(job.id)) return;
+}
+
+/** The search's sources, wrapped to note each result's own facts by `<source>:<id>` as they answer (#898). */
+function factsRecordingDeps(base: SeriesAudioSearchDeps, facts: Map<string, SeriesCandidateFacts>): SeriesAudioSearchDeps {
+  const note = (source: "abb" | "prowlarr", results: { id: string }[]) => {
+    for (const result of results) if (!facts.has(`${source}:${result.id}`)) facts.set(`${source}:${result.id}`, resultFacts(result));
+  };
+  return {
+    ...base,
+    abbSearch: async (query, page) => {
+      const response = await base.abbSearch(query, page);
+      note("abb", response.results);
+      return response;
+    },
+    prowlarrSearch: async (query) => {
+      const response = await base.prowlarrSearch(query);
+      note("prowlarr", response.results);
+      return response;
+    },
+  };
 }
 
 async function runEbookJob(

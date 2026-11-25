@@ -19,6 +19,8 @@ export type NowOpeners = {
   book: (workId: string, bookId: string | null) => void;
   /** Opens a work's Reading sync page (#540). */
   sync: (workId: string) => void;
+  /** Opens a saved series' page at one of its books, with what its search found and chose (#898). */
+  series: (seriesId: string, seriesBookId: string) => void;
   /** Opens a reading sync worker's page. */
   worker: (hostId: string) => void;
   /** Opens Activity's Server. */
@@ -36,6 +38,8 @@ export function openNowRow(opens: NowOpens, open: NowOpeners): void {
       return open.book(opens.workId, opens.bookId);
     case "reading-sync":
       return open.sync(opens.workId);
+    case "series":
+      return open.series(opens.seriesId, opens.seriesBookId);
     case "worker":
       return open.worker(opens.hostId);
     case "server":

@@ -22,6 +22,7 @@ import type { Book } from "../types";
 import { chosenRecording } from "./book-model";
 import { openAddSheet, openSaveSheet, SeriesAddSheet } from "./series-add-sheet";
 import { SeriesRemoveDialog } from "./series-remove-dialog";
+import { SeriesBookSheet } from "./series-book-sheet";
 import type { SeriesAddSeries } from "./series-add-model";
 import { DISMISS_LABEL, NEW_CARD_LINE, NEW_MARK, seriesPageModel, withoutNew, type SeriesPageSeries, type SeriesRow } from "./series-model";
 import { MATCH_SERIES_AUTOMATICALLY, seriesMatchLine, type SeriesMatchStatus } from "./metadata-compare-model";
@@ -126,6 +127,9 @@ export function SeriesPage({ id, admin, online, books, revision, onSaved, onRemo
       // Without storage the language holds for this page only.
     }
   };
+  // When the series was last read (#898): the run line counts the seconds to the next search from it.
+  const [readAt, setReadAt] = useState(() => Date.now());
+  const [clock, setClock] = useState(() => Date.now());
   /** Dismiss of the New card: sending, and its failure, shown on the card. */
   const [dismissing, setDismissing] = useState(false);
   const [dismissError, setDismissError] = useState("");
@@ -144,6 +148,8 @@ export function SeriesPage({ id, admin, online, books, revision, onSaved, onRemo
       const show = (value: SavedSeries, isSaved: boolean, unreached = false) => {
         lastRead.set(key, { series: value, saved: isSaved });
         setSeries(value);
+        setReadAt(Date.now());
+        setClock(Date.now());
         setSaved(isSaved);
         setError("");
         setUnreached(unreached);
@@ -216,9 +222,17 @@ export function SeriesPage({ id, admin, online, books, revision, onSaved, onRemo
     return () => clearInterval(timer);
   }, [isMoving, load]);
 
+  // While the queue waits to start the series' next search, the run line counts down each second (#898).
+  const counting = !!series?.queue?.nextAt && !offline;
+  useEffect(() => {
+    if (!counting) return;
+    const timer = setInterval(() => setClock(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [counting]);
+  const elapsed = Math.max(0, clock - readAt);
   const model = useMemo(
-    () => (series ? seriesPageModel(series, { library, admin, language, offline, saved }) : null),
-    [series, library, admin, language, offline, saved],
+    () => (series ? seriesPageModel(series, { library, admin, language, offline, saved, elapsed }) : null),
+    [series, library, admin, language, offline, saved, elapsed],
   );
 
   const run = async (action: () => Promise<void>) => {
@@ -233,6 +247,12 @@ export function SeriesPage({ id, admin, online, books, revision, onSaved, onRemo
     }
   };
   const retryRefresh = () => run(() => load(true));
+  // Stop searching for this series, and Resume what was stopped (#898).
+  const steerQueue = (step: "stop" | "resume") =>
+    run(async () => {
+      await api(`/series/${encodeURIComponent(seriesId)}/queue/${step}`, { method: "POST", body: JSON.stringify({}) });
+      await load();
+    });
   // Dismiss: acknowledges every work the answer marks new; the card and the marks clear, then the series is read again.
   const dismiss = async (bookIds: string[]) => {
     setDismissing(true);
@@ -277,7 +297,12 @@ export function SeriesPage({ id, admin, online, books, revision, onSaved, onRemo
     });
 
   const renderRow = (row: SeriesRow) => {
-    const open = row.workId ? () => address.navigate({ name: "book", workId: row.workId! }) : undefined;
+    // A book a series search was asked for opens its search sheet (#898); the sheet opens the Book page.
+    const open = row.searchSheet
+      ? () => address.navigate({ name: "series-book", id: seriesId, bookId: row.bookId })
+      : row.workId
+        ? () => address.navigate({ name: "book", workId: row.workId! })
+        : undefined;
     const action =
       row.action?.kind === "add" ? (
         <Button kind="secondary" aria-label={`Add ${row.title}`} disabled={row.actionOff} onClick={() => openAddSheet(seriesId, row.bookId)}>
@@ -365,6 +390,24 @@ export function SeriesPage({ id, admin, online, books, revision, onSaved, onRemo
         </div>
       )}
 
+      {model?.run && (
+        <div className="series-page-card series-page-run" role="group" aria-label="Series search">
+          <p className="type-label" role="status">
+            {model.run.line}
+          </p>
+          {model.run.stop && (
+            <Button kind="secondary" aria-label="Stop searching for this series" disabled={busy || !online} onClick={() => void steerQueue("stop")}>
+              Stop searching
+            </Button>
+          )}
+          {model.run.resume && (
+            <Button kind="secondary" aria-label="Resume searching for this series" disabled={busy || !online} onClick={() => void steerQueue("resume")}>
+              Resume
+            </Button>
+          )}
+        </div>
+      )}
+
       {model && model.books.length > 0 && (
         <Group caption={`Books · ${model.books.length}`} info={<InfoMark name="Books" text={tip("seriesBooks")} />}>
           {model.books.map(renderRow)}
@@ -403,6 +446,19 @@ export function SeriesPage({ id, admin, online, books, revision, onSaved, onRemo
               setSaved(true);
               onSaved();
             }
+            void load();
+            void refreshLibraryWorks().catch(() => {});
+          }}
+        />
+      )}
+
+      {address.route.name === "series-book" && address.route.id === seriesId && saved && admin && (
+        <SeriesBookSheet
+          seriesId={seriesId}
+          bookId={address.route.bookId}
+          cover={model ? [...model.books, ...model.related].find((row) => row.bookId === (address.route as { bookId: string }).bookId)?.cover ?? null : null}
+          online={!offline && online}
+          onChanged={() => {
             void load();
             void refreshLibraryWorks().catch(() => {});
           }}

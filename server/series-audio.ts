@@ -275,7 +275,7 @@ export type SeriesAudioSearchDeps = {
   log?: (message: string) => void;
 };
 
-const defaultDeps = (): SeriesAudioSearchDeps => ({
+export const defaultDeps = (): SeriesAudioSearchDeps => ({
   abbSearch: abbReleaseSearch,
   prowlarrSearch: prowlarrReleaseSearch,
   abbMagnetLink: abbMagnet,
@@ -388,6 +388,8 @@ export async function autoAcquireSeriesVolume(
     language?: string | null;
     /** The book's English releases on AudiobookDB, for the ranking (#721). */
     expected?: SeriesAudioExpectation | null;
+    /** What the search found and the one picked (null: none), as the series queue keeps them (#898). */
+    onCandidates?: (candidates: SeriesAudioCandidate[], chosen: SeriesAudioCandidate | null) => void;
   },
   acquire: (
     magnet: string,
@@ -416,6 +418,7 @@ export async function autoAcquireSeriesVolume(
     deps,
   );
   const chosen = pickAutoAcquireCandidate(candidates, input.expected);
+  input.onCandidates?.(candidates, chosen?.hash ? chosen : null);
   if (!chosen?.hash) {
     markWorkEmptySearch(userId, input.workId);
     return getWorkMediaState(userId, input.workId);

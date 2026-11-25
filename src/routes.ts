@@ -35,6 +35,8 @@ export type Route =
   | { name: "get-magnet"; workId: string }
   | { name: "series"; id: string }
   | { name: "series-add"; id: string }
+  /** A book of a saved series (#898): a sheet over the Series page with what its search found and chose. */
+  | { name: "series-book"; id: string; bookId: string }
   | { name: "listen"; workId: string }
   | { name: "read"; workId: string }
   /** The parts gallery (#486): an address of its own that no navigation links to, for the browser tests and builders. */
@@ -164,6 +166,8 @@ export function readAddress(hash: string): Route {
       if (!id) return nothing("library");
       if (rest.length === 1) return { name: "series", id };
       if (rest.length === 2 && rest[1] === "add") return { name: "series-add", id };
+      const bookId = rest.length === 3 && rest[1] === "book" ? decode(rest[2]) : null;
+      if (bookId) return { name: "series-book", id, bookId };
       return nothing("library");
     }
     case "listen":
@@ -211,6 +215,8 @@ export function writeAddress(route: Route): string {
       return `#series/${part(route.id)}`;
     case "series-add":
       return `#series/${part(route.id)}/add`;
+    case "series-book":
+      return `#series/${part(route.id)}/book/${part(route.bookId)}`;
     case "listen":
     case "read":
       return `#${route.name}/${part(route.workId)}`;
@@ -265,6 +271,7 @@ export function parentOf(route: Route): Route | null {
     case "series":
       return { name: "library" };
     case "series-add":
+    case "series-book":
       return { name: "series", id: route.id };
     // The magnet sheet belongs to the Get audiobook sheet it covers (#606).
     case "get-magnet":
@@ -289,7 +296,7 @@ export function parentOf(route: Route): Route | null {
 
 /** A sheet or Now playing (with its Read face): shown over a page rather than in place of it. */
 export function coversPage(route: Route): boolean {
-  return ["get", "get-magnet", "discover-get", "series-add", "listen", "read", "gallery-sheet"].includes(route.name);
+  return ["get", "get-magnet", "discover-get", "series-add", "series-book", "listen", "read", "gallery-sheet"].includes(route.name);
 }
 
 /**
@@ -343,8 +350,9 @@ function built(route: Route): boolean {
     case "book":
     // The Series page of a saved series (#562).
     case "series":
-    // Its Add sheet (#563).
+    // Its Add sheet (#563) and a book's search sheet (#898).
     case "series-add":
+    case "series-book":
     case "library":
     case "discover":
     // The Get sheet without a book (#575, #576): the recording chosen makes the book.

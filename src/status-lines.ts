@@ -646,3 +646,62 @@ export const SERIES_SEARCH_FAILED_LINE = failedLine({ entry: "series-search" });
 export const NEEDS_ADMIN_LINE = "Needs the administrator to link it";
 /** The same hold for the administrator: the book matches several books on the server. */
 export const SEVERAL_MATCHES_LINE = "Matches more than one book on the server";
+
+/*
+ * The series queue on the Series page (#898): the line over the books while the queue has work for the series, and a
+ * book's own lines for what its search did.
+ */
+/** The owner skipped the book's search: nothing is searched or downloaded for it. */
+export const SEARCH_SKIPPED_LINE = "Skipped";
+/** The owner stopped the series' searches before this one started. */
+export const SEARCH_STOPPED_LINE = "Search stopped";
+/** The audio search found no release of the book. */
+export const NOTHING_FOUND_LINE = "Nothing found";
+/** The audio search found releases but chose none (only sets of books, or episodes): the owner chooses. */
+export function leftToChooseLine(found: number): string {
+  return `${found} found${DOT}choose one`;
+}
+
+/** "in 25 s", "in 2 min"; "now" at or under a second. */
+export function startsIn(ms: number): string {
+  const seconds = Math.ceil(ms / 1000);
+  if (seconds <= 1) return "now";
+  if (seconds < 60) return `in ${seconds} s`;
+  return `in ${Math.round(seconds / 60)} min`;
+}
+
+export type SeriesRunFacts = {
+  /** The series' search running now: the book as the row numbers it ("book 3", or its title) and what it looks for. */
+  searching: { book: string; search: "audiobook" | "ebook" } | null;
+  /** A search of another series runs now. */
+  otherSearching: boolean;
+  /** The series' searches that wait, those waiting to try their source again among them. */
+  waiting: number;
+  retrying: number;
+  /** The series' searches the owner stopped. */
+  stopped: number;
+  /** The series queue is switched off on Activity's Server page. */
+  paused: boolean;
+  /** Milliseconds until the queue starts its next search; null while one runs or when it is not known. */
+  nextIn: number | null;
+};
+
+/**
+ * The run line over a saved series' books: what the queue does now for the series, how many of its searches wait, and
+ * when the next starts ("Searching for book 3 · audiobook · 5 waiting", "Next search in 20 s · 5 waiting"). Null when
+ * the queue has nothing of the series and none was stopped.
+ */
+export function seriesRunLine({ searching, otherSearching, waiting, retrying, stopped, paused, nextIn }: SeriesRunFacts): string | null {
+  const waits = waiting > 0 ? `${waiting} waiting` : null;
+  const join = (...parts: (string | null)[]) => parts.filter(Boolean).join(DOT);
+  if (searching) return join(`Searching for ${searching.book}`, searching.search, paused ? null : waits);
+  if (waiting > 0) {
+    if (paused) return join(QUEUE_OFF_LINE, waits);
+    if (otherSearching) return join("Another series is being searched", waits);
+    if (retrying >= waiting) return `${waiting} waiting to try again`;
+    if (nextIn !== null) return join(`Next search ${startsIn(nextIn)}`, waits);
+    return waits;
+  }
+  if (stopped > 0) return join(SEARCH_STOPPED_LINE, `${stopped} not searched`);
+  return null;
+}

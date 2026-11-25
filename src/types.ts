@@ -415,7 +415,18 @@ export type SeriesWorkAcquisition = {
     | "has_audio"
     | "has_ebook"
     | "no_permission"
+    /** The owner's Skip, and Stop searching for the series (#898). */
+    | "owner"
+    | "stopped"
     | null;
+  /** A waiting search's place in the series queue (1 is the search running now), #898; absent from an older server. */
+  place?: number | null;
+  /** A waiting search the queue put back by itself, after its source could not be reached. */
+  retrying?: boolean;
+  /** How many releases the audio search found; null before it kept any. */
+  found?: number | null;
+  /** The audio search picked one and asked for its download. */
+  chosen?: boolean;
 };
 
 export type TorrentHealth = {
@@ -523,6 +534,11 @@ export type ActivityFacts =
        * `running`, `done`, `unsure`, `failed`); the error is the reason. An older client reads it as a series search.
        */
       metadataMatch?: true;
+      /** The saved series and its book the search is for (#898): the row opens the Series page at the book. */
+      seriesId?: string;
+      seriesBookId?: string;
+      /** The owner's Skip or Stop searching on the Series page (#898); absent for the queue's own outcomes. */
+      outcome?: "skipped" | "stopped";
     }
   | {
       kind: "alignment";
