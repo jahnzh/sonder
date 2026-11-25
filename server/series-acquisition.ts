@@ -11,6 +11,7 @@ import {
   type SeriesAudioSearchDeps,
 } from "./series-audio.ts";
 import { fetchTopKIntoEbookSet } from "./ebook-set.ts";
+import { resetPackSearches, seriesPackStep } from "./series-pack-step.ts";
 import { retryWorkMediaAcquisition } from "./series-membership.ts";
 import {
   clearWorkMediaHold,
@@ -81,6 +82,7 @@ export function setSeriesAcquisitionDeps(overrides: SeriesAcquisitionDeps) {
 export function resetSeriesAcquisitionDeps() {
   deps = {};
   seriesWorkAcquireInFlight.clear();
+  resetPackSearches();
   // A test's own clock (`deps.now`) must not leave the next search's time behind for the next test.
   nextAcquisitionAt = 0;
 }
@@ -766,6 +768,24 @@ async function runAudioJob(
       leaveSeriesWorkAcquire(job.userId, job.workId);
     }
   };
+  // A pack of the series that holds this book, or one found for two or more waiting books, comes first (ADR 0027).
+  const packed = await seriesPackStep(
+    {
+      userId: job.userId,
+      seriesId: job.seriesId,
+      seriesName: meta.name,
+      author,
+      jobId: job.id,
+      workId: job.workId,
+      position: ref.position,
+      title: volume.title,
+      cover: volume.cover ?? edition?.cover,
+    },
+    wrappedAcquire,
+    deps.seriesAudioDeps,
+    deps.now,
+  );
+  if (packed || !seriesAudioJobStillSearching(job.id)) return;
   await autoAcquireSeriesVolume(
     job.userId,
     {

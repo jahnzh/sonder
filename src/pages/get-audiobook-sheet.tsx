@@ -6,6 +6,9 @@
 // states get-audiobook-state.ts. The language button beside the field opens a Picker (#602): the choice applies at
 // once and is stored on this device; Load more recordings asks AudioBookBay's next page. The words, the rows, the
 // pages loaded, the language and the choice are kept in the history entry; a reload searches again (as many pages).
+// A row that is a pack of a series the book is in (ADR 0027) starts its second line with the books it holds, the
+// line under the button names the other books it also gets, and Get sends `pack: true`. A downloaded pack that could
+// not tell which of its files are the book's shows its chooser (get-pack-choice.tsx) above Recordings.
 //
 // Without a book (#576, spec #572 "Discover"; board GetRecording.dc.html): `#discover/get/<query>` over Discover,
 // opened by Discover's "Search for a recording" with the words searched. "A recording for a new book" stands in
@@ -27,7 +30,8 @@ import { InfoMark } from "../parts/Tooltip";
 import { tip } from "../tooltip-texts";
 import { useTorrentHealth } from "../components/TorrentHealth";
 import type { Acquisition, AudiobookRelease } from "../types";
-import { GET_LANGUAGE, getLine, LANGUAGE_KEY, languageChoices, languageName, recordingRows, sourceLink } from "./get-audiobook-rows";
+import { GET_LANGUAGE, getLine, LANGUAGE_KEY, languageChoices, languageName, packLabel, packLine, recordingRows, sourceLink, type PackView } from "./get-audiobook-rows";
+import { GetPackChoice } from "./get-pack-choice";
 import {
   answered,
   emptySearch,
@@ -158,6 +162,9 @@ export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarr
   const [picking, setPicking] = useState(false);
   const [refusal, setRefusal] = useState("");
   const [getting, setGetting] = useState(false);
+  // The rows that are packs of a series the book is in (ADR 0027), by the release's title; asked once per title.
+  const [packs, setPacks] = useState<Record<string, PackView>>({});
+  const described = useRef(new Set<string>());
   const live = useRef(true);
   const searchRef = useRef(search);
   searchRef.current = search;
@@ -252,6 +259,21 @@ export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarr
     if (chosen && !recordingRows(loaded, title, next, newBook).some((row) => row.id === chosen)) setChosen(null);
   };
   const chosenRow = view.rows.find((row) => row.id === chosen) ?? null;
+  const chosenPack = chosenRow ? packs[chosenRow.release.title] ?? null : null;
+  useEffect(() => {
+    if (newBook || !online) return;
+    const titles = [...new Set(loaded.map((release) => release.title))].filter((title) => !described.current.has(title));
+    if (!titles.length) return;
+    for (const title of titles) described.current.add(title);
+    void api<{ packs?: Record<string, PackView> }>(`/works/${encodeURIComponent(workId)}/packs/describe`, {
+      method: "POST",
+      body: JSON.stringify({ titles: titles.slice(0, 200) }),
+    }).then(
+      (answer) => live.current && answer?.packs && setPacks((known) => ({ ...known, ...answer.packs })),
+      // Not known as packs: the rows stay plain recordings (an older server has no such route).
+      () => {},
+    );
+  }, [loaded.map((release) => release.title).join("\n"), newBook, online]);
   const line = getLine({ chosen: chosenRow?.release ?? null, mediaState: work?.mediaState, torboxConnected: torboxConfigured, health });
   // A preview of the chosen row when it says "Plays now" (#889): its own audio element, off while the book plays.
   const { playing: bookPlaying } = usePlayer();
@@ -301,6 +323,8 @@ export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarr
         body: JSON.stringify({
           ...(release.source === "prowlarr" ? { id: release.id, workId } : { slug: release.id, workId }),
           ...(line?.replaceActive ? { replaceActive: true } : {}),
+          // A pack of the book's series also gets the other books it holds (ADR 0027).
+          ...(chosenPack ? { pack: true } : {}),
         }),
       });
       if (job?.status === "error") throw new Error(job.error || NOT_QUEUED);
@@ -326,7 +350,9 @@ export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarr
   // This departs from the board's order (the button, then its sentence under it) on purpose: the button under the
   // thumb must not move when a row is chosen, and under it the sentence would have to be kept room for (#889).
   const link = sourceLink(chosenRow?.release);
-  const sentence = newBook ? (line ? `${ADDS_THE_BOOK} ${line.text}` : ADDS_THE_BOOK) : line?.text;
+  const sentence = newBook
+    ? line ? `${ADDS_THE_BOOK} ${line.text}` : ADDS_THE_BOOK
+    : [chosenPack ? packLine(chosenPack, workId) : null, line?.text].filter(Boolean).join(" ") || undefined;
   useChosenRowInView(`${chosen}|${link?.href}|${sentence}|${refusal}|${previewing?.line?.text}`);
   const footer = (
     <>
@@ -419,6 +445,19 @@ export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarr
         onChoose={chooseLanguage}
       />
 
+      {!newBook && (
+        <GetPackChoice
+          workId={workId}
+          online={online}
+          onChosen={async () => {
+            await refreshLibraryWorks().catch(() => {});
+            window.dispatchEvent(new Event("sonder:library-changed"));
+            void onChanged();
+            if (live.current && location.hash === writeAddress(route)) address.goBack(parent);
+          }}
+        />
+      )}
+
       <div className="part-group-block get-sheet-recordings">
         <div className="part-group-caption-line">
           <h2 className="part-group-caption type-caption">Recordings · {view.rows.length}</h2>
@@ -449,7 +488,10 @@ export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarr
               setChosen(value);
               setRefusal("");
             }}
-            options={view.rows.map((row) => ({ value: row.id, label: row.first, detail: row.second, edge: row.edge }))}
+            options={view.rows.map((row) => {
+              const pack = packs[row.release.title];
+              return { value: row.id, label: row.first, detail: pack ? [packLabel(pack), row.second].filter(Boolean).join(" · ") : row.second, edge: row.edge };
+            })}
           />
         )}
         {view.more && (

@@ -15,6 +15,7 @@ import { addTorrent, getTorrent, removeTorrent, transmission } from "./transmiss
 import { getTorrentHealth } from "./torrent-health.ts";
 import { audioPattern } from "./preview-file.ts";
 import { getWorkMediaState, trackWorkMediaState } from "./work-media-state.ts";
+import { assignWaitingPackWorks, importPack, isPackAcquisition, packOf, recordPack, type PackRequest } from "./acquisition-packs.ts";
 import {
   ACTIVE_ACQUISITION_STATUSES,
   isActiveAcquisitionStatus,
@@ -91,6 +92,8 @@ export async function acquire(
     language?: string | null;
     narrator?: string | null;
     userId?: number;
+    /** The download is a series pack serving these books (ADR 0027); `workId` is the one it was chosen for. */
+    pack?: PackRequest;
   } = {},
 ) {
   if (
@@ -107,6 +110,19 @@ export async function acquire(
   // A failed or cancelled download of the same torrent starts again; any other is joined.
   if (existing && existing.status !== "error" && existing.status !== "cancelled") {
     db.insert(s.userAcquisitions).values({ userId: metadata.userId ?? 1, acquisitionId: existing.id }).onConflictDoNothing().run();
+    // A pack another book has got already serves this one too (ADR 0027): no second download. A torrent imported
+    // whole before (not a pack) stays as it is.
+    const wasPack = isPackAcquisition(existing.id);
+    if ((metadata.pack && (wasPack || existing.status !== "ready")) || (wasPack && metadata.workId)) {
+      const work = metadata.workId ? db.select().from(s.works).where(eq(s.works.id, metadata.workId)).get() : undefined;
+      const known = packOf(existing.id);
+      recordPack(
+        existing.id,
+        metadata.pack ?? { seriesId: known!.seriesId, seriesName: known!.seriesName, volumes: [], works: [{ workId: work!.id, position: null, title: work!.title }] },
+      );
+      if (existing.status === "ready") await assignWaitingPackWorks(existing.id);
+      return db.select().from(s.acquisitions).where(eq(s.acquisitions.id, existing.id)).get()!;
+    }
     if (existing.bookId) {
       db.delete(s.userHiddenLibrary).where(and(eq(s.userHiddenLibrary.userId, metadata.userId ?? 1), eq(s.userHiddenLibrary.bookId, existing.bookId))).run();
       db.insert(s.userLibrary).values({userId: metadata.userId ?? 1, bookId: existing.bookId, status: "unread", addedAt: Date.now()}).onConflictDoNothing().run();
@@ -139,6 +155,7 @@ export async function acquire(
     updatedAt: Date.now(),
   };
   startAcquisitionRecord(entry);
+  if (metadata.pack) recordPack(id, metadata.pack);
   db.insert(s.userAcquisitions).values({userId: metadata.userId ?? 1, acquisitionId: id}).onConflictDoNothing().run();
   try {
     const route = await chooseBackend(hash, !!getSecret("torbox"), (h) =>
@@ -286,6 +303,11 @@ function createBook(
     });
   })();
 }
+/** A pack is downloaded (ADR 0027): each of its books gets its own recording, and the acquisition is ready. */
+async function finishPack(job: Acquisition, files: Parameters<typeof importPack>[1]) {
+  const bookId = await importPack(job, files);
+  setAcquisitionStatus(job.id, "ready", { progress: 1, error: null, bookId, updatedAt: Date.now() });
+}
 const processing = new Set<string>();
 // Completed files that fail validation won't change on the next refresh, so these end the job.
 class InvalidTorrentError extends Error {}
@@ -330,6 +352,7 @@ export async function refreshAcquisition(id: string) {
       const files = torrent.files
         .map((file, index) => ({
           ...file,
+          index,
           wanted: torrent.fileStats[index]?.wanted !== false,
         }))
         .filter((f) => audioPattern.test(f.name) && f.wanted)
@@ -343,6 +366,16 @@ export async function refreshAcquisition(id: string) {
         torrent.percentDone < 1
       )
         return;
+      if (isPackAcquisition(job.id)) {
+        const stored = [];
+        for (const file of files) {
+          const path = resolveTorrentFile(torrent.downloadDir, file.name);
+          if (!existsSync(path) || statSync(path).size !== file.length) return;
+          stored.push({ key: String(file.index), name: file.name, path });
+        }
+        await finishPack(job, stored);
+        return;
+      }
       const ready = [];
       for (const file of files) {
         const path = resolveTorrentFile(torrent.downloadDir, file.name);
@@ -383,6 +416,10 @@ export async function refreshAcquisition(id: string) {
         );
       if (!files.length)
         throw new InvalidTorrentError("This torrent contains no supported audio files.");
+      if (isPackAcquisition(job.id)) {
+        await finishPack(job, files.map((f) => ({ key: String(f.id), name: f.name })));
+        return;
+      }
       createBook(
         job,
         files.map((f) => ({

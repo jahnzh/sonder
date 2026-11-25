@@ -1,0 +1,10 @@
+/* The chooser of a downloaded pack's files for the book (src/pages/get-pack-choice.tsx, ADR 0027): its Group, a
+   refusal, and Use these files under it. */
+.get-pack-choice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.part-button.get-pack-choice-use {
+  align-self: center;
+}

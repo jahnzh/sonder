@@ -59,14 +59,33 @@ function trackedRows(database: Database, userId: number, workIds: Iterable<strin
   return new Map(rows.map((row) => [row.workId, row]));
 }
 
+/**
+ * The works each acquisition is for: a series pack's (ADR 0027) are its `acquisition_works` rows, any other's its
+ * `work_id`. A database from before packs has no such table, and every acquisition is for its `work_id`.
+ */
+const hasPackTable = new WeakMap<Database, boolean>();
+export function acquisitionWorksSql(database: Database) {
+  // Asked once per handle: the table is made at startup and never dropped.
+  let packs = hasPackTable.get(database);
+  if (packs === undefined) {
+    packs = !!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='acquisition_works'").get();
+    hasPackTable.set(database, packs);
+  }
+  if (!packs) return "SELECT id AS acquisitionId,work_id AS workId FROM acquisitions WHERE work_id IS NOT NULL";
+  return `SELECT id AS acquisitionId,work_id AS workId FROM acquisitions
+            WHERE work_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM acquisition_works p WHERE p.acquisition_id=acquisitions.id)
+          UNION SELECT acquisition_id,work_id FROM acquisition_works`;
+}
+
 function latestUserAcquisitions(database: Database, userId: number, workIds: Iterable<string>) {
   const rows = database
     .prepare(
       `SELECT workId,id,status,updatedAt FROM (
-         SELECT a.work_id AS workId,a.id,a.status,a.updated_at AS updatedAt,
-           ROW_NUMBER() OVER (PARTITION BY a.work_id ORDER BY a.updated_at DESC,a.rowid DESC) AS n
+         SELECT l.workId,a.id,a.status,a.updated_at AS updatedAt,
+           ROW_NUMBER() OVER (PARTITION BY l.workId ORDER BY a.updated_at DESC,a.rowid DESC) AS n
          FROM user_acquisitions u JOIN acquisitions a ON a.id=u.acquisition_id
-         WHERE u.user_id=? AND a.work_id IN (SELECT value FROM json_each(?))
+           JOIN (${acquisitionWorksSql(database)}) l ON l.acquisitionId=a.id
+         WHERE u.user_id=? AND l.workId IN (SELECT value FROM json_each(?))
        ) WHERE n=1`,
     )
     .all(userId, ids(workIds)) as LatestAcquisition[];
@@ -148,9 +167,9 @@ export function materialiseWorkMediaStates(
       .prepare(
         `SELECT user_id AS userId,work_id AS workId FROM work_media_states
          UNION
-         SELECT u.user_id,a.work_id FROM user_acquisitions u
-           JOIN acquisitions a ON a.id=u.acquisition_id
-           JOIN works w ON w.id=a.work_id
+         SELECT u.user_id,l.workId FROM user_acquisitions u
+           JOIN (${acquisitionWorksSql(database)}) l ON l.acquisitionId=u.acquisition_id
+           JOIN works w ON w.id=l.workId
            JOIN users us ON us.id=u.user_id
          ORDER BY 1,2`,
       )

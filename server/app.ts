@@ -32,6 +32,7 @@ import { registerHardcoverRoutes } from "./hardcover-routes.ts";
 import { switchFromHardcover } from "./hardcover-switch.ts";
 import { registerCatalogueRoutes } from "./catalogue-routes.ts";
 import { registerSeriesRoutes } from "./series-routes.ts";
+import { packRequestFor, registerPackRoutes } from "./series-pack-step.ts";
 import { savedCatalogueSeries, savedSeriesRefreshLoop } from "./series-catalogue.ts";
 import { discardResave, retryResave, seriesResaveLoop } from "./series-resave.ts";
 import { catalogueRefreshLoop } from "./catalogue-links.ts";
@@ -358,6 +359,7 @@ export async function createApp(options?: {
   registerHardcoverRoutes(app);
   registerCatalogueRoutes(app);
   registerSeriesRoutes(app);
+  registerPackRoutes(app);
   // #719 part b: the comparison with a provider, Apply, 'Match automatically' per book and per series.
   registerMetadataMatchRoutes(app, workMetadata, (userId, seriesId) => {
     try {
@@ -814,6 +816,8 @@ export async function createApp(options?: {
         replaceActive: z.boolean().optional(),
         // A recording for a new book (#576): the book is made from the release, in the requester's library.
         makeWork: z.boolean().optional(),
+        // A series pack for the book (ADR 0027): it also gets the other books of the series it holds.
+        pack: z.boolean().optional(),
       })
       .parse(req.body);
     const release = await abbRelease(input.slug);
@@ -823,8 +827,10 @@ export async function createApp(options?: {
         { title: release.title, author: release.author, cover: release.cover, language: release.language, narrator: release.narrator },
         currentUserId(req),
       );
+    const { pack, ...rest } = input;
     return acquireReplacing(await abbMagnet(input.slug), {
-      ...input,
+      ...rest,
+      pack: pack ? packRequestFor(currentUserId(req), input.workId, release.title) : undefined,
       title: release.title,
       author: release.author,
       cover: release.cover,
@@ -847,6 +853,8 @@ export async function createApp(options?: {
         replaceActive: z.boolean().optional(),
         // A recording for a new book (#576): the book is made from the release, in the requester's library.
         makeWork: z.boolean().optional(),
+        // A series pack for the book (ADR 0027): it also gets the other books of the series it holds.
+        pack: z.boolean().optional(),
       })
       .parse(req.body);
     const link = prowlarrRelease(input.id);
@@ -857,10 +865,13 @@ export async function createApp(options?: {
       : undefined;
     if (input.workId && !work)
       throw new Error("The selected book could not be found.");
+    const pack = input.pack ? packRequestFor(currentUserId(req), input.workId, link.title) : undefined;
     return acquireReplacing(await prowlarrMagnet(input.id), {
       workId: input.workId,
       replaceActive: input.replaceActive,
-      title: work?.title || releaseDisplayTitle(link.title),
+      pack,
+      // A pack is named by its release, not by one of its books.
+      title: (pack && releaseDisplayTitle(link.title)) || work?.title || releaseDisplayTitle(link.title),
       author: work?.author,
       userId: currentUserId(req),
     });

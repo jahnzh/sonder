@@ -18,6 +18,7 @@ import {
   setAcquisitionStatus,
 } from "./acquisition-status.ts";
 import { userIsAdmin } from "./users.ts";
+import { leavePacks, pathOfUsedPack } from "./acquisition-packs.ts";
 import {
   removeUserLibraryRow,
   seriesRemovalWorkSelectedByDefault,
@@ -169,6 +170,10 @@ function blockReasonForEdition(editionId: string, exceptUserId: number) {
   return null;
 }
 
+function servesAnotherWork(acquisitionId: string, workId: string) {
+  return !!sqlite.prepare("SELECT 1 FROM acquisition_works WHERE acquisition_id=? AND work_id<>? LIMIT 1").get(acquisitionId, workId);
+}
+
 function userActiveDownloads(userId: number, workId: string) {
   return db
     .select({ job: s.acquisitions })
@@ -185,7 +190,8 @@ function userActiveDownloads(userId: number, workId: string) {
     )
     .all()
     .map(({ job }) => job)
-    .filter((job) => isActiveAcquisitionStatus(job.status))
+    // A series pack that also serves another book does not stop with this one (ADR 0027).
+    .filter((job) => isActiveAcquisitionStatus(job.status) && !servesAnotherWork(job.id, workId))
     .map((job) => ({ id: job.id, title: job.title, status: job.status }));
 }
 
@@ -341,6 +347,9 @@ function cancelUserWorkDownloads(
   workId: string,
   torrentCancels: TorrentCancel[],
 ) {
+  // The work leaves every series pack that served it (ADR 0027). A pack that still serves another book is not
+  // cancelled; one that served only this work is this work's download again and is detached below.
+  leavePacks(workId);
   const jobs = db
     .select({ job: s.acquisitions })
     .from(s.userAcquisitions)
@@ -634,6 +643,11 @@ async function finalizeEditionDeletes(
     }).catch(() => {});
   }
   for (const path of pathsToUnlink) {
+    // A file of a series pack stays while another book of the pack uses it (ADR 0027).
+    if (pathOfUsedPack(path)) {
+      skippedPaths.push(path);
+      continue;
+    }
     try {
       if (existsSync(path)) unlinkSync(path);
     } catch (error) {

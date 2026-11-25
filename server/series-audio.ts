@@ -532,3 +532,158 @@ export async function autoAcquireSeriesVolumes(
   }
   return results;
 }
+
+/*
+ * Series packs (ADR 0027, #899): one release that holds several books of a series. The queue's pack step
+ * (`server/series-pack-step.ts`) searches for them before the per-book searches; the split of a pack's files into
+ * its books is `server/series-pack.ts`.
+ */
+
+/**
+ * The language rule's hook (#897): whether a candidate is in the series' language. It accepts every candidate until
+ * that rule is merged; the pack step calls it on each pack.
+ */
+export function languageFits(_candidate: Pick<SeriesAudioCandidate, "title" | "format">, _language?: string | null) {
+  return true;
+}
+
+const PACK_RANGE =
+  /(?:\bbooks?|\bbks?|\bvols?|\bvolumes?|\bparts?|#)\s*0*(\d{1,3})\s*(?:-|–|—|to|thru|through|&|and)\s*(?:#|books?\s*)?0*(\d{1,3})\b/i;
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * The range of books a release's title names: "Books 1-8", "Book 1 to 3", "#1-3", "Vol. 1 & 2", or a bare "1-8"
+ * right after the series' name. Null when it names none (a "Complete Series" says nothing a split can rely on).
+ */
+export function packRange(title: string, seriesName: string): { from: number; to: number } | null {
+  const plain = stripApostrophes(title);
+  const words = normalizeSeriesAudioTitle(seriesName).split(" ").filter(Boolean);
+  const afterSeries = words.length
+    ? new RegExp(`${words.map(escapeRegExp).join("\\W+")}\\W*0*(\\d{1,3})\\s*(?:-|–|—|to)\\s*0*(\\d{1,3})\\b`, "i")
+    : null;
+  const match = PACK_RANGE.exec(plain) ?? afterSeries?.exec(plain);
+  if (!match) return null;
+  const from = Number(match[1]);
+  const to = Number(match[2]);
+  if (!(to > from) || to - from > 60) return null;
+  return { from, to };
+}
+
+/**
+ * The volumes of the series a release holds, when it is a pack of this series: its title names the series and a
+ * range of books, and at least two volumes of the series fall in that range (whole positions only: a novella 1.5
+ * is not counted in "Books 1-3"). Null for any other release.
+ */
+export function packCoverage(
+  title: string,
+  volumes: readonly { position: number; title: string }[],
+  seriesName: string,
+): number[] | null {
+  const seriesKey = normalizeSeriesAudioTitle(seriesName);
+  if (!seriesKey || !normalizeSeriesAudioTitle(title).includes(seriesKey)) return null;
+  const range = packRange(title, seriesName);
+  if (!range) return null;
+  const covered = volumes
+    .map((volume) => volume.position)
+    .filter((position) => Number.isInteger(position) && position >= range.from && position <= range.to);
+  const unique = [...new Set(covered)].sort((a, b) => a - b);
+  return unique.length >= 2 ? unique : null;
+}
+
+/** The pack search's queries: the series' name, and with the author's surname. */
+export function buildPackSearchQueries(seriesName: string, author?: string) {
+  const authorTail = author?.trim().split(/\s+/).pop();
+  return [...new Set([seriesName, authorTail ? `${seriesName} ${authorTail}` : null].filter((value): value is string => !!value?.trim()).map((query) => query.trim()))];
+}
+
+/**
+ * The packs of a series the sources have: every release whose title is a pack of the series (`packCoverage`), with
+ * its info hash and whether TorBox has it. Two AudioBookBay pages and Prowlarr per query.
+ */
+export async function searchSeriesPackCandidates(
+  seriesName: string,
+  author: string,
+  volumes: readonly { position: number; title: string }[],
+  deps: SeriesAudioSearchDeps = defaultDeps(),
+): Promise<SeriesAudioCandidate[]> {
+  const log = deps.log ?? ((message: string) => console.warn(message));
+  const candidates = new Map<string, SeriesAudioCandidate>();
+  const add = (candidate: SeriesAudioCandidate) => {
+    if (!packCoverage(candidate.title, volumes, seriesName)) return;
+    const key = candidate.hash || `${candidate.source}:${candidate.id || candidate.title}`;
+    if (!candidates.has(key)) candidates.set(key, candidate);
+  };
+  for (const query of buildPackSearchQueries(seriesName, author)) {
+    await withProviderRetry(`AudioBookBay pack "${query}"`, async () => {
+      for (let page = 1, next: number | null = 1; next && page <= 2; page++) {
+        const response = await deps.abbSearch(query, page);
+        next = response.nextPage;
+        for (const result of response.results)
+          add({ source: "abb", id: result.id, title: result.title, size: result.size, format: result.format, narrator: result.narrator, kind: "compilation", query });
+      }
+    }, log);
+    await withProviderRetry(`Prowlarr pack "${query}"`, async () => {
+      const response = await deps.prowlarrSearch(query);
+      for (const result of response.results)
+        add({ source: "prowlarr", id: result.id, title: result.title, size: result.size, format: result.format, hash: result.infoHash || undefined, kind: "compilation", query });
+    }, log);
+  }
+  const list = [...candidates.values()];
+  await Promise.all(
+    list
+      .filter((candidate) => !candidate.hash && candidate.source === "abb")
+      .map(async (candidate) => {
+        const magnet = await withProviderRetry(`abb magnet ${candidate.id}`, () => deps.abbMagnetLink(candidate.id), log, 2);
+        if (magnet) candidate.hash = btihFromMagnet(magnet) || undefined;
+      }),
+  );
+  const hashes = [...new Set(list.flatMap((candidate) => (candidate.hash ? [candidate.hash] : [])))];
+  const cached = hashes.length
+    ? await deps.cachedHashes(hashes).catch((error) => {
+        logCaught(log, "TorBox cache check", error);
+        return new Set<string>();
+      })
+    : new Set<string>();
+  for (const candidate of list) candidate.cached = !!candidate.hash && cached.has(candidate.hash);
+  return list;
+}
+
+export type SeriesPackChoice = {
+  candidate: SeriesAudioCandidate;
+  /** Every volume position the pack covers. */
+  covered: number[];
+  /** The waiting books it covers. */
+  wanted: number[];
+};
+
+/**
+ * The pack the queue takes (ADR 0027): one in the series' language (`languageFits`) that covers at least two of the
+ * waiting books; the one covering the most of them, then TorBox's cached copy and the per-book ranking. Null when
+ * no pack covers two.
+ */
+export function pickSeriesPack(
+  candidates: readonly SeriesAudioCandidate[],
+  volumes: readonly { position: number; title: string }[],
+  seriesName: string,
+  wanted: ReadonlySet<number>,
+  language?: string | null,
+): SeriesPackChoice | null {
+  const options = candidates.flatMap((candidate) => {
+    if (!candidate.hash || !languageFits(candidate, language)) return [];
+    const covered = packCoverage(candidate.title, volumes, seriesName);
+    if (!covered) return [];
+    const hits = covered.filter((position) => wanted.has(position));
+    return hits.length >= 2 ? [{ candidate, covered, wanted: hits }] : [];
+  });
+  options.sort(
+    (a, b) =>
+      b.wanted.length - a.wanted.length ||
+      rankSeriesAudioCandidate({ ...b.candidate, kind: "plain" }) - rankSeriesAudioCandidate({ ...a.candidate, kind: "plain" }),
+  );
+  return options[0] ?? null;
+}
+
+/** A pack candidate's magnet link: the one its source gives, else one made from its hash. */
+export async function packCandidateMagnet(candidate: SeriesAudioCandidate, deps: SeriesAudioSearchDeps = defaultDeps()) {
+  return resolveCandidateMagnet(candidate, deps);
+}
