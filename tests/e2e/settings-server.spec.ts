@@ -124,6 +124,9 @@ for (const [size, viewport] of [["phone", { width: 390, height: 844 }], ["deskto
         "Prowlarr",
         "AudioBookBay",
         "Library Genesis",
+        // The shadow libraries with a key or an account (#901).
+        "Anna’s Archive",
+        "Z-Library",
         // The catalogue (#721).
         "AudiobookDB",
         "Open Library",
@@ -131,7 +134,11 @@ for (const [size, viewport] of [["phone", { width: 390, height: 844 }], ["deskto
         "Google Books",
         "iTunes",
       ]);
-      await expect(main.getByRole("heading", { name: "Anna’s Archive" })).toHaveCount(0);
+      // Anna’s Archive's key and Z-Library's account are write-only fields; Test shows only once one is saved (#901).
+      await expect(main.getByRole("textbox", { name: "Anna’s Archive address", exact: true })).toHaveValue("https://annas-archive.gl");
+      await expect(main.getByRole("textbox", { name: "Z-Library address", exact: true })).toHaveValue("https://z-library.sk");
+      await expect(main.getByRole("button", { name: "Test Anna’s Archive", exact: true })).toHaveCount(0);
+      await expect(main.getByRole("button", { name: "Test Z-Library", exact: true })).toHaveCount(0);
       // The old long form is gone: no save bar, no section for the local torrent client.
       await expect(main.getByRole("button", { name: /^Save (changes|connections|sync preferences)$/ })).toHaveCount(0);
       await expect(main.getByRole("heading", { name: "Your home server" })).toHaveCount(0);
@@ -312,7 +319,7 @@ for (const [size, viewport] of [["phone", { width: 390, height: 844 }], ["deskto
         await expect(page.getByRole("button", { name: "Add user" })).toHaveCount(0);
       }
       const main = page.locator("main");
-      for (const service of ["TorBox", "Hardcover", "Prowlarr", "AudioBookBay", "Library Genesis", "AudiobookDB", "Open Library"])
+      for (const service of ["TorBox", "Hardcover", "Prowlarr", "AudioBookBay", "Library Genesis", "Anna’s Archive", "Z-Library", "AudiobookDB", "Open Library"])
         await expect(main.getByRole("heading", { name: service, exact: true })).toHaveCount(0);
       await expect(main.getByRole("textbox", { name: "TorBox API key" })).toHaveCount(0);
       // Their settings carry no storage and none of the server's connections.
