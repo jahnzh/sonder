@@ -25,7 +25,7 @@ The new reading view (ADR 0025) has a text position rail: the book's chapters as
 
 - **The rule is about what is drawn.** Every box the rail draws, with its ring or halo, lies in the band's right margin and over no line of the book. The box a finger can take around the thumb (44 by 44) reaches over the line ends beside it; it draws nothing, and on touch it takes only a drag up or down: a tap there is the text's tap.
 - **The margin rule.** The text's right margin in the new view is never narrower than the rail's column, 24 px, whatever Appearance's Margin is; the left margin stays as set. The rail is in place from the moment the book opens, so showing it lays nothing out again. The band shows no scrollbar of the browser's, which would show the place among the loaded parts rather than in the book.
-- The browser test of the rule includes the rail: at rest, away from the narration, held and zoomed, its drawn boxes lie inside the text band and intersect no box of the text.
+- The browser test of the rule includes the rail: at rest, away from the narration, held and zoomed, its drawn boxes lie inside the text band and intersect no box of the text. In pages mode (#803) the same holds: the right margin of the page at the band's right edge is the rail's column, and the test runs in both modes.
 
 ## Amendment, 2026-11-24: a setting's pop-up, and the notice that leaves the controls in place (#890)
 

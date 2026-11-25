@@ -9,15 +9,27 @@ import { choosePreparedView } from "./prepared-view";
 import { expectRailBesideText, expectTextUncovered } from "./reader-bands";
 import { appearancePanel, closeAppearance, openAppearance } from "./reader-appearance";
 import { REST_MS } from "../../src/text-rail-model";
-// The text position rail of the new view's scroll mode (#804; boards RailB, RailBDrag, RailBZoom, RailTry): the thumb
-// follows the place in view, a drag moves the text as a move by hand does and never the audio, a touch takes the rail
-// only once it moves up or down, the zoom on the rail that eases out as the finger is pulled away, parts asked for
-// only at rests, and nothing over the text.
+// The text position rail of the new view (#804; boards RailB, RailBDrag, RailBZoom, RailTry): the thumb follows the
+// place in view, a drag moves the text as a move by hand does and never the audio, a touch takes the rail only once it
+// moves up or down, the zoom on the rail that eases out as the finger is pulled away, parts asked for only at rests,
+// and nothing over the text. Scroll mode first; pages mode (#803) at the end, where the rail is the same through the
+// same seam and a move by the rail is a page turned by hand.
 test.use({ serviceWorkers: "block" });
 installReaderWaitBudget(test);
 const imported: string[] = [];
+/** The reader's appearance before the test: each test chooses its reading mode, and the server's is put back after. */
+let appearance: any = null;
+async function reader(page: Page, patch: object) {
+  const now = await (await page.request.get("/api/appearance")).json();
+  expect((await page.request.put("/api/appearance", { data: { ...now, reader: { ...now.reader, ...patch } } })).ok()).toBe(true);
+}
+test.beforeEach(async ({ page }) => {
+  appearance = await (await page.request.get("/api/appearance")).json();
+  await reader(page, { mode: "scroll" });
+});
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "wait" });
+  if (appearance) await page.request.put("/api/appearance", { data: appearance });
   for (const id of imported.splice(0)) expect((await page.request.delete(`/api/library/${id}`)).ok()).toBe(true);
 });
 
@@ -466,16 +478,11 @@ test("the rail is a slider named Reading position: its keys and the wheel move t
 
 test("with Appearance's Margin at 8 the text's right margin is still the rail's column and the left stays 8", async ({ page }) => {
   test.setTimeout(150000);
-  const appearance = await (await page.request.get("/api/appearance")).json();
-  await page.request.put("/api/appearance", { data: { ...appearance, reader: { ...appearance.reader, margin: 8 } } });
-  try {
-    await openFollowing(page, `Rail margin ${randomUUID()}`);
-    const padding = await band(page).locator(".prepared-text").evaluate((text) => [getComputedStyle(text).paddingLeft, getComputedStyle(text).paddingRight]);
-    expect(padding).toEqual(["8px", "24px"]);
-    await expectRailBesideText(room(page));
-  } finally {
-    await page.request.put("/api/appearance", { data: appearance });
-  }
+  await reader(page, { margin: 8 });
+  await openFollowing(page, `Rail margin ${randomUUID()}`);
+  const padding = await band(page).locator(".prepared-text").evaluate((text) => [getComputedStyle(text).paddingLeft, getComputedStyle(text).paddingRight]);
+  expect(padding).toEqual(["8px", "24px"]);
+  await expectRailBesideText(room(page));
 });
 
 test("a touch tap on the rail is the text's tap; a touch that moves up or down takes the rail", async ({ page, browserName }) => {
@@ -513,6 +520,115 @@ async function manifestOfPage(page: Page): Promise<Manifest> {
   const address = await page.evaluate(() => performance.getEntriesByType("resource").map((entry) => entry.name).find((name) => /\/api\/reader\/[^/]+\/prepared$/.test(new URL(name).pathname)));
   return (await (await page.request.get(address!)).json()) as Manifest;
 }
+
+// ---- Pages mode (#803, #804): the same rail through the same seam ------------------------------------------------
+/** Pages mode: the first sentence that starts on the page shown (the reader's place for the page). */
+const firstOnPage = (page: Page) =>
+  band(page).evaluate((host) => {
+    const box = host.querySelector(".prepared-scroll")!.getBoundingClientRect();
+    for (const span of host.querySelectorAll<HTMLElement>(".prepared-text [data-s]")) {
+      const rect = [...span.getClientRects()].find((value) => value.width > 0 || value.height > 0);
+      if (rect && rect.left >= box.left - 1 && rect.left < box.right - 1) return span.getAttribute("data-s")!;
+    }
+    return null;
+  });
+/** Pages mode: the thumb stands on the place of the page's first sentence. */
+const expectThumbOnPage = (page: Page, manifest: Manifest) =>
+  expect.poll(async () => {
+    const first = await firstOnPage(page);
+    return first ? Math.abs((await railPlace(page)) - placeOf(manifest, first)) : 1;
+  }).toBeLessThan(1e-5);
+
+test("in pages mode the thumb follows a page turned by hand; a drag shows the page of the place let go at and saves it as a turn does, never the audio; nothing over the text with Margin at 8", async ({ page }) => {
+  test.setTimeout(180000);
+  await reader(page, { mode: "paginated", margin: 8 });
+  const { ebook, manifest } = await openFollowing(page, `Rail pages ${randomUUID()}`);
+  await expect(band(page)).toHaveAttribute("data-mode", "pages");
+  // The right margin of the page is the rail's column whatever Margin is; the left is the reader's 8.
+  const padding = await band(page).locator(".prepared-part").first().evaluate((part) => [getComputedStyle(part).paddingLeft, getComputedStyle(part).paddingRight]);
+  expect(padding).toEqual(["8px", "24px"]);
+  await expectTextUncovered(room(page));
+  // A page turned by hand: following pauses and the thumb goes to the new page's first sentence.
+  const opened = await firstOnPage(page);
+  const text = (await band(page).boundingBox())!;
+  await page.mouse.click(text.x + text.width * 0.85, text.y + text.height / 2);
+  await expect.poll(() => firstOnPage(page)).not.toBe(opened);
+  await expect(rail(page).locator(".text-rail-thumb")).toHaveAttribute("data-tone", "text");
+  await expectThumbOnPage(page, manifest);
+  await expectTextUncovered(room(page));
+  const pause = page.getByRole("button", { name: /Pause narration/ }).first();
+  if (await pause.isVisible()) await pause.click();
+  await page.waitForTimeout(500);
+  const audio = await audioState(page);
+  const writes = progressWrites(page);
+  // A drag, pulled away so the finger's travel is the whole book: the foot reads the thumb's place while it is held.
+  const { x, y, column } = await thumbAt(page);
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x - AWAY, y, { steps: 2 });
+  await page.mouse.move(x - AWAY, column.y + 10 + (column.height - 20) * 0.5, { steps: 6 });
+  const held = await railPlace(page);
+  await expect(room(page).locator(".reader-foot-place")).toHaveText(new RegExp(`· ${Math.round(held * 100)}%$`));
+  await expectRailBesideText(room(page));
+  await page.mouse.up();
+  await expect(rail(page)).not.toHaveAttribute("data-held", "");
+  // The page that holds the place let go at, its part loaded for it; the thumb on that page's first sentence.
+  await expect.poll(async () => placeOf(manifest, (await firstOnPage(page)) ?? "0:0")).toBeGreaterThan(0.45);
+  await expectThumbOnPage(page, manifest);
+  expect(Math.abs((await railPlace(page)) - held)).toBeLessThan(0.01);
+  await expect(band(page)).toHaveAttribute("data-view-resizes", "1");
+  // Saved as a page turn saves it: the page's first sentence, as the reader's place.
+  const saved = async () => (await (await page.request.get(`/api/reader/${ebook}/state`)).json()).checkpoint;
+  await expect.poll(async () => (await saved())?.locator?.paragraphId, { timeout: 15000 }).toBe(await firstOnPage(page));
+  expect((await saved()).origin).toBe("reading");
+  await expect(rail(page).locator(".text-rail-mark")).toBeVisible();
+  await expectTextUncovered(room(page));
+  // The audio is where it was and as it was; no listening position was written.
+  await page.waitForTimeout(1500);
+  expect(await audioState(page)).toEqual(audio);
+  expect(writes).toEqual([]);
+});
+
+test("in pages mode the rail's keys and the wheel over it turn the pages as a turn by hand", async ({ page }) => {
+  test.setTimeout(150000);
+  await reader(page, { mode: "paginated" });
+  const { manifest } = await openFollowing(page, `Rail pages keys ${randomUUID()}`);
+  await expect(band(page)).toHaveAttribute("data-mode", "pages");
+  const slider = page.getByRole("slider", { name: "Reading position" });
+  // A turn of the wheel over the rail is a page on.
+  const { x, y } = await thumbAt(page);
+  await page.mouse.move(x, y + 200);
+  let before = (await firstOnPage(page))!;
+  await page.mouse.wheel(0, 100);
+  await expect.poll(() => firstOnPage(page)).not.toBe(before);
+  await expect(rail(page).locator(".text-rail-thumb")).toHaveAttribute("data-tone", "text");
+  await page.waitForTimeout(600);
+  const once = (await firstOnPage(page))!;
+  expect(placeOf(manifest, once)).toBeGreaterThan(placeOf(manifest, before));
+  await expectThumbOnPage(page, manifest);
+  // Back up with the wheel: the page before, exactly.
+  await page.mouse.wheel(0, -100);
+  await expect.poll(() => firstOnPage(page)).toBe(before);
+  // Down: the next page.
+  await slider.focus();
+  await page.waitForTimeout(400);
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(() => firstOnPage(page)).toBe(once);
+  await expectThumbOnPage(page, manifest);
+  // Page Down: the page of the next chapter's first sentence.
+  before = once;
+  const place = await railPlace(page);
+  await page.keyboard.press("PageDown");
+  await expect.poll(() => railPlace(page)).toBeGreaterThan(place);
+  await expectThumbOnPage(page, manifest);
+  // End and Home: the book's last page and its first.
+  await page.keyboard.press("End");
+  await expect.poll(() => railPlace(page)).toBeGreaterThan(0.99);
+  await page.keyboard.press("Home");
+  await expect.poll(async () => placeOf(manifest, (await firstOnPage(page)) ?? "29:0")).toBe(0);
+  await expect.poll(() => railPlace(page)).toBe(0);
+  await expectTextUncovered(room(page));
+});
 
 // Pictures for the owner's check (#804): saved to artifacts/rail-804 when SONDER_RAIL_PICTURES is set.
 test("pictures of the rail at rest, away, held on the rail (zoomed in) and held pulled away, on a phone and a desktop, in Forest and Light, of the whole book and of the chapter", async ({ page, browser }) => {

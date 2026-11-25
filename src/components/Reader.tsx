@@ -688,6 +688,12 @@ export function ReaderView({
         seam.turn(direction);
         ended();
       },
+      // In pages mode a wheel over the rail turns the page, as a turn by hand; in scroll mode it scrolls, as by hand.
+      wheel(event) {
+        const ended = chosen();
+        seam.wheel(event);
+        ended();
+      },
     };
     const textRail = createTextRail(railSeam, { segments: railSegments(source.manifest, source.index), sentences: source.index.total, scope: railScope.current, onHeld: setRailHeld });
     rail.current = textRail;
