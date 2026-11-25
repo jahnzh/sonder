@@ -444,3 +444,70 @@ test("no connection: the No connection card where the refresh error would stand;
   const plain = seriesPageModel(series([book("5", 1)]), { ...facts(libraryOf(libraryWork("work-5", { recordings: [] }))), offline: true });
   assert.deepEqual(plain.books.map((row) => [row.chevron, row.actionOff]), [[true, false]]);
 });
+
+// The series queue on the Series page (#898).
+const state = (kind: "audio" | "ebook", parts: Partial<SeriesWorkAcquisition>): SeriesWorkAcquisition =>
+  ({ kind, status: "done", error: null, skipReason: null, ...parts }) as SeriesWorkAcquisition;
+
+test("each row names its search's state: waiting with its place, skipped, stopped, nothing found, left to choose, on server", () => {
+  const noAudio = { recordings: [] };
+  const works = [
+    book("1", 1, { acquisition: { audio: state("audio", { status: "pending", place: 3 }), ebook: null } }),
+    book("2", 2, { acquisition: { audio: state("audio", { status: "skipped", skipReason: "owner" }), ebook: null } }),
+    book("3", 3, { acquisition: { audio: state("audio", { status: "skipped", skipReason: "stopped" }), ebook: null } }),
+    book("4", 4, { acquisition: { audio: state("audio", { found: 0, chosen: false }), ebook: null } }),
+    book("5", 5, { acquisition: { audio: state("audio", { found: 3, chosen: false }), ebook: null } }),
+    book("6", 6, { acquisition: { audio: state("audio", { found: 3, chosen: true }), ebook: null } }),
+    book("7", 7, { acquisition: { audio: state("audio", { found: 3, chosen: true }), ebook: null } }),
+    book("8", 8, { acquisition: { audio: state("audio", { status: "failed", error: "AudioBookBay could not be reached. Try another mirror." }), ebook: null } }),
+  ];
+  const streams = { ...recording("work-7-rec"), serverStored: false };
+  const library = libraryOf(
+    libraryWork("work-1", noAudio),
+    libraryWork("work-2", noAudio),
+    libraryWork("work-3", noAudio),
+    libraryWork("work-4", { ...noAudio, mediaState: { state: "missing", holdReason: "empty_search", acquisition: null } }),
+    libraryWork("work-5", noAudio),
+    libraryWork("work-6"),
+    libraryWork("work-7", { recordings: [streams] }),
+    libraryWork("work-8", noAudio),
+  );
+  const rows = seriesPageModel(series(works), facts(library, true)).books;
+  assert.deepEqual(rows.map((row) => row.line), [
+    "Waiting · 3rd in line",
+    "Skipped",
+    "Search stopped",
+    "Nothing found",
+    "3 found · choose one",
+    "On server",
+    "Streams from TorBox",
+    "Audiobook search failed · AudioBookBay could not be reached",
+  ]);
+  // The administrator's rows of books a series search was asked for open the book's search sheet.
+  assert.ok(rows.every((row) => row.searchSheet));
+  const member = seriesPageModel(series(works), facts(library, false)).books;
+  assert.ok(member.every((row) => !row.searchSheet));
+});
+
+test("the run line: the search running now, how many wait, when the next starts; Stop searching and Resume", () => {
+  const works = [book("1", 1, { positionLabel: "1" }), book("3", 3), book("x", null, { title: "A Companion" })];
+  const library = libraryOf(libraryWork("work-1"), libraryWork("work-3"), libraryWork("work-x"));
+  const run = (queue: Partial<NonNullable<SeriesPageSeries["queue"]>>, elapsed = 0, admin = true) =>
+    seriesPageModel(
+      series(works, { queue: { searching: null, otherSearching: false, waiting: 0, retrying: 0, stopped: 0, nextAt: null, paused: false, now: 1000, ...queue } }),
+      { ...facts(library, admin), elapsed },
+    ).run;
+  assert.deepEqual(run({ searching: { bookId: "3", kind: "audio" }, waiting: 5 }), { line: "Searching for book 3 · audiobook · 5 waiting", stop: true, resume: false });
+  assert.equal(run({ searching: { bookId: "x", kind: "ebook" }, waiting: 0 })?.line, "Searching for A Companion · ebook");
+  assert.equal(run({ waiting: 2, nextAt: 26_000 })?.line, "Next search in 25 s · 2 waiting");
+  // The count goes on between reads of the series.
+  assert.equal(run({ waiting: 2, nextAt: 26_000 }, 20_000)?.line, "Next search in 5 s · 2 waiting");
+  assert.equal(run({ waiting: 2, otherSearching: true })?.line, "Another series is being searched · 2 waiting");
+  assert.equal(run({ waiting: 2, paused: true })?.line, "Paused · 2 waiting");
+  assert.equal(run({ waiting: 1, retrying: 1 })?.line, "1 waiting to try again");
+  assert.deepEqual(run({ stopped: 4 }), { line: "Search stopped · 4 not searched", stop: false, resume: true });
+  assert.equal(run({}), null);
+  // A member has none; nor has an older server's answer.
+  assert.equal(run({ waiting: 2 }, 0, false), null);
+  assert.equal(seriesPageModel(series(works), facts(library, true)).run, null);
+});
