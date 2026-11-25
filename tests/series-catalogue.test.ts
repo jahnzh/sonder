@@ -290,7 +290,7 @@ test("older clients: a number for a series or book id is taken as its text, an e
 });
 
 test("the audio search ranks a candidate read by the release's narrator, or as long as the release, first", () => {
-  const candidate = (id: string, narrator: string | null, lengthMs: number | null = null) => ({ source: "abb" as const, id, title: `Book ${id}`, narrator, hash: id, kind: "plain" as const, query: "q", lengthMs });
+  const candidate = (id: string, narrator: string | null, lengthMs: number | null = null) => ({ source: "abb" as const, id, title: `Book ${id}`, narrator, language: "English", hash: id, kind: "plain" as const, query: "q", lengthMs });
   const expected = { narrators: ["Jefferson Mays"], lengthMs: 72_000_000 };
   assert.equal(audio.pickAutoAcquireCandidate([candidate("a", "Someone Else"), candidate("b", "Mays, Jefferson")], expected)?.id, "b");
   assert.equal(audio.pickAutoAcquireCandidate([candidate("a", null, 30_000_000), candidate("b", null, 71_000_000)], expected)?.id, "b");

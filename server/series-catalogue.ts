@@ -26,6 +26,7 @@ import {
 } from "./audiobookdb.ts";
 import { searchOpenLibrarySeries } from "./openlibrary.ts";
 import { CatalogueError, type Priority } from "./catalogue-provider.ts";
+import { languageCode } from "./release-language.ts";
 import { LINKED_ENTRIES, authorMatches, englishRelease, linkWork, normaliseTitle, titleMatches } from "./catalogue-links.ts";
 import { applyTitleEdits, handSeriesMembers, isLocalSeriesId, localSeriesHead, localSeriesIds } from "./work-metadata.ts";
 import { workVisibleTo } from "./work-library.ts";
@@ -345,6 +346,8 @@ export async function saveCatalogueSeries(
   options?: {
     searchAudio?: boolean;
     searchEbooks?: boolean;
+    /** The series' language as the user chose it (#897), kept for the automatic pick; unchanged when absent. */
+    language?: string;
     /** The reset (`series-resave.ts`): books saved with the Hardcover series, each with the work it had then. */
     restore?: Map<string, { workId: string; introduced: boolean }>;
     priority?: Priority;
@@ -364,6 +367,8 @@ export async function saveCatalogueSeries(
   sqlite.transaction(() => {
     upsertCatalogue(entry, new Map(preview.map((work) => [work.id, work.workId])));
     sqlite.prepare("INSERT OR IGNORE INTO user_saved_series(user_id,series_id,saved_at,refreshed_at) VALUES(?,?,?,?)").run(userId, id, Date.now(), Date.now());
+    const chosen = options?.language ? languageCode(options.language) : null;
+    if (chosen) sqlite.prepare("UPDATE user_saved_series SET language=? WHERE user_id=? AND series_id=?").run(chosen, userId, id);
     markSeen(userId, id, entry.members.map((member) => member.id));
     for (const work of selected) {
       const member = entry.members.find((candidate) => candidate.id === work.id)!;

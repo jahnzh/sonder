@@ -146,7 +146,7 @@ test("pickAutoAcquireCandidate prefers plain releases and ignores compilations a
     {
       source: "prowlarr",
       id: "3",
-      title: "Plain release",
+      title: "Plain release [English]",
       kind: "plain",
       query: "q",
       hash,
@@ -156,8 +156,8 @@ test("pickAutoAcquireCandidate prefers plain releases and ignores compilations a
   assert.equal(pickAutoAcquireCandidate(candidates)?.id, "3");
   // Two plain releases: the one read by the narrator AudiobookDB names for the release wins (#721).
   const plain: SeriesAudioCandidate[] = [
-    { source: "prowlarr", id: "4", title: "Plain release", kind: "plain", query: "q", hash: "c".repeat(40), narrator: "Someone Else" },
-    { source: "prowlarr", id: "5", title: "Plain release", kind: "plain", query: "q", hash: "d".repeat(40), narrator: "Jefferson Mays" },
+    { source: "abb", id: "4", title: "Plain release", kind: "plain", query: "q", hash: "c".repeat(40), narrator: "Someone Else", language: "English" },
+    { source: "abb", id: "5", title: "Plain release", kind: "plain", query: "q", hash: "d".repeat(40), narrator: "Jefferson Mays", language: "English" },
   ];
   assert.equal(pickAutoAcquireCandidate(plain)?.id, "4", "without what AudiobookDB says, the first stays first");
   assert.equal(pickAutoAcquireCandidate(plain, { narrators: ["Jefferson Mays"], lengthMs: null })?.id, "5");
@@ -305,7 +305,7 @@ test("autoAcquireSeriesVolume queues acquire for a plain candidate", async () =>
         results: [
           {
             id: "p1",
-            title: "The Butchers Masquerade (Dungeon Crawler Carl 05)",
+            title: "The Butchers Masquerade (Dungeon Crawler Carl 05) [English] M4B",
             infoHash: hash,
             size: "1 GB",
             format: "M4B",
@@ -435,7 +435,7 @@ test("autoAcquireSeriesVolumes invokes acquire for a plain series volume", async
         results: [
           {
             id: "rel-1",
-            title: "Book One (Audio Series Book 1)",
+            title: "Book One (Audio Series Book 1) [English]",
             infoHash: hash,
             size: "500 MB",
             format: "M4B",
