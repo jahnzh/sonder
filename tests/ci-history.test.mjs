@@ -46,6 +46,20 @@ history_check_result
   }
 });
 
+test("history_check_result: a local check that never started a stage is unknown, even beside a setup_failed report (#887)", () => {
+  const r = runHelper(`
+RESULT=local_setup_failed
+echo '{"ok":false,"result":"failed"}' >"$LOCAL_REPORT_DIR/report.json"
+history_check_result
+`);
+  try {
+    assert.equal(r.status, 0, r.out);
+    assert.match(r.out.trim().split("\n").at(-1), /^unknown$/);
+  } finally {
+    r.cleanup();
+  }
+});
+
 test("history_check_result falls back to the shell RESULT when the report is missing", () => {
   const fail = runHelper(`
 RESULT=remote_check_failed

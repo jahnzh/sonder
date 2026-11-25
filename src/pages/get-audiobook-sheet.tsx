@@ -27,7 +27,7 @@ import { InfoMark } from "../parts/Tooltip";
 import { tip } from "../tooltip-texts";
 import { useTorrentHealth } from "../components/TorrentHealth";
 import type { Acquisition, AudiobookRelease } from "../types";
-import { GET_LANGUAGE, getLine, LANGUAGE_KEY, languageChoices, languageName, recordingRows } from "./get-audiobook-rows";
+import { GET_LANGUAGE, getLine, LANGUAGE_KEY, languageChoices, languageName, recordingRows, sourceLink } from "./get-audiobook-rows";
 import {
   answered,
   emptySearch,
@@ -44,6 +44,10 @@ import {
   type SourceId,
 } from "./get-audiobook-state";
 import { GetImportRow } from "./get-import-row";
+import { SourceLinkLine, useChosenRowInView } from "./get-sheet-parts";
+import { usePlayer } from "../player";
+import { usePreview } from "./get-preview";
+import { previewControl } from "./get-preview-model";
 import { Cover } from "../parts/Cover";
 import "./get-audiobook-sheet.css";
 
@@ -249,12 +253,17 @@ export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarr
   };
   const chosenRow = view.rows.find((row) => row.id === chosen) ?? null;
   const line = getLine({ chosen: chosenRow?.release ?? null, mediaState: work?.mediaState, torboxConnected: torboxConfigured, health });
+  // A preview of the chosen row when it says "Plays now" (#889): its own audio element, off while the book plays.
+  const { playing: bookPlaying } = usePlayer();
+  const preview = usePreview(chosenRow?.release ?? null, bookPlaying);
+  const previewing = previewControl({ chosen: chosenRow?.release, phase: preview.phase, played: preview.played, bookPlaying, online });
   const asked = Object.keys(search.sources) as SourceId[];
   const named = (asked.length ? asked : sources()).map((source) => SOURCE_NAMES[source]);
   const sourcesLine = `From ${named.join(" and ")}.`;
 
   const getNew = async () => {
     if (!chosenRow) return;
+    preview.stop();
     const release = chosenRow.release;
     setGetting(true);
     setRefusal("");
@@ -280,6 +289,7 @@ export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarr
   const get = async () => {
     if (newBook) return getNew();
     if (!chosenRow || !work) return;
+    preview.stop();
     const release = chosenRow.release;
     setGetting(true);
     setRefusal("");
@@ -310,6 +320,14 @@ export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarr
     }
   };
 
+  // The footer, bottom to top: the button row, pinned to the foot and never moving; the sentence that says what the
+  // button will do, 8 above it; the link to the chosen release's own page; a refusal. Nothing is reserved, so the
+  // footer is the button alone while nothing is chosen and grows upward into the list when there is something to say.
+  // This departs from the board's order (the button, then its sentence under it) on purpose: the button under the
+  // thumb must not move when a row is chosen, and under it the sentence would have to be kept room for (#889).
+  const link = sourceLink(chosenRow?.release);
+  const sentence = newBook ? (line ? `${ADDS_THE_BOOK} ${line.text}` : ADDS_THE_BOOK) : line?.text;
+  useChosenRowInView(`${chosen}|${link?.href}|${sentence}|${refusal}|${previewing?.line?.text}`);
   const footer = (
     <>
       {refusal && (
@@ -317,20 +335,33 @@ export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarr
           {refusal}
         </p>
       )}
-      <Button kind="primary" disabled={!chosenRow || getting || !online} onClick={() => void get()}>
-        Get this recording
-      </Button>
-      {newBook ? (
+      <SourceLinkLine link={link} />
+      {sentence && (
         <p className={line?.failed ? "get-sheet-line get-sheet-line-failed" : "get-sheet-line"} data-testid="get-line">
-          {line ? `${ADDS_THE_BOOK} ${line.text}` : ADDS_THE_BOOK}
+          {sentence}
         </p>
-      ) : (
-        line && (
-          <p className={line.failed ? "get-sheet-line get-sheet-line-failed" : "get-sheet-line"} data-testid="get-line">
-            {line.text}
-          </p>
-        )
       )}
+      {previewing?.line && (
+        <p className={previewing.line.failed ? "get-sheet-line get-sheet-line-failed" : "get-sheet-line"} data-testid="preview-line" role="status">
+          {previewing.line.text}
+        </p>
+      )}
+      {/* Preview (#889) at its own width on the left, only for a row that says "Plays now"; Get fills the rest. */}
+      <div className="get-sheet-buttons">
+        {previewing && (
+          <Button
+            kind="secondary"
+            className="get-sheet-preview"
+            disabled={previewing.disabled}
+            onClick={() => (preview.phase === "playing" ? preview.stop() : void preview.start())}
+          >
+            {previewing.label}
+          </Button>
+        )}
+        <Button kind="primary" disabled={!chosenRow || getting || !online} onClick={() => void get()}>
+          Get this recording
+        </Button>
+      </div>
     </>
   );
 

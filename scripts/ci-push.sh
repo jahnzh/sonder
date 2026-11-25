@@ -15,8 +15,8 @@
 #   skipped <sha> <branch> (same commit as <branch>)
 #
 # Deleted and unchanged branches are never dispatched. A SHA with a finished
-# run (a ci-ssh-result.txt or ci-deck-result.txt with a result= line) is not
-# started again. If the snapshot before the push fails, the push still runs
+# run (a ci-ssh-result.txt or ci-deck-result.txt with a result= line, other than
+# local_setup_failed) is not started again. If the snapshot before the push fails, the push still runs
 # but nothing is dispatched afterwards, and a warning says so.
 #
 # Exit status: the push's exit status; 0 when the push succeeded, whatever the

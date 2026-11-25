@@ -58,6 +58,10 @@ _Avoid_: Source (alone), copy
 The administrator's action of bringing a missing file to a work: a recording from AudioBookBay, Prowlarr, a magnet link or audio files from the device, or an ebook edition from Library Genesis or a file from the device. It always happens in the Get sheet of that work, and the file joins that work.
 _Avoid_: Find another release, Find ebook, acquire (on screen), download (for the action)
 
+**Preview**:
+A stretch of a release TorBox already holds ("Plays now"), heard in the Get sheet before it is got: up to two minutes of one of its files, in an audio element of its own, never the player's. It makes no recording and writes no listening position. The release stays on the TorBox account afterwards.
+_Avoid_: Sample (a file name the preview passes over), trial
+
 **Release**:
 A listing a source offers before Sonder has it: a torrent of a recording on AudioBookBay or an indexer behind Prowlarr, or a file of an edition on Library Genesis. Getting one makes it a recording or an ebook edition of the work. A release TorBox already holds plays at once ("Plays now"). On screen a release is called a recording or an edition.
 _Avoid_: Result, torrent (alone), version
@@ -114,11 +118,15 @@ _Avoid_: Screen, view, dialog
 
 **Sheet**:
 A full-screen task opened over a page, such as Get. Going back closes it and returns to the page.
-_Avoid_: Modal, dialog, popup
+_Avoid_: Modal, dialog, popup (a pop-up is a setting pop-up, which is not a sheet)
 
 **Picker**:
 A short list of choices that opens over a page from its bottom edge, such as the Library's Sort and view or its Shelf. It has no address: a choice applies at once, Done or a tap outside closes it, and Back leaves the page under it, as for a tooltip.
 _Avoid_: Dropdown, menu, popover, select
+
+**Setting pop-up**:
+The small box that Speed or the sleep timer in the reader's foot opens above its button, holding that setting's controls, each change applied at once. It is the one thing drawn over the text band, at most 120 px into it, and only on the reader's tap on its button; nothing is dimmed and the text is not laid out again, and a tap outside it, Escape, its button again or the controls hiding closes it (ADR 0019, amended 2026-11-24). It has no address and is not a sheet, a picker or a dialog.
+_Avoid_: Popover, menu, dialog, overlay
 
 **Old name**:
 An address from before the redesign, such as `#downloads` or `#reader/<ebook id>`, that keeps working for good by opening the page that took its place and replacing itself in the history.
@@ -143,7 +151,7 @@ The band at the top of the reader's page, 44 high plus the phone's safe area. At
 _Avoid_: Top bar, toolbar, header
 
 **Foot**:
-The band at the bottom of the reader's page, 72 high plus the phone's safe area. At rest it holds the progress line, the time left and Pause; with the controls shown, the timeline and the transport. Speed, the sleep timer and every message while reading take its lower row.
+The band at the bottom of the reader's page, 72 high plus the phone's safe area. At rest it holds the progress line, the time left and Pause; with the controls shown, the timeline and the transport. Every message while reading is in it: a notice with Undo takes its first row (the timeline, or the status line of a book without a recording) on a phone with the controls shown, the others its lower row. Speed and the sleep timer open a setting pop-up above their button, the one thing drawn over the text band (ADR 0019).
 _Avoid_: Player bar, bottom bar, footer, toast
 
 **Text band**:
@@ -205,6 +213,18 @@ _Avoid_: Synced, live, linked
 **Paged away**:
 The state where the reader shows something other than the narrated sentence because the reader navigated.
 _Avoid_: Off narration, unlinked
+
+**Text position rail**:
+The thin column in the text band's right margin of the new reading view, always shown: the whole book cut at its chapters, or the chapter of the place in view cut at its sentences (Reading position shows). A place on it is a sentence's place among the book's sentences; dragging it moves the text as a move by hand does and never touches the audio.
+_Avoid_: Scrollbar, position bar, scrubber (the foot's slider)
+
+**Thumb**:
+The mark on the text position rail at the place of the first sentence in view, in the accent colour while following; held, it is the place the finger has taken the text to.
+_Avoid_: Handle, knob, cursor
+
+**Narration mark**:
+The mark on the text position rail at the narrated sentence's place, shown while paged away. It is not the narration highlight, which marks the narrated sentence in the text.
+_Avoid_: Narration highlight, audio marker
 
 **Back to narration**:
 The action that returns a paged-away reader to the narrated sentence and resumes following. With no narrated sentence at the position, the administrator's Back to narration locates the passage from the audio instead (#592).

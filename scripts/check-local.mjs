@@ -13,6 +13,9 @@ import {
   findChangedFiles,
   selectBrowserScope,
   specWeight,
+  gainedProjects,
+  dealChangedSpecs,
+  splitProjectCount,
   partitionSpecs,
   changedStageShardCount,
   checkCallerDirty,
@@ -22,6 +25,8 @@ import {
   sanitizeEnvironment,
   runStageProcess,
   terminateProcessTree,
+  stopProcessesUnder,
+  CHECKOUT_DIR_FILE,
   preserveArtifacts,
   cleanupDirectory,
   writeReportFiles,
@@ -49,20 +54,34 @@ const STAGE_DEFINITIONS = [
 const PLAYWRIGHT_REPORT_NAME = "playwright-results.json";
 
 // Playwright treats positional file filters as regular expressions, not literal paths.
-// With more than one part (`parts`, the files dealt out by partitionSpecs), the stages run their parts at the same
-// time, each on its own server with one worker (#845, scripts/test-browser.mjs): SONDER_BROWSER_PARTS carries them.
-export function changedBrowserStages(files, parts = [files]) {
+// The one stage over a change's own spec files: every changed spec twice on one worker. With `--repeat-each=2` and
+// one worker Playwright runs, project by project, all the files in order and then all of them in order again, so
+// the first pass is the files once, in order, on one worker and a fresh server (what a separate
+// `browser-changed-ordered` stage ran until #845's follow-up; tests/check-local.test.mjs holds Playwright to it).
+// `parts` (dealChangedSpecs) are `{ files, projects }`: with more than one, or one that names projects, the stage
+// runs them through SONDER_BROWSER_PARTS, each on its own server with one worker (scripts/test-browser.mjs).
+export function changedBrowserStages(files, parts = [{ files, projects: null }]) {
   if (files.length === 0) return [];
   const filter = (file) => `${file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`;
   const filters = files.map(filter);
-  const env = parts.length > 1 ? { SONDER_BROWSER_PARTS: JSON.stringify(parts.map((part) => part.map(filter))) } : {};
-  return [
-    { name: "browser-changed-repeat", options: ["--workers=1", "--repeat-each=2", "--output=test-results-changed-repeat"] },
-    { name: "browser-changed-ordered", options: ["--workers=1", "--output=test-results-changed-ordered"] },
-  ].map(({ name, options }) => {
-    const args = ["run", "test:browser", "--", ...options, ...filters];
-    return { name, command: "npm", args, env, fullCommand: `npm ${args.map((arg) => JSON.stringify(arg)).join(" ")}${parts.length > 1 ? ` (in ${parts.length} parts)` : ""}` };
-  });
+  const split = parts.length > 1 || parts.some((part) => part.projects);
+  const env = split
+    ? { SONDER_BROWSER_PARTS: JSON.stringify(parts.map((part) => (part.projects ? { filters: part.files.map(filter), projects: part.projects } : part.files.map(filter)))) }
+    : {};
+  const args = ["run", "test:browser", "--", "--workers=1", "--repeat-each=2", "--output=test-results-changed-repeat", ...filters];
+  const gained = parts.filter((part) => part.projects).reduce((sum, part) => sum + part.files.length, 0);
+  const note = split ? ` (in ${parts.length} part${parts.length === 1 ? "" : "s"}${gained ? `; ${gained} spec(s) only in the projects they gained` : ""})` : "";
+  return [{ name: "browser-changed-repeat", command: "npm", args, env, fullCommand: `npm ${args.map((arg) => JSON.stringify(arg)).join(" ")}${note}` }];
+}
+
+/**
+ * One line for the summary on what the unit stage's worker tests ran with on this host, or "" on a machine that
+ * names no interpreter. A host without torch says so here, so its 33 skipped tests are never a silent gap (#878).
+ */
+export function workerTestsSummary(env) {
+  if (!env.SONDER_WORKER_PYTHON) return "";
+  if (env.SONDER_WORKER_TORCH === "1") return `Worker tests: run with ${env.SONDER_WORKER_PYTHON}, torch included; a test skipped for want of numpy, fastapi or torch fails.`;
+  return `Worker tests: run with ${env.SONDER_WORKER_PYTHON} WITHOUT torch: the 33 tests of the whole-book stages that need it were skipped on this host (its workerTorch in scripts/ci-hosts.json, #878).`;
 }
 
 // --- Local free-disk warning (issue #89) ---------------------------------------------------
@@ -236,13 +255,28 @@ Options:
 `);
 }
 
+// Written into the report directory just before the first stage starts. A runner that finds it absent after a failed
+// check knows the run ended in setup, so the failure says nothing about the commit (scripts/ci-ssh.sh).
+export const STAGE_STARTED_FILE = "stage-started";
+// A runner that made the directory itself leaves its pid file in it (ci-ssh.sh, for ci-stop.sh) and hands the
+// directory over: that is the one content a directory may have and still be taken.
+const CALLER_RESERVED_FILES = ["ci-ssh.pid"];
+const CLAIM_FILE = "check-local.claim";
+
 function reserveReportDirectory(outputDir) {
   fs.mkdirSync(path.dirname(outputDir), {recursive: true});
-  try { fs.mkdirSync(outputDir); }
+  try { fs.mkdirSync(outputDir); return; }
   catch (error) {
-    if (error.code === "EEXIST") throw new Error(`Output directory already contains or reserves another run: ${outputDir}`);
-    throw error;
+    if (error.code !== "EEXIST") throw error;
   }
+  const refusal = new Error(`Output directory already contains or reserves another run: ${outputDir}`);
+  let entries;
+  try { entries = fs.readdirSync(outputDir); }
+  catch { throw refusal; }
+  if (!entries.length || !entries.every((name) => CALLER_RESERVED_FILES.includes(name))) throw refusal;
+  // Two runs handed the same directory must not both take it: the exclusive create lets one of them.
+  try { fs.writeFileSync(path.join(outputDir, CLAIM_FILE), `${process.pid}\n`, {flag: "wx"}); }
+  catch { throw refusal; }
 }
 
 /**
@@ -308,7 +342,10 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       : path.resolve(callerDir, "artifacts", "ci", `unresolved-${sanitizedRef}`, runId);
 
     try { reserveReportDirectory(outputDir); }
-    catch (error) { return {ok: false, exitCode: 1, error: error.message}; }
+    catch (error) {
+      console.error(`[check-local] Setup error: ${error.message}`);
+      return {ok: false, exitCode: 1, error: error.message};
+    }
 
     const setupLog = `Setup failure: unable to resolve git reference "${options.ref}".\n${resolveResult.error}\n`;
     fs.writeFileSync(path.join(outputDir, "setup.log"), setupLog, "utf8");
@@ -353,7 +390,10 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     : path.resolve(callerDir, "artifacts", "ci", resolvedSha, runId);
 
   try { reserveReportDirectory(outputDir); }
-  catch (error) { return {ok: false, exitCode: 1, error: error.message}; }
+  catch (error) {
+    console.error(`[check-local] Setup error: ${error.message}`);
+    return {ok: false, exitCode: 1, error: error.message};
+  }
 
   // 2. Allocate loopback port with atomic host lease
   let portLease = null;
@@ -409,6 +449,12 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
   let disposableDir = null;
   try {
     disposableDir = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-local-check-"));
+    // For a runner that has to stop what this check left running after it was killed itself (ci-ssh.sh).
+    try {
+      fs.writeFileSync(path.join(outputDir, CHECKOUT_DIR_FILE), `${disposableDir}\n`);
+    } catch {
+      // the check's own cleanup still stops them
+    }
   } catch (err) {
     if (portLease) releasePortLease(portLease);
     const setupCompletedAt = new Date().toISOString();
@@ -460,6 +506,9 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     if (isCleanedUp) return;
     isCleanedUp = true;
     if (disposableDir) {
+      // What a stopped stage left running in the checkout: Playwright's web servers are in groups of their own.
+      const left = stopProcessesUnder(disposableDir);
+      if (left.length) console.warn(`[check-local] Stopped ${left.length} process(es) left running in the checkout: ${left.join(", ")}`);
       cleanupDirectory(disposableDir);
     }
     if (portLease) {
@@ -550,18 +599,39 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     // 5. Execute stages sequentially
     const playwrightReportPath = path.join(outputDir, PLAYWRIGHT_REPORT_NAME);
     const stageResults = [];
-    // The changed specs dealt into parts of about equal work, for the two stages that run them (#845).
-    const specWeights = new Map(
-      changedBrowserSpecs.files.map((file) => {
-        try {
-          return [file, specWeight(fs.readFileSync(path.join(disposableDir, file), "utf8"))];
-        } catch {
-          return [file, 1];
-        }
-      }),
-    );
+    // The changed specs dealt into parts of about equal work for the stage that repeats them (#845). A spec whose
+    // only change is its `// @projects` line is repeated in the projects it gained, nowhere else.
+    const specWeights = new Map();
+    const specGained = new Map();
+    // The changed files are those since the merge base with origin/main, so that is what a spec is compared with.
+    let mergeBase = changedBrowserSpecs.base;
+    try {
+      mergeBase = execFileSync("git", ["merge-base", changedBrowserSpecs.base, resolvedSha], { cwd: callerDir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || mergeBase;
+    } catch {
+      // setup already proved a common ancestor; without one every spec is repeated in every project
+    }
+    for (const file of changedBrowserSpecs.files) {
+      let head = null;
+      try {
+        head = fs.readFileSync(path.join(disposableDir, file), "utf8");
+      } catch {
+        // weighs 1, repeated in every project
+      }
+      let base = null;
+      try {
+        base = execFileSync("git", ["show", `${mergeBase}:${file}`], { cwd: callerDir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024 });
+      } catch {
+        // new at this commit
+      }
+      const gained = gainedProjects(base, head);
+      specGained.set(file, gained);
+      const all = head === null ? 1 : specWeight(head);
+      // Of its projects (chromium and those named), only the gained ones run.
+      specWeights.set(file, gained ? Math.max(1, Math.round((all * gained.length) / (1 + splitProjectCount(head)))) : all);
+    }
     const changedShards = changedStageShardCount({...process.env, ...overrides.env});
-    const changedParts = partitionSpecs(changedBrowserSpecs.files, changedShards, (file) => specWeights.get(file) ?? 1);
+    const dealBy = (weightOf) => dealChangedSpecs(changedBrowserSpecs.files, changedShards, weightOf, (file) => specGained.get(file));
+    const changedParts = dealBy((file) => specWeights.get(file) ?? 1);
     const stageDefinitions = [...STAGE_DEFINITIONS, ...changedBrowserStages(changedBrowserSpecs.files, changedParts)];
     let changedPartsBy = "the count of tests";
     // The browser stage scope follows the changed files (#34); --full or SONDER_CHECK_FULL=1 runs everything.
@@ -579,6 +649,17 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       ...process.env,
       ...overrides.env,
     };
+    // The stages get no SONDER_ setting of the caller's, with one exception: the number of browser shards, which a
+    // runner sets for its host (ci-ssh.sh, from the host's figures). It goes to the browser stages only: the unit
+    // stage runs the runners' own tests, which must not inherit it.
+    const shardSetting = /^(?:[1-9]|1[0-6])$/.test(baseEnv.SONDER_BROWSER_SHARDS ?? "") ? { SONDER_BROWSER_SHARDS: baseEnv.SONDER_BROWSER_SHARDS } : {};
+    // And for the unit stage the interpreter a check host names for the worker's Python tests, which then fail
+    // instead of being skipped when it cannot run them (tests/0-worker-python.test.ts).
+    const workerPython = baseEnv.SONDER_WORKER_PYTHON && path.isAbsolute(baseEnv.SONDER_WORKER_PYTHON) ? { SONDER_WORKER_PYTHON: baseEnv.SONDER_WORKER_PYTHON } : {};
+    // And whether that interpreter has torch: "1" makes the tests that need it fail instead of skip, "0" is a
+    // host's stated gap, which the summary below says in one line (#878).
+    if (workerPython.SONDER_WORKER_PYTHON && /^[01]$/.test(baseEnv.SONDER_WORKER_TORCH ?? "")) workerPython.SONDER_WORKER_TORCH = baseEnv.SONDER_WORKER_TORCH;
+    const workerTestsLine = workerTestsSummary(workerPython);
     const childEnv = sanitizeEnvironment(baseEnv, {
       PLAYWRIGHT_PORT: String(port),
     });
@@ -594,6 +675,8 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
     // Non-fatal startup warning when the local disk is low; names the stale directory families.
     // Never changes the exit code (issue #89).
     warnLocalDisk();
+
+    fs.writeFileSync(path.join(outputDir, STAGE_STARTED_FILE), `${new Date().toISOString()}\n`, "utf8");
 
     for (let i = 0; i < stageDefinitions.length; i++) {
       let stageDef = stageDefinitions[i];
@@ -643,7 +726,9 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       if (stageDef.name === "browser-changed-repeat" && changedParts.length > 1) {
         const measured = readSpecSeconds(playwrightReportPath);
         if (measured && changedBrowserSpecs.files.every((file) => measured.get(file) > 0)) {
-          const byTime = changedBrowserStages(changedBrowserSpecs.files, partitionSpecs(changedBrowserSpecs.files, changedShards, (file) => measured.get(file)));
+          // A spec repeated only in its gained projects costs that share of what the file took in all of them.
+          const share = (file) => (specGained.get(file) ? specWeights.get(file) / specWeight(fs.readFileSync(path.join(disposableDir, file), "utf8")) : 1);
+          const byTime = changedBrowserStages(changedBrowserSpecs.files, dealBy((file) => measured.get(file) * share(file)));
           for (const definition of byTime) stageDefinitions[stageDefinitions.findIndex((entry) => entry.name === definition.name)] = definition;
           changedPartsBy = "the browser stage's times";
         }
@@ -664,7 +749,7 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
       const stageArgs = jsonReport
         ? [...stageDef.args, "--", "--reporter=list,json", ...(selection.scope === "chromium" ? ["--project=chromium"] : [])]
         : stageDef.args;
-      const stageEnv = {...childEnv, ...stageDef.env, NODE_ENV: stageDef.name === "build" ? "production" : "test"};
+      const stageEnv = {...childEnv, ...(stageDef.name.startsWith("browser") ? shardSetting : {}), ...(stageDef.name === "unit" ? workerPython : {}), ...stageDef.env, NODE_ENV: stageDef.name === "build" ? "production" : "test"};
       if (jsonReport) stageEnv.PLAYWRIGHT_JSON_OUTPUT_NAME = playwrightReportPath;
 
       let stageRes;
@@ -887,6 +972,7 @@ export async function runCheckLocal(rawArgs = process.argv.slice(2), overrides =
         console.error(`\n[check-local] Checks failed: ${interruptedSignal || artifactError || blockingStage?.name}.`);
       }
       if (gate) for (const line of browserSummaryLines(gate)) console.log(`[check-local] ${line}`);
+      if (workerTestsLine) console.log(`[check-local] ${workerTestsLine}`);
       if (browserReruns?.skipped) console.log(`[check-local] No reruns: ${browserReruns.skipped}`);
       if (browserSlowestTests.length) {
         console.log(`[check-local] Slowest browser tests:`);

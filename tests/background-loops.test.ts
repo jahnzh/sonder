@@ -24,7 +24,7 @@ const app = await createApp({ background: { manual: true } });
 const runner = backgroundRunner(app);
 after(() => rmSync(temp, { recursive: true, force: true }));
 
-test("the app runs its eleven loops in one runner (Hardcover sync went, #721 part d), with the intervals and immediate runs they always had", { timeout: 10_000 }, () => {
+test("the app runs its twelve loops in one runner (Hardcover sync went, #721 part d), with the intervals and immediate runs they always had", { timeout: 10_000 }, () => {
   assert.deepEqual(
     runner.processes().map(({ id, intervalMs, runAtStart, pausedBy }) => ({ id, intervalMs, runAtStart: !!runAtStart, pausedBy })),
     [
@@ -36,6 +36,8 @@ test("the app runs its eleven loops in one runner (Hardcover sync went, #721 par
       // The ebook-set evaluation (#325) runs at start, so members left pending by a restart resume.
       { id: "ebook-set", intervalMs: 30_000, runAtStart: true, pausedBy: "ebook-set" },
       { id: "backups", intervalMs: 600_000, runAtStart: false, pausedBy: "backups" },
+      // TorBox previews (#889) end at start and each minute: a restart forgets none, a closed tab ends one in 30 minutes.
+      { id: "torbox-previews", intervalMs: 60_000, runAtStart: true, pausedBy: undefined },
       { id: "catalogue-refresh", intervalMs: 3_600_000, runAtStart: false, pausedBy: undefined },
       // Series on AudiobookDB (#721 part b): saved series read again (hourly, each once a day), and the Hardcover
       // series saved again after the reset, at start so a restart resumes it.

@@ -144,6 +144,15 @@ export function loadConfig(file, env = process.env) {
 
 // Primary and fallback tiers after SONDER_CI_HOSTS (every listed host primary).
 export function tiers(config, env = process.env) {
+  // Hosts on which this check would run over the bar (scripts/check-estimate.mjs, set by ci-run.sh) take no part.
+  const skip = new Set((env.SONDER_CI_SKIP_HOSTS ?? "").split(",").map((s) => s.trim()).filter(Boolean));
+  if (skip.size) {
+    const rest = tiers(config, { ...env, SONDER_CI_SKIP_HOSTS: "" });
+    const primary = rest.primary.filter((id) => !skip.has(id));
+    const fallback = rest.fallback.filter((id) => !skip.has(id));
+    if (!primary.length && !fallback.length) die("SONDER_CI_SKIP_HOSTS: no host is left");
+    return { primary, fallback };
+  }
   if (env.SONDER_CI_HOSTS === undefined) return { primary: config.order, fallback: config.fallback };
   const ids = [];
   for (const t of env.SONDER_CI_HOSTS.split(",").map((s) => s.replace(/\s+/g, "")).filter(Boolean)) {

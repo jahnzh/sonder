@@ -190,7 +190,16 @@ run_local_check() {
   log "Running npm run check locally for ${FULL_SHA}"
   npm run check -- --ref "$FULL_SHA" --output-dir "$LOCAL_REPORT_DIR"
   exit_code=$?
-  record_result local_fallback "$([[ $exit_code -eq 0 ]] && echo passed || echo failed)" "$exit_code"
+  if [[ $exit_code -eq 0 ]]; then
+    record_result local_fallback passed 0
+  elif [[ ! -f $LOCAL_REPORT_DIR/stage-started ]]; then
+    # Ended before a stage started (a refused directory, a bad argument, a port that could not be leased): no
+    # verdict on the commit, so not the result scripts/ci-run.sh counts as a failed check (#887).
+    log "The local check ended (exit ${exit_code}) before it started a stage; that is no verdict on the commit"
+    record_result local_fallback local_setup_failed "$exit_code"
+  else
+    record_result local_fallback failed "$exit_code"
+  fi
   return "$exit_code"
 }
 
@@ -787,7 +796,11 @@ else
   post_commit_status pending "CI running on ${SONDER_CI_HOST}"
   run_local_check
   FINAL_EXIT=$?
-  DESCRIPTION="CI failed (local fallback)"
+  if [[ $RESULT == local_setup_failed ]]; then
+    DESCRIPTION="CI host failure: the local check did not start"
+  else
+    DESCRIPTION="CI failed (local fallback)"
+  fi
 fi
 
 if [[ $RESULT == host_busy ]]; then

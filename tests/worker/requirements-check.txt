@@ -1,0 +1,7 @@
+# What a check host's Python needs so that the worker's tests under tests/worker run instead of being skipped
+# (scripts/setup-check-python.sh installs it into the host's own virtual environment). torch is not in this list:
+# `--torch` of that script adds the CPU build of the pin in worker/requirements-ctc.txt, on a host that declares it.
+numpy
+fastapi
+uvicorn
+httpx

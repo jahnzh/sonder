@@ -138,23 +138,35 @@ export function findChangedE2eSpecs(cwd, sha) {
 }
 
 // --- The changed-spec stages in parts (#845) -------------------------------------------------
-// `browser-changed-repeat` and `browser-changed-ordered` ran every changed spec on one worker: 1,094 and 547 test
-// runs for a pull request that changes 26 reader specs, three hours on a host whose wait cap is one. The stages
-// now split the changed spec FILES into parts that run at the same time, each part on its own server with one
-// worker. A file is never split, so what the stages prove is unchanged: every test of a changed spec still runs
-// twice in a row on one server (repeat), and the specs of a part still run once, in file order, on one worker and
-// one server (ordered). What a part no longer has is the specs of the other parts before it on the same server.
+// `browser-changed-repeat` ran every changed spec on one worker, and an ordered stage ran them once more: 1,094 and
+// 547 test runs for a pull request that changes 26 reader specs, three hours on a host whose wait cap is one. The
+// repeat stage now splits the changed spec FILES into parts that run at the same time, each part on its own server
+// with one worker. A file is never split: the specs of a part run in file order on one worker and one server, and
+// then again on that server. What a part does not have is the specs of the other parts before it on the same
+// server. The ordered stage is gone: the repeat stage's first pass is that run (scripts/check-local.mjs).
 
-/** How many parts the changed-spec stages run in: SONDER_BROWSER_CHANGED_SHARDS, else from the CPU count. */
+/** Number of parallel browser shards: SONDER_BROWSER_SHARDS when valid, else from the CPU count. */
+export function browserShardCount(env = process.env, cpus = os.availableParallelism()) {
+  const raw = env.SONDER_BROWSER_SHARDS;
+  if (raw !== undefined && raw !== "") {
+    const value = Number(raw);
+    return Number.isInteger(value) && value >= 1 && value <= 16 ? value : 1;
+  }
+  return cpus >= 8 ? Math.min(6, Math.floor(cpus / 3)) : 1;
+}
+
+/**
+ * How many parts the changed-spec stages run in: SONDER_BROWSER_CHANGED_SHARDS, else as many as the browser stage
+ * has shards on this host. That width is the one the full suite runs at on every check; with eight parts on lisa
+ * two measured checks each failed on one Firefox audio test, with none clean (#845).
+ */
 export function changedStageShardCount(env = process.env, cpus = os.availableParallelism()) {
   const raw = env.SONDER_BROWSER_CHANGED_SHARDS;
   if (raw !== undefined && raw !== "") {
     const value = Number(raw);
     return Number.isInteger(value) && value >= 1 && value <= 16 ? value : 1;
   }
-  // A part is one server, one browser and one runner: about one busy core and under a gigabyte. The browser stage
-  // keeps a core in three (its shards load every project's browsers); these parts get two in five, and at most eight.
-  return cpus >= 8 ? Math.min(8, Math.floor(cpus / 2.5)) : 1;
+  return browserShardCount(env, cpus);
 }
 
 /**
@@ -166,6 +178,61 @@ export function specWeight(source) {
   const named = /^\/\/ @projects (.*)$/m.exec(source.split("\n", 1)[0] ?? "");
   const projects = 1 + (named ? named[1].split(",").map((name) => name.trim()).filter(Boolean).length : 0);
   return Math.max(1, tests) * projects;
+}
+
+const PROJECTS_LINE = /^\/\/ @projects (.*)$/;
+/** A spec's source as the projects its first line names and everything else. */
+function splitProjectsLine(source) {
+  const end = source.indexOf("\n");
+  const first = end === -1 ? source : source.slice(0, end);
+  const named = PROJECTS_LINE.exec(first);
+  if (!named) return { projects: [], rest: source };
+  return { projects: named[1].split(",").map((name) => name.trim()).filter(Boolean), rest: end === -1 ? "" : source.slice(end + 1) };
+}
+
+/** How many projects a spec's first line names (chromium, which every spec runs in, is not named). */
+export const splitProjectCount = (source) => splitProjectsLine(source ?? "").projects.length;
+
+/**
+ * The projects a changed spec gained, when its `// @projects` line is its ONLY change: everything else of the file
+ * is byte for byte what it was at the base. Then only those projects run tests that did not run before, and the
+ * repeat stage repeats the spec in them alone. Null means "repeat the spec in every project": the file is new, some
+ * other byte changed, or it gained no project (a rule this narrow must not guess).
+ */
+export function gainedProjects(baseSource, headSource) {
+  if (typeof baseSource !== "string" || typeof headSource !== "string") return null;
+  const base = splitProjectsLine(baseSource);
+  const head = splitProjectsLine(headSource);
+  if (base.rest !== head.rest) return null;
+  const gained = head.projects.filter((name) => !base.projects.includes(name));
+  return gained.length ? gained : null;
+}
+
+/**
+ * The changed specs as the repeat stage's parts: `{ files, projects }`, where `projects` is null for a part that
+ * runs in every project and a list for specs that only gained those projects (`gainedOf(file)`, see gainedProjects).
+ * Specs with the same answer share parts; each such group gets parts by its share of the work (`weightOf`), `count`
+ * in all when the groups allow it, and within a group the files are dealt as partitionSpecs deals them.
+ */
+export function dealChangedSpecs(files, count, weightOf = () => 1, gainedOf = () => null) {
+  const groups = new Map();
+  for (const file of files) {
+    const gained = gainedOf(file);
+    const key = gained ? [...gained].sort().join(",") : "";
+    if (!groups.has(key)) groups.set(key, { projects: gained ? [...gained].sort() : null, files: [], weight: 0 });
+    const group = groups.get(key);
+    group.files.push(file);
+    group.weight += weightOf(file);
+  }
+  const list = [...groups.values()];
+  // One part each, then the rest of `count` to the group whose parts are heaviest.
+  for (const group of list) group.parts = 1;
+  for (let spare = Math.max(0, count - list.length); spare > 0; spare--) {
+    const heaviest = list.filter((group) => group.parts < group.files.length).sort((a, b) => b.weight / b.parts - a.weight / a.parts)[0];
+    if (!heaviest) break;
+    heaviest.parts++;
+  }
+  return list.flatMap((group) => partitionSpecs(group.files, group.parts, weightOf).map((part) => ({ files: part, projects: group.projects })));
 }
 
 /**
@@ -188,11 +255,11 @@ export function partitionSpecs(files, count, weightOf = () => 1) {
 }
 
 /**
- * The seconds the two changed-spec stages may take for `sha`, which a runner adds to its wait cap (#845): the cap is
- * set for a check without them, and they grow with the change. The longest part's work (the total dealt into
- * `parts`, or the heaviest file when that is more) runs three times, twice in the repeat stage and once in the
- * ordered one, at `secondsPerRun` for one unit of weight (measured on lisa: 7.3 s a test run, and a weight counts
- * about 1.75 runs because not every named project runs everywhere). Nothing when no spec changed or it cannot be told.
+ * The seconds the changed-spec stage may take for `sha`, which a runner adds to its wait cap (#845): the cap is
+ * set for a check without it, and it grows with the change. The longest part's work (the total dealt into
+ * `parts`, or the heaviest file when that is more) runs twice in the repeat stage, at `secondsPerRun` for one unit
+ * of weight (measured on lisa: 7.3 s a test run, and a weight counts about 1.75 runs because not every named
+ * project runs everywhere). Nothing when no spec changed or it cannot be told.
  */
 export function changedSpecsAllowance(cwd, sha, { parts = 6, secondsPerRun = 5 } = {}) {
   let files;
@@ -210,7 +277,7 @@ export function changedSpecsAllowance(cwd, sha, { parts = 6, secondsPerRun = 5 }
   });
   if (!weights.length) return { seconds: 0, specs: 0 };
   const longest = Math.max(Math.ceil(weights.reduce((sum, weight) => sum + weight, 0) / parts), ...weights);
-  return { seconds: longest * 3 * secondsPerRun, specs: files.length };
+  return { seconds: longest * 2 * secondsPerRun, specs: files.length };
 }
 
 /** Every file changed between origin/main and `sha` (added, copied, modified, deleted, type changes). */
@@ -942,7 +1009,7 @@ export function runStageProcess({
 export function preserveArtifacts(disposableDir, outputDir) {
   const preserved = [];
   const candidateDirs = [
-    "test-results", "test-results-changed-repeat", "test-results-changed-ordered",
+    "test-results", "test-results-changed-repeat",
     "playwright-report", "blob-report", "artifacts",
   ];
 
@@ -972,6 +1039,64 @@ export function preserveArtifacts(disposableDir, outputDir) {
 /**
  * Safely remove a directory recursively.
  */
+/** The file in a check's output folder that names its checkout folder, for a runner that must stop what is left. */
+export const CHECKOUT_DIR_FILE = "checkout-dir";
+
+/** The processes whose working directory is `dir` or inside it (Linux: /proc), this process left out. */
+export function processesUnder(dir, procRoot = "/proc") {
+  const found = [];
+  let entries = [];
+  try {
+    entries = fs.readdirSync(procRoot);
+  } catch {
+    return found;
+  }
+  for (const name of entries) {
+    if (!/^\d+$/.test(name) || Number(name) === process.pid) continue;
+    let cwd;
+    try {
+      cwd = fs.readlinkSync(path.join(procRoot, name, "cwd"));
+    } catch {
+      continue; // gone, or another user's
+    }
+    // The kernel marks a removed directory.
+    cwd = cwd.replace(/ \(deleted\)$/, "");
+    if (cwd === dir || cwd.startsWith(`${dir}${path.sep}`)) found.push(Number(name));
+  }
+  return found;
+}
+
+/**
+ * Stops every process whose working directory is inside `dir`, a check's own checkout folder: SIGTERM, up to
+ * `graceMs` for them to go, then SIGKILL. Stopping a stage kills its process group, and Playwright starts its web
+ * server (`node --import tsx tests/browser-server.ts`) in a group of its own; when Playwright is killed before it
+ * has stopped that server, the server lives on with its port, as ten of them did on lisa for up to 27 hours.
+ * Returns the process ids it signalled. Synchronous, so the check can call it on its way out.
+ */
+export function stopProcessesUnder(dir, { graceMs = 1500, procRoot = "/proc", signal = (pid, name) => process.kill(pid, name) } = {}) {
+  if (!dir || !path.isAbsolute(dir)) return [];
+  const first = processesUnder(dir, procRoot);
+  const send = (pids, name) => {
+    for (const pid of pids) {
+      try {
+        signal(pid, name);
+      } catch {
+        // already gone
+      }
+    }
+  };
+  send(first, "SIGTERM");
+  const until = Date.now() + graceMs;
+  while (first.length && Date.now() < until && processesUnder(dir, procRoot).length) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  const stubborn = processesUnder(dir, procRoot);
+  send(stubborn, "SIGKILL");
+  // A killed process is gone a moment after the signal, not with it: wait for that moment, so the folder can be
+  // removed and a caller that looks again finds nothing.
+  const gone = Date.now() + 1000;
+  while (stubborn.length && Date.now() < gone && processesUnder(dir, procRoot).length) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  return first;
+}
+
 export function cleanupDirectory(dir) {
   if (dir && fs.existsSync(dir)) {
     try {
@@ -1009,7 +1134,6 @@ export function cutOffSummary(log) {
   if (!header) return "";
   const command = header[3];
   const name = /--repeat-each=/.test(command) ? "browser-changed-repeat"
-    : /test-results-changed-ordered/.test(command) ? "browser-changed-ordered"
     : /test:browser/.test(command) ? "browser"
     : /^npm ci\b/.test(command) ? "install"
     : /run "?build/.test(command) ? "build"

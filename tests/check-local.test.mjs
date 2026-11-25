@@ -6,7 +6,7 @@ import os from "node:os";
 import net from "node:net";
 import { createRequire } from "node:module";
 import { spawn, execFileSync } from "node:child_process";
-import { runCheckLocal } from "../scripts/check-local.mjs";
+import { runCheckLocal, STAGE_STARTED_FILE, workerTestsSummary } from "../scripts/check-local.mjs";
 import {
   acquirePortLease,
   contenderPrecedes,
@@ -47,6 +47,13 @@ const failStages = (process.env.STUB_NPM_FAIL_STAGE || '').split(',');
 const failCodes = (process.env.STUB_NPM_FAIL_CODE || '42').split(',');
 const createTraces = process.env.STUB_NPM_CREATE_TRACES === '1';
 const sleepMs = parseInt(process.env.STUB_NPM_SLEEP_MS || '0', 10);
+// A web server Playwright would leave behind: its own process group and session, its working directory the checkout.
+if (process.env.STUB_NPM_LEAVE_SERVER && argv[0] === 'run' && argv[1] === 'test:browser') {
+  const { spawn } = require('node:child_process');
+  const left = spawn('sleep', ['120'], { cwd: process.cwd(), detached: true, stdio: 'ignore' });
+  left.unref();
+  fs.appendFileSync(process.env.STUB_NPM_LEAVE_SERVER, left.pid + ' ' + process.cwd() + '\\n');
+}
 
 if (logPath) {
   const entry = {
@@ -66,6 +73,9 @@ if (logPath) {
       NODE_ENV: process.env.NODE_ENV,
       PLAYWRIGHT_JSON_OUTPUT_NAME: process.env.PLAYWRIGHT_JSON_OUTPUT_NAME,
       SONDER_BROWSER_PARTS: process.env.SONDER_BROWSER_PARTS,
+      SONDER_BROWSER_SHARDS: process.env.SONDER_BROWSER_SHARDS,
+      SONDER_WORKER_PYTHON: process.env.SONDER_WORKER_PYTHON,
+      SONDER_WORKER_TORCH: process.env.SONDER_WORKER_TORCH,
     },
     snapshotFiles: {
       hasUncommitted: fs.existsSync(path.join(process.cwd(), 'uncommitted.txt')),
@@ -88,7 +98,7 @@ else if (argv[0] === 'run' && argv[1] === 'test:browser' && argv.some((arg) => a
 }
 else if (argv[0] === 'run' && argv[1] === 'test:browser') {
   currentStage = argv.includes('--reporter=list,json') ? 'browser'
-    : argv.includes('--repeat-each=2') ? 'browser-changed-repeat' : 'browser-changed-ordered';
+    : 'browser-changed-repeat';
 }
 
 // Exercise Playwright's scheduler with a filesystem-only fixture, without a browser or web server.
@@ -389,13 +399,13 @@ test("the changed specs are dealt into parts by the browser stage's times, by th
         try {
             const timed = await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, STUB_NPM_JSON_REPORT: reportFile}});
             assert.equal(timed.ok, true);
-            assert.deepEqual(partsOf(readNpmLogs(fixture.npmLogPath)), [[[filter("a"), filter("c")], [filter("b")]], [[filter("a"), filter("c")], [filter("b")]]]);
+            assert.deepEqual(partsOf(readNpmLogs(fixture.npmLogPath)), [[[filter("a"), filter("c")], [filter("b")]]]);
             assert.match(timed.report.stages[4].command, /\(in 2 parts\)$/);
             fs.rmSync(fixture.npmLogPath);
             // No report (or one that lacks a changed file): the count of tests stays the weight.
             const counted = await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env});
             assert.equal(counted.ok, true);
-            assert.deepEqual(partsOf(readNpmLogs(fixture.npmLogPath)), [[[filter("a")], [filter("b"), filter("c")]], [[filter("a")], [filter("b"), filter("c")]]]);
+            assert.deepEqual(partsOf(readNpmLogs(fixture.npmLogPath)), [[[filter("a")], [filter("b"), filter("c")]]]);
         } finally {
             fs.rmSync(reportFile, {force: true});
         }
@@ -404,7 +414,7 @@ test("the changed specs are dealt into parts by the browser stage's times, by th
     }
 });
 
-test("changed specs run repeated then in order and appear as separate report stages", async () => {
+test("changed specs run repeated, as a report stage of their own, and no ordered stage follows", async () => {
     const fixture = setupGitFixture();
     try {
         writeFixtureFile(fixture, "tests/e2e/new [x].spec.ts", "fixture\n");
@@ -415,21 +425,19 @@ test("changed specs run repeated then in order and appear as separate report sta
         });
         assert.equal(result.ok, true);
         const runs = readNpmLogs(fixture.npmLogPath);
-        assert.equal(runs.length, 6);
+        assert.equal(runs.length, 5);
         const filter = "tests/e2e/new \\[x\\]\\.spec\\.ts$";
         assert.deepEqual(runs[4].argv, ["run", "test:browser", "--", "--workers=1", "--repeat-each=2", "--output=test-results-changed-repeat", filter]);
-        assert.deepEqual(runs[5].argv, ["run", "test:browser", "--", "--workers=1", "--output=test-results-changed-ordered", filter]);
         assert.equal(runs[4].env.PLAYWRIGHT_JSON_OUTPUT_NAME, undefined);
         const written = JSON.parse(fs.readFileSync(path.join(result.outputDir, "report.json"), "utf8"));
         assert.deepEqual(written.changedBrowserSpecs, {
             baseRef: "origin/main", baseSha: fixture.initialSha, files: ["tests/e2e/new [x].spec.ts"],
         });
         assert.deepEqual(written.stages.slice(4).map(({name, status}) => [name, status]), [
-            ["browser-changed-repeat", "passed"], ["browser-changed-ordered", "passed"],
+            ["browser-changed-repeat", "passed"],
         ]);
         for (const [dir, name] of [
             ["test-results", "browser"], ["test-results-changed-repeat", "browser-changed-repeat"],
-            ["test-results-changed-ordered", "browser-changed-ordered"],
         ]) {
             assert.equal(fs.readFileSync(path.join(result.outputDir, dir, "trace.zip"), "utf8"), name);
             assert.ok(written.artifacts.includes(dir));
@@ -468,7 +476,7 @@ test('leaves state behind', () => {
         assert.equal(result.report.failedStage, "browser-changed-repeat");
         assert.equal(result.report.stages[3].status, "passed");
         assert.equal(result.report.stages[4].status, "failed");
-        assert.equal(result.report.stages[5].status, "skipped");
+        assert.equal(result.report.stages.length, 5);
         assert.match(result.report.stages[4].stdout + result.report.stages[4].stderr, /leaves state behind/);
         assert.equal(readNpmLogs(fixture.npmLogPath).length, 5);
     } finally {
@@ -476,18 +484,89 @@ test('leaves state behind', () => {
     }
 });
 
-test("the ordered changed-spec stage runs every test in file order", async () => {
+test("a spec whose only change is its @projects line is repeated in the projects it gained; another byte changed, in every project", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const body = 'test("one", async () => {});\ntest("two", async () => {});\n';
+        writeFixtureFile(fixture, "tests/e2e/gains.spec.ts", `// @projects firefox\n${body}`);
+        writeFixtureFile(fixture, "tests/e2e/edited.spec.ts", `// @projects firefox\n${body}`);
+        const base = commitFixture(fixture, "the specs as main has them");
+        execFileSync("git", ["update-ref", "refs/remotes/origin/main", base], {cwd: fixture.repoDir});
+        writeFixtureFile(fixture, "tests/e2e/gains.spec.ts", `// @projects firefox, prepared-view\n${body}`);
+        writeFixtureFile(fixture, "tests/e2e/edited.spec.ts", `// @projects firefox, prepared-view\n${body}test("three", async () => {});\n`);
+        writeFixtureFile(fixture, "tests/e2e/new.spec.ts", `// @projects firefox, prepared-view\n${body}`);
+        commitFixture(fixture, "a project more");
+        const result = await runCheckLocal(["--silent"], {
+            cwd: fixture.repoDir,
+            env: {PATH: `${fixture.binDir}:${process.env.PATH}`, STUB_NPM_LOG: fixture.npmLogPath, SONDER_BROWSER_CHANGED_SHARDS: "1"},
+        });
+        assert.equal(result.ok, true);
+        const repeat = readNpmLogs(fixture.npmLogPath)[4];
+        const filter = (name) => `tests/e2e/${name}\\.spec\\.ts$`;
+        // Every changed spec is in the run; only the one whose first line alone changed is narrowed.
+        assert.deepEqual(repeat.argv.slice(6).sort(), [filter("edited"), filter("gains"), filter("new")]);
+        assert.deepEqual(JSON.parse(repeat.env.SONDER_BROWSER_PARTS), [
+            [filter("edited"), filter("new")],
+            {filters: [filter("gains")], projects: ["prepared-view"]},
+        ]);
+        assert.match(result.report.stages[4].command, /\(in 2 parts; 1 spec\(s\) only in the projects they gained\)$/);
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+test("the number of browser shards a runner sets reaches the browser stage; no other SONDER_ setting does", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const env = {PATH: `${fixture.binDir}:${process.env.PATH}`, STUB_NPM_LOG: fixture.npmLogPath, SONDER_VERIFY_URL: "http://example.invalid"};
+        assert.equal((await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, SONDER_BROWSER_SHARDS: "8"}})).ok, true);
+        const [, , unit, browser] = readNpmLogs(fixture.npmLogPath);
+        assert.deepEqual([browser.argv[1], browser.env.SONDER_BROWSER_SHARDS, browser.env.SONDER_VERIFY_URL], ["test:browser", "8", undefined]);
+        // Not the unit stage: it runs the runners' own tests (the check of ca686f6 failed on WSL because one inherited it).
+        assert.deepEqual([unit.argv[0], unit.env.SONDER_BROWSER_SHARDS], ["test", undefined]);
+        // The interpreter a check host names for the worker's Python tests goes to the unit stage and nowhere else.
+        fs.rmSync(fixture.npmLogPath);
+        assert.equal((await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, SONDER_WORKER_PYTHON: "/opt/check/bin/python3"}})).ok, true);
+        assert.deepEqual(readNpmLogs(fixture.npmLogPath).map((run) => run.env.SONDER_WORKER_PYTHON), [undefined, undefined, "/opt/check/bin/python3", undefined]);
+        fs.rmSync(fixture.npmLogPath);
+        assert.equal((await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, SONDER_WORKER_PYTHON: "python3; true"}})).ok, true);
+        assert.equal(readNpmLogs(fixture.npmLogPath)[2].env.SONDER_WORKER_PYTHON, undefined, "only an absolute path");
+        // What the host declares about torch goes with the interpreter, and never without one.
+        for (const [torch, python, expected] of [["1", "/opt/check/bin/python3", "1"], ["0", "/opt/check/bin/python3", "0"], ["yes", "/opt/check/bin/python3", undefined], ["1", "", undefined]]) {
+            fs.rmSync(fixture.npmLogPath);
+            assert.equal((await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, SONDER_WORKER_PYTHON: python, SONDER_WORKER_TORCH: torch}})).ok, true);
+            assert.deepEqual(readNpmLogs(fixture.npmLogPath).map((run) => run.env.SONDER_WORKER_TORCH), [undefined, undefined, expected, undefined], `${torch} with ${python || "no interpreter"}`);
+        }
+        assert.equal(workerTestsSummary({}), "", "a machine that names no interpreter says nothing");
+        assert.match(workerTestsSummary({SONDER_WORKER_PYTHON: "/usr/bin/python3", SONDER_WORKER_TORCH: "0"}), /^Worker tests: run with \/usr\/bin\/python3 WITHOUT torch: the 33 tests of the whole-book stages that need it were skipped on this host/);
+        assert.match(workerTestsSummary({SONDER_WORKER_PYTHON: "/usr/bin/python3"}), /WITHOUT torch/, "a host that says nothing about torch has none");
+        assert.match(workerTestsSummary({SONDER_WORKER_PYTHON: "/opt/check/bin/python3", SONDER_WORKER_TORCH: "1"}), /torch included/);
+        fs.rmSync(fixture.npmLogPath);
+        // A value that is no shard count is not passed on.
+        assert.equal((await runCheckLocal(["--silent"], {cwd: fixture.repoDir, env: {...env, SONDER_BROWSER_SHARDS: "8; rm -rf /"}})).ok, true);
+        assert.equal(readNpmLogs(fixture.npmLogPath)[3].env.SONDER_BROWSER_SHARDS, undefined);
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+test("the repeat stage's first pass is every changed file in order on one worker and one server; the second is the same again", async () => {
+    // What the removed browser-changed-ordered stage ran. Real Playwright schedules this (no browser, no server):
+    // if a later version interleaved the repeats (a a b b), the first pass would no longer be the files in order,
+    // and this fails.
     const fixture = setupGitFixture();
     try {
         const require = createRequire(import.meta.url);
-        writeFixtureFile(fixture, "playwright.config.cjs", "module.exports = { testDir: './tests/e2e', workers: 1 };\n");
-        writeFixtureFile(fixture, "tests/e2e/ordered.spec.js", `
-const { test } = require(${JSON.stringify(require.resolve("@playwright/test"))});
+        const playwright = JSON.stringify(require.resolve("@playwright/test"));
+        writeFixtureFile(fixture, "playwright.config.cjs", "module.exports = { testDir: './tests/e2e', workers: 1, projects: [{ name: 'one' }, { name: 'two' }] };\n");
+        for (const name of ["a", "b"]) {
+            writeFixtureFile(fixture, `tests/e2e/${name}.spec.js`, `
+const { test } = require(${playwright});
 const fs = require('node:fs');
-test('first', () => fs.appendFileSync(process.env.STUB_NPM_STATE_FILE, 'first\\n'));
-test('second', () => fs.appendFileSync(process.env.STUB_NPM_STATE_FILE, 'second\\n'));
+for (const title of ['first', 'second']) test(title, ({}, info) => fs.appendFileSync(process.env.STUB_NPM_STATE_FILE, info.project.name + ' ${name} ' + title + ' worker ' + info.parallelIndex + '\\n'));
 `);
-        commitFixture(fixture, "add ordered spec");
+        }
+        commitFixture(fixture, "add two specs");
         const stateFile = path.join(fixture.tempBase, "test-order");
         const result = await runCheckLocal(["--silent"], {
             cwd: fixture.repoDir,
@@ -496,12 +575,42 @@ test('second', () => fs.appendFileSync(process.env.STUB_NPM_STATE_FILE, 'second\
                 STUB_NPM_LOG: fixture.npmLogPath,
                 STUB_NPM_PLAYWRIGHT_CLI: require.resolve("@playwright/test/cli"),
                 STUB_NPM_STATE_FILE: stateFile,
+                SONDER_BROWSER_CHANGED_SHARDS: "1",
             },
         });
         assert.equal(result.ok, true, result.report.stages.map((stage) => stage.stderr).join("\n"));
-        assert.equal(result.report.stages[5].name, "browser-changed-ordered");
-        assert.equal(result.report.stages[5].status, "passed");
-        assert.equal(fs.readFileSync(stateFile, "utf8"), "first\nsecond\n");
+        assert.deepEqual(result.report.stages.map((stage) => stage.name), ["install", "build", "unit", "browser", "browser-changed-repeat"]);
+        assert.equal(readNpmLogs(fixture.npmLogPath)[4].argv.includes("--workers=1"), true);
+        const pass = (project) => ["a first", "a second", "b first", "b second"].map((line) => `${project} ${line} worker 0`);
+        // The stub clears the state file at the start of each stage, so this is the repeat stage alone.
+        assert.deepEqual(fs.readFileSync(stateFile, "utf8").trim().split("\n"), [...pass("one"), ...pass("one"), ...pass("two"), ...pass("two")]);
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+test("a server a stage left running in the checkout is stopped when the check ends, and the checkout's name is in the report folder", async () => {
+    const fixture = setupGitFixture();
+    try {
+        const leftFile = path.join(fixture.tempBase, "left-servers");
+        const result = await runCheckLocal(["--silent"], {
+            cwd: fixture.repoDir,
+            env: {PATH: `${fixture.binDir}:${process.env.PATH}`, STUB_NPM_LOG: fixture.npmLogPath, STUB_NPM_LEAVE_SERVER: leftFile},
+        });
+        assert.equal(result.ok, true);
+        const [pid, checkout] = fs.readFileSync(leftFile, "utf8").trim().split("\n")[0].split(" ");
+        assert.match(checkout, /\/sonder-local-check-/);
+        assert.equal(fs.readFileSync(path.join(result.outputDir, "checkout-dir"), "utf8").trim(), checkout, "for a runner that must stop what is left");
+        const alive = () => {
+            try {
+                // A stopped child of nobody may stay a moment as a zombie of this test's own stub; its state says so.
+                return !/^\d+ \(.*\) Z /.test(fs.readFileSync(`/proc/${pid}/stat`, "utf8"));
+            } catch {
+                return false;
+            }
+        };
+        assert.equal(alive(), false, `the left server ${pid} is stopped`);
+        assert.equal(fs.existsSync(checkout), false);
     } finally {
         fixture.cleanup();
     }
@@ -1053,6 +1162,53 @@ test("concurrent callers cannot claim the same explicit output directory", async
   } finally { fixture.cleanup(); }
 });
 
+test("a directory that holds only the runner's pid file is taken over, and only by one run", async () => {
+  const fixture = setupGitFixture();
+  try {
+    const output = path.join(fixture.tempBase, "runner-made");
+    fs.mkdirSync(output);
+    fs.writeFileSync(path.join(output, "ci-ssh.pid"), "12345\n");
+    const options = {cwd: fixture.repoDir, env: {PATH: `${fixture.binDir}:${process.env.PATH}`, STUB_NPM_SLEEP_MS: "150"}};
+    const results = await Promise.all([runCheckLocal(["--silent", "--output-dir", output], options), runCheckLocal(["--silent", "--output-dir", output], options)]);
+    assert.equal(results.filter(result => result.ok).length, 1, "two runs never share the directory");
+    assert.match(results.find(result => !result.ok).error, /already contains/);
+    assert.equal(fs.readFileSync(path.join(output, "ci-ssh.pid"), "utf8"), "12345\n", "the runner's pid file stays");
+    assert.ok(fs.existsSync(path.join(output, "report.json")));
+    assert.ok(fs.existsSync(path.join(output, STAGE_STARTED_FILE)), "the first stage is marked as started");
+  } finally { fixture.cleanup(); }
+});
+
+test("a directory with anything besides the runner's pid file is still refused, and the refusal is printed", async () => {
+  const fixture = setupGitFixture();
+  try {
+    for (const files of [["ci-ssh.pid", "report.json"], ["other.pid"], []]) {
+      const output = path.join(fixture.tempBase, `held-${files.join("-") || "empty"}`);
+      fs.mkdirSync(output);
+      for (const name of files) fs.writeFileSync(path.join(output, name), "x\n");
+      const printed = [];
+      const original = console.error;
+      console.error = (...args) => printed.push(args.join(" "));
+      let result;
+      try { result = await runCheckLocal(["--silent", "--output-dir", output], {cwd: fixture.repoDir}); }
+      finally { console.error = original; }
+      assert.equal(result.ok, false, files.join(","));
+      assert.match(result.error, /already contains/);
+      assert.ok(printed.some((line) => /\[check-local\] Setup error: Output directory already contains/.test(line)), "the refusal is in the log");
+      assert.equal(fs.existsSync(path.join(output, STAGE_STARTED_FILE)), false);
+    }
+  } finally { fixture.cleanup(); }
+});
+
+test("a run that ends in setup leaves no stage-started file", async () => {
+  const fixture = setupGitFixture();
+  try {
+    const output = path.join(fixture.tempBase, "unknown-ref");
+    const result = await runCheckLocal(["--silent", "--ref", "unknown-ref", "--output-dir", output], {cwd: fixture.repoDir});
+    assert.equal(result.report.result, "setup_failed");
+    assert.equal(fs.existsSync(path.join(output, STAGE_STARTED_FILE)), false);
+  } finally { fixture.cleanup(); }
+});
+
 test("setup-failure reports also reserve their output directory", async () => {
   const fixture = setupGitFixture();
   try {
@@ -1299,8 +1455,8 @@ test("known failures in the full suite do not skip changed-spec stages", async (
         });
         assert.equal(result.report.result, "passed_with_known_failures");
         assert.equal(result.report.stages[3].toleratedBy, "known-failures");
-        assert.deepEqual(result.report.stages.slice(4).map((stage) => stage.status), ["passed", "passed"]);
-        assert.equal(readNpmLogs(fixture.npmLogPath).length, 6);
+        assert.deepEqual(result.report.stages.slice(4).map((stage) => stage.status), ["passed"]);
+        assert.equal(readNpmLogs(fixture.npmLogPath).length, 5);
     } finally {
         fixture.cleanup();
     }
@@ -1319,7 +1475,7 @@ test("known-failures list never tolerates a failed repeated changed-spec stage",
         assert.equal(result.ok, false);
         assert.equal(result.report.failedStage, "browser-changed-repeat");
         assert.equal(result.report.stages[4].status, "failed");
-        assert.equal(result.report.stages[5].status, "skipped");
+        assert.equal(result.report.stages.length, 5);
     } finally {
         fixture.cleanup();
     }

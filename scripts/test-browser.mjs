@@ -15,6 +15,8 @@
 // the one file the check reads. N comes from SONDER_BROWSER_SHARDS, or from the CPU count when unset
 // (one shard on a small host such as the 4-core production machine). Filtered runs, repeated runs and runs
 // that choose their own --output or --shard stay a single serial run.
+// With tests/e2e/spec-seconds.json the shards are not `--shard` slices (dealt by count: 11 to 35 minutes on lisa)
+// but the spec files dealt by measured time, every file in exactly one shard (#845).
 //
 // Parts (#845): the check's changed-spec stages name their spec files and ask for one worker, so `--shard` is not
 // for them: it would put a spec's two repeats on two servers. Instead SONDER_BROWSER_PARTS holds the files dealt
@@ -30,6 +32,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { browserShardCount, partitionSpecs } from "./check-local-support.mjs";
 
 const PROFILE_PREFIX = "playwright_chromiumdev_profile-";
 export const BROWSER_SERVER_PREFIX = "sonder-browser-";
@@ -203,16 +206,50 @@ export function removeStaleBrowserTemps({
   return removed;
 }
 
-const MAX_SHARDS = 16;
+export { browserShardCount };
 
-/** Number of parallel browser shards: SONDER_BROWSER_SHARDS when valid, else from the CPU count. */
-export function browserShardCount(env = process.env, cpus = os.availableParallelism()) {
-  const raw = env.SONDER_BROWSER_SHARDS;
-  if (raw !== undefined && raw !== "") {
-    const value = Number(raw);
-    return Number.isInteger(value) && value >= 1 && value <= MAX_SHARDS ? value : 1;
+/** The file that holds what each spec file's tests took in a full browser stage, in seconds (#845). */
+export const SPEC_SECONDS_FILE = "tests/e2e/spec-seconds.json";
+
+/** Every browser spec file under tests/e2e, as repo paths in order: what an unfiltered run runs. */
+export function listSpecFiles(cwd = process.cwd()) {
+  const found = [];
+  const walk = (dir) => {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(path.join(cwd, dir), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const file = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) walk(file);
+      // Playwright's own rule for a test file.
+      else if (/\.(test|spec)\.(js|ts|mjs)$/.test(entry.name)) found.push(file);
+    }
+  };
+  walk("tests/e2e");
+  return found.sort();
+}
+
+/**
+ * The spec files of a full run dealt into `shards` parts of about equal time, as Playwright filters, or null when
+ * there is no table of times (then the run is split by `--shard`, which deals by count). Every spec file is in
+ * exactly one part; a file the table does not know (a new spec) weighs the middle value of those it knows.
+ */
+export function dealSpecFiles(cwd, shards) {
+  let seconds;
+  try {
+    seconds = JSON.parse(fs.readFileSync(path.join(cwd, SPEC_SECONDS_FILE), "utf8")).seconds;
+  } catch {
+    return null;
   }
-  return cpus >= 8 ? Math.min(6, Math.floor(cpus / 3)) : 1;
+  const files = listSpecFiles(cwd);
+  const known = files.map((file) => seconds?.[file]).filter((value) => Number.isFinite(value) && value > 0).sort((a, b) => a - b);
+  if (!known.length || files.length < 2) return null;
+  const middle = known[Math.floor(known.length / 2)];
+  const parts = partitionSpecs(files, shards, (file) => (Number.isFinite(seconds[file]) && seconds[file] > 0 ? seconds[file] : middle));
+  return parts.length > 1 ? parts.map((part) => part.map((file) => `${file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`)) : null;
 }
 
 const RUN_SHAPING_FLAG = /^--(shard|repeat-each|output|grep|grep-invert|last-failed|only-changed|list|workers)(=|$)/;
@@ -322,6 +359,12 @@ export function runTestBrowser({
 // browser temp directory, output directory and JSON report file, so shards never share state or clean
 // each other's artifacts. Resolves with the worst exit code (null if any shard was signalled).
 function runShardedBrowser({ cwd, args, shards, spawnCommand, createBrowserTemp, env, track, beforeProfiles }) {
+  // By time when the table of times is there: each shard is then its own files, none split and none left out.
+  const dealt = dealSpecFiles(cwd, shards);
+  if (dealt) {
+    shards = dealt.length;
+    console.log(`[test-browser] ${shards} shards dealt by ${SPEC_SECONDS_FILE}: ${dealt.map((part) => part.length).join(", ")} files`);
+  }
   const basePort = Number(env.PLAYWRIGHT_PORT || 4173);
   const jsonName = env.PLAYWRIGHT_JSON_OUTPUT_NAME;
   const temps = [];
@@ -339,7 +382,8 @@ function runShardedBrowser({ cwd, args, shards, spawnCommand, createBrowserTemp,
       jsonFiles.push(file);
       shardEnv.PLAYWRIGHT_JSON_OUTPUT_NAME = file;
     }
-    const child = spawnCommand("npx", ["playwright", "test", ...args, `--shard=${index}/${shards}`, `--output=${output}`], {
+    const piece = dealt ? [`--output=${output}`, ...dealt[index - 1]] : [`--shard=${index}/${shards}`, `--output=${output}`];
+    const child = spawnCommand("npx", ["playwright", "test", ...args, ...piece], {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
       env: shardEnv,
@@ -376,9 +420,10 @@ function runShardedBrowser({ cwd, args, shards, spawnCommand, createBrowserTemp,
 }
 
 /**
- * The parts SONDER_BROWSER_PARTS asks for, or null when the run is one piece: the variable must be a JSON array of
- * two or more arrays of filters that together are exactly the run's positional filters, so a part can neither add
- * a file to the run nor drop one from it.
+ * The parts SONDER_BROWSER_PARTS asks for, as `{ filters, projects }`, or null when the run is one piece. The
+ * variable must be a JSON array of parts, each an array of filters or `{ filters, projects }` (a part that runs only
+ * in those projects), whose filters together are exactly the run's positional filters: a part can neither add a file
+ * to the run nor drop one from it. One part is a run in parts only when it names projects.
  */
 export function browserParts(env, args) {
   const raw = env.SONDER_BROWSER_PARTS;
@@ -389,10 +434,18 @@ export function browserParts(env, args) {
   } catch {
     return null;
   }
-  if (!Array.isArray(parts) || parts.length < 2 || !parts.every((part) => Array.isArray(part) && part.length && part.every((filter) => typeof filter === "string"))) return null;
+  if (!Array.isArray(parts) || !parts.length) return null;
+  const strings = (list) => Array.isArray(list) && list.length > 0 && list.every((item) => typeof item === "string" && item);
+  const read = [];
+  for (const part of parts) {
+    if (strings(part)) read.push({ filters: part, projects: null });
+    else if (part && typeof part === "object" && !Array.isArray(part) && strings(part.filters) && strings(part.projects)) read.push({ filters: part.filters, projects: part.projects });
+    else return null;
+  }
+  if (read.length < 2 && !read[0].projects) return null;
   const named = args.filter((arg) => !arg.startsWith("-")).sort();
-  const dealt = parts.flat().sort();
-  return named.length === dealt.length && named.every((filter, index) => filter === dealt[index]) ? parts : null;
+  const dealt = read.flatMap((part) => part.filters).sort();
+  return named.length === dealt.length && named.every((filter, index) => filter === dealt[index]) ? read : null;
 }
 
 // One `playwright test` child per part, at the same time: the run's flags, the part's own files. Each part has
@@ -406,14 +459,15 @@ function runBrowserParts({ cwd, args, parts, spawnCommand, createBrowserTemp, en
   const temps = [];
   const outputs = [];
   const runs = [];
-  console.log(`[test-browser] ${parts.length} parts, each on its own server with its own files: ${parts.map((part) => part.length).join(", ")} files`);
-  for (const [at, filters] of parts.entries()) {
+  console.log(`[test-browser] ${parts.length} part(s), each on its own server with its own files: ${parts.map((part) => `${part.filters.length}${part.projects ? ` (only ${part.projects.join(", ")})` : ""}`).join(", ")} files`);
+  for (const [at, { filters, projects }] of parts.entries()) {
     const index = at + 1;
     const temp = createBrowserTemp();
     const output = `${target}-part-${index}`;
     temps.push(temp);
     outputs.push(output);
-    const child = spawnCommand("npx", ["playwright", "test", ...flags, `--output=${output}`, ...filters], {
+    const only = (projects ?? []).map((name) => `--project=${name}`);
+    const child = spawnCommand("npx", ["playwright", "test", ...flags, ...only, `--output=${output}`, ...filters], {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...partBase, PLAYWRIGHT_PORT: String(basePort + index - 1), [BROWSER_TEMP_ENV]: temp },

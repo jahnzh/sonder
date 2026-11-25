@@ -793,6 +793,23 @@ test("a host failure result with a failed report does not block the commit", () 
   }
 });
 
+test("a local check that ended before any stage started does not block the commit (#887)", () => {
+  const f = fixture();
+  try {
+    // The fallback's check was refused or could not be set up: it judged nothing, even with a setup_failed report.
+    const dir = writeResult(f.repo, f.second, "wsl", "local_setup_failed", { exit_code: "1" });
+    fs.writeFileSync(path.join(dir, "report.json"), JSON.stringify({ ok: false, result: "setup_failed", stages: [] }));
+    const out = f.run();
+    assert.equal(out.status, 0, out.output);
+    assert.equal(f.invocations().length, 1, "the commit is checked again");
+    // A genuinely failed local fallback is still a verdict.
+    writeResult(f.repo, f.second, "wsl", "failed", { exit_code: "1" });
+    assert.equal(f.run().status, 1);
+  } finally {
+    f.cleanup();
+  }
+});
+
 test("a passed result whose report says the check failed blocks the run", () => {
   const f = fixture();
   try {
@@ -1235,6 +1252,100 @@ test("an unreadable df does not block the check", () => {
     const out = f.run([], f.commits[1], { SONDER_CI_DF: "false" });
     assert.equal(out.status, 0, out.output);
     assert.match(out.stderr, /could not read the disk use/);
+    assert.equal(f.invocations().length, 1);
+  } finally {
+    f.cleanup();
+  }
+});
+
+// --- The bar: a check says at dispatch how long it will take, and does not start where it would run over ---
+
+/** The fixture with the estimator, two specs of 600 s each in the table, and a commit after origin/main. */
+function barFixture() {
+  const f = fixture();
+  const git = (...args) => execFileSync("git", args, { cwd: f.repo, encoding: "utf8" }).trim();
+  for (const file of ["check-estimate.mjs", "check-local-support.mjs"]) fs.copyFileSync(path.join(repoRoot, "scripts", file), path.join(f.repo, "scripts", file));
+  fs.mkdirSync(path.join(f.repo, "tests", "e2e"), { recursive: true });
+  for (const name of ["a", "b"]) fs.writeFileSync(path.join(f.repo, "tests", "e2e", `${name}.spec.ts`), 'test("one", async () => {});\n');
+  fs.writeFileSync(path.join(f.repo, "tests", "e2e", "spec-seconds.json"), JSON.stringify({ from: "a test", seconds: { "tests/e2e/a.spec.ts": 600, "tests/e2e/b.spec.ts": 600 } }));
+  // The hosts' figures are the fixture's own, so a change to the real ones does not move these tests.
+  const hosts = JSON.parse(fs.readFileSync(path.join(f.repo, "scripts", "ci-hosts.json"), "utf8"));
+  hosts.dispatch.barSeconds = 1800;
+  hosts.lisa.estimate = { fixedSeconds: 300, speed: 1, shards: 2, startSeconds: 100 };
+  hosts.wsl.estimate = { fixedSeconds: 100, speed: 0.5, shards: 2, startSeconds: 50 };
+  delete hosts["192.168.1.119"].estimate;
+  fs.writeFileSync(path.join(f.repo, "scripts", "ci-hosts.json"), JSON.stringify(hosts, null, 2));
+  git("update-ref", "refs/remotes/origin/main", "HEAD");
+  git("add", ".");
+  git("commit", "-qm", "specs and their times");
+  return { ...f, sha: git("rev-parse", "HEAD") };
+}
+
+test("a check says at dispatch how long it will take on each host, and runs when it fits the bar", () => {
+  const f = barFixture();
+  try {
+    // lisa: 300 + one shard of 600 s + 100 to start + the repeat of the two changed specs (1,200 s in a part, + 50).
+    const out = f.run([], f.sha);
+    assert.equal(out.status, 0, out.output);
+    const short = f.sha.slice(0, 7);
+    assert.match(out.stdout, new RegExp(`^estimate wsl 17\\.9min fixed=100s browser=350s repeat=625s changed_specs=2 ${short}$`, "m"));
+    assert.match(out.stdout, new RegExp(`^estimate lisa 37\\.5min fixed=300s browser=700s repeat=1250s changed_specs=2 ${short}$`, "m"));
+    assert.match(out.stdout, new RegExp(`^estimate deck none: no estimate entry for this host ${short}$`, "m"));
+    assert.match(out.stdout, new RegExp(`^bar 30\\.0min fits=wsl,deck judged=wsl over=lisa ${short}$`, "m"));
+    assert.match(out.stdout, new RegExp(`^over the bar on lisa: the check waits for wsl ${short}$`, "m"));
+    assert.deepEqual(f.invocations().map((run) => run.host), [WSL]);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("over the bar on one host, the check waits for the other and never starts on the first", () => {
+  const f = barFixture();
+  try {
+    // WSL is full and lisa is idle: without the bar the check would start on lisa at once.
+    f.setProbe(WSL, fullWsl);
+    // (The Deck has no figures and stays the fallback it was; it is full here, so only lisa has room.)
+    f.setProbe(DECK, probeText({ cpus: 8, load1: 41, memAvailKB: 12000000, diskFreeKB: 200000000 }));
+    const out = f.run([], f.sha, { SONDER_CI_QUEUE_TIMEOUT: "2" });
+    assert.equal(out.status, 124, out.output);
+    assert.equal(f.invocations().length, 0, "it did not go to lisa");
+    assert.match(out.stdout, /over the bar on lisa: the check waits for wsl/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("a check that fits the bar on no host is refused at once with the figures, unless SONDER_CI_OVER_BAR=1", () => {
+  const f = barFixture();
+  try {
+    const out = f.run([], f.sha, { SONDER_CI_BAR_SECONDS: "900" });
+    assert.equal(out.status, 9, out.output);
+    assert.match(out.stdout, /^estimate wsl 17\.9min /m);
+    assert.match(out.stdout, /^estimate lisa 37\.5min /m);
+    assert.match(out.stdout, /^bar 15\.0min fits=deck judged=none over=wsl,lisa /m);
+    assert.match(out.stdout, new RegExp(`^refused over_bar ${f.sha}: the check fits the bar on no host \\(wsl,lisa\\); the figures are above\\. Only SONDER_CI_OVER_BAR=1 runs it\\.$`, "m"));
+    assert.equal(f.invocations().length, 0, "not on the Deck either: a host without figures is not a fit");
+    // A caller who names one host gets the same answer for it.
+    const named = f.run([], f.sha, { SONDER_CI_HOSTS: "lisa" });
+    assert.equal(named.status, 9, named.output);
+    assert.match(named.stdout, /^bar 30\.0min fits=none judged=none over=lisa /m);
+    assert.equal(f.invocations().length, 0);
+    // The explicit setting runs it all the same, on a host with room.
+    const forced = f.run([], f.sha, { SONDER_CI_BAR_SECONDS: "900", SONDER_CI_OVER_BAR: "1" });
+    assert.equal(forced.status, 0, forced.output);
+    assert.match(forced.stdout, /over the bar on wsl,lisa; SONDER_CI_OVER_BAR=1 runs it all the same/);
+    assert.equal(f.invocations().length, 1);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("a commit without the table of times is judged on no host and runs as before", () => {
+  const f = barFixture();
+  try {
+    const out = f.run([], f.second);
+    assert.equal(out.status, 0, out.output);
+    assert.match(out.stdout, /^estimate none: the commit has no table of times \(tests\/e2e\/spec-seconds\.json\); no host is judged /m);
     assert.equal(f.invocations().length, 1);
   } finally {
     f.cleanup();

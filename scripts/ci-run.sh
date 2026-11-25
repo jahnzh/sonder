@@ -50,6 +50,10 @@
 #   SONDER_CI_STATE_DIR    shared queue/state dir (default
 #                          ${XDG_RUNTIME_DIR:-/tmp}/sonder-ci-dispatch-<uid>)
 #   SONDER_CI_HOST_CONFIG  hosts file (default scripts/ci-hosts.json)
+#   SONDER_CI_BAR_SECONDS  the bar a check must end within (default
+#                          dispatch.barSeconds of the hosts file, 1800)
+#   SONDER_CI_OVER_BAR     1 runs a check that fits the bar on no host; set
+#                          only by whoever decides that
 #   SONDER_CI_POLL_INTERVAL queue poll in seconds (default 5)
 #   SONDER_CI_QUEUE_TIMEOUT queue wait cap in seconds (default 3600)
 #   SONDER_CI_ARTIFACT_HOURS commit artifact dirs older than this are pruned at
@@ -162,7 +166,8 @@ node "$DISPATCHER" prune --artifacts "$ROOT/artifacts/ci" --keep "$FULL_SHA" || 
 # blocking run: <host> <result> <run_dir>. A check result of failed or
 # remote_check_failed means the check ran and the commit failed. A passed run
 # whose report says the check failed counts too (the runners' own final
-# override); host-failure results did not judge the commit, and the runners
+# override); host-failure results and local_setup_failed (the local fallback ended before it started
+# a stage) did not judge the commit, and the runners
 # retrieve the report on those paths too, so a report left beside one is not
 # evidence and does not block. A report that does not parse is not evidence
 # either.
@@ -215,6 +220,31 @@ if [[ -n $BLOCKING ]]; then
   done <<<"$BLOCKING"
   log "A failure is a failure: the commit is not rerun on the other host to obtain a pass."
   exit 1
+fi
+
+# How long the check will take on each host, before it takes a slot (owner's rule: a check ends within the bar,
+# 30 minutes; one that would not says so now instead of being cut off later). A host it would run over the bar on
+# takes no part, so the check goes to a host it fits; when it fits on no host that has figures, it is refused here
+# with the figures. SONDER_CI_OVER_BAR=1, set by whoever decides that, runs it all the same.
+CI_OVER_BAR_EXIT=9
+ESTIMATE_HOSTS=${SONDER_CI_HOSTS:-}
+if ESTIMATE=$(cd "$ROOT" && node "$ROOT/scripts/check-estimate.mjs" "$FULL_SHA" "$ESTIMATE_HOSTS" 2>/dev/null) && [[ -n $ESTIMATE ]]; then
+  while IFS= read -r line; do echo "$line ${FULL_SHA:0:7}"; done <<<"$ESTIMATE"
+  verdict=$(grep '^bar ' <<<"$ESTIMATE" | tail -n 1)
+  if [[ $verdict =~ judged=([^ ]+)\ over=([^ ]+) ]]; then
+    judged=${BASH_REMATCH[1]} over=${BASH_REMATCH[2]}
+    if [[ $over != none ]]; then
+      if [[ ${SONDER_CI_OVER_BAR:-0} == 1 ]]; then
+        echo "over the bar on ${over}; SONDER_CI_OVER_BAR=1 runs it all the same ${FULL_SHA:0:7}"
+      elif [[ $judged == none ]]; then
+        echo "refused over_bar ${FULL_SHA}: the check fits the bar on no host (${over}); the figures are above. Only SONDER_CI_OVER_BAR=1 runs it."
+        exit "$CI_OVER_BAR_EXIT"
+      else
+        export SONDER_CI_SKIP_HOSTS=$over
+        echo "over the bar on ${over}: the check waits for ${judged} ${FULL_SHA:0:7}"
+      fi
+    fi
+  fi
 fi
 
 # Refuse before taking a queue slot or writing a log: a full disk made the
@@ -306,5 +336,11 @@ else
     bash "$ROOT/scripts/$DISPATCH_RUNNER" "$FULL_SHA" >>"$LOG_FILE" 2>&1 || rc=$?
 fi
 release_slot
+# The bar was judged with an estimate: say when this check's stages took more than a tenth more or less, and what
+# to refresh, so the figures do not go stale unseen.
+REPORT_FILE=$(ls -t "$ARTIFACT_ROOT"/*/check-report.json 2>/dev/null | head -n 1)
+if [[ -n $REPORT_FILE ]]; then
+  (cd "$ROOT" && node "$ROOT/scripts/check-estimate.mjs" --compare "$FULL_SHA" "$ADMITTED" "$REPORT_FILE" 2>/dev/null) | sed "s|$ROOT/||g" || true
+fi
 echo "finished ${ADMITTED} ${FULL_SHA} exit=${rc} log=${LOG_FILE}"
 exit "$rc"

@@ -78,7 +78,7 @@ The server stays tolerant of older open clients throughout: responses only gain 
 - One reading view in two modes (ADR 0017). Accepted losses: starting the audio by tapping a line, reading at a set words-per-minute, the `P` key. `F` stays. "Correct this sentence's timing" leaves the interface; its endpoint stays.
 - The narration highlight stays on the last narrated sentence with no time limit, until the next one begins.
 - The page turn inside a sentence is estimated from the sentence's start and end, spread over its words, and may come about a second early or late. No per-word timing is added to reading sync. If the break cannot be read from the page reliably, the reader turns at the sentence's midpoint.
-- Nothing is drawn over the book's text (ADR 0019). Controls stay until the text is tapped again; no timer. At rest the foot keeps a small Pause. The reading mode is the first row of Appearance. Speed and the sleep timer take the place of the foot's transport row, with Done. Every message while reading appears in the foot.
+- Nothing is drawn over the book's text (ADR 0019). Controls stay until the text is tapped again; no timer. At rest the foot keeps a small Pause. The reading mode is the first row of Appearance. Speed and the sleep timer take the place of the foot's transport row, with Done (superseded by ADR 0019's amendment of 2026-11-24, #890: each opens a setting pop-up above its button and the transport row stays). Every message while reading appears in the foot.
 - Now playing opens on the face last used for that book on that device, Listen the first time. A book without an EPUB has no Read face and Read offers Get ebook. A book without a recording opens on Read, has no Listen face (Listen offers Get audiobook), no mini player, and a foot that shows the place in the book with a position slider where the transport would be.
 
 ### 0.2 Bring the canvas in line (done 2026-11-16, version 17)
@@ -165,7 +165,7 @@ Each replaces the old screen in the same change, ships its phone and desktop lay
 - a. Listen: the redrawn Now playing, with the sleep timer as a row and Chapters as a page. It opens on the face last used for that book on that device.
 - b. The page: a head of 44 and a foot of 72 that keep their height whether the controls show or not, plus the safe areas of a phone. The epub.js view is sized to the text band once and not again on a tap. Controls stay until the text is tapped again. At rest the foot keeps the progress line, the time left and Pause.
 - c. Appearance docked under the text, with Reading mode (Pages, Scroll) as its first row; the view is laid out again in what is left and keeps the narrated sentence in view.
-- d. Chapters, Bookmarks and Search as pages; speed and the sleep timer in the foot in place of the transport row, with Done; every message in the foot; the More sheet removed.
+- d. Chapters, Bookmarks and Search as pages; speed and the sleep timer in the foot in place of the transport row, with Done (superseded by ADR 0019's amendment of 2026-11-24, #890: a setting pop-up above the button, the transport row stays); every message in the foot; the More sheet removed.
 - e. A book without a recording (Read only, the place and a position slider in the foot, no mini player) and a book without an EPUB (Read offers Get ebook).
 - f. Desktop: contents beside the text, page arrows in the margins, the player as footer.
 - A spec asserts the rule itself: in every state the boxes of the head, the foot and any docked panel do not intersect the box of the text.

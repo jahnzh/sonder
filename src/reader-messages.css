@@ -1,7 +1,10 @@
-/* The reader's message in the foot (#591, ADR 0019, spec #586 "Messages in the foot"; boards ReaderUndo, ReaderError,
-   ReaderConflict, ReaderUpdate, ReaderConfirm). On a phone the message takes the foot's lower row: under the progress
-   line at rest (the place and the small Pause give way), under the timeline with the controls shown (the transport
-   row gives way). The foot keeps its box, so the text band is not laid out again. */
+/* The reader's message in the foot (#591, #890, ADR 0019, spec #586 "Messages in the foot"; boards ReaderUndo,
+   ReaderError, ReaderConflict, ReaderUpdate, ReaderConfirm). Where it stands is `messagePlace` (src/reader-messages.ts),
+   marked on the foot as data-message-place. On a phone a message takes the foot's lower row: under the progress line
+   at rest (the place and the small Pause give way), under the timeline with the controls shown (the transport row
+   gives way); a notice with Undo, with the controls shown, takes the foot's first row instead (the timeline, or the
+   status line of a book without a recording) and leaves the row of controls whole. The foot keeps its box, so the
+   text band is not laid out again. */
 .reader-message {
   display: none;
 }
@@ -49,10 +52,57 @@
     background: var(--accent);
     color: var(--on-accent);
   }
-  .reader-player[data-message] .reader-foot-row,
-  .reader-player[data-message] .reader-player-leading,
-  .reader-player[data-message] .reader-transport,
-  .reader-player[data-message] .reader-player-extras {
+  .reader-player[data-message-place="row"] .reader-foot-row,
+  .reader-player[data-message-place="row"] .reader-player-leading,
+  .reader-player[data-message-place="row"] .reader-transport,
+  .reader-player[data-message-place="row"] .reader-player-extras {
+    visibility: hidden;
+  }
+  /* A notice with Undo says what happened and offers to take it back: Undo follows its sentence, and at rest Play or
+     Pause stays at the row's far end (#890). */
+  .reader-player > .reader-message[data-kind="notice"] .reader-message-text {
+    flex: 0 1 auto;
+  }
+  .reader-player > .reader-message[data-kind="notice"] .reader-message-play {
+    margin: 0 0 0 auto;
+  }
+  /* With the controls shown the notice takes the foot's first row, 20 high (#890, ADR 0019 amended 2026-11-24): the
+     timeline, or for a book without a recording the status line (the chapter and "N% of the book"). The row of
+     controls under it stays whole. Undo's target is 44 high and reaches up over the text band's last line, drawing
+     nothing there, and ends where the row of controls begins (the row's gap under the first row). */
+  .reader-player[data-controls="true"]:is([data-message-place="timeline"], [data-message-place="status"]) > .reader-message {
+    top: var(--space-4);
+    height: 20px;
+    gap: var(--space-8);
+  }
+  .reader-player:is([data-message-place="timeline"], [data-message-place="status"]) > .reader-message .reader-message-text {
+    display: block;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .reader-player:is([data-message-place="timeline"], [data-message-place="status"]) > .reader-message .part-button.reader-message-action {
+    align-self: flex-end;
+    height: var(--height-control);
+    min-height: var(--height-control);
+    margin: 0 0 calc(var(--space-4) * -1);
+    padding: 0 var(--space-8) var(--space-4);
+    align-items: flex-end;
+    background: transparent;
+  }
+  /* Neither a hover nor the keyboard's focus draws in the part over the text: the focus underlines the word. */
+  .reader-player:is([data-message-place="timeline"], [data-message-place="status"]) > .reader-message .part-button.reader-message-action:hover {
+    background: transparent;
+  }
+  .reader-player:is([data-message-place="timeline"], [data-message-place="status"]) > .reader-message .part-button.reader-message-action:focus-visible {
+    outline: none;
+    text-decoration: underline 2px;
+    text-underline-offset: 3px;
+  }
+  .reader-player[data-message-place="timeline"] .reader-scrubber,
+  .reader-player[data-message-place="timeline"] .reader-audio-timeline {
+    visibility: hidden;
+  }
+  .reader-player[data-message-place="status"] .reader-player-info {
     visibility: hidden;
   }
 }

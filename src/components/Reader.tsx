@@ -27,7 +27,7 @@ import { useAppearance } from "./Appearance";
 import { fontFamilies, paletteFor } from "../appearance";
 import { useReaderMap } from "../use-reader-map";
 import { PlaybackSource } from "./PlaybackSource";
-import { FootSettingButtons, FootSettingRow, useFootSetting } from "./ReaderFootSetting";
+import { FootSettingButtons, TextCatcher, useFootSetting } from "./ReaderFootSetting";
 import { PlaybackTimeline } from "./PlaybackTimeline";
 import { readerNeedsScripts } from "../reader-sandbox";
 import { closeRawTextElements } from "../reader-section-markup";
@@ -44,7 +44,7 @@ import { ReaderAppearance } from "./ReaderAppearance";
 import { Button } from "../parts/Button";
 import { BLOCKS_IN_LINK, BLOCKS_INSIDE_LINK_SELECTOR, LINK_SELECTOR, followedLink, fragmentTarget } from "../reader-links";
 import { ReaderFootMessage, tappedControl, useReaderMessages, useReaderUpdate } from "./ReaderFootMessage";
-import { messageToShow, type ReaderError, type ReaderNotice } from "../reader-messages";
+import { messagePlace, messageToShow, type ReaderError, type ReaderNotice } from "../reader-messages";
 import { dismissUpdate, reloadForUpdate } from "../app-update";
 import { usePlayer, type SeekTarget } from "../player";
 import { api, forgetPositionHistory, localDB } from "../lib";
@@ -67,6 +67,8 @@ import { SPREAD_GAP, SPREAD_MIN_HOST, spreadHostWidth } from "../reader-spread";
 import { preparedView } from "../reader-view-switch";
 import { createPreparedView, type PreparedTarget, type PreparedView } from "../prepared-view";
 import { PREPARED_CHANGED_EVENT, reportRefused, type PreparedBook } from "../prepared-book";
+import { createTextRail, type RailSeam, type TextRail } from "../text-rail";
+import { railSegments, readoutLine, readoutShare, type RailReadout } from "../text-rail-model";
 import { sentencePlaces } from "../reader-places";
 import {
   countedBlocks,
@@ -328,6 +330,9 @@ export function ReaderView({
   const [prepared] = useState(preparedView);
   const [source, setSource] = useState<PreparedBook | null>(null);
   const engine = useRef<PreparedView | null>(null);
+  // The text position rail of the new view (#804), and the readout of its thumb while it is held (the foot shows it).
+  const rail = useRef<TextRail | null>(null);
+  const [railHeld, setRailHeld] = useState<RailReadout | null>(null);
   // Appearance docked under the text in place of the foot (#588); not in the address.
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   // Sizes the view to the text band when the band changed (the ResizeObserver's work, #587); set once the book opens.
@@ -509,6 +514,19 @@ export function ReaderView({
   // The narrated sentence, decided by the following module: it stays through a gap until the next one begins.
   const narrationBack = useRef<() => void>(() => {});
   const currentInterval = following.narratedSentence(map, placeOf(p.book, p.track?.id, p.position)) ?? undefined;
+  // The rail's narration: the narrated sentence's place in the book, and following or paged away (ADR 0014).
+  const narratedPlace = source && currentInterval && source.index.ordinalOf(currentInterval.paragraphId) >= 0 ? source.index.progression(currentInterval.paragraphId) : null;
+  const railNarration = useRef({ place: narratedPlace, follow });
+  railNarration.current = { place: narratedPlace, follow };
+  useEffect(() => {
+    rail.current?.narration(narratedPlace, follow);
+  }, [narratedPlace, follow]);
+  // What the rail shows: the whole book or the chapter in view (Appearance, "Reading position").
+  const railScope = useRef(preferences.positionScope);
+  railScope.current = preferences.positionScope;
+  useEffect(() => {
+    rail.current?.scope(preferences.positionScope);
+  }, [preferences.positionScope]);
   // `keepPlace`: the same book loaded again (its prepared text changed on the server) stays where it is read.
   const refresh = async (keepPlace = false) => {
     try {
@@ -651,6 +669,29 @@ export function ReaderView({
       onBandResized: () => redrawHighlight(),
     }, { mode: preferences.mode === "scroll" ? "scroll" : "pages", spread: !!spreadWidth });
     engine.current = view;
+    // A place chosen on the rail (a drag, a click, a key) is the reader's own choice, as a page turn by hand is
+    // (`turn`): it replaces a follow jump in flight, pages away from the narration and is saved, also in the moment
+    // after a jump of ours, when a move the view reports by itself would count as that jump's.
+    const seam = view.railSeam();
+    const chosen = () => {
+      following.navigate();
+      return following.beginNavigation();
+    };
+    const railSeam: RailSeam = {
+      ...seam,
+      showPlace(place, load) {
+        const ended = chosen();
+        return seam.showPlace(place, load).finally(ended);
+      },
+      turn(direction) {
+        const ended = chosen();
+        seam.turn(direction);
+        ended();
+      },
+    };
+    const textRail = createTextRail(railSeam, { segments: railSegments(source.manifest, source.index), sentences: source.index.total, scope: railScope.current, onHeld: setRailHeld });
+    rail.current = textRail;
+    textRail.narration(railNarration.current.place, railNarration.current.follow);
     following.openingDisplay();
     const settled = following.beginOwnDisplay();
     const place = latest.current?.paragraphId ?? null;
@@ -679,6 +720,9 @@ export function ReaderView({
     return () => {
       disposed = true;
       setRendered(false);
+      textRail.destroy();
+      if (rail.current === textRail) rail.current = null;
+      setRailHeld(null);
       view.destroy();
       if (engine.current === view) engine.current = null;
     };
@@ -1945,6 +1989,14 @@ export function ReaderView({
     reload: () => void reloadForUpdate(() => { if (playerRef.current.playing) playerRef.current.toggle(); }),
     dismissUpdate,
   };
+  // Where the message stands (#890): on a phone with the controls shown a notice with Undo takes the foot's first row
+  // (the timeline, or without a recording the status line); the others take the row's place, and a setting pop-up,
+  // whose button gives way with the row, closes.
+  const messageAt = message ? messagePlace(message, { controls, desktop, recording }) : null;
+  const rowTaken = messageAt === "row" && controls;
+  useEffect(() => {
+    if (rowTaken) setFootSetting(null);
+  }, [rowTaken]);
   // The next tap on a control ends a notice with Undo (spec #586 "How long").
   // The notice leaves on the next task, not in the capture phase: React would unmount the message's own Play or Pause
   // before its click reached it, and the narration would not stop (#592, found with Listen from here's long-press).
@@ -2035,6 +2087,7 @@ export function ReaderView({
             style={prepared ? (spreadWidth ? ({ ...preparedStyle, "--reader-spread": `${spreadWidth}px` } as CSSProperties) : preparedStyle) : spreadWidth ? ({ "--reader-spread": `${spreadWidth}px` } as CSSProperties) : undefined}
             aria-label="Ebook pages"
           />
+          {footSetting && <TextCatcher key={footSetting} viewport={viewport} onClose={() => setFootSetting(null)} />}
           {desktop && <button className="reader-edge reader-edge-next" aria-label="Next page" onClick={()=>turn(1)}><ArrowRight size={20}/></button>}
         </div>
       </div>
@@ -2051,20 +2104,21 @@ export function ReaderView({
             onChange={editReader}
             follow={follow}
             onFollow={(on) => { if (on) following.backToNarration(); else following.pageAway(); }}
+            rail={prepared}
             onClose={() => setAppearanceOpen(false)}
           />
         )}
       </div>
       {/* The foot (#587): its box stays whether the controls show or not. At rest the progress line, where the
           narration is and a small Play or Pause; with the controls shown the timeline and the transport row. */}
-      <section className="reader-player" aria-label="Player" data-controls={controls} data-recording={recording ? undefined : "none"} data-setting={footSetting ?? undefined} data-message={message?.kind} onClickCapture={tapControls}>
+      <section className="reader-player" aria-label="Player" data-controls={controls} data-recording={recording ? undefined : "none"} data-message={message?.kind} data-message-place={messageAt ?? undefined} onClickCapture={tapControls}>
         {message && (
-          <ReaderFootMessage message={message} actions={messageActions} play={p.book && atRest.has("pause") ? { playing: p.playing, toggle: p.toggle } : null} />
+          <ReaderFootMessage message={message} actions={messageActions} play={p.book && atRest.has("pause") && messageAt === "row" ? { playing: p.playing, toggle: p.toggle } : null} />
         )}
         <div className="reader-foot-rest">
           <span className="reader-foot-line" aria-hidden="true"><i style={{ width: `${restProgress * 100}%` }} /></span>
           <div className="reader-foot-row">
-            <span className="reader-foot-place">{restLine}</span>
+            <span className="reader-foot-place">{railHeld ? readoutLine(railHeld) : restLine}</span>
             {p.book && atRest.has("pause") && (
               <Button
                 kind="quiet"
@@ -2078,7 +2132,12 @@ export function ReaderView({
         </div>
         <div className="reader-foot-controls">
         <div className="reader-player-info">
-          {ebookLine ? (
+          {railHeld ? (
+            <>
+              <strong>{railHeld.chapter}</strong>
+              <span>{readoutShare(railHeld)}</span>
+            </>
+          ) : ebookLine ? (
             <>
               <strong>{ebookLine.chapter}</strong>
               <span>{ebookLine.place}</span>
@@ -2136,7 +2195,6 @@ export function ReaderView({
             <FootSettingButtons open={footSetting} onOpen={setFootSetting} />
           </div>
         )}
-        {footSetting && inRow.has("speed") && <FootSettingRow setting={footSetting} onDone={() => setFootSetting(null)} />}
         </div>
       </section>
     </div>

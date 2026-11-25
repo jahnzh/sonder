@@ -6,9 +6,10 @@
 // with the download's line; a refusal kept above the button; Get on a book outside the library sending the PUT first;
 // a failing source with its Retry, nothing found and fewer than two characters; the administrator-only address; and
 // the sheet measured against the board at phone size and on a desktop.
-import { test, expect, type Page, type Request } from "@playwright/test";
-import { mkdirSync } from "node:fs";
+import { test, expect, type Locator, type Page, type Request } from "@playwright/test";
+import { mkdirSync, readFileSync } from "node:fs";
 import type { AudiobookRelease } from "../../src/types";
+import { listenOnBookPage } from "./library-play";
 
 test.use({ serviceWorkers: "block" });
 
@@ -44,6 +45,15 @@ const RELEASES = {
   abb: [abb("war-gillen"), abb("war-french", { language: "French", narrator: "Lecteur", size: "300 MB" }), abb("war-giles", { narrator: "Lionel Giles", format: "MP3", bitrate: "128 Kbps", size: "1.1 GB", title: "The Art of War: Complete Edition" })],
   prowlarr: [abb(PROWLARR_ID, { source: "prowlarr", indexer: "Fixture Tracker", narrator: null, language: null, title: "Sun Tzu - The Art of War [MP3]", size: "480 MB", bitrate: null, format: null, seeders: 1 })],
 };
+
+/** The chosen row is inside the sheet's body, not left under the footer that has grown over it (#889). */
+async function expectInBody(row: Locator, body: Locator) {
+  await expect(async () => {
+    const [r, b] = [await row.boundingBox(), await body.boundingBox()];
+    expect(r!.y).toBeGreaterThanOrEqual(b!.y - 1);
+    expect(r!.y + r!.height).toBeLessThanOrEqual(b!.y + b!.height + 1);
+  }).toPass();
+}
 
 const sheet = (page: Page) => page.getByRole("dialog", { name: "Get audiobook", exact: true });
 const rows = (page: Page) => sheet(page).getByRole("radiogroup", { name: "Recordings", exact: true }).getByRole("radio");
@@ -165,6 +175,135 @@ test("from the Book page: the search with title and author, rows from both sourc
   await expect(page).toHaveURL(new RegExp(`#book/${WAR.workId}$`));
   await expect(sheet(page)).toHaveCount(0);
   await expect(bookRegion(page).getByRole("list", { name: "Files", exact: true })).toContainText("Downloading to server · 10%");
+});
+
+// Releases of every kind of page address (#889): AudioBookBay's, an older server's (no source), two Prowlarr results
+// (one naming its indexer, one not) and a Prowlarr result with no address, or one that is not a web page.
+const PAGES = {
+  abb: [
+    abb("page-abb", { narrator: "Abby Voice", size: "110 MB" }),
+    (({ source: _source, ...older }) => older)(abb("page-older", { narrator: "Older Voice", size: "210 MB" })) as AudiobookRelease,
+  ],
+  prowlarr: [
+    abb(`prowlarr-${"b".repeat(32)}`, { source: "prowlarr", indexer: "Fixture Tracker", url: "https://tracker.example/details/1", narrator: "Tracker Voice", language: null, size: "310 MB", seeders: 4 }),
+    abb(`prowlarr-${"c".repeat(32)}`, { source: "prowlarr", indexer: null, url: "https://tracker.example/details/2", narrator: "Nameless Voice", language: null, size: "410 MB", seeders: 3 }),
+    abb(`prowlarr-${"d".repeat(32)}`, { source: "prowlarr", indexer: "Fixture Tracker", url: "", narrator: "Addressless Voice", language: null, size: "510 MB", seeders: 2 }),
+    abb(`prowlarr-${"e".repeat(32)}`, { source: "prowlarr", indexer: "Fixture Tracker", url: "magnet:?xt=urn:btih:" + "e".repeat(40), narrator: "Magnet Voice", language: null, size: "610 MB", seeders: 1 }),
+  ],
+};
+
+test("the footer links to the chosen recording's own page, follows the choice, and no row holds a link (#889)", async ({ page }) => {
+  // Get is refused once the test says so: the refusal stands above the footer's other lines, the button stays.
+  let refuse = false;
+  const asked = await sources(page, {
+    abb: () => ({ results: PAGES.abb, nextPage: null }),
+    prowlarr: () => ({ results: PAGES.prowlarr }),
+    add: () => (refuse ? { status: 502, error: "The release could not be added. Choose another." } : { id: "acq-test", backend: "local", status: "downloading", progress: 0.1, error: null }),
+  });
+  let opened = 0;
+  page.context().on("page", () => opened++);
+  await page.goto(`/#book/${WAR.workId}/get/audiobook`);
+  await expect(rows(page)).toHaveCount(6);
+  const row = (voice: string) => rows(page).filter({ hasText: voice });
+  const foot = sheet(page).locator(".part-sheet-foot");
+  const link = foot.getByRole("link");
+  // Nothing chosen: the footer is the button alone, at the foot, as high as on main.
+  await expect(link).toHaveCount(0);
+  await expect(foot.locator(":scope > *")).toHaveCount(1);
+  expect((await foot.boundingBox())!.height).toBe(44);
+  await page.screenshot({ path: `${OUT}/get-audiobook-nothing-chosen-phone.png` });
+  const home = await getButton(page).boundingBox();
+  const stays = async () => expect(await getButton(page).boundingBox()).toEqual(home);
+
+  const expectLink = async (voice: string, name: string, href: string) => {
+    await row(voice).click();
+    await expect(row(voice)).toHaveAttribute("aria-checked", "true");
+    await expect(link).toHaveCount(1);
+    await expect(link).toHaveAccessibleName(name);
+    await expect(link).toHaveAttribute("href", href);
+    await expect(link).toHaveAttribute("target", "_blank");
+    await expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    await expect(link.locator(".get-sheet-leaving")).toBeVisible();
+    await stays();
+  };
+  await expectLink("Abby Voice", "On AudioBookBay", "https://audiobookbay.lu/abss/page-abb/");
+  await page.screenshot({ path: `${OUT}/get-audiobook-source-link-phone.png` });
+  // Above the button: the link's 44 high row, then the sentence 8 above the button (the footer grew upward).
+  const sentence = foot.getByTestId("get-line");
+  const above = async () => {
+    const [l, t, b] = [await link.boundingBox(), await sentence.boundingBox(), await getButton(page).boundingBox()];
+    expect(l!.height).toBe(44);
+    expect(Math.round(l!.y + l!.height + 8)).toBe(Math.round(t!.y));
+    expect(Math.round(t!.y + t!.height + 8)).toBe(Math.round(b!.y));
+  };
+  await above();
+  await stays();
+  // It follows the choice: its words and its address.
+  await expectLink("Tracker Voice", "On Fixture Tracker", "https://tracker.example/details/1");
+  await expectLink("Nameless Voice", "On the indexer's page", "https://tracker.example/details/2");
+  // An older server's release (no source) is AudioBookBay's.
+  await expectLink("Older Voice", "On AudioBookBay", "https://audiobookbay.lu/abss/page-older/");
+  // No address, or one that is not a web page: no link and no gap; the sentence is 8 above the button.
+  for (const voice of ["Addressless Voice", "Magnet Voice"]) {
+    await row(voice).click();
+    await expect(row(voice)).toHaveAttribute("aria-checked", "true");
+    await expect(link).toHaveCount(0);
+    await expect(foot.locator("a")).toHaveCount(0);
+    await expect(foot.locator(":scope > *")).toHaveCount(2);
+    const [t, b] = [await sentence.boundingBox(), await getButton(page).boundingBox()];
+    expect(Math.round(t!.y + t!.height + 8)).toBe(Math.round(b!.y));
+    await stays();
+  }
+  // Choosing a row opened nothing, and no row holds a link or anything with an address.
+  expect(opened).toBe(0);
+  await expect(rows(page).locator("a, [href]")).toHaveCount(0);
+  await expect(sheet(page).getByRole("radiogroup", { name: "Recordings", exact: true }).getByRole("link")).toHaveCount(0);
+
+  // A new search clears the choice, and the link with it.
+  await row("Abby Voice").click();
+  await expect(link).toHaveCount(1);
+  const search = sheet(page).getByRole("searchbox", { name: "Search for a recording" });
+  const before = asked.abb.length;
+  await search.fill("art of war");
+  await search.press("Enter");
+  await expect.poll(() => asked.abb.length).toBe(before + 1);
+  await expect(link).toHaveCount(0);
+  await stays();
+  expect(asked.posts).toEqual([]);
+  expect(opened).toBe(0);
+
+  // The link opens the release's own page in a new tab.
+  await page.context().route("https://audiobookbay.lu/**", (route) => route.fulfill({ contentType: "text/html", body: "<title>AudioBookBay</title>" }));
+  await row("Abby Voice").click();
+  const [tab] = await Promise.all([page.context().waitForEvent("page"), link.click()]);
+  await expect.poll(() => tab.url()).toBe("https://audiobookbay.lu/abss/page-abb/");
+  await tab.close();
+  await expect(page).toHaveURL(new RegExp(`#book/${WAR.workId}/get/audiobook$`));
+  await expect(row("Abby Voice")).toHaveAttribute("aria-checked", "true");
+
+  // A refused Get: the refusal stands above the link, the sentence and the button, and the button stays.
+  refuse = true;
+  await getButton(page).click();
+  const alert = foot.getByRole("alert");
+  await expect(alert).toHaveText("The release could not be added. Choose another.");
+  await expect.poll(() => asked.posts.length).toBe(1);
+  const [a, l, t] = [await alert.boundingBox(), await link.boundingBox(), await sentence.boundingBox()];
+  expect(Math.round(a!.y + a!.height + 8)).toBe(Math.round(l!.y));
+  expect(Math.round(l!.y + l!.height + 8)).toBe(Math.round(t!.y));
+  await stays();
+
+  // On a short screen the footer grows over the list: with nothing chosen and the row at the bottom edge of the list,
+  // choosing it adds the link and the sentence, and the row is scrolled back into view, not left under them.
+  await page.setViewportSize({ width: 390, height: 560 });
+  const again = sheet(page).getByRole("searchbox", { name: "Search for a recording" });
+  await again.fill("art of war again");
+  await again.press("Enter");
+  await expect(link).toHaveCount(0);
+  await expect(rows(page)).toHaveCount(6);
+  await row("Older Voice").evaluate((el) => el.scrollIntoView({ block: "end" }));
+  await row("Older Voice").click();
+  await expect(link).toHaveCount(1);
+  await expectInBody(row("Older Voice"), sheet(page).locator(".part-sheet-body"));
 });
 
 test("from the Audiobook page, on a reload and from a link; Close goes back, or to the Book page", async ({ page, context }) => {
@@ -326,6 +465,9 @@ for (const size of [
     const row = await box(rows(page).nth(0));
     const other = await box(sheet(page).getByRole("button", { name: "Paste a magnet link", exact: true }));
     const button = await box(getButton(page));
+    // The chosen candidate's own page (#889): the foot's last line, a 44 high target under the button's line.
+    const source = await box(sheet(page).locator(".part-sheet-foot").getByRole("link"));
+    expect(source.height).toBe(44);
     const line = await box(sheet(page).getByText("Plays from TorBox right away.", { exact: true }));
     const recordings = await box(sheet(page).getByRole("heading", { name: "Recordings · 3" }));
     expect([close.width, close.height]).toEqual([44, 44]);
@@ -335,11 +477,14 @@ for (const size of [
     expect(other.height).toBe(52);
     expect(button.height).toBe(44);
     // The order of the parts: head, book, search, Recordings, the other ways, then the button and its line at the foot.
-    const order = [close.y, cover.y, field.y, recordings.y, row.y, other.y, button.y, line.y];
+    // Bottom to top the foot is the button, the sentence 8 above it, the link's 44 high row 8 above that.
+    const order = [close.y, cover.y, field.y, recordings.y, row.y, other.y, source.y, line.y, button.y];
     expect([...order].sort((a, b) => a - b)).toEqual(order);
-    // The foot at the bottom of the screen, 16 from its edge.
+    // The foot at the bottom of the screen, 16 from its edge: the button's bottom, as before #889.
     const edge = size.name === "phone" ? 16 : 32;
-    expect(Math.round(line.y + line.height)).toBe(size.height - edge);
+    expect(Math.round(button.y + button.height)).toBe(size.height - edge);
+    expect(Math.round(line.y + line.height + 8)).toBe(Math.round(button.y));
+    expect(Math.round(source.y + source.height + 8)).toBe(Math.round(line.y));
     // One centred column on a desktop.
     const column = await box(sheet(page).locator(".part-sheet-column"));
     if (size.name === "desktop") expect(Math.abs(column.x + column.width / 2 - size.width / 2)).toBeLessThanOrEqual(1);
@@ -347,3 +492,319 @@ for (const size of [
     await noOverflow(page);
     await page.screenshot({ path: `${OUT}/get-audiobook-${size.name}.png` });
   });
+
+// The preview of a recording cached on TorBox (#889, part 2): the server's routes are answered by the test (the server
+// side is tests/torbox-preview.test.ts), the file is the demo chapter (10:40 long, so the preview starts at 3:00).
+const PREVIEW_MEDIA = readFileSync("server/demo/alice-01.mp3");
+const PREVIEW_ID = "11111111-1111-4111-8111-111111111111";
+const CACHED_ID = `prowlarr-${"c".repeat(32)}`;
+const SEEDED_ID = `prowlarr-${"d".repeat(32)}`;
+const PREVIEWABLE = [
+  abb(CACHED_ID, { source: "prowlarr", indexer: "Fixture Tracker", narrator: "Cached Reader", size: "480 MB", infoHash: "c".repeat(40), cached: true, seeders: 24 }),
+  abb(SEEDED_ID, { source: "prowlarr", indexer: "Fixture Tracker", narrator: "Seeded Reader", size: "900 MB", infoHash: "d".repeat(40), cached: false, seeders: 9 }),
+];
+const previewButton = (page: Page) => sheet(page).locator(".get-sheet-preview");
+const previewLine = (page: Page) => sheet(page).getByTestId("preview-line");
+const chooseRow = async (page: Page, voice: string) => {
+  const row = rows(page).filter({ hasText: voice });
+  await row.click();
+  await expect(row).toHaveAttribute("aria-checked", "true");
+};
+
+/** Every audio element the page makes, kept on `window.__audios` (the player's own and the preview's). */
+async function watchAudios(page: Page) {
+  await page.addInitScript(() => {
+    const Original = window.Audio;
+    const made: HTMLAudioElement[] = [];
+    (window as any).__audios = made;
+    const Watched = function (this: unknown, src?: string) {
+      const element = new Original(src);
+      made.push(element);
+      return element;
+    } as unknown as typeof Audio;
+    Watched.prototype = Original.prototype;
+    window.Audio = Watched;
+  });
+}
+const audios = (page: Page) =>
+  page.evaluate(() => ((window as any).__audios as HTMLAudioElement[]).map((a) => ({ src: a.getAttribute("src") ?? "", paused: a.paused, time: a.currentTime })));
+const previewAudio = async (page: Page) => (await audios(page)).at(-1)!;
+
+/** The preview's own element (the last one made) really plays: not paused, and its time moves on. */
+async function previewAdvances(page: Page) {
+  const at = (await previewAudio(page)).time;
+  await expect.poll(async () => {
+    const audio = await previewAudio(page);
+    return !audio.paused && audio.time > at;
+  }, { timeout: 20_000 }).toBe(true);
+}
+
+/** Preview pressed once it can be, and playing: Stop on the button and its own element advancing. */
+async function playPreview(page: Page) {
+  await expect(previewButton(page)).toHaveText("Preview");
+  await expect(previewButton(page)).toBeEnabled();
+  await previewButton(page).click();
+  await expect(previewButton(page)).toHaveText(/^Stop/, { timeout: 20_000 });
+  await previewAdvances(page);
+}
+
+/**
+ * The book started as the other specs start it (library-play.ts): Listen on its Book page, enabled once the book is
+ * loaded, then the dock's Pause; and the player's own element really advancing. Answers that element's index.
+ */
+async function playBook(page: Page, workId: string) {
+  await page.goto(`/#book/${workId}`);
+  await listenOnBookPage(page);
+  await expect(page.locator(".player-dock").getByRole("button", { name: "Pause", exact: true })).toBeVisible({ timeout: 20_000 });
+  let book = -1;
+  await expect
+    .poll(async () => (book = await page.evaluate(() => ((window as any).__audios as HTMLAudioElement[]).findIndex((a) => !a.paused))), { timeout: 20_000 })
+    .toBeGreaterThanOrEqual(0);
+  const at = await page.evaluate((index) => (window as any).__audios[index].currentTime as number, book);
+  await expect.poll(() => page.evaluate((index) => (window as any).__audios[index].currentTime as number, book), { timeout: 20_000 }).toBeGreaterThan(at);
+  return book;
+}
+
+/** The preview's start, bytes (with ranges) and end answered by the test; starts, ends and progress writes counted. */
+async function previewRoutes(page: Page, options: { start?: () => unknown } = {}) {
+  const asked = { starts: [] as unknown[], ends: [] as string[], progress: 0 };
+  page.on("request", (request) => {
+    if (request.method() !== "GET" && request.url().includes("/api/progress")) asked.progress++;
+  });
+  await page.route("**/api/discover/*/preview", async (route) => {
+    asked.starts.push(route.request().postDataJSON());
+    await answerWith(route, await (options.start ? options.start() : { id: PREVIEW_ID }));
+  });
+  await page.route("**/api/discover/previews/*", async (route) => {
+    if (route.request().method() === "DELETE") asked.ends.push(route.request().url().split("/").pop()!);
+    await route.fulfill({ json: { ok: true } }).catch(() => {});
+  });
+  await page.route("**/api/discover/previews/*/audio", async (route) => {
+    const size = PREVIEW_MEDIA.length;
+    const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers()["range"] ?? "");
+    const start = range ? Number(range[1]) : 0;
+    const end = range?.[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+    await route
+      .fulfill({
+        status: range ? 206 : 200,
+        headers: {
+          "Content-Type": "audio/mpeg",
+          "Accept-Ranges": "bytes",
+          "Content-Length": String(end - start + 1),
+          ...(range ? { "Content-Range": `bytes ${start}-${end}/${size}` } : {}),
+        },
+        body: PREVIEW_MEDIA.subarray(start, end + 1),
+      })
+      .catch(() => {});
+  });
+  return asked;
+}
+
+test("Preview stands at the left of Get only while the chosen row says Plays now, and the button row does not move (#889)", async ({ page }) => {
+  const asked = await previewRoutes(page);
+  await sources(page, { prowlarr: () => ({ results: PREVIEWABLE, nextPage: null }) });
+  await page.goto(`/#book/${WAR.workId}/get/audiobook`);
+  await expect(rows(page)).toHaveCount(4);
+  await expect(previewButton(page)).toHaveCount(0);
+  const home = await getButton(page).boundingBox();
+  for (const voice of ["Aidan Gillen", "Seeded Reader"]) {
+    await chooseRow(page, voice);
+    await expect(previewButton(page)).toHaveCount(0);
+  }
+  await chooseRow(page, "Cached Reader");
+  await expect(previewButton(page)).toHaveText("Preview");
+  await expect(previewButton(page)).toBeEnabled();
+  const preview = (await previewButton(page).boundingBox())!;
+  const get = (await getButton(page).boundingBox())!;
+  expect(preview.x + preview.width).toBeLessThan(get.x);
+  expect(preview.y).toBe(get.y);
+  expect(get.y + get.height).toBe(home!.y + home!.height);
+  expect(get.x + get.width).toBe(home!.x + home!.width);
+  await noOverflow(page);
+  await page.screenshot({ path: `${OUT}/get-audiobook-preview-390x844.png` });
+  // Choosing a row starts nothing.
+  expect(asked.starts).toEqual([]);
+});
+
+test("Preview plays in its own audio element from 3:00, reads Stop with the time, and leaves the player and progress alone (#889)", async ({ page }) => {
+  await watchAudios(page);
+  const asked = await previewRoutes(page);
+  await sources(page, { prowlarr: () => ({ results: PREVIEWABLE, nextPage: null }) });
+  await page.goto(`/#book/${WAR.workId}/get/audiobook`);
+  await chooseRow(page, "Cached Reader");
+  const before = await audios(page);
+  const dock = await page.locator(".player-dock").count();
+  const session = () => page.evaluate(() => (navigator.mediaSession?.metadata ? navigator.mediaSession.metadata.title : null));
+  const metadata = await session();
+  await playPreview(page);
+  await expect(previewButton(page)).toHaveText(/^Stop 0:0[1-9]$/, { timeout: 20_000 });
+  expect(asked.starts).toEqual([{ id: CACHED_ID }]);
+  // Its own element: a new one, playing the preview's address from 3:00 on.
+  const playing = await previewAudio(page);
+  expect(playing.src).toBe(`/api/discover/previews/${PREVIEW_ID}/audio`);
+  expect(playing.paused).toBe(false);
+  expect(playing.time).toBeGreaterThanOrEqual(180);
+  expect(playing.time).toBeLessThan(200);
+  // The player's element and the dock are as they were; no listening position is written; Media Session is untouched.
+  expect((await audios(page)).slice(0, before.length)).toEqual(before);
+  expect(await page.locator(".player-dock").count()).toBe(dock);
+  expect(await session()).toBe(metadata);
+  expect(asked.progress).toBe(0);
+  await page.screenshot({ path: `${OUT}/get-audiobook-preview-playing-390x844.png` });
+  // Stop, then Preview again: the same preview plays; the release is not asked for twice and nothing is ended.
+  await previewButton(page).click();
+  await expect(previewButton(page)).toHaveText("Preview");
+  expect((await audios(page)).at(-1)!.paused).toBe(true);
+  await playPreview(page);
+  expect(asked.starts).toHaveLength(1);
+  expect(asked.ends).toEqual([]);
+  // Another row chosen: it stops.
+  await chooseRow(page, "Seeded Reader");
+  await expect(previewButton(page)).toHaveCount(0);
+  expect((await audios(page)).every((audio) => audio.paused)).toBe(true);
+  // The sheet closes: it ends on the server.
+  await chooseRow(page, "Cached Reader");
+  await expect(previewButton(page)).toHaveText("Preview");
+  await sheet(page).getByRole("button", { name: "Close", exact: true }).click();
+  await expect(sheet(page)).toHaveCount(0);
+  await expect.poll(() => asked.ends).toEqual([PREVIEW_ID]);
+  expect(asked.progress).toBe(0);
+  expect((await audios(page)).slice(0, before.length)).toEqual(before);
+});
+
+test("a preview stops when the page is hidden, on Get, and says one sentence when it fails (#889)", async ({ page }) => {
+  await watchAudios(page);
+  const asked = await previewRoutes(page);
+  const got = await sources(page, { prowlarr: () => ({ results: PREVIEWABLE, nextPage: null }), add: () => ({ status: 409, error: "Refused by the test." }) });
+  await page.goto(`/#book/${WAR.workId}/get/audiobook`);
+  await chooseRow(page, "Cached Reader");
+  await playPreview(page);
+  // Hidden (another app, a locked screen): it stops.
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect(previewButton(page)).toHaveText("Preview");
+  expect((await previewAudio(page)).paused).toBe(true);
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  // Get this recording: it stops (the add is refused here, so the sheet stays).
+  await playPreview(page);
+  await getButton(page).click();
+  await expect(previewButton(page)).toHaveText("Preview");
+  expect((await previewAudio(page)).paused).toBe(true);
+  await expect.poll(() => got.posts.length).toBe(1);
+  // A failure (the server no longer plays it): one plain sentence in the footer, and Get still works.
+  const ended = (route: import("@playwright/test").Route) => route.fulfill({ status: 404, json: { error: "This preview has ended." } }).catch(() => {});
+  await page.route("**/api/discover/previews/*/audio", ended);
+  await previewButton(page).click();
+  await expect(previewLine(page)).toHaveText("This recording could not be previewed.");
+  await expect(previewButton(page)).toHaveText("Preview");
+  await expect(getButton(page)).toBeEnabled();
+  // The failed preview ends; Preview of the same release asks for a new one and plays, without closing the sheet.
+  await expect.poll(() => asked.ends).toEqual([PREVIEW_ID]);
+  await page.unroute("**/api/discover/previews/*/audio", ended);
+  await playPreview(page);
+  expect(asked.starts).toHaveLength(2);
+  await expect(previewLine(page)).toHaveCount(0);
+  await previewButton(page).click();
+  // Another row clears the sentence.
+  await chooseRow(page, "Aidan Gillen");
+  await expect(previewLine(page)).toHaveCount(0);
+  expect(asked.progress).toBe(0);
+});
+
+test("while the book plays Preview is off and the footer says to pause it; a playing preview stops when the book starts (#889)", async ({ page }) => {
+  await watchAudios(page);
+  const asked = await previewRoutes(page);
+  // The book's own playing writes its place; answered here so the suite's Alice keeps hers.
+  await page.route("**/api/progress", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    await route.fulfill({ json: { progress: route.request().postDataJSON(), conflict: false } }).catch(() => {});
+  });
+  await sources(page, { prowlarr: () => ({ results: PREVIEWABLE, nextPage: null }) });
+  const book = await playBook(page, ALICE.workId);
+  await page.evaluate((hash) => (location.hash = hash), `#book/${WAR.workId}/get/audiobook`);
+  await chooseRow(page, "Cached Reader");
+  await expect(previewButton(page)).toHaveText("Preview");
+  await expect(previewButton(page)).toBeDisabled();
+  await expect(previewLine(page)).toHaveText("Pause the book to preview.");
+  await page.screenshot({ path: `${OUT}/get-audiobook-preview-book-playing-390x844.png` });
+  expect(asked.starts).toEqual([]);
+  // Still the book playing under the sheet.
+  expect(await page.evaluate((index) => !(window as any).__audios[index].paused, book)).toBe(true);
+  // The book paused (by the test, on the player's own element): Preview is on; the preview plays.
+  await page.evaluate((index) => (window as any).__audios[index].pause(), book);
+  await expect(previewButton(page)).toBeEnabled();
+  await expect(previewLine(page)).toHaveCount(0);
+  await playPreview(page);
+  // The book starts again: the preview stops, and Preview is off again.
+  await page.evaluate((index) => void (window as any).__audios[index].play(), book);
+  await expect.poll(() => page.evaluate((index) => !(window as any).__audios[index].paused, book)).toBe(true);
+  await expect(previewButton(page)).toHaveText("Preview");
+  await expect(previewButton(page)).toBeDisabled();
+  await expect(previewLine(page)).toHaveText("Pause the book to preview.");
+  expect((await previewAudio(page)).paused).toBe(true);
+  await page.evaluate((index) => (window as any).__audios[index].pause(), book);
+});
+
+test("a late answer to an older start does not replace the newer preview, and its record ends (#889)", async ({ page }) => {
+  await watchAudios(page);
+  const OLD_ID = "22222222-2222-4222-8222-222222222222";
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let starts = 0;
+  const asked = await previewRoutes(page, {
+    start: async () => {
+      starts++;
+      if (starts === 1) {
+        await held;
+        return { id: OLD_ID };
+      }
+      return { id: PREVIEW_ID };
+    },
+  });
+  await sources(page, { prowlarr: () => ({ results: PREVIEWABLE, nextPage: null }) });
+  await page.goto(`/#book/${WAR.workId}/get/audiobook`);
+  await chooseRow(page, "Cached Reader");
+  await expect(previewButton(page)).toBeEnabled();
+  await previewButton(page).click();
+  await expect(previewButton(page)).toHaveText("Preparing…");
+  // Another row and back: the first start is left waiting, a second one plays.
+  await chooseRow(page, "Seeded Reader");
+  await chooseRow(page, "Cached Reader");
+  await playPreview(page);
+  release();
+  await expect.poll(() => asked.ends).toEqual([OLD_ID]);
+  await expect(previewButton(page)).toHaveText(/^Stop/);
+  expect((await previewAudio(page)).src).toBe(`/api/discover/previews/${PREVIEW_ID}/audio`);
+  // Stop, then Preview again still plays the newer one: no third start.
+  await previewButton(page).click();
+  await playPreview(page);
+  expect(asked.starts).toHaveLength(2);
+  expect((await previewAudio(page)).src).toBe(`/api/discover/previews/${PREVIEW_ID}/audio`);
+});
+
+test("a preview the server has ended by time is not ended again beside the new start (#889)", async ({ page }) => {
+  await watchAudios(page);
+  let next = 0;
+  const ids = [PREVIEW_ID, "33333333-3333-4333-8333-333333333333"];
+  const asked = await previewRoutes(page, { start: () => ({ id: ids[next++] }) });
+  await sources(page, { prowlarr: () => ({ results: PREVIEWABLE, nextPage: null }) });
+  await page.goto(`/#book/${WAR.workId}/get/audiobook`);
+  await chooseRow(page, "Cached Reader");
+  await playPreview(page);
+  await previewButton(page).click();
+  await expect(previewButton(page)).toHaveText("Preview");
+  // 26 minutes later (the server ends a preview at 30; the sheet asks for a new one after 25).
+  await page.evaluate(() => {
+    const real = Date.now;
+    Date.now = () => real() + 26 * 60_000;
+  });
+  await playPreview(page);
+  expect(asked.starts).toHaveLength(2);
+  expect(asked.ends).toEqual([]);
+  expect((await previewAudio(page)).src).toBe(`/api/discover/previews/${ids[1]}/audio`);
+});

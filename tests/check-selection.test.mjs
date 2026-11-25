@@ -1,6 +1,10 @@
 import { test } from "node:test";
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import assert from "node:assert/strict";
-import { changedStageShardCount, cutOffSummary, parseCliArgs, partitionSpecs, selectBrowserScope, specWeight } from "../scripts/check-local-support.mjs";
+import { changedStageShardCount, cutOffSummary, dealChangedSpecs, gainedProjects, parseCliArgs, partitionSpecs, processesUnder, selectBrowserScope, specWeight, stopProcessesUnder } from "../scripts/check-local-support.mjs";
 import { changedBrowserStages } from "../scripts/check-local.mjs";
 import { formatSummary } from "../scripts/ci-summary.mjs";
 
@@ -106,28 +110,63 @@ test("a spec's weight is its tests times the projects it runs in", () => {
 
 test("the number of parts follows the host's processors, or the setting", () => {
   assert.equal(changedStageShardCount({}, 4), 1, "the production machine: one run");
-  assert.equal(changedStageShardCount({}, 8), 3);
-  assert.equal(changedStageShardCount({}, 16), 6);
-  assert.equal(changedStageShardCount({}, 20), 8);
-  assert.equal(changedStageShardCount({}, 64), 8, "never more than eight by itself");
+  assert.equal(changedStageShardCount({}, 8), 2);
+  assert.equal(changedStageShardCount({}, 16), 5, "WSL: as many as its browser shards");
+  assert.equal(changedStageShardCount({}, 20), 6, "lisa: six, as its browser stage, not eight");
+  assert.equal(changedStageShardCount({}, 64), 6);
+  assert.equal(changedStageShardCount({ SONDER_BROWSER_SHARDS: "3" }, 20), 3, "it follows the browser stage's width when that is set");
   assert.equal(changedStageShardCount({ SONDER_BROWSER_CHANGED_SHARDS: "12" }, 4), 12);
   assert.equal(changedStageShardCount({ SONDER_BROWSER_CHANGED_SHARDS: "1" }, 20), 1);
   for (const bad of ["0", "17", "two", "2.5"]) assert.equal(changedStageShardCount({ SONDER_BROWSER_CHANGED_SHARDS: bad }, 20), 1, bad);
 });
 
-test("both changed-spec stages keep one worker and every changed file, and carry the same parts", () => {
+test("the changed-spec stage keeps one worker, two passes and every changed file, in parts", () => {
   const files = ["tests/e2e/a.spec.ts", "tests/e2e/b (1).spec.ts", "tests/e2e/c.spec.ts"];
   const one = changedBrowserStages(files);
-  assert.deepEqual(one.map((stage) => [stage.name, stage.env]), [["browser-changed-repeat", {}], ["browser-changed-ordered", {}]]);
-  const parts = [[files[0], files[2]], [files[1]]];
-  const [repeat, ordered] = changedBrowserStages(files, parts);
+  assert.deepEqual(one.map((stage) => [stage.name, stage.env]), [["browser-changed-repeat", {}]], "one stage; no ordered stage after it");
   const filters = ["tests/e2e/a\\.spec\\.ts$", "tests/e2e/b \\(1\\)\\.spec\\.ts$", "tests/e2e/c\\.spec\\.ts$"];
+  const [repeat] = changedBrowserStages(files, [{ files: [files[0], files[2]], projects: null }, { files: [files[1]], projects: null }]);
   assert.deepEqual(repeat.args, ["run", "test:browser", "--", "--workers=1", "--repeat-each=2", "--output=test-results-changed-repeat", ...filters]);
-  assert.deepEqual(ordered.args, ["run", "test:browser", "--", "--workers=1", "--output=test-results-changed-ordered", ...filters]);
   assert.deepEqual(JSON.parse(repeat.env.SONDER_BROWSER_PARTS), [[filters[0], filters[2]], [filters[1]]]);
-  assert.equal(ordered.env.SONDER_BROWSER_PARTS, repeat.env.SONDER_BROWSER_PARTS);
   assert.match(repeat.fullCommand, / \(in 2 parts\)$/);
+  // A spec that only gained projects is a part that names them, also when it is the only part.
+  const [gained] = changedBrowserStages([files[0]], [{ files: [files[0]], projects: ["firefox"] }]);
+  assert.deepEqual(JSON.parse(gained.env.SONDER_BROWSER_PARTS), [{ filters: [filters[0]], projects: ["firefox"] }]);
+  assert.match(gained.fullCommand, / \(in 1 part; 1 spec\(s\) only in the projects they gained\)$/);
   assert.deepEqual(changedBrowserStages([]), []);
+});
+
+test("a spec whose only change is its @projects line is repeated in the projects it gained; anything else in every project", () => {
+  const body = 'import { test } from "@playwright/test";\ntest("a", async () => {});\n';
+  assert.deepEqual(gainedProjects(`// @projects firefox\n${body}`, `// @projects firefox, prepared-view\n${body}`), ["prepared-view"]);
+  assert.deepEqual(gainedProjects(body, `// @projects firefox, webkit\n${body}`), ["firefox", "webkit"], "the line is new");
+  assert.deepEqual(gainedProjects(`// @projects webkit, firefox\n${body}`, `// @projects prepared-view, firefox\n${body}`), ["prepared-view"], "one gained, one lost");
+  // The fallbacks: every one is the full repeat.
+  assert.equal(gainedProjects(`// @projects firefox\n${body}`, `// @projects firefox, prepared-view\n${body} `), null, "one more byte at the end");
+  assert.equal(gainedProjects(`// @projects firefox\n${body}`, `// @projects firefox, prepared-view\n${body.replace('"a"', '"b"')}`), null, "a test changed too");
+  assert.equal(gainedProjects(`// @projects firefox\n${body}`, `// @projects firefox, prepared-view\r\n${body}`), null, "another line ending");
+  assert.equal(gainedProjects(null, `// @projects firefox\n${body}`), null, "a new file");
+  assert.equal(gainedProjects(`// @projects firefox, webkit\n${body}`, `// @projects firefox\n${body}`), null, "it only lost a project: no guess");
+  assert.equal(gainedProjects(`// @projects firefox\n${body}`, `// @projects firefox\n${body}`), null, "nothing changed");
+  assert.equal(gainedProjects(`// @projects firefox\n${body}`, `${body}// @projects firefox, webkit\n`), null, "the line is not the first");
+});
+
+test("changed specs are dealt by what they are repeated in: gained projects apart from every project", () => {
+  const files = ["a", "b", "c", "d", "e"].map((name) => `tests/e2e/${name}.spec.ts`);
+  const gained = { [files[1]]: ["prepared-view"], [files[3]]: ["prepared-view"], [files[4]]: ["firefox", "webkit"] };
+  const weights = { [files[0]]: 50, [files[1]]: 10, [files[2]]: 40, [files[3]]: 10, [files[4]]: 5 };
+  const parts = dealChangedSpecs(files, 4, (file) => weights[file], (file) => gained[file] ?? null);
+  assert.deepEqual(parts, [
+    { files: [files[0]], projects: null },
+    { files: [files[2]], projects: null },
+    { files: [files[1], files[3]], projects: ["prepared-view"] },
+    { files: [files[4]], projects: ["firefox", "webkit"] },
+  ]);
+  assert.deepEqual(parts.flatMap((part) => part.files).sort(), files, "every changed spec in exactly one part");
+  // More kinds than parts asked for: each kind still has its own part, because a part is one set of projects.
+  assert.equal(dealChangedSpecs(files, 1, (file) => weights[file], (file) => gained[file] ?? null).length, 3);
+  assert.deepEqual(dealChangedSpecs(files, 3), partitionSpecs(files, 3).map((part) => ({ files: part, projects: null })));
+  assert.deepEqual(dealChangedSpecs([], 4), []);
 });
 
 test("a cut-off check's log gives the stage that was running and how far it had come (#845)", () => {
@@ -146,6 +185,48 @@ test("a cut-off check's log gives the stage that was running and how far it had 
   assert.equal(cutOffSummary(log), "cut off in stage 5 of 6, browser-changed-repeat: 4 of 70 test runs done (2 passed, 1 failed, 1 skipped)");
   assert.equal(cutOffSummary(log.split("\n").slice(0, 3).join("\n")), "cut off in stage 4 of 6, browser: 1 of 300 test runs done (1 passed, 0 failed, 0 skipped)");
   assert.equal(cutOffSummary("=== [Stage 3/6] npm test ===\nok 1 - a unit test"), "cut off in stage 3 of 6, unit");
-  assert.equal(cutOffSummary('=== [Stage 6/6] npm "run" "test:browser" "--" "--workers=1" "--output=test-results-changed-ordered" "a" ==='), "cut off in stage 6 of 6, browser-changed-ordered");
-  assert.equal(cutOffSummary("no stage began"), "");
+    assert.equal(cutOffSummary("no stage began"), "");
+});
+
+test("stopProcessesUnder stops every process whose working directory is inside the folder, and no other", async () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "sonder-stop-under-"));
+  const inside = path.join(base, "checkout");
+  const beside = path.join(base, "checkout-2");
+  fs.mkdirSync(path.join(inside, "tests"), { recursive: true });
+  fs.mkdirSync(beside);
+  const start = (cwd, command = "sleep 120") => {
+    // As Playwright starts its web server: `sh -c`, in a process group and session of its own.
+    const child = spawn("sh", ["-c", command], { cwd, detached: true, stdio: "ignore" });
+    child.unref();
+    return child;
+  };
+  const closed = (child) => new Promise((resolve) => child.once("close", (code, signal) => resolve(signal ?? code)));
+  const server = start(inside);
+  const deeper = start(path.join(inside, "tests"));
+  // One that does not go when asked: it is killed after the grace.
+  // (Its `sleep` inherits the ignored signal and is a process in the folder too: four in all, two of them killed.)
+  const stubborn = start(inside, "trap '' TERM; sleep 120 & wait");
+  const neighbour = start(beside);
+  const ends = [closed(server), closed(deeper), closed(stubborn)];
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.deepEqual(processesUnder(inside).filter((pid) => [server.pid, deeper.pid, stubborn.pid, neighbour.pid].includes(pid)).sort(), [server.pid, deeper.pid, stubborn.pid].sort());
+    const stopped = stopProcessesUnder(inside, { graceMs: 400 });
+    for (const child of [server, deeper, stubborn]) assert.ok(stopped.includes(child.pid), `${child.pid} was signalled`);
+    assert.equal(stopped.includes(neighbour.pid), false, "a folder whose name only starts the same is another folder");
+    assert.deepEqual(await Promise.all(ends), ["SIGTERM", "SIGTERM", "SIGKILL"]);
+    assert.deepEqual(processesUnder(inside), []);
+    assert.equal(neighbour.exitCode ?? neighbour.signalCode, null, "the neighbour runs on");
+    assert.deepEqual(stopProcessesUnder("relative/folder"), [], "only an absolute folder");
+    assert.deepEqual(stopProcessesUnder(""), []);
+  } finally {
+    for (const child of [server, deeper, stubborn, neighbour]) {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        // already gone
+      }
+    }
+    fs.rmSync(base, { recursive: true, force: true });
+  }
 });

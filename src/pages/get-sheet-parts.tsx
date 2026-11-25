@@ -3,9 +3,10 @@
 // a failing source's line with its Retry, and the marks of the Group's rows. The styles are the Get audiobook sheet's
 // (`get-sheet-*` in get-audiobook-sheet.css). Get ebook is built from these; Get audiobook keeps its own copies until
 // its language and Load more ticket (#602) has landed, so that ticket's files are not touched here.
-import type { FormEvent } from "react";
+import { useLayoutEffect, type FormEvent } from "react";
 import { Button } from "../parts/Button";
 import type { LibraryWork } from "../types";
+import type { SourceLink } from "./get-source-link";
 import { Cover } from "../parts/Cover";
 import "./get-audiobook-sheet.css";
 
@@ -33,6 +34,30 @@ export function LeavingMark() {
       <path d="M14 5h5v5M19 5l-8 8M11 7H6v11h11v-5" />
     </svg>
   );
+}
+
+/**
+ * The footer's link to the chosen candidate's own page, a 44 high row opened in a new tab (#889); nothing, and no
+ * space, without a link.
+ */
+export function SourceLinkLine({ link }: { link: SourceLink | null }) {
+  if (!link) return null;
+  return (
+    <a className="get-sheet-source" href={link.href} target="_blank" rel="noopener noreferrer">
+      <span className="type-label">{link.text}</span>
+      <LeavingMark />
+    </a>
+  );
+}
+
+/**
+ * Keeps the chosen row in view when the footer grows over the list (a link, a sentence or a refusal arrives): the body
+ * is shorter then, so the row is scrolled back into it. `footerKey` changes with what the footer says.
+ */
+export function useChosenRowInView(footerKey: string) {
+  useLayoutEffect(() => {
+    document.querySelector<HTMLElement>('.part-sheet [role="radio"][aria-checked="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [footerKey]);
 }
 
 /** The book the sheet gets a file for: its cover, the title as the sheet's one heading, the author under it. */

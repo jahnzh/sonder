@@ -48,3 +48,20 @@ test("a save without the removed fields, or with no reader at all, is accepted t
   assert.equal((await put({ preset: "forest" })).statusCode, 200);
   assert.deepEqual((await get()).reader, defaultAppearance.reader);
 });
+
+test("an older client's save, which has no Reading position choice, keeps the stored one", async () => {
+  const current = await get();
+  assert.equal((await put({ ...current, reader: { ...current.reader, positionScope: "chapter" } })).statusCode, 200);
+  assert.equal((await get()).reader.positionScope, "chapter");
+  // The build before the choice sends `reader` without it; what it changed is saved, and the choice stays.
+  const { positionScope: _scope, ...older } = current.reader;
+  assert.equal((await put({ ...current, preset: "light", reader: { ...older, size: 22 } })).statusCode, 200);
+  const read = await get();
+  assert.deepEqual([read.preset, read.reader.size, read.reader.positionScope], ["light", 22, "chapter"]);
+  // A save with no reader at all keeps it too.
+  assert.equal((await put({ preset: "forest" })).statusCode, 200);
+  assert.equal((await get()).reader.positionScope, "chapter");
+  // A client that knows the choice sets it, the whole book included.
+  assert.equal((await put({ ...current, reader: { ...current.reader, positionScope: "book" } })).statusCode, 200);
+  assert.equal((await get()).reader.positionScope, "book");
+});

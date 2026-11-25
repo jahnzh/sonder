@@ -183,7 +183,14 @@ class Jobs(unittest.TestCase):
         return BookJobs(self.root, stages, registry, clock=self.clock, state_bytes=STATE)
 
     def done(self, jobs, key="job-1"):
-        return wait_for(lambda: jobs.status(key)["state"] in ("done", "failed", "cancelled"))
+        ended = wait_for(lambda: jobs.status(key)["state"] in ("done", "failed", "cancelled"))
+        # "failed" is set in memory just before the error record is written: wait for the thread, so a
+        # test that reads the folder from disk afterwards sees the record.
+        job = jobs._jobs.get(key)
+        if ended and job is not None and job.thread is not None:
+            job.thread.join(5)
+            return not job.thread.is_alive()
+        return ended
 
     def test_start_progress_and_result(self):
         stages = FakeStages()
@@ -326,10 +333,23 @@ class Jobs(unittest.TestCase):
         jobs.start(request())
         self.assertTrue(self.done(jobs))
         self.assertEqual(jobs.status("job-1")["state"], "failed")
-        jobs._jobs["job-1"].thread.join(5)  # "failed" is set in memory just before the record is written
         record = (self.root / "job-1" / "state.json").stat().st_size
         self.assertEqual(budget.reserved("job-1"), record)
         self.assertLessEqual(budget.peak, budget.total, "the record never takes the budget over its total")
+
+    def test_done_waits_for_a_failed_jobs_record_even_when_the_save_is_slow(self):
+        real_save = book_job.Job.save
+
+        def slow_save(job):
+            if job.state.get("state") == "failed":
+                time.sleep(0.2)
+            return real_save(job)
+
+        jobs = self.jobs(FakeStages(fail_at=1))
+        with mock.patch.object(book_job.Job, "save", slow_save):
+            jobs.start(request())
+            self.assertTrue(self.done(jobs))
+            self.assertEqual([p.name for p in (self.root / "job-1").iterdir()], ["state.json"])
 
     def test_a_failed_start_deletes_what_it_wrote(self):
         def broken_save(job):
@@ -490,9 +510,12 @@ class Jobs(unittest.TestCase):
                          lambda: restarted.cancel("job-1"), lambda: restarted.result("job-1")):
                 with self.assertRaises(book_job.Resuming):
                     self.answers_at_once(call)
-            self.assertEqual({p.name: p.read_bytes() for p in (self.root / "job-1").iterdir() if p.is_file()
-                              if p.name != "state.json"},
-                             {k: v for k, v in files.items() if k != "state.json"}, "the retained job is untouched")
+            # Not the state file, nor the temporary it is written through: the first worker may still be writing
+            # its last state when the folder is listed above (a check on WSL listed a `state.json.tmp` that was
+            # gone a moment later, 21 Nov 2026).
+            kept = lambda name: name not in ("state.json", "state.json.tmp")
+            self.assertEqual({p.name: p.read_bytes() for p in (self.root / "job-1").iterdir() if p.is_file() and kept(p.name)},
+                             {k: v for k, v in files.items() if kept(k)}, "the retained job is untouched")
             release.set()
             thread.join(5)
         self.assertFalse(restarted.resuming)

@@ -14,6 +14,7 @@ import { SPREAD_GAP } from "./reader-spread";
 import { pagedWords, type PagedWord } from "./reader-page-turn";
 import { BLOCKS_IN_LINK } from "./reader-links";
 import { readerBlockSelector } from "./reading-types";
+import type { RailSeam } from "./text-rail";
 
 /** At most this many parts are in the page at once: the one in view and its neighbours. */
 export const MAX_LOADED_PARTS = 5;
@@ -102,6 +103,20 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
   const stopped = { [-1]: false, [1]: false } as Record<number, boolean>;
   let failures = 0;
   const reportedParts = new Set<number>();
+  /** The text position rail holds the text (text-rail.ts): no neighbour is asked for until it lets go. */
+  let railHeld = false;
+  /** A place the rail asked for whose part is loading. */
+  let placing = 0;
+  /** The next scroll is the reader's own, whatever this module last set (a move by the rail is a move by hand). */
+  let handNext = false;
+  /** Told the first sentence in view whenever it changes, whoever moved the text (the rail's thumb). */
+  const watchers = new Set<(sentence: string) => void>();
+  let watched: string | null = null;
+  const tell = (first: string | null) => {
+    if (!first || first === watched) return;
+    watched = first;
+    for (const watcher of watchers) watcher(first);
+  };
 
   // ---- Pages mode (step 4 of #799) ------------------------------------------------------------------------------
   // A page is a CSS column, or two side by side. Nothing of the whole book is laid out.
@@ -594,7 +609,7 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
   }
   /** Loads a neighbour when the loaded text ends near the view. */
   const fill = () => {
-    if (disposed || low < 0) return;
+    if (disposed || low < 0 || railHeld) return;
     if (pages) {
       const { perView } = geometry();
       if (columns() - startColumn - perView < TURNS_AHEAD * perView && !extending[1]) void extend(1);
@@ -626,7 +641,8 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
       }
       return;
     }
-    const mine = ownTop !== null && Math.abs(scroller.scrollTop - ownTop) < 1;
+    const mine = !handNext && ownTop !== null && Math.abs(scroller.scrollTop - ownTop) < 1;
+    handNext = false;
     ownTop = null;
     if (frame) cancelAnimationFrame(frame);
     frame = requestAnimationFrame(() => {
@@ -635,6 +651,7 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
       fill();
       const first = firstInView();
       holdOn(first);
+      tell(first);
       if (mine || !first) {
         if (first) reported = first;
         return;
@@ -763,6 +780,7 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
       place();
       holdOn();
       reported = firstInView();
+      tell(reported);
     } else keepPlace();
     fill();
   });
@@ -786,6 +804,7 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
     if (disposed || at !== epoch) return false;
     holdOn();
     reported = firstInView();
+    tell(reported);
     fill();
     return true;
   };
@@ -1005,6 +1024,94 @@ export function createPreparedView(host: HTMLElement, book: PreparedBook, events
     },
     /** The first sentence in view. */
     firstInView,
+    /**
+     * The text position rail's seam (text-rail.ts): places of the book, 0 to 1 by sentence, never pixels of the
+     * loaded text. A move by the rail is a move by hand: the scroll it makes is reported as the reader's.
+     */
+    railSeam(): RailSeam {
+      const last = () => Math.max(0, index.total - 1);
+      /** The window's y of a place in the loaded text; between two sentences' tops for a place between them. */
+      const yOf = (place: number): number | null => {
+        const exact = Math.max(0, Math.min(last(), place * last()));
+        const at = Math.floor(exact + 1e-6);
+        // A sentence the book hides has no box: the next one drawn stands for it.
+        for (let step = 0; step < 64 && at + step <= last(); step++) {
+          const box = boxOf(elementsOf(index.idAt(at + step) ?? ""));
+          if (!box) continue;
+          if (step) return box.top;
+          const following = boxOf(elementsOf(index.idAt(at + 1) ?? ""));
+          return box.top + (following && following.top > box.top ? (exact - at) * (following.top - box.top) : 0);
+        }
+        return null;
+      };
+      const put = (y: number) => {
+        const before = scroller.scrollTop;
+        scroller.scrollTop = Math.max(0, Math.min(before + y - bandTop() - TOP_ROOM, scroller.scrollHeight - scroller.clientHeight));
+        if (scroller.scrollTop !== before) {
+          handNext = true;
+          ownTop = null;
+        }
+      };
+      const settled = async (at: number) => {
+        await nextFrame();
+        await nextFrame();
+        return !disposed && at === epoch;
+      };
+      return {
+        band: host,
+        watch(listener) {
+          const told = (sentence: string) => listener(index.progression(sentence));
+          watchers.add(told);
+          const first = watched ?? firstInView();
+          if (first) told(first);
+          return () => watchers.delete(told);
+        },
+        async showPlace(place, load) {
+          const id = index.idAt(Math.floor(Math.max(0, Math.min(1, place)) * last() + 1e-6));
+          const part = id ? index.partOf(id) : -1;
+          if (disposed || part < 0) return false;
+          const at = ++epoch;
+          if (loaded.has(part)) {
+            placing = 0;
+            const y = yOf(place);
+            if (y !== null) put(y);
+            return settled(at);
+          }
+          if (!load) return false;
+          placing = at;
+          try {
+            if (!(await only(part, at))) return false;
+          } catch (error) {
+            if (disposed || at !== epoch) return false;
+            failed(error);
+            if (!(error instanceof PreparedStaleError)) events.onLoadFailed(error);
+            return false;
+          } finally {
+            if (placing === at) placing = 0;
+          }
+          const y = yOf(place);
+          if (y !== null) put(y);
+          // Reported as the reader's move whether or not the band's offset changed with the new text.
+          handNext = true;
+          scrolled();
+          return settled(at);
+        },
+        turn: (direction) => scroller.scrollBy(0, direction * scroller.clientHeight * 0.9),
+        hold() {
+          railHeld = true;
+        },
+        letGo() {
+          railHeld = false;
+          if (!placing) fill();
+        },
+        tap: { down, move, up, cancel },
+        wheel(event) {
+          gesture();
+          const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? scroller.clientHeight : 1;
+          scroller.scrollBy(0, event.deltaY * unit);
+        },
+      };
+    },
     /** The reader asked to try again after a part could not be loaded. */
     retry() {
       book.retry();

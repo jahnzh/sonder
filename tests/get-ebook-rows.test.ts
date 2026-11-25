@@ -8,6 +8,7 @@ import {
   editionId,
   editionRow,
   editionRows,
+  editionSourceLink,
   getEditionLine,
   LINE_EPUB,
   LINE_EPUB_CHECKED,
@@ -80,4 +81,21 @@ test("the line under Get this edition: nothing chosen, an EPUB with and without 
   assert.equal(LINE_EPUB, "Saved on the server.");
   assert.equal(getEditionLine({ extension: "pdf" }, withRecording), LINE_PDF);
   assert.equal(getEditionLine({ extension: "pdf" }, without), "Saved on the server. Opens in another app.");
+});
+
+test("the footer link of an edition leads to its page on Library Genesis (#889)", () => {
+  assert.deepEqual(editionSourceLink(result(1)), { text: "On Library Genesis", href: `https://libgen.li/ads.php?md5=${md5(1)}` });
+  assert.deepEqual(editionSourceLink(result(2, { url: "http://libgen.example/edition/2" })), {
+    text: "On Library Genesis",
+    href: "http://libgen.example/edition/2",
+  });
+});
+
+test("an edition with no http(s) address, or none chosen, has no link (#889)", () => {
+  assert.equal(editionSourceLink(null), null);
+  assert.equal(editionSourceLink(undefined), null);
+  for (const url of ["", "  ", "javascript:alert(1)", "/ads.php?md5=1", "libgen.li/ads.php", "ftp://libgen.li/x", "https://"])
+    assert.equal(editionSourceLink(result(3, { url })), null, JSON.stringify(url));
+  assert.equal(editionSourceLink(result(5, { url: "https://user:pass@libgen.li/ads.php" })), null);
+  assert.equal(editionSourceLink(result(4, { url: undefined as unknown as string })), null);
 });

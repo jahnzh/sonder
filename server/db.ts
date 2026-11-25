@@ -237,6 +237,13 @@ for (const table of ["work_metadata_overrides", "recording_metadata_overrides"])
 sqlite.exec(`
 CREATE TABLE IF NOT EXISTS metadata_match_jobs(work_id TEXT PRIMARY KEY,series_id TEXT NOT NULL,user_id INTEGER NOT NULL,status TEXT NOT NULL CHECK(status IN ('pending','running','done','unsure','failed')),provider TEXT,fields TEXT NOT NULL DEFAULT '[]',reason TEXT,updated_at INTEGER NOT NULL);
 `);
+// A preview of a release cached on TorBox (#889): which release and file it plays, and when it ended. `added` is the
+// best-known fact whether this preview put the release on the TorBox account; it is NOT reliable yet (TorBox's list
+// is cached for up to 600 s), so nothing acts on it. Removal from TorBox is a later ticket (server/torbox-preview.ts).
+sqlite.exec(`
+CREATE TABLE IF NOT EXISTS torbox_previews(id TEXT PRIMARY KEY,user_id INTEGER NOT NULL,hash TEXT NOT NULL,torrent_id INTEGER NOT NULL,file_id INTEGER,file_name TEXT,added INTEGER NOT NULL CHECK(added IN (0,1)),created_at INTEGER NOT NULL,ended_at INTEGER);
+CREATE INDEX IF NOT EXISTS torbox_previews_hash ON torbox_previews(hash);
+`);
 sqlite.exec(SERIES_RESAVE_TABLE);
 // A work a series brought into the library names that series by its AudiobookDB id (#721); `series_id` keeps the
 // Hardcover id of older rows, unused.

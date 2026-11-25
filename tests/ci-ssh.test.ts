@@ -42,13 +42,28 @@ cp -r "$(strip "\${args[0]}")" "$(strip "\${args[1]}")"
 `;
 
 const npmStub = `#!/usr/bin/env bash
-echo "cwd=$PWD args=$* base=$(git rev-parse --verify refs/remotes/origin/main 2>/dev/null)" >>"$STUB_NPM_LOG"
+echo "cwd=$PWD args=$* base=$(git rev-parse --verify refs/remotes/origin/main 2>/dev/null) shards=\${SONDER_BROWSER_SHARDS:-} python=\${SONDER_WORKER_PYTHON:-} torch=\${SONDER_WORKER_TORCH:-}" >>"$STUB_NPM_LOG"
+# The real scripts/check-local.mjs, whose first stage (npm ci) is this stub's trivial exit: STUB_CI_EXIT.
+if [[ $1 == ci ]]; then exit "\${STUB_CI_EXIT:-0}"; fi
 if [[ $1 == run && $2 == check ]]; then
   case "\${STUB_NPM_MODE:-pass}" in
+    real-check) exec node "$STUB_CHECK_LOCAL" "\${@:4}" ;;
     fail) exit "\${STUB_NPM_EXIT:-7}" ;;
+    fail-after-stage)
+      # A check that got as far as a stage, as check-local.mjs marks it, and failed there.
+      out=""; prev=""; for arg in "$@"; do [[ $prev == --output-dir ]] && out=$arg; prev=$arg; done
+      echo started >"$out/stage-started"; exit "\${STUB_NPM_EXIT:-7}" ;;
     die) kill -KILL "$PPID"; sleep 5 ;;
     vanish) rm -rf "$(dirname "$PWD")"; sleep 5 ;;
     hang) sleep 60 ;;
+    leave-server)
+      # A check that is killed with a web server of its own still running: the server is in a session of its own,
+      # its working directory the check's checkout folder, whose name the check wrote into its report folder.
+      out=""; prev=""; for arg in "$@"; do [[ $prev == --output-dir ]] && out=$arg; prev=$arg; done
+      checkout=$(mktemp -d "\${TMPDIR:-/tmp}/sonder-local-check-XXXXXX")
+      mkdir -p "$out"; echo "$checkout" >"$out/checkout-dir"
+      (cd "$checkout" && setsid sleep 120 >/dev/null 2>&1 & echo "$! $checkout" >"$STUB_LEFT_SERVER")
+      sleep 60 ;;
     hang-in-stage)
       printf '%s\\n' '=== [Stage 4/6] npm run test:browser ===' '  3 passed' '=== [Stage 5/6] npm "run" "test:browser" "--" "--workers=1" "--repeat-each=2" "a.spec.ts" (in 2 parts) ===' '[part 1/2] Running 40 tests using 1 worker' '[part 2/2] Running 30 tests using 1 worker' '[part 1/2]   ✓  1 [chromium] › a.spec.ts:1:1 › one (1.0s)' '[part 2/2]   ✓  1 [firefox] › b.spec.ts:1:1 › two (1.0s)' '[part 2/2]   -  2 [firefox] › b.spec.ts:2:1 › three'
       sleep 60 ;;
@@ -82,7 +97,8 @@ done
 // A developer's own SONDER_CI_* settings must not change what the tests see.
 function cleanEnv() {
   const env = { ...process.env };
-  for (const key of Object.keys(env)) if (key.startsWith("SONDER_CI_") || key === "REPORT_JSON") delete env[key];
+  // Also the caller's shard count, which the runner would pass on as "set by the caller".
+  for (const key of Object.keys(env)) if (key.startsWith("SONDER_CI_") || key === "REPORT_JSON" || key === "SONDER_BROWSER_SHARDS" || key === "SONDER_WORKER_PYTHON" || key === "SONDER_WORKER_TORCH") delete env[key];
   return env;
 }
 
@@ -413,6 +429,71 @@ test("an unreachable host falls back to a local check of the same commit", (t) =
   assert.equal(record.result, "passed");
 });
 
+// The fallback's own check is the real scripts/check-local.mjs (#887): the stubbed `npm run check` of the other
+// tests never met the report directory ci-ssh.sh makes, so it never showed that the real check refuses it.
+function useRealCheckLocal(f: ReturnType<typeof fixture>) {
+  for (const name of ["check-local.mjs", "check-local-support.mjs", "known-failures.mjs"]) {
+    fs.copyFileSync(path.resolve("scripts", name), path.join(f.repo, "scripts", name));
+  }
+  return {
+    STUB_SSH_MODE: "down",
+    STUB_NPM_MODE: "real-check",
+    STUB_CHECK_LOCAL: path.join(f.repo, "scripts", "check-local.mjs"),
+    // Where the check keeps its port lease and its snapshot: this test's own folder.
+    TMPDIR: f.base,
+  };
+}
+
+test("the local fallback gets past its report directory with the real check and starts its first stage", (t) => {
+  const f = fixture(t);
+  // The first stage (npm ci) fails at once, so the check ends after one stage instead of installing the project.
+  const out = f.run(f.second, { ...useRealCheckLocal(f), STUB_CI_EXIT: "1" });
+  assert.doesNotMatch(out.output, /already contains or reserves another run/, out.output);
+  assert.match(out.output, /Stage 1\/\d+\] npm ci/, "the install stage started");
+  assert.ok(f.read(f.logs.npm).split("\n").some((line) => / args=ci /.test(line)), "npm ci ran in the snapshot");
+  const root = path.join(f.repo, "artifacts", "ci", f.second);
+  const [dir] = fs.readdirSync(root);
+  assert.ok(fs.existsSync(path.join(root, dir, "stage-started")));
+  const report = JSON.parse(fs.readFileSync(path.join(root, dir, "report.json"), "utf8"));
+  assert.equal(report.stages[0].name, "install");
+  assert.notEqual(report.stages[0].status, "skipped");
+  // The check ran and failed in a stage: that one is a verdict on the commit.
+  assert.equal(f.result(f.second).result, "failed");
+  assert.equal(out.status, 1, out.output);
+});
+
+test("the real check leaves its report and result files in the run's own directory", (t) => {
+  const f = fixture(t);
+  const out = f.run(f.second, { ...useRealCheckLocal(f), STUB_CI_EXIT: "0" });
+  // Every later stage is this stub's `exit 0`, so the browser stage has no report and the check fails there;
+  // what matters here is that the files readers look for are in the run's directory and the pid file is gone.
+  const root = path.join(f.repo, "artifacts", "ci", f.second);
+  const [dir] = fs.readdirSync(root);
+  for (const name of ["report.json", "check-report.json", "ci-ssh-result.txt", "stage-started"]) {
+    assert.ok(fs.existsSync(path.join(root, dir, name)), `${name} is in the run directory: ${out.output}`);
+  }
+  assert.equal(fs.existsSync(path.join(root, dir, "ci-ssh.pid")), false, "the pid file is removed at the end");
+});
+
+test("a local check that ends before any stage started is recorded as local_setup_failed, not as a failed check", (t) => {
+  const f = fixture(t);
+  const out = f.run(f.second, { STUB_SSH_MODE: "down", STUB_NPM_MODE: "fail", STUB_NPM_EXIT: "3" });
+  assert.equal(out.status, 3, "the check's own exit status");
+  assert.match(out.output, /before it started a stage; that is no verdict on the commit/);
+  const record = f.result(f.second);
+  assert.equal(record.mode, "local_fallback");
+  assert.equal(record.result, "local_setup_failed");
+  assert.equal(record.exit_code, "3");
+  assert.match(f.read(f.logs.gh), /state=failure.*the local check did not start/);
+});
+
+test("a local check that failed in a stage is still recorded as failed", (t) => {
+  const f = fixture(t);
+  const out = f.run(f.second, { STUB_SSH_MODE: "down", STUB_NPM_MODE: "fail-after-stage", STUB_NPM_EXIT: "7" });
+  assert.equal(out.status, 7, out.output);
+  assert.equal(f.result(f.second).result, "failed");
+});
+
 test("a failing remote check is a failure and is never rerun locally", (t) => {
   const f = fixture(t);
   // The commit is not HEAD, which also proves the bundle carries it.
@@ -482,6 +563,42 @@ test("a check cut off by the cap says which stage was running and how far it had
   assert.ok(out.output.includes(`The check was ${said}`), out.output);
   assert.equal(f.result(f.second).result, "timeout");
   assert.equal(f.result(f.second).cut_off, said);
+});
+
+test("the check runs at the host's shard count from its figures, unless the caller sets one", (t) => {
+  const f = fixture(t);
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: f.repo, encoding: "utf8" }).trim();
+  fs.writeFileSync(path.join(f.repo, "scripts", "ci-hosts.json"), JSON.stringify({ lisa: { host: "lisa", workerPython: "/opt/check/bin/python3", workerTorch: true, estimate: { fixedSeconds: 308, speed: 1, shards: 8, startSeconds: 80 } }, plain: { host: "plain" } }) + "\n");
+  git("add", ".");
+  git("commit", "-qm", "hosts");
+  const sha = git("rev-parse", "HEAD");
+  const shardsOf = () => fs.readFileSync(f.logs.npm, "utf8").trim().split("\n").filter((line) => line.includes("args=run check")).map((line) => /shards=(\S*) python=/.exec(line)?.[1]);
+  assert.equal(f.run(sha, { SONDER_CI_HOST: "lisa" }).status, 0);
+  assert.equal(f.run(sha, { SONDER_CI_HOST: "lisa", SONDER_BROWSER_SHARDS: "3" }).status, 0);
+  assert.equal(f.run(sha, { SONDER_CI_HOST: "plain" }).status, 0);
+  assert.deepEqual(shardsOf(), ["8", "3", ""], "from the figures; the caller's; the host's own count when it has no figures");
+  // The interpreter for the worker's Python tests travels the same way: the host's, and none for a host that names none.
+  const pythonOf = () => fs.readFileSync(f.logs.npm, "utf8").trim().split("\n").filter((line) => line.includes("args=run check")).map((line) => /python=(\S*) torch=(\S*)$/.exec(line)?.slice(1, 3).join(" torch="));
+  assert.deepEqual(pythonOf(), ["/opt/check/bin/python3 torch=1", "/opt/check/bin/python3 torch=1", " torch="], "with what the host declares about torch");
+});
+
+test("a server the check left running in its checkout folder is stopped with the run, and the folder removed", (t) => {
+  const f = fixture(t);
+  const leftFile = path.join(f.base, "left-server");
+  const out = f.run(f.second, { STUB_NPM_MODE: "leave-server", STUB_LEFT_SERVER: leftFile, SONDER_CI_MAX_WAIT: "2" });
+  assert.equal(out.status, 124, out.output);
+  const [pid, checkout] = fs.readFileSync(leftFile, "utf8").trim().split(" ");
+  assert.match(checkout, /\/sonder-local-check-/);
+  const alive = () => {
+    try {
+      return !/^\d+ \(.*\) Z /.test(fs.readFileSync(`/proc/${pid}/stat`, "utf8"));
+    } catch {
+      return false;
+    }
+  };
+  assert.equal(alive(), false, `the left server ${pid} is stopped`);
+  assert.equal(fs.existsSync(checkout), false, "its checkout folder is removed");
+  assert.deepEqual(fs.readdirSync(f.remote), []);
 });
 
 test("a host whose closed port does not refuse fails fast without running tests", (t) => {
@@ -732,14 +849,14 @@ test("the wait cap grows with the commit's changed browser specs, unless it is s
   git("add", ".");
   git("commit", "-qm", "hosts");
   const fourth = git("rev-parse", "HEAD");
-  // The heaviest file is 50 tests in two projects: 100, three times, 5 s each.
+  // The heaviest file is 50 tests in two projects: 100, twice, 5 s each.
   const grown = f.run(fourth, { SONDER_CI_HOST: "lisa" });
   assert.equal(grown.status, 0, grown.output);
-  assert.match(grown.output, /Waiting for the check \(cap 5100s, 3600 \+ 1500 for 2 changed browser spec\(s\), poll every/);
+  assert.match(grown.output, /Waiting for the check \(cap 4600s, 3600 \+ 1000 for 2 changed browser spec\(s\), poll every/);
   // Through the dispatcher the host's cap arrives as SONDER_CI_HOST_MAX_WAIT, and grows the same way.
   const dispatched = f.run(fourth, { SONDER_CI_HOST: "lisa", SONDER_CI_HOST_MAX_WAIT: "2000" });
   assert.equal(dispatched.status, 0, dispatched.output);
-  assert.match(dispatched.output, /Waiting for the check \(cap 3500s, 2000 \+ 1500 for 2 changed browser spec\(s\), poll every/);
+  assert.match(dispatched.output, /Waiting for the check \(cap 3000s, 2000 \+ 1000 for 2 changed browser spec\(s\), poll every/);
   // Set by hand, the cap is what was set.
   const byHand = f.run(fourth, { SONDER_CI_HOST: "lisa", SONDER_CI_MAX_WAIT: "900" });
   assert.equal(byHand.status, 0, byHand.output);

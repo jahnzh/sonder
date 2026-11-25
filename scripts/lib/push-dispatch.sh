@@ -6,7 +6,8 @@
 #
 #   push_dispatch_finished <artifacts> <sha>
 #       0 when the commit has a finished run under <artifacts>/<sha>/ (a ci-ssh-result.txt or
-#       ci-deck-result.txt with a result= line).
+#       ci-deck-result.txt with a result= line). A run recorded as local_setup_failed (the local
+#       fallback ended before it started a stage, #887) is not finished: it checked nothing.
 #
 #   push_dispatch_start <runner> <artifacts> <sha> <branch>
 #       For a push that has landed (the wrapper). Starts `bash <runner> <sha>` at once.
@@ -33,9 +34,13 @@
 
 push_dispatch_finished() {
   local dir=$1/$2 f
+  local result
   for f in "$dir"/ci-ssh-result.txt "$dir"/ci-deck-result.txt \
     "$dir"/*/ci-ssh-result.txt "$dir"/*/ci-deck-result.txt; do
-    [[ -f $f ]] && grep -q '^result=' "$f" && return 0
+    [[ -f $f ]] || continue
+    result=$(sed -n 's/^result=//p' "$f" | head -n 1)
+    # A local fallback that ended before it started a stage checked nothing (#887): the next push starts one.
+    [[ -n $result && $result != local_setup_failed ]] && return 0
   done
   return 1
 }

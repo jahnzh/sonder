@@ -35,6 +35,9 @@ export const appearanceSchema = z.object({
       margin: z.number().min(8).max(80).default(20),
       width: z.number().min(350).max(1100).default(720),
       mode: z.enum(["paginated", "scroll"]).default("paginated"),
+      // What the text position rail shows (#804): the whole book, or the chapter of the place in view. A client
+      // from before it sends none, and the default is stored.
+      positionScope: z.enum(["book", "chapter"]).default("book"),
       // The view choice, words per line and words per minute of the removed Lyrics and Word views
       // (ADR 0017). Accepted and kept because an older open client still sends them; the reader
       // ignores them and always shows the book's text.
@@ -50,6 +53,7 @@ export const appearanceSchema = z.object({
       margin: 20,
       width: 720,
       mode: "paginated",
+      positionScope: "book",
       display: "book",
       segmentWords: 30,
       wordWpm: 300,
@@ -61,6 +65,16 @@ export const defaultAppearance = appearanceSchema.parse({});
 export function keepPlaybackSpeed(input: Appearance, stored: Appearance): Appearance {
   return input.playback.speed === undefined && stored.playback.speed !== undefined
     ? { ...input, playback: { ...input.playback, speed: stored.playback.speed } }
+    : input;
+}
+/**
+ * A client from before the text position rail's choice sends `reader` without `positionScope` (or no `reader`) when it
+ * saves; that must not put the rail back to the whole book. `body` is the save as sent, before the schema filled it in.
+ */
+export function keepPositionScope(input: Appearance, body: unknown, stored: Appearance): Appearance {
+  const sent = (body as { reader?: { positionScope?: unknown } } | null)?.reader?.positionScope;
+  return sent === undefined && input.reader.positionScope !== stored.reader.positionScope
+    ? { ...input, reader: { ...input.reader, positionScope: stored.reader.positionScope } }
     : input;
 }
 /** What this client sends: an unset default speed goes out as null, so the server clears it too. */

@@ -11,7 +11,9 @@
 # recorded as disk_full before the bundle is made (#791); 124 the wait cap was
 # reached.
 # Only an unreachable host at the start falls back to a local run. A failure on
-# the host is a failure and is never rerun locally.
+# the host is a failure and is never rerun locally. A local run that ends before
+# it starts a stage (no stage-started file in its report directory) is recorded
+# as result=local_setup_failed, which is no verdict on the commit (#887).
 #
 # Environment: SONDER_CI_HOST, SONDER_CI_REPO, SONDER_CI_STATUS_CONTEXT,
 # SONDER_CI_POST_STATUS (0 skips the GitHub status), SONDER_CI_MAX_WAIT (seconds,
@@ -108,6 +110,16 @@ const maxWait = entry.maxWait ?? entry.max_wait;
 if (maxWait !== undefined) console.log(`CONFIG_MAX_WAIT=${esc(maxWait)}`);
 const maxParallel = entry.maxParallel ?? entry.max_parallel;
 if (maxParallel !== undefined) console.log(`CONFIG_MAX_PARALLEL=${esc(maxParallel)}`);
+// The browser stage's shards on this host: the figure the estimate at dispatch reckons with (check-estimate.mjs),
+// so the check runs at the width it was judged at.
+const shards = entry.estimate?.shards;
+if (Number.isInteger(shards) && shards >= 1 && shards <= 16) console.log(`CONFIG_SHARDS=${esc(shards)}`);
+// The interpreter the check runs the worker's Python tests with on this host (scripts/setup-check-python.sh): with it
+// named, those tests fail instead of being skipped when it cannot run them.
+if (typeof entry.workerPython === "string" && entry.workerPython) console.log(`CONFIG_WORKER_PYTHON=${esc(entry.workerPython)}`);
+// Whether that interpreter has torch, so that the 33 tests needing it run and fail instead of skip (#878). A host
+// says so either way; "0" is a stated gap that the check's summary names.
+if (typeof entry.workerTorch === "boolean") console.log(`CONFIG_WORKER_TORCH=${entry.workerTorch ? 1 : 0}`);
 NODE_EOF
 }
 
@@ -117,6 +129,9 @@ CONFIG_REMOTE_BASE=""
 CONFIG_TMPDIR=""
 CONFIG_MAX_WAIT=""
 CONFIG_MAX_PARALLEL=""
+CONFIG_SHARDS=""
+CONFIG_WORKER_PYTHON=""
+CONFIG_WORKER_TORCH=""
 
 if [[ -f "$HOST_CONFIG_FILE" ]]; then
   eval "$(resolve_host_config "$HOST_CONFIG_FILE" "$SONDER_CI_HOST")"
@@ -286,12 +301,24 @@ REMOTE
   return "$rc"
 }
 
+# The local check works in the run's own directory: it takes over a directory that holds only this script's pid file
+# (check-local.mjs). A check that ends without having started a stage (no stage-started file: a refused directory, a
+# bad argument, a port that could not be leased, a snapshot that could not be made) has judged nothing, so it is
+# recorded as local_setup_failed, which scripts/ci-run.sh does not count as a failed check of the commit; the
+# check's own sentence about it is in the log above. The exit status stays the check's own.
 run_local_check() {
   local exit_code
   log "Running npm run check locally for ${FULL_SHA}"
   npm run check -- --ref "$FULL_SHA" --output-dir "$LOCAL_REPORT_DIR"
   exit_code=$?
-  record_result local_fallback "$([[ $exit_code -eq 0 ]] && echo passed || echo failed)" "$exit_code"
+  if [[ $exit_code -eq 0 ]]; then
+    record_result local_fallback passed 0
+  elif [[ ! -f $LOCAL_REPORT_DIR/stage-started ]]; then
+    log "The local check ended (exit ${exit_code}) before it started a stage; that is no verdict on the commit"
+    record_result local_fallback local_setup_failed "$exit_code"
+  else
+    record_result local_fallback failed "$exit_code"
+  fi
   return "$exit_code"
 }
 
@@ -418,6 +445,20 @@ if [ -s "$run_dir/check.pid" ]; then
     fi
   fi
 fi
+# What the check left running in its own checkout folder: Playwright starts its web server in a process group of
+# its own, so the kill above does not reach it when the check was killed before it could stop it itself (ten such
+# servers stood on lisa for up to 27 hours, each holding its port). The check wrote the folder's name.
+checkout=$(cat "$run_dir/report/checkout-dir" 2>/dev/null)
+case "$checkout" in
+  /*/sonder-local-check-*)
+    for proc in /proc/[0-9]*; do
+      cwd=$(readlink "$proc/cwd" 2>/dev/null) || continue
+      cwd=${cwd% (deleted)}
+      case "$cwd" in "$checkout" | "$checkout"/*) kill -KILL "${proc#/proc/}" 2>/dev/null ;; esac
+    done
+    rm -rf "$checkout"
+    ;;
+esac
 rm -rf "$run_dir"
 exit 0
 REMOTE
@@ -657,16 +698,20 @@ REMOTE
   log "Starting the check on ${SONDER_CI_HOST}"
   # The wrapper must not run under `set -e`: a failing check still has to write
   # check.exit, or the wait loop can only conclude that the run died.
-  remote_bash start "$REMOTE_RUN_DIR" "$FULL_SHA" "$KNOWN_FAILURES" "${REMOTE_TMPDIR:-}" <<'REMOTE'
-run_dir=$2 sha=$3 known_failures=$4 remote_tmpdir=${5:-}
+  # The host's shard count (its `estimate.shards`), unless the caller set one for this run.
+  remote_bash start "$REMOTE_RUN_DIR" "$FULL_SHA" "$KNOWN_FAILURES" "${REMOTE_TMPDIR:-}" "${SONDER_BROWSER_SHARDS:-$CONFIG_SHARDS}" "${SONDER_WORKER_PYTHON:-$CONFIG_WORKER_PYTHON}" "${SONDER_WORKER_TORCH:-$CONFIG_WORKER_TORCH}" <<'REMOTE'
+run_dir=$2 sha=$3 known_failures=$4 remote_tmpdir=${5:-} shards=${6:-} worker_python=${7:-} worker_torch=${8:-}
 cd "$run_dir/checkout" || exit 1
 rm -f "$run_dir/check.exit" "$run_dir/check.pid"
 setsid nohup bash -c '
   if [ -n "$5" ]; then export TMPDIR="$5"; fi
+  if [ -n "$6" ]; then export SONDER_BROWSER_SHARDS="$6"; fi
+  if [ -n "$7" ]; then export SONDER_WORKER_PYTHON="$7"; fi
+  if [ -n "$8" ]; then export SONDER_WORKER_TORCH="$8"; fi
   nice -n 10 npm run check -- --ref "$1" --known-failures "$4" --output-dir "$2"
   rc=$?
   echo "$rc" >"$3.tmp" && mv "$3.tmp" "$3"
-' _ "$sha" "$run_dir/report" "$run_dir/check.exit" "$known_failures" "$remote_tmpdir" >"$run_dir/check.log" 2>&1 </dev/null &
+' _ "$sha" "$run_dir/report" "$run_dir/check.exit" "$known_failures" "$remote_tmpdir" "$shards" "$worker_python" "$worker_torch" >"$run_dir/check.log" 2>&1 </dev/null &
 echo $! >"$run_dir/check.pid"
 REMOTE
   rc=$?
@@ -761,7 +806,11 @@ else
   log "SSH unreachable at ${SONDER_CI_HOST}; falling back to local check"
   run_local_check
   FINAL_EXIT=$?
-  DESCRIPTION="CI failed (local fallback)"
+  if [[ $RESULT == local_setup_failed ]]; then
+    DESCRIPTION="CI host failure: the local check did not start"
+  else
+    DESCRIPTION="CI failed (local fallback)"
+  fi
 fi
 
 # The exit status is authoritative, but a report that says the check failed

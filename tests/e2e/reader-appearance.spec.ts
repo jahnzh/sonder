@@ -242,10 +242,12 @@ test("the panel as on ReaderAppearance.dc.html at 390 by 844: the rows, their na
       const close = panel.getByRole("button", { name: "Close appearance", exact: true });
       expect((await close.boundingBox())!.height).toBeCloseTo(44, 0);
       const rows = panel.getByRole("listitem");
-      // No Theme row: it went with the reader on its own (#613 part 2).
-      await expect(rows).toHaveCount(7);
+      // No Theme row: it went with the reader on its own (#613 part 2). The new view has the text position rail,
+      // and with it the Reading position row (#804).
+      const names = ["Reading mode", "Follow the narration", ...(onPreparedView() ? ["Reading position"] : []), "Font", "Size", "Line height", "Margins", "Line width"];
+      await expect(rows).toHaveCount(names.length);
       const labels = await rows.locator(".part-row-label").allTextContents();
-      expect(labels).toEqual(["Reading mode", "Follow the narration", "Font", "Size", "Line height", "Margins", "Line width"]);
+      expect(labels).toEqual(names);
       // Each row is 52 high; the panel is at most half the window and scrolls inside.
       for (const row of await rows.all()) expect((await row.boundingBox())!.height).toBeCloseTo(52, 0);
       const docked = await expectDockedUncovered(room);
@@ -262,6 +264,13 @@ test("the panel as on ReaderAppearance.dc.html at 390 by 844: the rows, their na
       expect(mark.width).toBeCloseTo(168, 0);
       expect(mark.height).toBeCloseTo(44, 0);
       await expect(panel.getByRole("switch", { name: "Follow the narration", exact: true })).toHaveAttribute("aria-checked", "true");
+      // What the text position rail shows, where there is one: the whole book, as saved.
+      const position = panel.getByRole("radiogroup", { name: "Reading position shows", exact: true });
+      if (onPreparedView()) {
+        await expect(position.getByRole("radio")).toHaveText(["Book", "Chapter"]);
+        await expect(position.getByRole("radio", { name: "Book", exact: true })).toHaveAttribute("aria-checked", "true");
+        expect((await position.boundingBox())!.width).toBeCloseTo(168, 0);
+      } else await expect(position).toHaveCount(0);
       await expect(panel.getByRole("radiogroup", { name: "Theme", exact: true })).toHaveCount(0);
       for (const name of ["App", "Dark", "Light", "Sepia"]) await expect(panel.getByRole("radio", { name, exact: true })).toHaveCount(0);
       const font = panel.getByRole("radiogroup", { name: "Font", exact: true });
