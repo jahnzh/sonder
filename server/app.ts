@@ -4,6 +4,8 @@ import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
 import staticFiles from "@fastify/static";
 import rateLimit from "@fastify/rate-limit";
+/** 127.0.0.0/8, ::1 and the IPv4-mapped loopback: a request made on this machine. */
+export const isLoopbackAddress = (ip: string) => /^127\./.test(ip) || ip === "::1" || /^::ffff:127\./.test(ip);
 import { randomUUID, createHash } from "node:crypto";
 import {
   createReadStream,
@@ -336,7 +338,10 @@ export async function createApp(options?: {
   app.get("/api/auth/status", async (req) => ({ required: !!process.env.APP_PASSWORD, authenticated: !!sessionUser(req), user: sessionUser(req) }));
   app.post(
     "/api/auth/login",
-    { config: { rateLimit: { max: 10, timeWindow: "15 minutes", keyGenerator: (request) => request.ip } } },
+    // Ten tries in 15 minutes per address stops password guessing from outside. A request made on the server itself
+    // (the coordinator's and the live checks' scripts) is not counted: behind Caddy (trustProxy "loopback") only a
+    // request that did not come through it has a loopback address.
+    { config: { rateLimit: { max: 10, timeWindow: "15 minutes", keyGenerator: (request) => request.ip, allowList: (request) => isLoopbackAddress(request.ip) } } },
     async (req, reply) => {
       const { password, username } = z
         .object({ password: z.string().max(512), username: z.string().max(40).optional() })
