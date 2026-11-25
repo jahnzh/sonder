@@ -255,6 +255,129 @@ test("a speed chosen while a recording's saved speed is still loading is not ove
   assert.equal(await pending, 1.65);
   assert.equal(await memory.speedOf("recording-a", undefined), 1.65);
 });
+/** A store whose writes land only when released, and are lost if the page goes first. */
+function lateStore(rows = new Map<string, unknown>()) {
+  const inFlight: { apply: () => void; resolve: () => void; live: boolean }[] =
+    [];
+  const late = (apply: () => void) =>
+    new Promise<void>((resolve) => {
+      inFlight.push({ apply, resolve, live: true });
+    });
+  return {
+    rows,
+    inFlight,
+    get: async (key: string) =>
+      rows.has(key) ? { key, value: rows.get(key) } : undefined,
+    put: ({ key, value }: { key: string; value: unknown }) =>
+      late(() => void rows.set(key, value)),
+    delete: (key: string) => late(() => void rows.delete(key)),
+    /** The page goes: writes not yet applied are dropped. */
+    unload() {
+      for (const write of inFlight) write.live = false;
+    },
+    /** Applies the writes still alive, in the order they were started. */
+    async release() {
+      for (const write of inFlight.splice(0)) {
+        if (write.live) write.apply();
+        write.resolve();
+      }
+      await Promise.resolve();
+    },
+  };
+}
+test("Use default is in memory at once, but done only when the delete has landed (#848)", async () => {
+  const key = recordingSpeedKey("recording-a");
+  const storage = lateStore(new Map([[key, 2.65]]));
+  const memory = speedMemory(storage);
+  assert.equal(await memory.own("recording-a"), 2.65);
+  let settled = false;
+  const forgotten = memory.forget("recording-a").then(() => {
+    settled = true;
+  });
+  assert.equal(await memory.own("recording-a"), null, "memory changes at once");
+  assert.equal(await memory.speedOf("recording-a", 1), 1);
+  await Promise.resolve();
+  assert.equal(settled, false, "not done while the delete is in flight");
+  assert.equal(storage.rows.get(key), 2.65);
+  assert.equal(memory.hasPending(), true);
+  await storage.release();
+  await forgotten;
+  assert.equal(settled, true);
+  assert.equal(storage.rows.has(key), false);
+  assert.equal(memory.hasPending(), false);
+  assert.equal(await speedMemory(storage).speedOf("recording-a", 1), 1);
+});
+test("a reset whose delete the page lost is written again when the page goes, so a reload reads the default (#848)", async () => {
+  const key = recordingSpeedKey("recording-a");
+  const storage = lateStore(new Map([[key, 2.65]]));
+  const memory = speedMemory(storage);
+  assert.equal(await memory.own("recording-a"), 2.65);
+  void memory.forget("recording-a");
+  storage.unload();
+  const again = memory.rewritePending();
+  await storage.release();
+  await again;
+  assert.equal(storage.rows.has(key), false);
+  assert.equal(await speedMemory(storage).speedOf("recording-a", 1), 1);
+});
+test("a set the page lost is written again when the page goes, so a reload reads the set value (#848)", async () => {
+  const storage = lateStore();
+  const memory = speedMemory(storage);
+  void memory.remember("recording-a", 2.65);
+  void memory.remember("recording-b", 0.8);
+  void memory.remember(undefined, 1.4);
+  storage.unload();
+  const again = memory.rewritePending();
+  await storage.release();
+  await again;
+  const reloaded = speedMemory(storage);
+  assert.equal(await reloaded.speedOf("recording-a", undefined), 2.65);
+  assert.equal(await reloaded.speedOf("recording-b", undefined), 0.8);
+  assert.equal(await reloaded.speedOf("recording-c", undefined), 1.4);
+});
+test("only the newest write per key is written again, and finished writes are not pending", async () => {
+  const key = recordingSpeedKey("recording-a");
+  const storage = lateStore();
+  const memory = speedMemory(storage);
+  void memory.remember("recording-a", 1.5);
+  void memory.forget("recording-a");
+  void memory.remember("recording-a", 1.9);
+  void memory.forget("recording-a");
+  storage.unload();
+  const before = storage.inFlight.length;
+  const again = memory.rewritePending();
+  assert.equal(storage.inFlight.length - before, 1, "one write for the key");
+  await storage.release();
+  await again;
+  assert.equal(storage.rows.has(key), false, "the newest intent, a reset, wins");
+  assert.equal(memory.hasPending(), false);
+  const done = lateStore();
+  const finished = speedMemory(done);
+  const set = finished.remember("recording-a", 1.2);
+  await done.release();
+  await set;
+  assert.equal(finished.hasPending(), false);
+  assert.equal(done.rows.get(key), 1.2);
+});
+test("a write that fails stays pending and is tried again when the page goes", async () => {
+  const key = recordingSpeedKey("recording-a");
+  const rows = new Map<string, unknown>();
+  let fail = true;
+  const memory = speedMemory({
+    get: async () => undefined,
+    put: async (row) => {
+      if (fail) throw new Error("quota");
+      rows.set(row.key, row.value);
+    },
+    delete: async () => {},
+  });
+  await memory.remember("recording-a", 1.3);
+  assert.equal(memory.hasPending(), true);
+  fail = false;
+  await memory.rewritePending();
+  assert.equal(rows.get(key), 1.3);
+  assert.equal(memory.hasPending(), false);
+});
 test("chapter rows keep real lengths and show only the current chapter's time left at the book's speed", () => {
   const chapter = { start: 30, end: 240 };
   assert.deepEqual(chapterRowTime(chapter, null, 1.5), {

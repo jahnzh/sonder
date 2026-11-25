@@ -106,7 +106,7 @@ type PlayerState = {
   /** Without a recording id, sets the speed of the book in the player. */
   setSpeed: (n: number, recordingId?: string) => void;
   /** Removes a recording's own speed so it plays at the default again. */
-  resetSpeed: (recordingId: string) => void;
+  resetSpeed: (recordingId: string) => Promise<void>;
   setSleep: (n: number | null) => void;
   next: () => void;
   previous: () => void;
@@ -1097,7 +1097,11 @@ export function PlayerProvider({
       setPosition(elementPlace());
     };
     const ready = () => setLoading(false);
-    const pagehide = () => persist();
+    const pagehide = () => {
+      persist();
+      // A speed write still in flight when the page goes is started again (#848).
+      void speeds.rewritePending();
+    };
     // Back in view while paused: the place another device saved since shows before play is pressed (#773).
     const visible = () => {
       if (document.visibilityState === "visible") void catchUp(false);
@@ -1202,7 +1206,7 @@ export function PlayerProvider({
       window.removeEventListener("keydown", keydown);
       navigator.serviceWorker?.removeEventListener("message", mediaSource);
     };
-  }, [persist, next, previous, skip, seek, toggle, recoverOnDevice, failures, rememberPosition, catchUp, resumeFromPause]);
+  }, [persist, next, previous, skip, seek, toggle, recoverOnDevice, failures, rememberPosition, catchUp, resumeFromPause, speeds]);
   const speedTarget = book?.recordingId ?? fallback?.recordingId;
   useEffect(() => {
     // Shows the fallback book's speed before playback and follows a changed
@@ -1241,11 +1245,14 @@ export function PlayerProvider({
     void speeds.remember(id, n);
     setSpeedRevision((revision) => revision + 1);
   };
-  const resetSpeed = (recordingId: string) => {
-    void speeds.forget(recordingId);
+  const resetSpeed = async (recordingId: string) => {
+    // The value in memory changes at once; the delete is awaited so the reset
+    // counts as done only when the device's database has it (#848).
+    const forgotten = speeds.forget(recordingId);
     if (recordingId === (state.current.book ?? fallbackRef.current)?.recordingId)
       void speedFor(recordingId).then(applyRate);
     setSpeedRevision((revision) => revision + 1);
+    await forgotten;
   };
   const setSleep = (minutes: number | null) => {
     sleepEnd.current = minutes ? Date.now() + minutes * 60000 : null;
