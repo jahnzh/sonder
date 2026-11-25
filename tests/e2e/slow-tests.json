@@ -25,7 +25,6 @@
     "tests/e2e/reader-paused-seek.spec.ts": "not cut yet (#904 hands it on): 4 place(s) over the limits, up to 120 s",
     "tests/e2e/reader-second-book.spec.ts": "not cut yet (#904 hands it on): 2 place(s) over the limits, up to 120 s",
     "tests/e2e/reader-second-track.spec.ts": "not cut yet (#904 hands it on): 2 place(s) over the limits, up to 120 s",
-    "tests/e2e/reader-theme.spec.ts": "not cut yet (#904 hands it on): 1 place(s) over the limits, up to 60 s",
     "tests/e2e/reader-two-pages.spec.ts": "not cut yet (#904 hands it on): 2 place(s) over the limits, up to 120 s",
     "tests/e2e/reading-sync-again.spec.ts": "not cut yet (#904 hands it on): 1 place(s) over the limits, up to 150 s",
     "tests/e2e/slice-pass.spec.ts": "not cut yet (#904 hands it on): 1 place(s) over the limits, up to 300 s",
