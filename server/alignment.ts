@@ -624,10 +624,10 @@ export async function queueEngineRebuilds(log: AutoQueueLog = console): Promise<
     for (const workId of projectedWorks) {
       // A consensus map of an older engine is queued above and regenerates its projections when it
       // publishes. One that already published (the server stopped before it projected) projects now.
-      const consensusJobId = getEbookSetPresentation(workId).consensus?.jobId;
-      const consensus = consensusJobId ? jobs().find((job) => job.id === consensusJobId) : undefined;
-      if (!consensus || engineIsOlder(consensus.engine, target) || !alignmentMapUsable(consensus)) continue;
       try {
+        const consensusJobId = getEbookSetPresentation(workId).consensus?.jobId;
+        const consensus = consensusJobId ? jobs().find((job) => job.id === consensusJobId) : undefined;
+        if (!consensus || engineIsOlder(consensus.engine, target) || !alignmentMapUsable(consensus)) continue;
         await onConsensusAlignmentFinished(workId, consensus);
         result.projections++;
       } catch (error) {
