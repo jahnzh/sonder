@@ -145,8 +145,8 @@ async function searchPublicDomain(source: PublicDomainSource, q: string) {
       headers: { Accept: "application/atom+xml, application/xml;q=0.9", "User-Agent": "Sonder" },
       signal: AbortSignal.timeout(20000),
     });
-  } catch {
-    throw new Error(`${site.name} could not be reached.`);
+  } catch (error) {
+    throw new Error(`${site.name} could not be reached.`, { cause: error });
   }
   // Project Gutenberg answers 503 with a maintenance page while it is down.
   if (!response.ok) {

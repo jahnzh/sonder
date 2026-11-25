@@ -94,13 +94,7 @@ function verdict(response: Response, body: string | null) {
   return "ok" as const;
 }
 
-const origin = (value: string) => {
-  try {
-    return new URL(value).origin;
-  } catch {
-    return null;
-  }
-};
+const origin = (value: string) => (URL.canParse(value) ? new URL(value).origin : null);
 
 export function createLibgenClient(deps: LibgenClientDeps) {
   const now = deps.now ?? Date.now;

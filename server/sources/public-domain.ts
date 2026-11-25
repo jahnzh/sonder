@@ -139,12 +139,9 @@ export function parseGutenberg(xml: string): PublicDomainResult[] {
 }
 
 export function standardEbooksPage(page: string) {
-  try {
-    const url = new URL(page);
-    return url.origin === STANDARD_EBOOKS && /^\/ebooks\/[a-z0-9-]+(\/[a-z0-9_-]+)+$/.test(url.pathname);
-  } catch {
-    return false;
-  }
+  if (!URL.canParse(page)) return false;
+  const url = new URL(page);
+  return url.origin === STANDARD_EBOOKS && /^\/ebooks\/[a-z0-9-]+(\/[a-z0-9_-]+)+$/.test(url.pathname);
 }
 
 /**
