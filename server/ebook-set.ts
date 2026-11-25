@@ -32,6 +32,7 @@ import {
 } from "./ebook-set-ctc-session.ts";
 import { normalizeReaderText } from "../src/reading-types.ts";
 import { ebookEditionId, searchEbooks, saveEbook, type EbookResult, type EbookSource } from "./ebooks.ts";
+import { namesLanguage } from "./release-language.ts";
 import { publicDomainAge } from "./sources/public-domain.ts";
 import { iso3 } from "./language.ts";
 import { ebookSetCheckEnded, ebookSetCheckStarted } from "./ebook-set-activity.ts";
@@ -794,15 +795,17 @@ export function reevaluateEbookSetForWork(workId: string) {
 }
 
 /** Which sources are set up in Settings: Anna's Archive's key, Z-Library's account, Prowlarr. */
-export type ConfiguredSources = { annas: boolean; zlib: boolean; prowlarr: boolean };
+export type ConfiguredSources = { annas: boolean; zlib: boolean; prowlarr: boolean; mam?: boolean };
 
 /**
- * The sources the series ebook search asks, in order (#901): Library Genesis, Anna's Archive and Z-Library when set
- * up, the other Library Genesis family, Prowlarr's book indexers when connected, then Standard Ebooks and Project
- * Gutenberg for a book old enough to be in the public domain.
+ * The sources the series ebook search asks, in order (#901): MyAnonamouse when its session is saved (the owner's order,
+ * #911: after a release TorBox has cached, which `fetchTopKIntoEbookSet` takes first), Library Genesis, Anna's Archive
+ * and Z-Library when set up, the other Library Genesis family, Prowlarr's book indexers when connected, then Standard
+ * Ebooks and Project Gutenberg for a book old enough to be in the public domain.
  */
 export function seriesEbookSources(work: { year: number | null }, configured: ConfiguredSources, now = new Date()): EbookSource[] {
   return [
+    ...(configured.mam ? (["mam"] as const) : []),
     "libgen",
     ...(configured.annas ? (["annas"] as const) : []),
     ...(configured.zlib ? (["zlib"] as const) : []),
@@ -812,10 +815,19 @@ export function seriesEbookSources(work: { year: number | null }, configured: Co
   ];
 }
 
-/** Start the download of a Prowlarr book release for the work (#901); its EPUB joins the set when it is complete. */
+/**
+ * Start the download of a Prowlarr book release for the work (#901), or of a MyAnonamouse one (#911, MAM's own
+ * `.torrent`, local client only); its EPUB joins the set when it is complete.
+ */
 async function startEbookTorrent(file: EbookResult, work: { id: string; title: string; author: string }, userId: number) {
-  const [{ prowlarrMagnet }, { acquire }] = await Promise.all([import("./services.ts"), import("./acquisitions.ts")]);
-  const job = await acquire(await prowlarrMagnet(`prowlarr-${file.md5}`), {
+  const [{ prowlarrMagnet }, { acquire }, { mamIdOfEbookKey, mamLink }] = await Promise.all([
+    import("./services.ts"),
+    import("./acquisitions.ts"),
+    import("./sources/myanonamouse.ts"),
+  ]);
+  const mamId = file.source === "mam" ? mamIdOfEbookKey(file.md5) : null;
+  if (file.source === "mam" && !mamId) throw new Error("This MyAnonamouse release could not be found.");
+  const job = await acquire(mamId ? mamLink(mamId) : await prowlarrMagnet(`prowlarr-${file.md5}`), {
     kind: "ebook",
     workId: work.id,
     title: work.title,
@@ -868,13 +880,28 @@ export async function fetchTopKIntoEbookSet(
     if (Number.isFinite(at) && at > 0) retryAt = Math.max(retryAt ?? 0, at);
   };
   const found = () => downloaded.some((member) => member.status !== "rejected");
+  const sources = options.sources ?? [source];
+  // The owner's order (#911): a release TorBox has cached comes first, from any source. Of the series sources only
+  // Prowlarr's torrents can be cached, so Prowlarr is asked first; its answer is kept for its own turn, and only a
+  // cached release is got before the others.
+  const asked = new Map<EbookSource, EbookResult[]>();
+  const order: EbookSource[] = sources.includes("prowlarr") && sources[0] !== "prowlarr" ? ["prowlarr", ...sources] : sources;
+  let cachedPass = order.length !== sources.length;
   try {
-    for (const from of options.sources ?? [source]) {
+    for (const from of order) {
       if (found() || started || downloaded.length >= remaining) break;
+      const onlyCached = cachedPass && from === "prowlarr";
+      if (!onlyCached && from === "prowlarr") cachedPass = false;
       let files: EbookResult[];
       try {
-        files = (await search(from, `${work.title} ${work.author}`)).files;
+        files = asked.get(from) ?? (await search(from, `${work.title} ${work.author}`)).files;
+        asked.set(from, files);
       } catch (searchError) {
+        // The cached pass is a look ahead: its failure is said in Prowlarr's own turn.
+        if (onlyCached) {
+          cachedPass = false;
+          continue;
+        }
         // Only the one source asked: its failure is the fetch's, as before.
         if (!options.sources) throw searchError;
         // The libgen.rs family is often out of reach for good (it did not answer while this was built): that alone does
@@ -892,21 +919,28 @@ export async function fetchTopKIntoEbookSet(
           // A torrent's title names its author (Prowlarr gives no author of its own).
           cheapTitleAuthorMatch(work, { title: f.title, authors: f.authors.length ? f.authors : from === "prowlarr" ? [f.title] : [] }),
       );
-      if (from === "prowlarr") {
+      if (onlyCached) {
+        cachedPass = false;
+        const cached = filtered.find((release) => release.cached);
+        if (!cached || earlierEbookTorrent(workId)) continue;
+        try {
+          started = (await startTorrent(cached, work, options.userId ?? 1)).id;
+        } catch (startError) {
+          failed(startError);
+        }
+        continue;
+      }
+      if (from === "prowlarr" || from === "mam") {
         // A torrent is not checked here: its download is started, and its EPUB joins the set when complete. One
-        // Prowlarr download per book: one on its way is waited for; a finished one (its edition was not taken, or the
-        // search would not run) is not started again, and the next source is asked.
-        const earlier = sqlite
-          .prepare(
-            `SELECT id, status FROM acquisitions WHERE kind='ebook' AND work_id=? AND status NOT IN ('error','cancelled')
-             ORDER BY updated_at DESC LIMIT 1`,
-          )
-          .get(workId) as { id: string; status: string } | undefined;
+        // torrent download per book (Prowlarr's or MyAnonamouse's): one on its way is waited for; a finished one (its
+        // edition was not taken, or the search would not run) is not started again, and the next source is asked.
+        const earlier = earlierEbookTorrent(workId);
         if (earlier) {
           if (earlier.status !== "ready") started = earlier.id;
           continue;
         }
-        const release = filtered[0];
+        // A MyAnonamouse row names its language: one in another language than the book's is never started (#897).
+        const release = from === "mam" ? filtered.find((file) => namesLanguage(file.language, bookLanguage(workId))) : filtered[0];
         if (!release) continue;
         try {
           started = (await startTorrent(release, work, options.userId ?? 1)).id;
@@ -969,6 +1003,25 @@ export async function fetchTopKIntoEbookSet(
     await syncEbookSetConsensus(workId);
   }
   return { downloaded, skipped: null, failures, started, retryAt };
+}
+
+/** The book's language: its recordings' (the first named), else English. */
+function bookLanguage(workId: string) {
+  const named = sqlite
+    .prepare("SELECT language FROM audio_editions WHERE work_id=? AND language IS NOT NULL AND trim(language) <> '' LIMIT 1")
+    .pluck()
+    .get(workId) as string | undefined;
+  return named ?? "English";
+}
+
+/** The book's latest ebook torrent that did not fail: on its way, or finished. */
+function earlierEbookTorrent(workId: string) {
+  return sqlite
+    .prepare(
+      `SELECT id, status FROM acquisitions WHERE kind='ebook' AND work_id=? AND status NOT IN ('error','cancelled')
+       ORDER BY updated_at DESC LIMIT 1`,
+    )
+    .get(workId) as { id: string; status: string } | undefined;
 }
 
 export function workHasRecording(workId: string) {

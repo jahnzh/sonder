@@ -12,7 +12,7 @@ const DOT = " · ";
 /** A release the audio search found (`StoredSeriesCandidate` in `server/series-queue-store.ts`). */
 export type SeriesCandidate = {
   key: string;
-  source: "abb" | "prowlarr";
+  source: "abb" | "prowlarr" | "mam";
   id: string;
   title: string;
   size: string | null;

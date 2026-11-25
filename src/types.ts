@@ -324,6 +324,9 @@ export type Settings = {
   storageLabel: string;
   prowlarrUrl?: string;
   prowlarrConfigured?: boolean;
+  /** MyAnonamouse (#911): its session is saved, and when MAM last refused it (null: it has not). Absent from an older server. */
+  mamConfigured?: boolean;
+  mamRefusedAt?: number | null;
   /** AudiobookDB (#721), for the administrator: a key is set, and whether it is the server's file or Settings. */
   audiobookdbConfigured?: boolean;
   audiobookdbSource?: "env" | "settings" | null;
@@ -368,8 +371,8 @@ export type AudiobookRelease = {
   posted: string | null;
   uploader: string | null;
   description: string;
-  // Absent on AudioBookBay releases from older servers.
-  source?: "abb" | "prowlarr";
+  // Absent on AudioBookBay releases from older servers. "mam": MyAnonamouse (#911), a private tracker's torrent.
+  source?: "abb" | "prowlarr" | "mam";
   indexer?: string | null;
   indexers?: string[];
   seeders?: number | null;
@@ -379,7 +382,7 @@ export type AudiobookRelease = {
   cached?: boolean;
 };
 export type ReleaseSourceStatus = {
-  source: "abb" | "prowlarr";
+  source: "abb" | "prowlarr" | "mam";
   label: string;
   error?: string;
 };
@@ -387,8 +390,8 @@ export type EbookResult = {
   /** The file's md5 on Library Genesis; for another source a 32-hex key of the edition there. */
   md5: string;
   /** Where it is listed (#901); an older server answers Library Genesis's without it. */
-  source: "libgen" | "annas" | "zlib" | "libgenrs" | "prowlarr" | "standardebooks" | "gutenberg";
-  /** A Prowlarr release's indexer and seeders, and whether TorBox has it cached. */
+  source: "libgen" | "annas" | "zlib" | "libgenrs" | "prowlarr" | "standardebooks" | "gutenberg" | "mam";
+  /** A Prowlarr release's indexer and seeders, and whether TorBox has it cached; a MyAnonamouse torrent's seeders (#911). */
   indexer?: string;
   seeders?: number | null;
   cached?: boolean;

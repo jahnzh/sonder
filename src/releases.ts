@@ -32,6 +32,9 @@ function titleKeys(release: AudiobookRelease) {
   return keys.filter(Boolean);
 }
 export function sameRelease(a: AudiobookRelease, b: AudiobookRelease) {
+  // A MyAnonamouse torrent is a private tracker's own (#911): it is got another way (its .torrent, the local client
+  // only), so it stays its own row even when another source lists the same files.
+  if (a.source === "mam" || b.source === "mam") return a.source === b.source && a.id === b.id;
   if (a.infoHash && b.infoHash) return a.infoHash.toLowerCase() === b.infoHash.toLowerCase();
   // Within one source every listing is its own upload, so only match across sources.
   const indexers = new Set(releaseIndexers(a));
@@ -49,7 +52,7 @@ export function sameRelease(a: AudiobookRelease, b: AudiobookRelease) {
 export function releaseIndexers(release: AudiobookRelease) {
   return release.indexers?.length
     ? release.indexers
-    : [release.source === "prowlarr" ? release.indexer || "Prowlarr" : "AudioBookBay"];
+    : [release.source === "prowlarr" ? release.indexer || "Prowlarr" : release.source === "mam" ? "MyAnonamouse" : "AudioBookBay"];
 }
 // AudioBookBay entries keep priority because their detail pages carry language and narrator.
 function combine(a: AudiobookRelease, b: AudiobookRelease): AudiobookRelease {
@@ -98,12 +101,15 @@ export function sortReleases(releases: AudiobookRelease[], title: string) {
     Number(!!wanted && normalizeTitle(release.title).includes(wanted));
   // Seeder counts are unknown on AudioBookBay; rank them above dead torrents but below seeded ones.
   const seeders = (release: AudiobookRelease) => release.seeders ?? 1;
+  // The owner's order of sources (#911): TorBox's cached copies, then MyAnonamouse's, then the others; each after the
+  // rows that are the book (the title searched), so another book's copy never comes before the book's own.
+  const tier = (release: AudiobookRelease) => (release.cached ? 0 : release.source === "mam" ? 1 : 2);
   return releases
     .map((release, index) => ({ release, index }))
     .sort(
       (a, b) =>
         relevant(b.release) - relevant(a.release) ||
-        Number(!!b.release.cached) - Number(!!a.release.cached) ||
+        tier(a.release) - tier(b.release) ||
         seeders(b.release) - seeders(a.release) ||
         a.index - b.index,
     )

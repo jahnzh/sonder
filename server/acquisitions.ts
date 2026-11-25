@@ -15,7 +15,9 @@ import { claimWorkAudio } from "./work-library.ts";
 import * as s from "./schema.ts";
 import { getSecret, torbox, torboxUrl } from "./services.ts";
 import { ownCover } from "../src/types.ts";
-import { addTorrent, getTorrent, removeTorrent, transmission } from "./transmission.ts";
+import { addTorrent, getSeedingStates, getTorrent, keepSeeding, removeTorrent, transmission } from "./transmission.ts";
+import { mam, mamLinkId } from "./sources/myanonamouse.ts";
+import { torrentFacts } from "./sources/torrent.ts";
 import { getTorrentHealth } from "./torrent-health.ts";
 import { audioPattern } from "./preview-file.ts";
 import { getWorkMediaState, trackWorkMediaState } from "./work-media-state.ts";
@@ -33,6 +35,27 @@ import {
   resolveTorrentFile,
   torrentDownloadDir,
 } from "./storage.ts";
+/** MAM's rule the owner decided on (#911): a MAM torrent seeds at least 72 hours before anything may remove it. */
+export const MAM_MIN_SEED_SECONDS = 72 * 3600;
+/** Whether a MAM torrent has seeded long enough that the owner's own cancel may remove it from the client. */
+export const mamTorrentMayBeRemoved = (secondsSeeding: number | null | undefined) =>
+  typeof secondsSeeding === "number" && secondsSeeding >= MAM_MIN_SEED_SECONDS;
+
+/** What `acquire` asks outside the database; a test replaces it. */
+const acquireDeps = {
+  mamTorrentFile: (id: number) => mam().torrentFile(id),
+};
+export function setAcquireDeps(overrides: Partial<typeof acquireDeps>) {
+  Object.assign(acquireDeps, overrides);
+}
+
+/** The acquisition a link names: a MAM link by its torrent id, a magnet by its info hash; undefined when none. */
+export function acquisitionOfLink(link: string) {
+  const mamId = mamLinkId(link);
+  if (mamId) return db.select().from(s.acquisitions).where(eq(s.acquisitions.mamTorrentId, mamId)).get();
+  return db.select().from(s.acquisitions).where(eq(s.acquisitions.hash, magnetHash(link))).get();
+}
+
 export function magnetHash(magnet: string) {
   const url = new URL(magnet);
   if (url.protocol !== "magnet:") throw new Error("Enter a valid magnet link.");
@@ -108,12 +131,9 @@ export async function acquire(
     !db.select().from(s.works).where(eq(s.works.id, metadata.workId)).get()
   )
     throw new Error("The selected book could not be found.");
-  const hash = magnetHash(magnet);
-  const existing = db
-    .select()
-    .from(s.acquisitions)
-    .where(eq(s.acquisitions.hash, hash))
-    .get();
+  const existing = acquisitionOfLink(magnet);
+  // A MyAnonamouse torrent (#911), asked for by its link or known as one (a retry gives its stored magnet).
+  const mamId = mamLinkId(magnet) ?? existing?.mamTorrentId ?? null;
   // A retry of the same torrent (no kind given) stays what it was.
   const kind = metadata.kind ? (metadata.kind === "ebook" ? "ebook" : null) : (existing?.kind ?? null);
   // A failed or cancelled download of the same torrent starts again; any other is joined. A finished ebook download
@@ -145,7 +165,23 @@ export async function acquire(
     return existing;
   }
   ensureMediaStorage();
-  const id = existing?.id || randomUUID();
+  let hash: string;
+  let metainfo: Buffer | undefined;
+  let seedPath: string | null = null;
+  let prior = existing;
+  if (mamId) {
+    // MAM's own `.torrent`: its info hash names the download, its name the folder it seeds from. The magnet kept is
+    // made of the hash and the name alone, so the passkey is written nowhere but in the torrent client.
+    metainfo = await acquireDeps.mamTorrentFile(Number(mamId));
+    const facts = torrentFacts(metainfo);
+    hash = facts.hash;
+    magnet = `magnet:?xt=urn:btih:${hash}&dn=${encodeURIComponent(facts.name)}`;
+    seedPath = resolveTorrentFile(torrentDownloadDir, facts.name);
+    // The same torrent known by its hash (got before from another source) is that download again.
+    prior ??= db.select().from(s.acquisitions).where(eq(s.acquisitions.hash, hash)).get();
+    if (prior && prior.hash !== hash) db.update(s.acquisitions).set({ hash, magnet }).where(eq(s.acquisitions.id, prior.id)).run();
+  } else hash = magnetHash(magnet);
+  const id = prior?.id || randomUUID();
   const title =
     metadata.title ||
     new URL(magnet).searchParams.get("dn") ||
@@ -164,10 +200,12 @@ export async function acquire(
     kind,
     language: metadata.language || null,
     narrator: metadata.narrator || null,
+    mamTorrentId: mamId,
+    seedPath,
     progress: 0,
     error: null,
     bookId: null,
-    createdAt: existing?.createdAt || Date.now(),
+    createdAt: prior?.createdAt || Date.now(),
     updatedAt: Date.now(),
   };
   startAcquisitionRecord(entry);
@@ -180,9 +218,12 @@ export async function acquire(
   }
   db.insert(s.userAcquisitions).values({userId: metadata.userId ?? 1, acquisitionId: id}).onConflictDoNothing().run();
   try {
-    const route = await chooseBackend(hash, !!getSecret("torbox"), (h) =>
-      torbox(`torrents/checkcached?hash=${h}&format=list&list_files=false`),
-    );
+    // A private tracker's torrent is never shared into TorBox's cache (#911): the local client only.
+    const route = mamId
+      ? "local"
+      : await chooseBackend(hash, !!getSecret("torbox"), (h) =>
+          torbox(`torrents/checkcached?hash=${h}&format=list&list_files=false`),
+        );
     let backend: "torbox" | "local" = route === "local" ? "local" : "torbox";
     if (backend === "torbox") {
       try {
@@ -236,7 +277,12 @@ export async function acquire(
         throw new Error(
           "The torrent client’s incomplete folder must be on the media drive. Configure the dedicated Sonder queue.",
         );
-      const torrent = await addTorrent(magnet, torrentDownloadDir);
+      const torrent = await addTorrent(magnet, torrentDownloadDir, { metainfo });
+      if (mamId) {
+        if (torrent.hashString.toLowerCase() !== hash) throw new Error("The torrent client added another torrent than MyAnonamouse's.");
+        // Seeds on with no ratio or idle limit (#911); a client that refuses is said in the log, the torrent stays.
+        await keepSeeding(torrent.hashString).catch((error: Error) => console.warn(`MAM torrent ${hash}: seeding limits not lifted: ${error.message}`));
+      }
       setAcquisitionStatus(id, "downloading", {
         backend: "local",
         remoteId: torrent.hashString,
@@ -400,8 +446,9 @@ export async function refreshAcquisition(id: string) {
           if (torrent.files.length) throw new InvalidTorrentError(noEbookFile(files));
           return;
         }
-        // Only the book's file is fetched: the torrent's other files (a collection's other books) are not wanted.
-        const others = files.filter((entry) => entry.index !== file.index && torrent.fileStats[entry.index]?.wanted !== false);
+        // Only the book's file is fetched: the torrent's other files (a collection's other books) are not wanted. A MAM
+        // torrent is fetched whole (#911): it is seeded as it is.
+        const others = job.mamTorrentId ? [] : files.filter((entry) => entry.index !== file.index && torrent.fileStats[entry.index]?.wanted !== false);
         if (others.length)
           await transmission("torrent-set", { ids: [job.hash], "files-unwanted": others.map((entry) => entry.index) }).catch(
             (error: Error) => console.warn(`ebook torrent ${job.id}: other files still wanted: ${error.message}`),
@@ -618,7 +665,7 @@ export const CANCELLABLE_ACQUISITION_STATUSES = ["preparing", "downloading", "pa
  */
 export async function cancelAcquisition(
   id: string,
-  deps: { removeTorrent?: (hash: string) => Promise<void>; waitMs?: number } = {},
+  deps: { removeTorrent?: (hash: string) => Promise<void>; waitMs?: number; seedingSeconds?: (hash: string) => Promise<number | null> } = {},
 ) {
   // A refresh of this download in flight would write its status after ours: wait for it, then hold the next one off.
   const until = Date.now() + (deps.waitMs ?? 5000);
@@ -636,7 +683,9 @@ export async function cancelAcquisition(
         { statusCode: 409 },
       );
     const local = job.backend !== "torbox";
-    if (local) {
+    // A MAM torrent stays in the client and seeds on (#911) until it has seeded 72 hours; only then does Cancel remove it.
+    const keep = !!job.mamTorrentId && !(await mamSeededEnough(job.hash, deps.seedingSeconds));
+    if (local && !keep) {
       try {
         await (deps.removeTorrent ?? removeTorrent)(job.hash);
       } catch (error) {
@@ -645,10 +694,16 @@ export async function cancelAcquisition(
       }
     }
     setAcquisitionStatus(id, "cancelled", { error: null, updatedAt: Date.now() });
-    return { ok: true, removed: local };
+    return { ok: true, removed: local && !keep, ...(keep ? { seeding: true } : {}) };
   } finally {
     processing.delete(id);
   }
+}
+
+/** Whether a MAM torrent has seeded its 72 hours, as the client counts them; not known (no answer) is not enough. */
+async function mamSeededEnough(hash: string, seedingSeconds?: (hash: string) => Promise<number | null>) {
+  const ask = seedingSeconds ?? (async (h: string) => (await getSeedingStates([h]))[0]?.secondsSeeding ?? null);
+  return mamTorrentMayBeRemoved(await ask(hash).catch(() => null));
 }
 
 /** The download queue loop (ADR 0010): checks the torrents every 10 s and imports the finished ones. */
@@ -699,7 +754,7 @@ export async function replacePreviousAcquisition(
     .where(eq(s.acquisitions.id, previousAcquisitionId))
     .get();
   if (!previous) return { action: "skipped_same_hash" };
-  const newHash = magnetHash(newMagnet);
+  const newHash = mamLinkId(newMagnet) ? acquisitionOfLink(newMagnet)?.hash : magnetHash(newMagnet);
   if (previous.hash === newHash) return { action: "skipped_same_hash" };
   // A series pack that serves other books too keeps downloading for them (ADR 0027): only this book leaves it.
   const leaving = workId ?? previous.workId;
@@ -752,7 +807,8 @@ export async function replacePreviousAcquisition(
       ),
     )
     .run();
-  if (!isFinishedAcquisitionStatus(previous.status)) {
+  // A MAM torrent is never stopped (#911): it finishes and seeds on; only this book no longer waits for it.
+  if (!isFinishedAcquisitionStatus(previous.status) && !previous.mamTorrentId) {
     try {
       await transmission("torrent-stop", { ids: [previous.hash] });
     } catch (error) {

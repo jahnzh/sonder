@@ -42,6 +42,7 @@ import {
   settledSources,
   sheetView,
   SOURCE_NAMES,
+  audiobookSources,
   startSearch,
   type Ask,
   type GetSearch,
@@ -110,6 +111,11 @@ function Chevron() {
   );
 }
 
+/** The add route of a row's source: AudioBookBay's by its slug, Prowlarr's and MyAnonamouse's (#911) by their id. */
+const addPath = (release: AudiobookRelease) =>
+  release.source === "prowlarr" ? "/discover/prowlarr/add" : release.source === "mam" ? "/discover/mam/add" : "/discover/abb/add";
+const addKey = (release: AudiobookRelease) => (release.source === "prowlarr" || release.source === "mam" ? { id: release.id } : { slug: release.id });
+
 /** Lighter rows for the history entry: the description is the largest field and the sheet never shows it. */
 function lean(search: GetSearch): GetSearch {
   const sources: GetSearch["sources"] = {};
@@ -128,6 +134,8 @@ type Props = {
   prowlarrConfigured: boolean | null;
   /** TorBox is connected: the line under the button says whether a recording plays at once. */
   torboxConfigured: boolean;
+  /** MyAnonamouse's session is saved (#911): it is searched too. */
+  mamConfigured?: boolean;
   /** The library changed: the shell reads the books again. */
   onChanged: () => Promise<void> | void;
 };
@@ -137,7 +145,7 @@ export const ADDS_THE_BOOK = "Adds the book to your library.";
 /** In place of the book on the sheet without a book (#576). */
 export const NEW_BOOK_HEADING = "A recording for a new book";
 
-export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarrConfigured, torboxConfigured, onChanged }: Props) {
+export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarrConfigured, torboxConfigured, mamConfigured = false, onChanged }: Props) {
   const address = useAddress();
   const newBook = bookId === null;
   const workId = bookId ?? "";
@@ -181,13 +189,13 @@ export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarr
     void storedLanguage().then((stored) => live.current && setLanguage((current) => current ?? stored));
   }, []);
 
-  const sources = (): SourceId[] => (prowlarrConfigured ? ["abb", "prowlarr"] : ["abb"]);
+  const sources = (): SourceId[] => audiobookSources({ prowlarr: !!prowlarrConfigured, mam: mamConfigured });
   const ask = (asks: Ask[]) => {
     for (const { source, token, query, page } of asks) {
       const path =
         source === "abb"
           ? "/discover/abb/releases?" + new URLSearchParams({ q: query, page: String(page) })
-          : "/discover/prowlarr/releases?" + new URLSearchParams({ q: query });
+          : `/discover/${source}/releases?` + new URLSearchParams({ q: query });
       void api<{ results: AudiobookRelease[]; nextPage?: number | null }>(path).then(
         (answer) => {
           if (!live.current) return;
@@ -295,7 +303,7 @@ export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarr
   const previewing = previewControl({ chosen: chosenRow?.release, phase: preview.phase, played: preview.played, bookPlaying, online });
   const asked = Object.keys(search.sources) as SourceId[];
   const named = (asked.length ? asked : sources()).map((source) => SOURCE_NAMES[source]);
-  const sourcesLine = `From ${named.join(" and ")}.`;
+  const sourcesLine = `From ${named.length > 1 ? `${named.slice(0, -1).join(", ")} and ${named[named.length - 1]}` : named[0]}.`;
 
   const getNew = async () => {
     if (!chosenRow) return;
@@ -304,9 +312,9 @@ export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarr
     setGetting(true);
     setRefusal("");
     try {
-      const job = await api<Acquisition>(release.source === "prowlarr" ? "/discover/prowlarr/add" : "/discover/abb/add", {
+      const job = await api<Acquisition>(addPath(release), {
         method: "POST",
-        body: JSON.stringify({ ...(release.source === "prowlarr" ? { id: release.id } : { slug: release.id }), makeWork: true }),
+        body: JSON.stringify({ ...addKey(release), makeWork: true }),
       });
       if (job?.status === "error") throw new Error(job.error || NOT_QUEUED);
       if (!job?.workId) throw new Error(NOT_QUEUED);
@@ -331,11 +339,12 @@ export function GetAudiobookSheet({ workId: bookId, query = "", online, prowlarr
     setRefusal("");
     try {
       if (!work.inLibrary) await api(`/works/${encodeURIComponent(workId)}/library`, { method: "PUT" });
-      const job = await api<Acquisition>(release.source === "prowlarr" ? "/discover/prowlarr/add" : "/discover/abb/add", {
+      const job = await api<Acquisition>(addPath(release), {
         method: "POST",
         // Sent only when the line under the button says the add replaces the download on its way.
         body: JSON.stringify({
-          ...(release.source === "prowlarr" ? { id: release.id, workId } : { slug: release.id, workId }),
+          ...addKey(release),
+          workId,
           ...(line?.replaceActive ? { replaceActive: true } : {}),
           // A pack of the book's series also gets the other books it holds (ADR 0027).
           ...(chosenPack ? { pack: true } : {}),

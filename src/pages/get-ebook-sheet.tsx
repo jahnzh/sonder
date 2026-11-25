@@ -77,6 +77,8 @@ type Props = {
   libgenUrl: string | null;
   /** Prowlarr is connected: its book indexers are asked too (#901). Absent or null: not asked. */
   prowlarrConfigured?: boolean | null;
+  /** MyAnonamouse's session is saved (#911): its ebooks are searched first. */
+  mamConfigured?: boolean;
   /** Anna’s Archive's key and Z-Library's account are saved in Settings: they are asked too (#901). */
   annasConfigured?: boolean;
   zlibConfigured?: boolean;
@@ -84,7 +86,7 @@ type Props = {
   onChanged: () => Promise<void> | void;
 };
 
-export function GetEbookSheet({ workId, online, libgenUrl, prowlarrConfigured, annasConfigured, zlibConfigured, onChanged }: Props) {
+export function GetEbookSheet({ workId, online, libgenUrl, prowlarrConfigured, mamConfigured = false, annasConfigured, zlibConfigured, onChanged }: Props) {
   const address = useAddress();
   const route: Route = { name: "get", workId, kind: "ebook" };
   const parent: Route = { name: "book", workId };
@@ -115,7 +117,7 @@ export function GetEbookSheet({ workId, online, libgenUrl, prowlarrConfigured, a
     [],
   );
 
-  const sources = () => ebookSources({ prowlarr: !!prowlarrConfigured, annas: !!annasConfigured, zlib: !!zlibConfigured });
+  const sources = () => ebookSources({ prowlarr: !!prowlarrConfigured, annas: !!annasConfigured, zlib: !!zlibConfigured, mam: mamConfigured });
   const ask = (next: EbookSearch, requests: EbookAsk[]) => {
     searchRef.current = next;
     setSearch(next);

@@ -14,10 +14,10 @@
  *   leaves no empty book behind and a second try makes only one.
  */
 import { randomUUID } from "node:crypto";
-import { and, eq, ne } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db, sqlite } from "./db.ts";
 import * as s from "./schema.ts";
-import { acquire, magnetHash } from "./acquisitions.ts";
+import { acquire, acquisitionOfLink } from "./acquisitions.ts";
 import { ensurePlaceholder, placeholderEditionSql } from "./placeholder-edition.ts";
 import { addWorkToLibrary, workInLibrary } from "./work-library.ts";
 
@@ -95,12 +95,9 @@ export async function acquireForNewBook(
   userId: number,
   acquireFn: typeof acquire = acquire,
 ): Promise<Acquisition & { workId: string }> {
-  const hash = magnetHash(magnet);
-  const existing = db
-    .select()
-    .from(s.acquisitions)
-    .where(and(eq(s.acquisitions.hash, hash), ne(s.acquisitions.status, "error")))
-    .get();
+  // A magnet by its hash, a MyAnonamouse link by its torrent id (#911); a failed one is no book's yet.
+  const found = acquisitionOfLink(magnet);
+  const existing = found && found.status !== "error" ? found : undefined;
   const known = existing ? workOfAcquisition(existing) : null;
   if (existing && known) {
     if (!workInLibrary(userId, known)) addWorkToLibrary(userId, known);

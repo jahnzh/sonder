@@ -140,6 +140,13 @@ export const acquisitions = sqliteTable("acquisitions", {
   workId: text("work_id"),
   /** "ebook" for a torrent fetched for its EPUB or PDF (#901); null for an audiobook. */
   kind: text("kind"),
+  /**
+   * A MyAnonamouse torrent (#911): its torrent id there. Such a torrent goes to the local client only, from MAM's own
+   * `.torrent`, and Sonder never stops or removes it; null for every other download.
+   */
+  mamTorrentId: text("mam_torrent_id"),
+  /** A MyAnonamouse torrent's root in the download folder (#911): its files are never deleted while it seeds. */
+  seedPath: text("seed_path"),
   language: text("language"),
   narrator: text("narrator"),
   id: text("id").primaryKey(),

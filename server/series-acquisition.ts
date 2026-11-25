@@ -26,6 +26,7 @@ import {
 import { seriesQueueOrder } from "./series-queue-order.ts";
 import { fetchTopKIntoEbookSet, seriesEbookSources } from "./ebook-set.ts";
 import { prowlarrConfig } from "./services.ts";
+import { mamConfigured } from "./sources/myanonamouse.ts";
 import { annasConfigured, zlibConfigured } from "./sources/shadow-libraries.ts";
 import { packServesWork, resetPackSearches, seriesPackStep } from "./series-pack-step.ts";
 import { retryWorkMediaAcquisition } from "./series-membership.ts";
@@ -931,11 +932,25 @@ async function runAudioJob(
 
 /** The search's sources, wrapped to note each result's own facts by `<source>:<id>` as they answer (#898). */
 function factsRecordingDeps(base: SeriesAudioSearchDeps, facts: Map<string, SeriesCandidateFacts>): SeriesAudioSearchDeps {
-  const note = (source: "abb" | "prowlarr", results: { id: string }[]) => {
-    for (const result of results) if (!facts.has(`${source}:${result.id}`)) facts.set(`${source}:${result.id}`, resultFacts(result));
+  const note = (source: "abb" | "prowlarr" | "mam", results: { id: string }[]) => {
+    for (const result of results) {
+      // A MAM candidate is named by its torrent id (`mam-<id>` in the search's rows).
+      const id = source === "mam" ? result.id.replace(/^mam-/, "") : result.id;
+      if (!facts.has(`${source}:${id}`)) facts.set(`${source}:${id}`, resultFacts(result));
+    }
   };
+  const mamSearch = base.mamSearch;
   return {
     ...base,
+    ...(mamSearch
+      ? {
+          mamSearch: async (query: string) => {
+            const response = await mamSearch(query);
+            note("mam", response.results);
+            return response;
+          },
+        }
+      : {}),
     abbSearch: async (query, page) => {
       const response = await base.abbSearch(query, page);
       note("abb", response.results);
@@ -965,7 +980,7 @@ async function runEbookJob(
   const work = db.select({ year: s.works.year }).from(s.works).where(eq(s.works.id, job.workId)).get();
   // Library Genesis, Prowlarr, then the public-domain sources for an old book (#901).
   const result = await fetch(job.workId, "libgen", {
-    sources: seriesEbookSources({ year: work?.year ?? null }, { annas: annasConfigured(), zlib: zlibConfigured(), prowlarr: !!prowlarrConfig() }),
+    sources: seriesEbookSources({ year: work?.year ?? null }, { annas: annasConfigured(), zlib: zlibConfigured(), prowlarr: !!prowlarrConfig(), mam: mamConfigured() }),
     userId: job.userId,
   });
   const failures = "failures" in result ? result.failures ?? [] : [];
