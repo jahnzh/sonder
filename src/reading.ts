@@ -2,7 +2,7 @@ import { userStorageKey } from "./lib";
 import { alignmentJobNeedsPolling, warmMap } from "./alignment-map-lifecycle";
 import { alignmentMapDeps } from "./alignment-map-deps";
 import { ApiError, api, localDB, authDB, userId } from "./lib";
-import { isKeptReaderFile, writesAsCache, type ReaderFileRecord } from "./ebook-keep";
+import { EBOOK_DEVICE_EVENT, isKeptReaderFile, writesAsCache, type ReaderFileRecord } from "./ebook-keep";
 import type {
   AlignmentJob,
   ReaderBook,
@@ -220,10 +220,7 @@ async function withDeviceState(id: string, book: ReaderBook): Promise<ReaderBook
  * files that have text, with no paragraphs, and the view reads the text from the prepared parts.
  */
 export async function loadPreparedReader(id: string): Promise<{ book: ReaderBook; prepared: PreparedBook }> {
-  const [prepared, state] = await Promise.all([
-    preparedBook(id),
-    patiently(() => api<Pick<ReaderBook, "workId" | "title" | "author" | "checkpoint" | "bookmarks">>(`/reader/${encodeURIComponent(id)}/state`)),
-  ]);
+  const [prepared, state] = await Promise.all([preparedBook(id), loadReaderState(id)]);
   const { manifest } = prepared;
   const sections = manifest.sections
     .filter((section) => section.first !== null)
@@ -243,6 +240,37 @@ export async function loadPreparedReader(id: string): Promise<{ book: ReaderBook
   });
   return { book, prepared };
 }
+type ReaderState = Pick<ReaderBook, "workId" | "title" | "author" | "checkpoint" | "bookmarks">;
+const stateKey = (id: string) => `reader-state:${id}`;
+/**
+ * What the user saved of a book, for the new view: the server's answer, stored on this device, or without an answer
+ * the one stored last (or the details today's reader stored, `reader-book:<id>`) so a kept book opens offline (#805).
+ * The place saved here and bookmarks that wait to be sent are added by `withDeviceState` either way.
+ */
+async function loadReaderState(id: string): Promise<ReaderState> {
+  const stored = async (): Promise<ReaderState | null> => {
+    const own = (await localDB.preferences.get(stateKey(id)).catch(() => undefined))?.value as ReaderState | undefined;
+    const book = own ? null : ((await localDB.preferences.get(`reader-book:${id}`).catch(() => undefined))?.value as ReaderBook | undefined);
+    const state = own ?? (book ? { workId: book.workId, title: book.title, author: book.author, checkpoint: book.checkpoint, bookmarks: book.bookmarks } : null);
+    if (!state) return null;
+    // The place this device holds is at least as new as one stored with the book: it is never stepped back.
+    const local = await readingState(id);
+    return local?.checkpoint ? { ...state, checkpoint: local.checkpoint } : state;
+  };
+  if (!navigator.onLine) {
+    const offline = await stored();
+    if (offline) return offline;
+  }
+  try {
+    const state = await patiently(() => api<ReaderState>(`/reader/${encodeURIComponent(id)}/state`));
+    void localDB.preferences.put({ key: stateKey(id), value: state }).catch(() => {});
+    return state;
+  } catch (error) {
+    const offline = await stored();
+    if (offline) return offline;
+    throw error;
+  }
+}
 const readerTexts = new Map<string, Promise<ReaderBook["sections"]>>();
 /**
  * Every sentence of a book, for Search in the new view, which searches on the device as today's does. Asked for
@@ -252,11 +280,19 @@ export function loadReaderText(id: string, fingerprint: string): Promise<ReaderB
   const key = `${id}:${fingerprint}`;
   let text = readerTexts.get(key);
   if (!text) {
-    text = api<ReaderBook>(`/reader/${encodeURIComponent(id)}`).then((book) => {
-      // The sentences name the file they were cut from: another one than the manifest's means the book changed.
-      if (book.fingerprint !== fingerprint) preparedChanged(id, book.fingerprint);
-      return book.sections;
-    });
+    text = api<ReaderBook>(`/reader/${encodeURIComponent(id)}`).then(
+      (book) => {
+        // The sentences name the file they were cut from: another one than the manifest's means the book changed.
+        if (book.fingerprint !== fingerprint) preparedChanged(id, book.fingerprint);
+        return book.sections;
+      },
+      async (error) => {
+        // Without an answer, the sentences today's reader stored for this file (Keep on this device stores them).
+        const stored = (await localDB.preferences.get(`reader-book:${id}`).catch(() => undefined))?.value as ReaderBook | undefined;
+        if (stored?.fingerprint === fingerprint && stored.sections?.length) return stored.sections;
+        throw error;
+      },
+    );
     text.catch(() => readerTexts.get(key) === text && readerTexts.delete(key));
     readerTexts.set(key, text);
   }
@@ -353,7 +389,7 @@ const epubMemoryCache = new Map<string, Blob>();
 const inFlightEpub = new Map<string, Promise<Blob>>();
 
 /** Told when a device copy of an ebook is added or removed, so every screen that shows one reads it again. */
-export const EBOOK_DEVICE_EVENT = "sonder:ebook-device-changed";
+export { EBOOK_DEVICE_EVENT };
 
 /** Drops the reader's in-memory copy of an edition, so the next open reads it from this device's copy or the server. */
 export function forgetEpub(id: string) {

@@ -2,8 +2,8 @@
  * Keep on this device as a standing choice (#550, ADR 0018 and ADR 0021, decided in #465): the pure rules.
  *
  * - `mergeKeep`: the device's `keep` table merged with `GET /api/device/keep`.
- * - `keptNeeds`: what a kept book needs on this device: the chosen recording's tracks, the chosen EPUB and the
- *   pair's reading sync map (#551).
+ * - `keptNeeds`: what a kept book needs on this device: the chosen recording's tracks, the chosen EPUB, its prepared
+ *   text (#805) and the pair's reading sync map (#551).
  * - `classifyStop`: what became of a save that stopped, for the device's record of it (#517).
  * - `stallGuard`: a range that delivers nothing for 30 seconds is aborted.
  * - `rolloutChoices`: the books a device that saved before Keep existed turns Keep on for, once.
@@ -116,6 +116,12 @@ export type NeededEbookEdition = Pick<LibraryWork["ebooks"][number], "id" | "for
 export type NeededMapJob = Pick<ReadingSyncSummary, "id" | "ebookId" | "recordingId" | "status" | "updatedAt" | "fingerprint" | "audioFingerprint" | "intervalCount">;
 /** This device's kept copy of an EPUB (`reader-file:<id>` that is not the reader's own cache), and its size. */
 export type HeldEbook = { id: string; fingerprint: string; size: number };
+/**
+ * This device's kept prepared text of an EPUB (#805, `reader-text:<id>`, `src/keep-text.ts`): the manifest, every part
+ * and every picture of one prepared output (`key`), made from the file with `fingerprint`. `stale` once the reader saw
+ * the server answer another output: it still reads offline, and the next run saves the new one in its place.
+ */
+export type HeldText = { id: string; key: string; fingerprint: string; size: number; stale?: boolean };
 /** This device's stored map of a pair (`reader-map:<ebookId>:<recordingId>`), as far as the match needs it. */
 export type HeldMap = Pick<NeededMapJob, "id" | "updatedAt" | "fingerprint" | "audioFingerprint"> & { intervals?: readonly unknown[] };
 
@@ -126,6 +132,8 @@ export type KeepReading = {
   deviceChoice?: string | null;
   /** This device's kept EPUB copies. */
   ebooks: readonly HeldEbook[];
+  /** This device's kept prepared texts (#805). */
+  texts?: readonly HeldText[];
   /** This device's stored maps, by `reader-map:<ebookId>:<recordingId>`. */
   maps: Readonly<Record<string, HeldMap | undefined>>;
 };
@@ -137,14 +145,27 @@ export type KeptNeeds = {
   tracks: NeededTrack[];
   /** Of those, the ones not complete on this device. */
   missing: NeededTrack[];
-  /** The chosen EPUB, when the work has one on the server; a PDF is never needed. */
+  /**
+   * The chosen EPUB's file, when the work has one on the server and Keep still keeps EPUB files (`KEEP_EPUB_FILE`); a
+   * PDF is never needed.
+   */
   ebook: { id: string; complete: boolean; size: number } | null;
+  /**
+   * The chosen EPUB's prepared text (#805): what the new reading view reads offline. Complete when this device keeps a
+   * prepared output of it that the reader has not seen replaced.
+   */
+  text: { id: string; complete: boolean; size: number } | null;
+  /**
+   * A kept EPUB file this device no longer needs (#805, "old kept EPUBs are replaced"): Keep keeps prepared text
+   * only (`KEEP_EPUB_FILE` off) and the text that replaces it is complete. The saver removes it. Null otherwise.
+   */
+  dropEpub: string | null;
   /** The pair's map, when the read says it is ready or partly ready. */
   map: { ebookId: string; recordingId: string; jobId: string; complete: boolean } | null;
-  /** Tracks, the EPUB and the map: every file the book needs. */
+  /** Tracks, the EPUB, its prepared text and the map: every file the book needs. */
   filesTotal: number;
   filesSaved: number;
-  /** Bytes the complete files take (the audio files and the EPUB). */
+  /** Bytes the complete files take (the audio files, the EPUB and its prepared text). */
   size: number;
   /** Bytes of the missing files already saved in sections. */
   sections: number;
@@ -158,6 +179,15 @@ export function mapReady(job: Pick<NeededMapJob, "status" | "intervalCount"> | n
 }
 
 export const readerFileKey = (ebookId: string) => `reader-file:${ebookId}`;
+export const readerTextKey = (ebookId: string) => `reader-text:${ebookId}`;
+
+/**
+ * Whether Keep on this device keeps a kept book's EPUB file beside its prepared text (#805). On until step 7 of the
+ * reader plan (#806) makes the new reading view the default and removes epub.js, which reads the file. Turned off,
+ * a kept book needs its prepared text only, and a kept EPUB from before is removed once the text that replaces it
+ * is complete (`KeptNeeds.dropEpub`); a book kept before that has the EPUB and no text gets its text first.
+ */
+export const KEEP_EPUB_FILE = true;
 export const readerMapKey = (ebookId: string, recordingId: string) => `reader-map:${ebookId}:${recordingId}`;
 
 /**
@@ -166,15 +196,19 @@ export const readerMapKey = (ebookId: string, recordingId: string) => `reader-ma
  *   size check (a complete file of the same recording with a size); a file of a track the read no longer lists does
  *   not count;
  * - the chosen EPUB by the Ebook page's rule (`chosenEbook`), complete when this device keeps `reader-file:<id>`;
- *   a PDF is never needed;
+ *   a PDF is never needed; only while `keepEpub` (`KEEP_EPUB_FILE`);
+ * - the chosen EPUB's prepared text (#805), complete when this device keeps `reader-text:<id>` and the reader has not
+ *   seen the server answer another output (a changed file, or the book prepared anew) since;
  * - the pair's map when the read says it is ready or partly ready, complete when `reader-map:<ebookId>:<recordingId>`
- *   matches that job and the kept EPUB's fingerprint (`cachedMapMatches`, the reader's own rule).
+ *   matches that job and the kept EPUB's fingerprint (`cachedMapMatches`, the reader's own rule), or the kept
+ *   text's where no EPUB file is kept.
  */
 export function keptNeeds(
   recording: { recordingId: string; tracks: readonly NeededTrack[] } | null,
   downloads: readonly HeldFile[],
   parts: readonly HeldPart[] = [],
   reading: KeepReading | null = null,
+  { keepEpub = KEEP_EPUB_FILE }: { keepEpub?: boolean } = {},
 ): KeptNeeds {
   const files = recording
     ? new Map(downloads.filter((file) => file.recordingId === recording.recordingId && file.size > 0).map((file) => [file.trackId, file]))
@@ -191,7 +225,13 @@ export function keptNeeds(
 
   const chosen = reading ? chosenEbook(reading.work as Pick<LibraryWork, "ebooks" | "chosenEbookId">, reading.deviceChoice ?? null) : null;
   const held = chosen ? reading!.ebooks.find((copy) => copy.id === chosen.id) ?? null : null;
-  const ebook = chosen ? { id: chosen.id, complete: !!held, size: held?.size ?? 0 } : null;
+  const ebook = chosen && keepEpub ? { id: chosen.id, complete: !!held, size: held?.size ?? 0 } : null;
+  const heldText = chosen ? reading!.texts?.find((copy) => copy.id === chosen.id) ?? null : null;
+  // A changed file is seen by the reader, whose answer from the server marks the kept text stale.
+  const textComplete = !!heldText && !heldText.stale;
+  const text = chosen ? { id: chosen.id, complete: textComplete, size: heldText?.size ?? 0 } : null;
+  // The file the map is matched against: the kept EPUB's, or where none is kept the kept text's.
+  const fingerprint = held?.fingerprint ?? (textComplete ? heldText!.fingerprint : undefined);
   const job =
     chosen && recording ? reading!.work.readingSync?.find((j) => j.ebookId === chosen.id && j.recordingId === recording.recordingId) ?? null : null;
   const map =
@@ -200,21 +240,23 @@ export function keptNeeds(
           ebookId: chosen.id,
           recordingId: recording.recordingId,
           jobId: job.id,
-          complete: cachedMapMatches(reading!.maps[readerMapKey(chosen.id, recording.recordingId)], job, held?.fingerprint),
+          complete: cachedMapMatches(reading!.maps[readerMapKey(chosen.id, recording.recordingId)], job, fingerprint),
         }
       : null;
 
-  const filesTotal = tracks.length + (ebook ? 1 : 0) + (map ? 1 : 0);
-  const filesSaved = tracks.length - missing.length + (ebook?.complete ? 1 : 0) + (map?.complete ? 1 : 0);
+  const filesTotal = tracks.length + (ebook ? 1 : 0) + (text ? 1 : 0) + (map ? 1 : 0);
+  const filesSaved = tracks.length - missing.length + (ebook?.complete ? 1 : 0) + (text?.complete ? 1 : 0) + (map?.complete ? 1 : 0);
   return {
     recordingId: recording?.recordingId ?? null,
     tracks,
     missing,
     ebook,
+    text,
+    dropEpub: !keepEpub && held && textComplete ? held.id : null,
     map,
     filesTotal,
     filesSaved,
-    size: audioSize + (ebook?.size ?? 0),
+    size: audioSize + (ebook?.size ?? 0) + (text?.complete ? text.size : 0),
     sections,
     complete: filesTotal > 0 && filesSaved === filesTotal,
   };

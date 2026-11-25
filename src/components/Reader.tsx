@@ -626,8 +626,9 @@ export function ReaderView({
     setLocator(next);
   };
   const preparedLink = useRef<(target: PreparedTarget) => void>(() => {});
-  // The new view's loading failures, in the reader's words: without a connection the book cannot be read in this
-  // view yet (Keep on this device is step 6 of #799); anything else is a part or the book that could not be loaded.
+  // The new view's loading failures, in the reader's words: without a connection a book that is not kept on this
+  // device cannot be read in this view (a kept one reads its kept text, #805); anything else is a part or the book
+  // that could not be loaded.
   const loadError = (error: unknown): ReaderError =>
     !navigator.onLine || error instanceof TypeError ? "book-offline" : engine.current?.firstInView() ? "text-load" : "book-load";
   const staleReloads = useRef(0);
