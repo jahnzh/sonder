@@ -226,9 +226,8 @@ test("a paused save waits with Resume after a reload and resumes on Resume; a bo
   await page.goto(address(partial.workId));
   await page.reload();
   await keep(page).click();
-  // The track is saved; the EPUB and its prepared text (#805, saved after the EPUB) are not.
-  await expect(line(page)).toHaveText("Not complete · 1 of 3 files", { timeout: 30_000 });
-  await expect(reason(page)).toHaveText("The server could not supply 2 files.");
+  await expect(line(page)).toHaveText("Not complete · 1 of 2 files", { timeout: 30_000 });
+  await expect(reason(page)).toHaveText("The server could not supply 1 file.");
 
   await page.goto(address(book.workId));
   await keep(page).click();

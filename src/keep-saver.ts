@@ -7,10 +7,13 @@
  * online, after a library read that changed, and when the switch is turned on; never on a timer. A run first merges
  * the device's Keep records with the server's (when there is a connection), turns Keep on once for the books saved
  * before Keep existed, then saves the missing files of each kept book, one book after another: the recording's
- * tracks first, then the chosen EPUB, then the pair's reading sync map (#551), then the EPUB's prepared text (#805).
- * An EPUB, a text or a map that arrives later (a new chosen EPUB, a map that became ready, a map or a text prepared
- * again) is missing at the next run and saved then. Once Keep no longer keeps EPUB files (`KEEP_EPUB_FILE`, step 7
- * of #799), a kept EPUB from before is removed at the run that finds its prepared text complete.
+ * tracks first, then the chosen EPUB, then the pair's reading sync map (#551). An EPUB, a text or a map that arrives
+ * later (a new chosen EPUB, a map that became ready, a map or a text prepared again) is missing at the next run and
+ * saved then. The EPUB's prepared text (#805) is fetched quietly after the run's saves, for each complete book, while
+ * Keep keeps EPUB files (`KEEP_EPUB_FILE`): the book reads from its EPUB, so the text never makes it Not complete and
+ * a failure is only logged and tried again at the next run. Once Keep no longer keeps EPUB files (step 7 of #799)
+ * the text is the book's file, saved last in its save, and a kept EPUB from before is removed at the run that finds
+ * its prepared text complete.
  *
  * Network failures and a closed or frozen tab interrupt a save; it resumes by itself at the next run. A failed save
  * (the source refused, the account is signed out, the device is full) waits for Retry and is tried again by itself
@@ -173,6 +176,8 @@ export type SaverMessage =
   | { type: "changed" };
 
 type Stoppable = AbortController & { cause?: StopCause };
+/** A complete kept book's prepared text to fetch quietly (`saveTexts`). */
+type QuietText = { workId: string; saveId: string; ebookId: string };
 
 export class KeepSaver {
   private leader = false;
@@ -391,6 +396,12 @@ export class KeepSaver {
     const pausedAt = new Map(state.keep.map((entry) => [entry.workId, entry.pausedAt ?? null]));
     const libraryChanged = this.libraryChanged;
     this.libraryChanged = false;
+    /** The complete books whose prepared text is fetched after the run's saves, quietly (#805, `saveTexts`). */
+    const texts: QuietText[] = [];
+    const quietText = (entry: KeepEntry, saveId: string, needs: KeptNeeds) => {
+      if (entry.pausedAt || pausedAt.get(entry.workId)) return;
+      if (needs.text && !needs.text.counted && !needs.text.complete) texts.push({ workId: entry.workId, saveId, ebookId: needs.text.id });
+    };
     for (const entry of keep) {
       if (this.stopped || !this.leader) return;
       if (!entry.on) continue;
@@ -414,12 +425,13 @@ export class KeepSaver {
       }
       await this.dropReplaced(needs);
       if (!needs.filesTotal) continue;
-      if (needs.complete) {
-        if (entry.completeAt === null) await this.reportComplete(entry, keep);
-        continue;
-      }
       // A book without a recording (only an ebook) has no save record of its own: its save is keyed by its EPUB.
       const saveId = needs.recordingId ?? `ebook:${(needs.ebook ?? needs.text)!.id}`;
+      if (needs.complete) {
+        if (entry.completeAt === null) await this.reportComplete(entry, keep);
+        quietText(entry, saveId, needs);
+        continue;
+      }
       if (this.deps.running.has(saveId)) continue;
       const record = records.get(saveId);
       // A save the user paused waits for Resume; one that failed waits for Retry, or for a library read that changed.
@@ -439,12 +451,16 @@ export class KeepSaver {
         state = await this.deps.read();
         const done = this.needsOf(works.get(entry.workId)!, state);
         await this.dropReplaced(done);
-        if (done.complete) await this.reportComplete(entry, keep);
+        if (done.complete) {
+          await this.reportComplete(entry, keep);
+          quietText(entry, saveId, done);
+        }
       } else if (stop.state === "interrupted" && stop.how === "network") {
         this.networkStopped.add(saveId);
         return; // The others would fail as well.
       }
     }
+    await this.saveTexts(texts);
     // The note of a cleared device ends once every kept book is complete again (#554).
     if (this.deps.setClearedAt && (await this.deps.clearedAt?.())) {
       const latest = await this.deps.read();
@@ -454,6 +470,36 @@ export class KeepSaver {
       }
     }
     void reason;
+  }
+
+  /**
+   * Fetches the prepared texts of complete kept books beside their EPUB files (#805, while `KEEP_EPUB_FILE`): no save
+   * record, no progress, no Retry. The book stays complete and reads from its EPUB; a text that could not be saved (the
+   * server cannot prepare it, the network failed) is logged and tried again at the next run. Off and Pause stop it as
+   * they stop a save: it runs under the book's save id.
+   */
+  private async saveTexts(texts: readonly QuietText[]) {
+    if (!this.deps.saveText) return;
+    for (const { workId, saveId, ebookId } of texts) {
+      if (this.stopped || !this.leader || !this.deps.online()) return;
+      if (this.deps.running.has(saveId)) continue;
+      if (this.deps.isKept && !(await this.deps.isKept(workId).catch(() => true))) continue;
+      if (this.deps.isPaused && (await this.deps.isPaused(workId).catch(() => false))) continue;
+      const controller: Stoppable = new AbortController();
+      this.deps.running.set(saveId, controller);
+      try {
+        await this.deps.saveText(ebookId, controller.signal);
+        this.changed();
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        console.warn(`Keep on this device: the text of ebook ${ebookId} was not saved; it is tried again at the next run.`, error);
+        // The others would fail as well: the network failed, or the account is signed out.
+        const stop = classifyStop({ cause: null, error });
+        if (stop.state === "interrupted" || (stop.state === "failed" && stop.failure === "signed-out")) return;
+      } finally {
+        if (this.deps.running.get(saveId) === controller) this.deps.running.delete(saveId);
+      }
+    }
   }
 
   /** An EPUB file from before whose prepared text is complete: the text replaces it (#805), once Keep keeps no files. */
@@ -496,8 +542,8 @@ export class KeepSaver {
   }
 
   /**
-   * Saves the missing files of one kept book: its recording's tracks, then its EPUB, then its map, then its prepared
-   * text (last, so a text the server cannot prepare leaves the rest saved). Null when every one
+   * Saves the missing files of one kept book: its recording's tracks, then its EPUB, then its map, then (without EPUB
+   * files) its prepared text (last, so a text the server cannot prepare leaves the rest saved). Null when every one
    * was saved, otherwise how it stopped. `saveId` is the recording (or, for a book with only an ebook, its EPUB).
    */
   private async save(workId: string, saveId: string, needs: KeptNeeds): Promise<SaveStop | null> {
@@ -548,7 +594,8 @@ export class KeepSaver {
         await this.deps.saveMap(needs.map.ebookId, needs.map.recordingId, controller.signal);
         step();
       }
-      if (needs.text && !needs.text.complete && this.deps.saveText) {
+      // While Keep keeps EPUB files the text is no file that decides complete: `saveTexts` fetches it after the run.
+      if (needs.text?.counted && !needs.text.complete && this.deps.saveText) {
         await pausedElsewhere();
         await this.deps.saveText(needs.text.id, controller.signal);
         step();

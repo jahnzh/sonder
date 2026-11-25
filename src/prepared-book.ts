@@ -7,6 +7,7 @@
 // cached for good.
 import type { PreparedManifest } from "../server/prepared-text";
 import { ApiError, api } from "./lib";
+import { partAddress, preparedBase } from "./keep-text";
 import { keptManifest, keptPart, keptTextKey, noticePreparedAnswer } from "./keep-text-store";
 
 export type { PreparedManifest };
@@ -193,7 +194,8 @@ async function loadManifest(id: string): Promise<PreparedManifest> {
 
 async function load(id: string): Promise<PreparedBook> {
   const manifest = await loadManifest(id);
-  const base = `/api/reader/${encodeURIComponent(id)}/prepared/${manifest.key}`;
+  // The addresses Keep stores the parts under (`keep-text.ts`), so a kept part is found by the address read.
+  const base = preparedBase(id, manifest.key);
   // This output is kept on this device (#805): its parts are read from there.
   const kept = (await keptTextKey(id).catch(() => null)) === manifest.key;
   const parts = new Map<number, Promise<string>>();
@@ -201,7 +203,7 @@ async function load(id: string): Promise<PreparedBook> {
   /** The parts that arrived, oldest first. */
   const arrived: number[] = [];
   const one = async (index: number) => {
-    const address = `${base}/parts/${index}`;
+    const address = partAddress(base, index);
     // A kept book's part is on this device (#805): its address names the output, so the kept copy is the server's.
     const copy = kept ? await keptPart(address).catch(() => null) : null;
     if (copy !== null) return copy;
