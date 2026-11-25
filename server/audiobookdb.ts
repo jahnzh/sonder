@@ -25,6 +25,10 @@ import {
   type Priority,
 } from "./catalogue-provider.ts";
 
+/** A page of AudiobookDB's own site (#902): a book, a series or a release. */
+export function audiobookDbPageUrl(kind: "book" | "series" | "release", id: string): string {
+  return `https://audiobookdb.org/${kind === "book" ? "books" : kind === "series" ? "series" : "releases"}/${encodeURIComponent(id)}`;
+}
 export const AUDIOBOOKDB_BASE = "https://api.audiobookdb.org/api";
 export const AUDIOBOOKDB_DAILY_UNITS = 10_000;
 /** Units kept back from searches so details (a match, a refresh) still go through near the limit. */

@@ -35,7 +35,7 @@ export type WorkCatalogue = {
     matchedBy: "title" | "asin" | "manual";
     url: string;
     /** The other AudiobookDB entries of the same work (#754); absent from servers that predate them. */
-    duplicates?: { id: string; title: string; releases: number }[];
+    duplicates?: { id: string; title: string; releases: number; url?: string }[];
   } | null;
   /** Google Books and iTunes (part e); absent from servers that predate them. */
   links?: ProviderLink[];
