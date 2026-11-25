@@ -34,7 +34,7 @@ import { registerCatalogueRoutes } from "./catalogue-routes.ts";
 import { registerSeriesRoutes } from "./series-routes.ts";
 import { savedCatalogueSeries, savedSeriesRefreshLoop } from "./series-catalogue.ts";
 import { discardResave, retryResave, seriesResaveLoop } from "./series-resave.ts";
-import { catalogueRefreshLoop } from "./catalogue-links.ts";
+import { catalogueCoverLoop, catalogueRefreshLoop } from "./catalogue-links.ts";
 import { audiobookDbKey } from "./audiobookdb.ts";
 import { claimWorkAudio, joinLibraryWithEbook, joinShelfEbooksOnce } from "./work-library.ts";
 import { registerEbookSetRoutes } from "./ebook-set-routes.ts";
@@ -984,6 +984,7 @@ export async function createApp(options?: {
     background.add(loop);
   // The catalogue cache keeps to its licence (#721): expired searches go, a week's details are fetched again.
   background.add(catalogueRefreshLoop((message) => app.log.warn(message)));
+  background.add(catalogueCoverLoop((message) => app.log.warn(message)));
   // Series on AudiobookDB (#721 part b): saved series read again daily; the Hardcover series saved again after the reset.
   background.add(savedSeriesRefreshLoop((message) => app.log.warn(message)));
   background.add(seriesResaveLoop((message) => app.log.warn(message)));
