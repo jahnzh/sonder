@@ -72,7 +72,12 @@ export async function keepText(ebookId: string, signal: AbortSignal): Promise<vo
     }
     const blob = await response.blob();
     signal.throwIfAborted();
-    await cache.put(address, new Response(blob, { headers: { "Content-Type": response.headers.get("Content-Type") || blob.type } }));
+    // The server's sandbox goes with the kept copy: the service worker answers a picture's address with it, opened
+    // by itself too, so a book's SVG never runs script on Sonder's origin.
+    const headers = new Headers({ "Content-Type": response.headers.get("Content-Type") || blob.type });
+    headers.set("Content-Security-Policy", response.headers.get("Content-Security-Policy") || "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+    headers.set("X-Content-Type-Options", "nosniff");
+    await cache.put(address, new Response(blob, { headers }));
     return blob;
   };
   const pictures = new Set<string>();
@@ -90,9 +95,12 @@ export async function keepText(ebookId: string, signal: AbortSignal): Promise<vo
   // What the user saved, so the book opens offline without the EPUB's details too (`loadPreparedReader`).
   const state = await api(`/reader/${encodeURIComponent(ebookId)}/state`, { signal }).catch(() => null);
   if (state) await localDB.preferences.put({ key: `reader-state:${ebookId}`, value: state }).catch(() => {});
+  // Off or Pause while the state was asked for (its failure is let go): nothing more is written.
+  signal.throwIfAborted();
   // The manifest under its own output's address: the record that names an earlier output still finds its own.
   await cache.put(keptManifestAddress(base), new Response(manifestText, { headers: { "Content-Type": "application/json; charset=utf-8" } }));
   const record: KeptTextRecord = { id: ebookId, key: manifest.key, fingerprint: manifest.fingerprint, parts: manifest.parts.length, pictures: [...pictures], size, at: Date.now() };
+  signal.throwIfAborted();
   await authDB.preferences.put({ key: readerTextKey(ebookId), value: record });
   // The output this one replaces goes now that the new one is whole.
   for (const request of await cache.keys()) {

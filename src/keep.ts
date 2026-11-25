@@ -152,9 +152,11 @@ export type KeptNeeds = {
   ebook: { id: string; complete: boolean; size: number } | null;
   /**
    * The chosen EPUB's prepared text (#805): what the new reading view reads offline. Complete when this device keeps a
-   * prepared output of it that the reader has not seen replaced.
+   * prepared output of it that the reader has not seen replaced. `counted` when it is one of the files that decide
+   * whether the book is complete: only once Keep keeps no EPUB files (`KEEP_EPUB_FILE` off). Until then the book reads
+   * from its kept EPUB, and the saver fetches the text beside it quietly, without making the book Not complete.
    */
-  text: { id: string; complete: boolean; size: number } | null;
+  text: { id: string; complete: boolean; size: number; counted: boolean } | null;
   /**
    * A kept EPUB file this device no longer needs (#805, "old kept EPUBs are replaced"): Keep keeps prepared text
    * only (`KEEP_EPUB_FILE` off) and the text that replaces it is complete. The saver removes it. Null otherwise.
@@ -162,7 +164,7 @@ export type KeptNeeds = {
   dropEpub: string | null;
   /** The pair's map, when the read says it is ready or partly ready. */
   map: { ebookId: string; recordingId: string; jobId: string; complete: boolean } | null;
-  /** Tracks, the EPUB, its prepared text and the map: every file the book needs. */
+  /** Tracks, the EPUB (or, without EPUB files, its prepared text) and the map: every file that decides complete. */
   filesTotal: number;
   filesSaved: number;
   /** Bytes the complete files take (the audio files, the EPUB and its prepared text). */
@@ -183,7 +185,8 @@ export const readerTextKey = (ebookId: string) => `reader-text:${ebookId}`;
 
 /**
  * Whether Keep on this device keeps a kept book's EPUB file beside its prepared text (#805). On until step 7 of the
- * reader plan (#806) makes the new reading view the default and removes epub.js, which reads the file. Turned off,
+ * reader plan (#806) makes the new reading view the default and removes epub.js, which reads the file. While on, the
+ * book reads from the EPUB and the text is no file that decides complete: it is fetched beside it quietly. Turned off,
  * a kept book needs its prepared text only, and a kept EPUB from before is removed once the text that replaces it
  * is complete (`KeptNeeds.dropEpub`); a book kept before that has the EPUB and no text gets its text first.
  */
@@ -198,7 +201,8 @@ export const readerMapKey = (ebookId: string, recordingId: string) => `reader-ma
  * - the chosen EPUB by the Ebook page's rule (`chosenEbook`), complete when this device keeps `reader-file:<id>`;
  *   a PDF is never needed; only while `keepEpub` (`KEEP_EPUB_FILE`);
  * - the chosen EPUB's prepared text (#805), complete when this device keeps `reader-text:<id>` and the reader has not
- *   seen the server answer another output (a changed file, or the book prepared anew) since;
+ *   seen the server answer another output (a changed file, or the book prepared anew) since; one of the files that
+ *   decide complete only without EPUB files (`keepEpub` off), otherwise fetched beside the EPUB quietly;
  * - the pair's map when the read says it is ready or partly ready, complete when `reader-map:<ebookId>:<recordingId>`
  *   matches that job and the kept EPUB's fingerprint (`cachedMapMatches`, the reader's own rule), or the kept
  *   text's where no EPUB file is kept.
@@ -229,7 +233,8 @@ export function keptNeeds(
   const heldText = chosen ? reading!.texts?.find((copy) => copy.id === chosen.id) ?? null : null;
   // A changed file is seen by the reader, whose answer from the server marks the kept text stale.
   const textComplete = !!heldText && !heldText.stale;
-  const text = chosen ? { id: chosen.id, complete: textComplete, size: heldText?.size ?? 0 } : null;
+  const text = chosen ? { id: chosen.id, complete: textComplete, size: heldText?.size ?? 0, counted: !keepEpub } : null;
+  const countedText = text?.counted ? text : null;
   // The file the map is matched against: the kept EPUB's, or where none is kept the kept text's.
   const fingerprint = held?.fingerprint ?? (textComplete ? heldText!.fingerprint : undefined);
   const job =
@@ -244,8 +249,8 @@ export function keptNeeds(
         }
       : null;
 
-  const filesTotal = tracks.length + (ebook ? 1 : 0) + (text ? 1 : 0) + (map ? 1 : 0);
-  const filesSaved = tracks.length - missing.length + (ebook?.complete ? 1 : 0) + (text?.complete ? 1 : 0) + (map?.complete ? 1 : 0);
+  const filesTotal = tracks.length + (ebook ? 1 : 0) + (countedText ? 1 : 0) + (map ? 1 : 0);
+  const filesSaved = tracks.length - missing.length + (ebook?.complete ? 1 : 0) + (countedText?.complete ? 1 : 0) + (map?.complete ? 1 : 0);
   return {
     recordingId: recording?.recordingId ?? null,
     tracks,
