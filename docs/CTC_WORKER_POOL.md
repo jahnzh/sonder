@@ -1110,12 +1110,19 @@ encodes it with `book_encode.encode_tracks` (one 30 s window per batch):
 The 6-thread figure matches the real job of #912 (about 6.5 h to encode).
 Emissions at 10, 14 and 20 threads against 6: the same argmax on all 14,999
 frames, at most 0.0156 apart in log-probability (one float16 step) and 0.0005
-in probability. Map comparison: MAPS_PLACEHOLDER
+in probability. Map comparison: the book's first hour (a WAV of 3,600 s
+with the book's whole sentence list) run twice through the worker's own job
+stages, `WorkerStages` with the pinned model, the encode held to 6 threads and
+then to 20: both map the same 921 sentences with identical intervals (no
+difference at all). That run took 1,308 s to encode at 6 threads (2.75x,
+slowed by a leftover measurement process beside it) and 890 s at 20 (4.05x).
 
 **The whole job.** The decode of this book takes 40 s on lisa (the job of
 2026-11-26, 48 ranges), the encode as above, and the text match, anchors,
-align, leftover pass and finish STAGES_PLACEHOLDER. So the job takes about
-JOB_BEFORE before and JOB_AFTER now. The real job's time comes from the next
+align, leftover pass and finish took 19 s together for the book's first hour
+(the job of the map comparison: align 16.1 s, prepare 1.3 s, the rest under a
+second each), so about 7 minutes for the whole book. So the job takes about
+6.5 h before (6.3 h of encode) and 5.3 to 5.7 h now. The real job's time comes from the next
 whole-book job on lisa after the worker update (`stageTimings`, and
 `encode.threads` says what the encode used).
 
