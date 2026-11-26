@@ -92,6 +92,9 @@ class Microbatch:
 
 
 class AcousticModel:
+    # On the CPU, the torch threads each window request's forward pass uses (`_share_cpu_threads`).
+    window_threads = None
+
     def __init__(self, folder):
         import torch
         import torchaudio
@@ -137,6 +140,8 @@ class AcousticModel:
         batch = np.zeros((len(items), widest), dtype=np.float32)
         for row, (audio, *_rest) in enumerate(items):
             batch[row, :len(audio)] = audio
+        if self.window_threads is not None:
+            use_cpu_threads(torch, self.window_threads)
         with torch.inference_mode():
             wave = torch.from_numpy(batch).to(device=self.device, dtype=self.dtype)
             length_tensor = torch.tensor(lengths, device=self.device, dtype=torch.int64)
@@ -168,12 +173,28 @@ _model_folder = None
 _lock = threading.Lock()
 
 
+def use_cpu_threads(torch, threads):
+    """Run this thread's next torch operations on `threads` CPU threads.
+
+    torch's thread count is per calling thread: a thread's first parallel operation sets it to the count
+    last set by any thread, and `set_num_threads` changes the calling thread's own (and that default). So
+    each caller sets its own before its forward pass, after that first initialisation (`get_num_threads`).
+    """
+    torch.get_num_threads()
+    torch.set_num_threads(max(1, int(threads)))
+
+
 def _share_cpu_threads(model, env=None):
-    """On a CPU host, requests running at once split the cores instead of each claiming all of them."""
+    """On a CPU host, window requests running at once split the cores instead of each claiming all of them;
+    with one slot a request keeps torch's own default. A whole-book encode sets its own per batch
+    (`cpu_share`), so each window request sets its share again before its forward pass."""
+    from cpu_share import host_cores
     from deadline import worker_slots
     slots = worker_slots(env)
-    if model.device.type == "cpu" and slots > 1:
-        model.torch.set_num_threads(max(1, (os.cpu_count() or 1) // slots))
+    if model.device.type == "cpu":
+        model.window_threads = (max(1, host_cores() // slots) if slots > 1
+                                else model.torch.get_num_threads())
+        use_cpu_threads(model.torch, model.window_threads)
 
 
 def resident_model(folder):

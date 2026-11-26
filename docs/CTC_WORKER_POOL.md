@@ -595,7 +595,8 @@ the current wait has lasted; then `groupsTotal`, `groupsDone` and
 `encodeQueue`, `gateWait`, `encode`, `prepare`, `textMatch`, `anchor`, `align`,
 `finish`, `leftover`).
 `resumed` counts the worker restarts the job has continued from. `encode` holds the encode statistics (`encodeSeconds`,
-`audioSeconds`, `realtime`, `batch`, `oomHalvings`, `gpuUtilization`).
+`audioSeconds`, `realtime`, `batch`, `oomHalvings`, `gpuUtilization`, and on the CPU `threads`: the
+`min`, `max` and `last` torch threads of its batches, see "CPU threads").
 
 ### Result
 
@@ -790,6 +791,21 @@ within 0.25 s.
   the books read in the ebook's order it adds nothing (0.003 to 1.4 s). Like
   the anchor chain and the validation, it runs in the job's thread, not in the
   group processes.
+* **CPU threads** (#913, `worker/cpu_share.py`). On a CPU host the encode
+  sets its torch threads before each batch to the cores no other running work
+  of the worker claims: every core of the process's affinity mask (lisa: 20)
+  while the book encodes alone. Another book's decode claims its ffmpeg
+  processes and its align stage the job's thread plus its process pool for as
+  long as they run, so the next batch leaves those cores to it and the batch
+  after that one takes them back. Window requests claim nothing: a batch starts
+  only when none runs or waits, so one that arrives during a batch and finds a
+  free slot shares the cores with that batch only until it ends (one 30 s
+  window, about 4.5 s on lisa). torch's thread count belongs to the calling
+  thread, so each window request sets its own share (cores / `slots`, or with
+  one slot torch's default) before its forward pass and keeps it whatever the
+  encode uses. Before #913 the worker set cores / `slots` (lisa: 6) for
+  everything, also while one book encoded alone. Measurements: "CPU encode
+  speed on lisa" below.
 * **Viterbi kernel.** numba when installed (the pool hosts' production
   environments do not have it), otherwise an equivalent numpy kernel.
   `tests/worker/test_book_align.py` checks that the two give identical paths.
@@ -1070,6 +1086,78 @@ top level of `/health` and under `ctc`.
 | Gate run (health to report) | about 12 s | about 94 s | — |
 
 Gate: PASS on both hosts; outcome `mapped`. CPU and GPU give the same outcomes.
+
+## CPU encode speed on lisa, 2026-11-26 (#913)
+
+lisa: Xeon E5-2470 v2 (Ivy Bridge, 10 cores, 20 threads, AVX but no AVX2 or
+FMA), torch `2.8.0+cpu` (OpenMP, MKL, oneDNN 3.7.1), float32. Measured with
+the worker's own code from `~/sonder-replication/issue-913/` while lisa ran no
+alignment job (its other services, Prowlarr among them, ran as usual), nice 10
+like the service, on a copy of *The Butcher's Masquerade* (one 23.6 h M4B,
+84,845 s). `worker/measure_encode.py` decodes a stretch as a book job does and
+encodes it with `book_encode.encode_tracks` (one 30 s window per batch):
+
+    measure_encode.py --alignment ~/sonder-ctc-worker/media/alignment \
+        --audio book.m4b --start 36000 --seconds 300 --threads 6,10,14,20 --out runs/sweep
+
+| torch threads | audio s per wall s (300 s from 10:00:00) | 23.6 h book's encode |
+| ---: | ---: | ---: |
+| 6 (before: 20 cores / 3 slots) | 3.72 | 6.3 h |
+| 10 | 3.80 (repeats 3.7 to 4.8) | 6.2 h |
+| 14 | 3.82 | 6.2 h |
+| 20 (now: every core, alone) | 4.22 (repeats 4.4 to 4.5) | 5.2 to 5.6 h |
+
+The 6-thread figure matches the real job of #912 (about 6.5 h to encode).
+Emissions at 10, 14 and 20 threads against 6: the same argmax on all 14,999
+frames, at most 0.0156 apart in log-probability (one float16 step) and 0.0005
+in probability. Map comparison: the book's first hour (a WAV of 3,600 s
+with the book's whole sentence list) run twice through the worker's own job
+stages, `WorkerStages` with the pinned model, the encode held to 6 threads and
+then to 20: both map the same 921 sentences with identical intervals (no
+difference at all). That run took 1,308 s to encode at 6 threads (2.75x,
+slowed by a leftover measurement process beside it) and 890 s at 20 (4.05x).
+
+**The whole job.** The decode of this book takes 40 s on lisa (the job of
+2026-11-26, 48 ranges), the encode as above, and the text match, anchors,
+align, leftover pass and finish took 19 s together for the book's first hour
+(the job of the map comparison: align 16.1 s, prepare 1.3 s, the rest under a
+second each), so about 7 minutes for the whole book. So the job takes about
+6.5 h before (6.3 h of encode) and 5.3 to 5.7 h now. The real job's time comes from the next
+whole-book job on lisa after the worker update (`stageTimings`, and
+`encode.threads` says what the encode used).
+
+**Where the time goes.** One 30 s window at 20 threads takes about 4.4 s:
+the feature extractor's convolutions 1.4 s and the transformer 3.0 s. The
+convolutions do not get faster past 6 threads (1.44 s at 6 and at 20), the
+transformer stops at the 10 physical cores (4.45 s at 6, 2.9 s at 10, 3.0 s at
+20). In the transformer, attention (`_scaled_dot_product_flash_attention_for_cpu`)
+takes as long as all linear layers together. Checked and not taken:
+
+| Option | Measured on lisa | Result | Why not taken |
+| --- | --- | --- | --- |
+| Math attention instead of flash | transformer 3.7 s instead of 3.0 s | same | slower |
+| Convolutions without oneDNN | feature extractor 1.08 s instead of 1.43 s (10 threads), about 8 % of a window | same (5.5e-7) | a process-wide switch that also changes window requests, and every convolution then logs an NNPACK warning |
+| Batch of 4 windows | 3.95 s instead of 4.45 s per window (11 %) | same | a window request may wait for a whole batch: 4 times as long |
+| Two to four encode streams of 5 to 10 threads (in one process) | 5.0 to 5.4x against 4.4x in one round, 2.4x in the other | same as that thread count | inside lisa's spread from run to run; it needs ordered writes and several gate slots |
+| OpenVINO float32 (prototype D+E) | 0.52x | about the same | far slower without AVX2 |
+| ONNX Runtime float32 (prototype D+E, 16 threads, batch 4) | 5.74x against 4.85x (+18 %) | map agreement 100 % on 1 h | a second inference runtime and a 378 MB export; its threads are fixed per session, so the thread rule would need a session per count |
+
+**Under 2 hours** needs about 12x realtime, about 2.7 times the 4.4x of every
+core. That changes the result, so a new engine (ADR 0006), and it is left to
+the owner. Measured in prototype D+E on lisa (16 threads, batch 4, the
+first hour of a book, against production's map):
+
+| Option | Speed on lisa | 23.6 h book's encode | Map against production |
+| --- | ---: | ---: | --- |
+| wav2vec2 Base (the engine) | 4.85x | 4.9 h | 100 % of its sentences, median 7.5 ms |
+| Dynamic int8 of the same model | 5.0x | 4.7 h | 99.8 %, but 5 % of frames change their argmax |
+| DistilWav2Vec2 (52 M parameters) | 7.36x | 3.2 h | 98.5 %, median 7.5 ms |
+| SEW-D tiny (24 M parameters) | 19.1x | 1.2 h | 98.1 %, median 20 ms, p90 32.5 ms |
+| Shorter context, 2.5 s instead of 5 s (25 s windows), estimated from the profile | about 1.25x faster | about 4.4 h | not measured; the edge frames of each core change |
+
+Only SEW-D tiny reaches 2 h on lisa. WSL's GPU encodes the same book in
+minutes, which is why a whole-book job takes lisa only when WSL cannot be used
+("CPU hosts are the fallback only").
 
 ## Probing gate (#278)
 
