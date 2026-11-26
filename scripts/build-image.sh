@@ -47,10 +47,14 @@ fi
 
 echo "building $tag"
 began=$(date +%s%3N)
-if ! git archive --format=tar "$full" | $docker build --label "sonder.commit=$full" -t "$tag" -; then
-  echo "image build failed: $tag" >&2
+# The builder's own lines go to a file; a failed build prints their end.
+build_log=$(mktemp "${TMPDIR:-/tmp}/sonder-image-build-XXXXXX.log") || { echo "cannot create a build log" >&2; exit 1; }
+if ! git archive --format=tar "$full" | $docker build --progress=plain --label "sonder.commit=$full" -t "$tag" - >"$build_log" 2>&1; then
+  tail -n 40 "$build_log" >&2
+  echo "image build failed: $tag (the builder's lines: $build_log)" >&2
   exit 1
 fi
+rm -f "$build_log"
 took=$(( $(date +%s%3N) - began ))
 if ! ready; then
   echo "the build ended but $tag is not labelled sonder.commit=$full" >&2

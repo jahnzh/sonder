@@ -63,8 +63,8 @@ function fixture({ missing, failSsh } = {}) {
     ALIGNMENT_POOL_DECK_HOST: targets[1],
     ALIGNMENT_POOL_LISA_HOST: targets[2],
   };
-  const run = (extra = {}) => new Promise((resolveRun, reject) => {
-    const child = spawn(process.execPath, ["--import", tsxLoader, "scripts/image-smoke.mjs"], {
+  const run = (extra = {}, args = []) => new Promise((resolveRun, reject) => {
+    const child = spawn(process.execPath, ["--import", tsxLoader, "scripts/image-smoke.mjs", ...args], {
       cwd: repo,
       env: { ...env, ...extra },
       stdio: ["ignore", "pipe", "pipe"],
@@ -84,7 +84,7 @@ function fixture({ missing, failSsh } = {}) {
       assert.deepEqual(readdirSync(temp).filter((name) => name.startsWith("sonder-image-smoke-")), [], "image smoke must remove its temporary data directory");
     } finally { rmSync(dir, { recursive: true, force: true }); }
   };
-  return { run, sshCalls, cleanup };
+  return { repo, run, sshCalls, cleanup };
 }
 
 const CTC_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-v2";
@@ -283,4 +283,36 @@ test("image smoke accepts the deployed worker revision, whose top-level engine i
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /alignment pool health and SSH/);
   } finally { await health.close(); f.cleanup(); }
+});
+
+// #915: the deploy's markers are checked in the smoke's own container, before the server is imported.
+test("image smoke checks marker strings under server/, dist/ and src/ and marker files, then runs the smoke", async () => {
+  const image = fixture();
+  try {
+    mkdirSync(join(image.repo, "dist", "assets"), { recursive: true });
+    writeFileSync(join(image.repo, "dist", "assets", "index-abc.js"), "const label = 'Sign in to Sonder';\n");
+    const r = await image.run({}, ["--marker", "Sign in to Sonder", "--marker", "createApp", "--marker-file", join(image.repo, "package.json")]);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.match(r.stdout, /^marker ok: Sign in to Sonder\nmarker ok: createApp\nmarker file ok: .*package\.json\n/);
+    assert.match(r.stdout, /image smoke passed: server imports and consensus worker/);
+  } finally {
+    image.cleanup();
+  }
+});
+
+test("a marker or marker file missing from the image fails the smoke before the server is imported", async () => {
+  const image = fixture();
+  try {
+    // node_modules is not searched: a string only a dependency has is not a marker of this build.
+    const r = await image.run({}, ["--marker", "createApp", "--marker", "JSZip", "--marker-file", "/app/dist/index.html", "--marker-file", join(image.repo, "server")]);
+    assert.equal(r.status, 1, r.stderr + r.stdout);
+    assert.equal(r.stderr, "marker not found in the built image: JSZip\nmarker file not found in the built image: /app/dist/index.html\nmarker file not found in the built image: " + join(image.repo, "server") + "\n");
+    assert.match(r.stdout, /marker ok: createApp/);
+    assert.doesNotMatch(r.stdout, /image smoke passed/);
+    const usage = await image.run({}, ["--marker"]);
+    assert.equal(usage.status, 1);
+    assert.match(usage.stderr, /usage: image-smoke\.mjs \[--marker <string>\]/);
+  } finally {
+    image.cleanup();
+  }
 });

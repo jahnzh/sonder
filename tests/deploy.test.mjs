@@ -105,7 +105,10 @@ function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", t
     `  "image inspect --format {{.Id}} "*) [ -e ${q(prebuiltFile)} ] && echo sha256:bbbbbbbbbbbb ;;`,
     `  "build "*) cat > /dev/null; ${buildFails ? 'echo "npm ci failed" >&2; exit 1' : `touch ${q(prebuiltFile)}`} ;;`,
     '  "images --filter "*) exit 0 ;;',
-    `  "images "*) printf '%b\\n' ${q(images)} ;;`,
+    // The running image's tags: those `images` lists with its id.
+    `  "image inspect --format {{range .RepoTags}}{{println .}}{{end}} "*)
+    id=\${@: -1}; id=\${id#sha256:}
+    printf '%b\\n' ${q(images)} | awk -v id="$id" '$2 == id {print $1}' ;;`,
     '  "rmi "*) exit 0 ;;',
     // One container checks the markers and runs the smoke (#915).
     `  "compose run --rm --no-deps --entrypoint node sonder --import tsx scripts/image-smoke.mjs"*)
@@ -150,7 +153,10 @@ function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", t
     `printf %s "$next"`,
   ].join("\n"));
   const state = join(dir, "state");
+  // A failed build leaves its builder's lines in TMPDIR: inside the fixture.
+  mkdirSync(join(dir, "tmp"));
   const baseEnv = () => cleanEnv({
+    TMPDIR: join(dir, "tmp"),
     PATH: `${bin}:${process.env.PATH}`,
     SONDER_DEPLOY_DOCKER: join(bin, "docker"),
     SONDER_DEPLOY_LIVE_CHECKS: Object.keys(checks).map((n) => `scripts/${n}`).join(" "),
@@ -680,7 +686,7 @@ test("an image that is not built yet is built from the commit before the backup"
     const r = f.run(["--no-marker"]);
     assert.equal(r.status, 0, r.stderr + r.stdout);
     const calls = f.dockerCalls();
-    const build = calls.indexOf(`build --label sonder.commit=${f.head} -t sonder-audiobooks:commit-${f.head} -`);
+    const build = calls.indexOf(`build --progress=plain --label sonder.commit=${f.head} -t sonder-audiobooks:commit-${f.head} -`);
     assert.ok(build >= 0, calls.join("\n"));
     assert.ok(r.stdout.indexOf("image ready: ") < r.stdout.indexOf("backing up "), r.stdout);
     assert.match(r.stdout, new RegExp(`image ready: sonder-audiobooks:commit-${f.head} \\(built in \\d+\\.\\ds\\)`));
@@ -692,7 +698,7 @@ test("a failed build stops the deploy before the backup; nothing is tagged and t
   try {
     const r = f.run(["--no-marker"]);
     assert.equal(r.status, 1);
-    assert.match(r.stderr, /image build failed: sonder-audiobooks:commit-/);
+    assert.match(r.stderr, /npm ci failed\nimage build failed: sonder-audiobooks:commit-[0-9a-f]{40} \(the builder's lines: /);
     assert.match(r.stderr, /the image of [0-9a-f]{7} could not be built; the container is untouched/);
     assert.doesNotMatch(r.stdout, /backing up/);
     const calls = f.dockerCalls();

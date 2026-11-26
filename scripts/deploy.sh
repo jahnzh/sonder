@@ -451,9 +451,9 @@ fi
 # untags the older ones.
 timed rollback-tag
 rollback_tag=""
-old_short=$(image_short "$old_id")
-existing=$($docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' \
-  | awk -v id="$old_short" -v repo="$repo_name" '$2 == id && index($1, repo ":") == 1 && $1 != repo ":local" && index($1, repo ":commit-") != 1 {print $1; exit}')
+# The running image's own tags (listing every image takes seconds on this machine).
+existing=$($docker image inspect --format '{{range .RepoTags}}{{println .}}{{end}}' "$old_id" 2>/dev/null \
+  | awk -v repo="$repo_name" 'index($1, repo ":") == 1 && $1 != repo ":local" && index($1, repo ":commit-") != 1 {print $1; exit}')
 case ${existing:-} in
   ${repo_name}:*) rollback_tag=${existing#"${repo_name}":} ;;
   *)

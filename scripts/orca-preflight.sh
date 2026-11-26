@@ -72,18 +72,31 @@ check_disk() {
   done
 }
 
+# "<pid> <cwd>" for every process whose working directory is the worktree or under it, other than this script and its
+# parents. One find reads every process's cwd (a readlink per process took seconds on a host with 500 processes, #915).
+# Only called as $(worktree_processes): its subshell moves to / first, so neither it, the find nor the loop is one of them.
+worktree_processes() {
+  local pid cwd
+  cd / || return
+  find /proc -mindepth 2 -maxdepth 2 -name cwd -printf '%h\t%l\n' 2>/dev/null \
+    | while IFS=$'\t' read -r pid cwd; do
+        pid=${pid#/proc/}
+        case $pid in ''|*[!0-9]*) continue ;; esac
+        [ -z "${skip[$pid]:-}" ] || continue
+        if [ -n "$cwd" ] && { [ "$cwd" = "$worktree" ] || [ "${cwd#"$worktree"/}" != "$cwd" ]; }; then
+          printf '%s %s\n' "$pid" "$cwd"
+        fi
+      done
+}
+
 check_processes() {
-  local entry cwd pid cmd
-  for entry in /proc/[0-9]*; do
-    pid=${entry#/proc/}
-    [ -z "${skip[$pid]:-}" ] || continue
-    cwd=$(readlink "$entry/cwd" 2>/dev/null) || continue
-    if [ "$cwd" = "$worktree" ] || [ "${cwd#"$worktree"/}" != "$cwd" ]; then
-      cmd=$(tr '\0' ' ' < "$entry/cmdline" 2>/dev/null)
-      echo "process $pid has cwd $cwd: ${cmd% }"
-      failed=1
-    fi
-  done
+  local cwd pid cmd
+  while read -r pid cwd; do
+    [ -n "$pid" ] || continue
+    cmd=$(tr '\0' ' ' 2>/dev/null <"/proc/$pid/cmdline") || continue
+    echo "process $pid has cwd $cwd: ${cmd% }"
+    failed=1
+  done <<<"$(worktree_processes)"
 }
 
 check_npm() {
@@ -91,19 +104,15 @@ check_npm() {
   [ -f "$worktree/package.json" ] || return 0
 
   local log="$worktree/.npm-ci.log"
-  local npm_pid="" entry p cwd cmd
+  local npm_pid="" p cwd cmd
 
-  for entry in /proc/[0-9]*; do
-    p=${entry#/proc/}
-    [ -z "${skip[$p]:-}" ] || continue
-    cwd=$(readlink "$entry/cwd" 2>/dev/null) || continue
-    if [ "$cwd" = "$worktree" ] || [ "${cwd#"$worktree"/}" != "$cwd" ]; then
-      cmd=$(tr '\0' ' ' < "$entry/cmdline" 2>/dev/null)
-      case "$cmd" in
-        *npm*) npm_pid=$p; break ;;
-      esac
-    fi
-  done
+  while read -r p cwd; do
+    [ -n "$p" ] || continue
+    cmd=$(tr '\0' ' ' 2>/dev/null <"/proc/$p/cmdline") || continue
+    case "$cmd" in
+      *npm*) npm_pid=$p; break ;;
+    esac
+  done <<<"$(worktree_processes)"
 
   if [ -n "$npm_pid" ]; then
     echo "npm ci has not finished: install process still running (pid $npm_pid)"
