@@ -96,8 +96,8 @@ try {
  await expect(room.locator('.reader-topbar')).toBeHidden();
  const surface=await room.evaluate(el=>getComputedStyle(el).backgroundColor);
  // The book's page is the room's own surface: the prepared text and the band under it paint nothing else (the first
- // painted background from the text up to the band is the room's).
- const textPaper=()=>room.locator('.reader-viewport .prepared-text').first().evaluate(text=>{for(let el=text;el;el=el.parentElement){const bg=getComputedStyle(el).backgroundColor;if(bg!=='rgba(0, 0, 0, 0)'&&bg!=='transparent')return bg;if(el.classList.contains('reader-viewport'))break;}return null;});
+ // painted background from the text up to the room is the room's: the band is transparent inside Now playing).
+ const textPaper=()=>room.locator('.reader-viewport .prepared-text').first().evaluate(text=>{for(let el=text;el;el=el.parentElement){const bg=getComputedStyle(el).backgroundColor;if(bg!=='rgba(0, 0, 0, 0)'&&bg!=='transparent')return bg;if(el.classList.contains('inline-reader'))break;}return null;});
  await expect.poll(textPaper,{message:'The book text has the reader surface behind it'}).toBe(surface);
  const readerBox=await waitForBox(room.locator('.reader-viewport'),{description:'reader viewport'});if(readerBox.height<844*.65)throw Error('Reader is too small on mobile');
  // The head has no More button (#592): what it held is the long-press, Back to narration, the Bookmarks page, the

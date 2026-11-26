@@ -17,6 +17,7 @@ export const EBOOK_SOURCE_NAMES: Record<EbookSourceId, string> = {
   prowlarr: "Prowlarr",
   standardebooks: "Standard Ebooks",
   gutenberg: "Project Gutenberg",
+  mam: "MyAnonamouse",
 };
 /** A result's source; an older server's Library Genesis file has none. */
 export const sourceOf = (result: Pick<EbookResult, "source">): EbookSourceId => (result.source && result.source in EBOOK_SOURCE_NAMES ? result.source : "libgen");
@@ -24,8 +25,10 @@ export const sourceOf = (result: Pick<EbookResult, "source">): EbookSourceId => 
 /** Where the row's edition is listed: the source, or a Prowlarr release's indexer with its seeders. */
 export function editionSource(result: Pick<EbookResult, "source" | "indexer" | "seeders">) {
   const source = sourceOf(result);
-  if (source !== "prowlarr") return EBOOK_SOURCE_NAMES[source];
   const seeders = Number.isFinite(result.seeders) ? `${result.seeders} ${result.seeders === 1 ? "seeder" : "seeders"}` : null;
+  // A MyAnonamouse torrent says its seeders too (#911).
+  if (source === "mam") return [EBOOK_SOURCE_NAMES.mam, seeders].filter(Boolean).join(DOT);
+  if (source !== "prowlarr") return EBOOK_SOURCE_NAMES[source];
   return [result.indexer?.trim() ? `${result.indexer.trim()} via Prowlarr` : "Prowlarr", seeders].filter(Boolean).join(DOT);
 }
 
@@ -78,7 +81,10 @@ export function addedEditions(work: Pick<LibraryWork, "ebooks"> | null | undefin
   return new Set((work?.ebooks ?? []).map((ebook) => ebook.id.toLowerCase()));
 }
 
-/** The rows for the sources' answers: EPUBs before PDFs, each in the order given; one row per file. */
+/**
+ * The rows for the sources' answers: EPUBs before PDFs (the reader opens an EPUB), each in the owner's order of
+ * sources (#911): TorBox's cached torrents, then MyAnonamouse's, then the others in the order given; one row per file.
+ */
 export function editionRows(results: EbookResult[], added: ReadonlySet<string>): EditionRow[] {
   const seen = new Set<string>();
   const unique = results.filter((result) => {
@@ -88,8 +94,9 @@ export function editionRows(results: EbookResult[], added: ReadonlySet<string>):
     return true;
   });
   const rank = (result: EbookResult) => (result.extension === "epub" ? 0 : 1);
+  const tier = (result: EbookResult) => (result.cached ? 0 : sourceOf(result) === "mam" ? 1 : 2);
   // Array.prototype.sort is stable: each format keeps the sources' order.
-  return [...unique].sort((a, b) => rank(a) - rank(b)).map((result) => editionRow(result, added));
+  return [...unique].sort((a, b) => rank(a) - rank(b) || tier(a) - tier(b)).map((result) => editionRow(result, added));
 }
 
 export const LINE_EPUB_CHECKED = "Saved on the server, then checked against the narration.";
@@ -97,6 +104,8 @@ export const LINE_EPUB = "Saved on the server.";
 export const LINE_PDF = "Saved on the server. Opens in another app.";
 /** A Prowlarr release is a torrent (#901): it is downloaded first, in Activity, and then joins the book. */
 export const LINE_TORRENT = "Downloaded as a torrent first. It joins the book when the download ends.";
+/** A MyAnonamouse release is a private torrent (#911): the server's own client gets it and keeps seeding it. */
+export const LINE_MAM = "Downloaded as a torrent to your server first and kept seeding on MyAnonamouse. It joins the book when the download ends.";
 
 /**
  * The line under Get this edition: nothing while no row is chosen; a PDF is kept for other apps; an EPUB is checked
@@ -105,6 +114,7 @@ export const LINE_TORRENT = "Downloaded as a torrent first. It joins the book wh
 export function getEditionLine(result: (Pick<EbookResult, "extension"> & Partial<Pick<EbookResult, "source">>) | null, work: Pick<LibraryWork, "recordings"> | null): string | null {
   if (!result) return null;
   if (result.source === "prowlarr") return LINE_TORRENT;
+  if (result.source === "mam") return LINE_MAM;
   if (result.extension !== "epub") return LINE_PDF;
   return work && work.recordings.length > 0 ? LINE_EPUB_CHECKED : LINE_EPUB;
 }

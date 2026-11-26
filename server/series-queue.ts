@@ -304,7 +304,7 @@ export async function chooseSeriesCandidate(
   userId: number,
   seriesId: string,
   bookId: string,
-  wanted: { key?: string; source?: "abb" | "prowlarr"; id?: string },
+  wanted: { key?: string; source?: "abb" | "prowlarr" | "mam"; id?: string },
 ) {
   assertCanAcquireMedia(userId);
   const work = savedSeriesWork(userId, seriesId, bookId);
@@ -316,7 +316,8 @@ export async function chooseSeriesCandidate(
   if (!job || !candidate) throw fail(404, "This release is not among what the search found. Search again.");
   // A release the queue's search found may be chosen as one from the Get sheet's search is.
   if (candidate.source === "abb") rememberAbbSlugs([{ id: candidate.id }]);
-  else await refreshProwlarrLink(candidate);
+  // A MAM torrent is got by its id alone (#911).
+  else if (candidate.source === "prowlarr") await refreshProwlarrLink(candidate);
   const result = await selectSeriesWorkRelease(userId, seriesId, bookId, {
     source: candidate.source,
     id: candidate.id,
@@ -350,7 +351,7 @@ async function refreshProwlarrLink(candidate: { id: string; title: string }) {
 }
 
 /** The Get sheet's select for a series book (`selectSeriesWorkRelease`): the release is the book's chosen one too. */
-export function noteOwnerSelect(userId: number, seriesId: string, bookId: string, release: { source: "abb" | "prowlarr"; id: string; title?: string | null }) {
+export function noteOwnerSelect(userId: number, seriesId: string, bookId: string, release: { source: "abb" | "prowlarr" | "mam"; id: string; title?: string | null }) {
   try {
     const work = savedSeriesWork(userId, seriesId, bookId);
     const job = bookJob(userId, seriesId, bookId, work.workId, "audio");

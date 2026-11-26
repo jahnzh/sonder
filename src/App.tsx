@@ -766,6 +766,7 @@ function LibraryApp({
                 online={online}
                 prowlarrConfigured={settings ? !!settings.prowlarrConfigured : null}
                 torboxConfigured={!!settings?.torboxConfigured}
+                mamConfigured={!!settings?.mamConfigured}
                 onChanged={async () => {
                   await refresh();
                   await refreshDownloads();
@@ -781,6 +782,7 @@ function LibraryApp({
                 online={online}
                 prowlarrConfigured={settings ? !!settings.prowlarrConfigured : null}
                 torboxConfigured={!!settings?.torboxConfigured}
+                mamConfigured={!!settings?.mamConfigured}
                 onChanged={async () => {
                   await refresh();
                   await refreshDownloads();
@@ -807,6 +809,7 @@ function LibraryApp({
                 online={online}
                 libgenUrl={settings?.libgenUrl || null}
                 prowlarrConfigured={settings ? !!settings.prowlarrConfigured : null}
+                mamConfigured={!!settings?.mamConfigured}
                 annasConfigured={!!settings?.annasConfigured}
                 zlibConfigured={!!settings?.zlibConfigured}
                 onChanged={refresh}

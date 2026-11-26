@@ -66,3 +66,23 @@ export function torrentToMagnet(data: Buffer) {
     if (/^(udp|https?|wss?):\/\//i.test(tracker)) params.append("tr", tracker);
   return { hash, magnet: `magnet:?${params.toString().replaceAll("%3A", ":")}` };
 }
+
+/**
+ * What a `.torrent` file says of itself (#911): its info hash, its name (the file or folder it makes in the download
+ * folder) and whether it is a private tracker's (`info.private` 1). The announce address (a private tracker's carries
+ * the member's passkey) is not returned.
+ */
+export function torrentFacts(data: Buffer) {
+  const infoRange: number[] = [];
+  const root = decode(data, 0, infoRange);
+  if (!root || typeof root !== "object" || Array.isArray(root) || Buffer.isBuffer(root) || infoRange.length !== 2)
+    throw new Error("This torrent file has no info section.");
+  const info = root.info as Record<string, Value>;
+  if (!info || typeof info !== "object" || Array.isArray(info) || Buffer.isBuffer(info) || !Buffer.isBuffer(info.name))
+    throw new Error("This torrent file has no name.");
+  const name = info.name.toString("utf8");
+  // A name that would leave the download folder is no torrent Sonder adds.
+  if (!name || name === "." || name === ".." || /[\\/\0]/.test(name)) throw new Error("This torrent file has an invalid name.");
+  const hash = createHash("sha1").update(data.subarray(infoRange[0], infoRange[1])).digest("hex");
+  return { hash, name, private: info.private === 1 };
+}

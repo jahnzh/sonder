@@ -4,6 +4,8 @@ import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
 import staticFiles from "@fastify/static";
 import rateLimit from "@fastify/rate-limit";
+/** 127.0.0.0/8, ::1 and the IPv4-mapped loopback: a request made on this machine. */
+export const isLoopbackAddress = (ip: string) => /^127\./.test(ip) || ip === "::1" || /^::ffff:127\./.test(ip);
 import { randomUUID, createHash } from "node:crypto";
 import {
   createReadStream,
@@ -33,6 +35,8 @@ import { switchFromHardcover } from "./hardcover-switch.ts";
 import { registerCatalogueRoutes } from "./catalogue-routes.ts";
 import { registerSeriesRoutes } from "./series-routes.ts";
 import { packRequestFor, registerPackRoutes } from "./series-pack-step.ts";
+import { registerMamRoutes } from "./mam-routes.ts";
+import { clearMamRefused, mamConfigured, mamIdOfEbookKey, mamLink, mamRefusedAt } from "./sources/myanonamouse.ts";
 import { savedCatalogueSeries, savedSeriesRefreshLoop } from "./series-catalogue.ts";
 import { discardResave, retryResave, seriesResaveLoop } from "./series-resave.ts";
 import { catalogueCoverLoop, catalogueRefreshLoop } from "./catalogue-links.ts";
@@ -329,14 +333,17 @@ export async function createApp(options?: {
   });
   app.addHook("preHandler", async (req) => {
     const path = req.routeOptions.url || "";
-    if (/^\/api\/(prowlarr|torbox|annas|zlib)(?:\/|$)/.test(path) || /^\/api\/acquisitions(?:\/|$)/.test(path) || path === "/api/acquire" || path === "/api/torrents/health" || path === "/api/alignments/pool" || path === "/api/alignments/pool/staging" || path === "/api/alignments/pool/staging/remove" || path === "/api/local/test" || /^\/api\/discover\/(abb|prowlarr|previews)(?:\/|$)/.test(path) || path === "/api/discover/ebooks" || (req.method === "POST" && ["/api/ebooks", "/api/ebooks/import", "/api/import"].includes(path)) || (req.method === "POST" && /^\/api\/books\/[^/]+\/keep$/.test(path)) || (req.method === "POST" && /^\/api\/reader\/[^/]+\/link$/.test(path)) || (["PUT", "DELETE"].includes(req.method) && /^\/api\/recordings\/[^/]+\/(faults\/[^/]+|server-copy)$/.test(path)) || (["POST", "PATCH"].includes(req.method) && /^\/api\/alignments(?:\/|$)/.test(path)) || (req.method === "POST" && /^\/api\/works\/[^/]+\/ebook-set\/fetch$/.test(path))) requireAdmin(req);
+    if (/^\/api\/(prowlarr|torbox|annas|zlib|mam)(?:\/|$)/.test(path) || /^\/api\/acquisitions(?:\/|$)/.test(path) || path === "/api/acquire" || path === "/api/torrents/health" || path === "/api/alignments/pool" || path === "/api/alignments/pool/staging" || path === "/api/alignments/pool/staging/remove" || path === "/api/local/test" || /^\/api\/discover\/(abb|prowlarr|previews|mam)(?:\/|$)/.test(path) || path === "/api/discover/ebooks" || (req.method === "POST" && ["/api/ebooks", "/api/ebooks/import", "/api/import"].includes(path)) || (req.method === "POST" && /^\/api\/books\/[^/]+\/keep$/.test(path)) || (req.method === "POST" && /^\/api\/reader\/[^/]+\/link$/.test(path)) || (["PUT", "DELETE"].includes(req.method) && /^\/api\/recordings\/[^/]+\/(faults\/[^/]+|server-copy)$/.test(path)) || (["POST", "PATCH"].includes(req.method) && /^\/api\/alignments(?:\/|$)/.test(path)) || (req.method === "POST" && /^\/api\/works\/[^/]+\/ebook-set\/fetch$/.test(path))) requireAdmin(req);
   });
   registerCsp(app, { mode: cspMode() });
   app.get("/api/health", async () => ({ ok: true }));
   app.get("/api/auth/status", async (req) => ({ required: !!process.env.APP_PASSWORD, authenticated: !!sessionUser(req), user: sessionUser(req) }));
   app.post(
     "/api/auth/login",
-    { config: { rateLimit: { max: 10, timeWindow: "15 minutes", keyGenerator: (request) => request.ip } } },
+    // Ten tries in 15 minutes per address stops password guessing from outside. A request made on the server itself
+    // (the coordinator's and the live checks' scripts) is not counted: behind Caddy (trustProxy "loopback") only a
+    // request that did not come through it has a loopback address.
+    { config: { rateLimit: { max: 10, timeWindow: "15 minutes", keyGenerator: (request) => request.ip, allowList: (request) => isLoopbackAddress(request.ip) } } },
     async (req, reply) => {
       const { password, username } = z
         .object({ password: z.string().max(512), username: z.string().max(40).optional() })
@@ -369,6 +376,7 @@ export async function createApp(options?: {
   registerCatalogueRoutes(app);
   registerSeriesRoutes(app);
   registerPackRoutes(app);
+  registerMamRoutes(app);
   // #719 part b: the comparison with a provider, Apply, 'Match automatically' per book and per series.
   registerMetadataMatchRoutes(app, workMetadata, (userId, seriesId) => {
     try {
@@ -563,6 +571,9 @@ export async function createApp(options?: {
     zlibSaved: { email: !!getSetting("zlibEmail"), password: !!getSetting("zlibPassword"), token: !!getSetting("zlibToken") },
     prowlarrUrl: getSetting("prowlarrUrl") || "",
     prowlarrConfigured: !!prowlarrConfig(),
+    // MyAnonamouse (#911): whether its session is saved (never the value), and when MAM last refused it.
+    mamConfigured: mamConfigured(),
+    mamRefusedAt: mamRefusedAt(),
     localConfigured: transmissionConfigured(),
     storageLabel: "4 TB media drive",
     authenticationEnabled: !!process.env.APP_PASSWORD,
@@ -592,8 +603,16 @@ export async function createApp(options?: {
         zlibToken: z.string().max(1000).optional(),
         prowlarrUrl: z.union([z.url(), z.literal("")]).optional(),
         prowlarr: z.string().max(200).optional(),
+        // MyAnonamouse's session (#911): the `mam_id` a member makes in MAM's preferences, pasted alone or as `mam_id=…`.
+        mam: z.string().max(4000).optional(),
       })
       .parse(req.body);
+    if (input.mam) {
+      const session = input.mam.trim().replace(/^mam_id=/i, "").replace(/;.*$/, "").trim();
+      if (!/^[A-Za-z0-9%_\-+/=.]{20,3000}$/.test(session)) throw new Error("Paste the session's mam_id as MyAnonamouse shows it.");
+      input.mam = session;
+    }
+    if (input.mam !== undefined) clearMamRefused();
     for (const [field, hosts] of [
       ["annasUrl", /^([a-z0-9-]+\.)?annas-archive\.[a-z]{2,8}$/],
       ["zlibUrl", /^([a-z0-9-]+\.)?(z-library|z-lib|zlibrary|1lib|singlelogin)\.[a-z]{2,8}$/],
@@ -638,7 +657,7 @@ export async function createApp(options?: {
         db.delete(s.settings).where(eq(s.settings.key, key)).run();
         continue;
       }
-      const v = ["torbox", "prowlarr", "audiobookdb", "annas", "zlibEmail", "zlibPassword", "zlibToken"].includes(key)
+      const v = ["torbox", "prowlarr", "audiobookdb", "annas", "zlibEmail", "zlibPassword", "zlibToken", "mam"].includes(key)
         ? encrypt(value)
         : value;
       db.insert(s.settings)
@@ -951,6 +970,16 @@ export async function createApp(options?: {
         workId: z.string().optional(),
       })
       .parse(req.body));
+    // A MyAnonamouse ebook is a private torrent (#911): the local client gets MAM's own `.torrent`, and its EPUB or PDF
+    // joins the book when it is complete; the torrent seeds on.
+    if (input.source === "mam") {
+      const work = input.workId ? db.select().from(s.works).where(eq(s.works.id, input.workId)).get() : undefined;
+      if (!work) throw new Error("Choose the book this ebook is for.");
+      const torrentId = mamIdOfEbookKey(input.md5);
+      if (!torrentId) throw new Error("This MyAnonamouse release could not be found. Search again.");
+      const job = await acquire(mamLink(torrentId), { kind: "ebook", workId: work.id, title: work.title, author: work.author, userId: currentUserId(req) });
+      return { acquisition: { id: job.id, status: job.status } };
+    }
     // A Prowlarr release is a torrent (#901): it goes through the download queue, and its EPUB or PDF joins the book
     // when it is complete. The answer names the download instead of an edition.
     if (input.source === "prowlarr") {

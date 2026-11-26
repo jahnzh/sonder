@@ -153,14 +153,18 @@ export async function seriesPackStep(
   return mine;
 }
 
-/** Whether the pack with this info hash, on its way or done, serves the work (ADR 0027). */
+/**
+ * Whether the pack with this info hash (or, for a MyAnonamouse pack, the key `mam:<torrent id>`, #911), on its way or
+ * done, serves the work (ADR 0027).
+ */
 export function packServesWork(workId: string, hash: string) {
+  const mamId = /^mam:(\d+)$/.exec(hash)?.[1];
   return !!sqlite
     .prepare(
       `SELECT 1 FROM acquisition_works w JOIN acquisitions a ON a.id = w.acquisition_id
-        WHERE w.work_id = ? AND lower(a.hash) = lower(?) AND a.status NOT IN ('error','cancelled')`,
+        WHERE w.work_id = ? AND ${mamId ? "a.mam_torrent_id = ?" : "lower(a.hash) = lower(?)"} AND a.status NOT IN ('error','cancelled')`,
     )
-    .get(workId, hash);
+    .get(workId, mamId ?? hash);
 }
 
 /** A book of a pack as the Get sheet names it. */

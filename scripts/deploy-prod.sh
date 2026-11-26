@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Check out <commit> in the production work tree (bare repo + GIT_WORK_TREE) and run
-# scripts/deploy.sh inside a subshell so GIT_DIR/GIT_WORK_TREE never escape to the caller.
+# scripts/deploy.sh inside a subshell so GIT_DIR/GIT_WORK_TREE never escape to the caller. Before the checkout it stops
+# the background checks of an earlier deploy (deploy.sh --stop-checks), which run from that work tree.
 #   deploy-prod.sh <commit> [deploy.sh args...]
 # deploy.sh requires --marker, --marker-file or --no-marker; deploy-prod.sh rejects a call with none of them (exit 2)
 # before touching the work tree.
@@ -63,6 +64,11 @@ fi
   export GIT_DIR="$git_dir"
   export GIT_WORK_TREE="$work_tree"
   cd "$work_tree" || exit 1
+  # An earlier deploy's background checks run scripts from this work tree: stop them before it changes (#915).
+  # A deploy.sh from before the background checks has no --stop-checks.
+  if grep -q -- '--stop-checks' "$deploy_script" 2>/dev/null; then
+    bash "$deploy_script" --stop-checks || exit 1
+  fi
   if [ "$(git rev-parse HEAD)" != "$full" ]; then
     git checkout --detach "$full" || exit 1
   fi

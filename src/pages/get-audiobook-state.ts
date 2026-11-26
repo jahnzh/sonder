@@ -1,15 +1,21 @@
 // The Get audiobook sheet's search (#601, spec #600 "Searching, a failing source, nothing found"). Pure: no React,
-// no window. Each source (AudioBookBay, and Prowlarr when it is connected) is asked on its own; its rows join as it
+// no window. Each source (AudioBookBay, Prowlarr when it is connected, MyAnonamouse with its session saved, #911) is
+// asked on its own; its rows join as it
 // answers, and a source that fails says so with the server's sentence and a Retry of its own while the others'
 // rows stay. Every ask carries a token: an answer to an older search (or an older Retry) is dropped. AudioBookBay
 // answers a page at a time (#602): Load more asks its next page for the words searched and merges the rows in;
-// Prowlarr has one page and is asked once.
+// Prowlarr and MyAnonamouse have one page and are asked once.
 import { mergeReleases } from "../releases";
 import type { AudiobookRelease } from "../types";
 import { GET_LANGUAGE, languageName, recordingRows, type RecordingRow } from "./get-audiobook-rows";
 
-export type SourceId = "abb" | "prowlarr";
-export const SOURCE_NAMES: Record<SourceId, string> = { abb: "AudioBookBay", prowlarr: "Prowlarr" };
+export type SourceId = "abb" | "prowlarr" | "mam";
+export const SOURCE_NAMES: Record<SourceId, string> = { abb: "AudioBookBay", prowlarr: "Prowlarr", mam: "MyAnonamouse" };
+
+/** The sources the sheet asks: MyAnonamouse first when its session is saved (#911), AudioBookBay, Prowlarr when connected. */
+export function audiobookSources({ prowlarr, mam = false }: { prowlarr: boolean; mam?: boolean }): SourceId[] {
+  return [...(mam ? (["mam"] as const) : []), "abb", ...(prowlarr ? (["prowlarr"] as const) : [])];
+}
 
 export type SourceSearch = {
   status: "searching" | "done" | "failed";

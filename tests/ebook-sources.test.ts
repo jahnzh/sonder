@@ -155,6 +155,8 @@ test("the series search's order: Library Genesis, Anna's Archive, Z-Library, lib
   assert.deepEqual(seriesEbookSources({ year: 2020 }, { ...none, prowlarr: true }, now), ["libgen", "libgenrs", "prowlarr"]);
   assert.deepEqual(seriesEbookSources({ year: 2020 }, { ...none, zlib: true }, now), ["libgen", "zlib", "libgenrs"]);
   assert.deepEqual(seriesEbookSources({ year: null }, none, now), ["libgen", "libgenrs"]);
+  // MyAnonamouse first when its session is saved (the owner's order, #911).
+  assert.deepEqual(seriesEbookSources({ year: 2020 }, { ...none, prowlarr: true, mam: true }, now), ["mam", "libgen", "libgenrs", "prowlarr"]);
   assert.equal(publicDomainAge(1930, now), true);
   assert.equal(publicDomainAge(1931, now), false);
 });
@@ -300,7 +302,8 @@ test("the series ebook search asks the sources in order: Library Genesis limited
     },
   });
   const result = await fetchTopKIntoEbookSet("work-series-1", "libgen", { sources: ["libgen", "prowlarr", "standardebooks"] });
-  assert.deepEqual(order, ["libgen", "prowlarr"]);
+  // Prowlarr is asked first for a release TorBox has cached (#911); none is, so its answer waits for its own turn.
+  assert.deepEqual(order, ["prowlarr", "libgen"]);
   assert.deepEqual(started, ["Project Hail Mary by Andy Weir EPUB"]);
   assert.equal(result.started, "acquisition-1");
   assert.deepEqual(result.failures, [LIBGEN_LIMITED]);
@@ -416,5 +419,40 @@ test("the series search tries a book's Prowlarr download once: a finished one se
   const result = await fetchTopKIntoEbookSet(workId, "libgen", { sources: ["libgen", "prowlarr", "standardebooks"] });
   assert.equal(startedAgain, 0);
   assert.equal(result.started ?? null, null);
-  assert.deepEqual(order, ["libgen", "prowlarr", "standardebooks"]);
+  // Prowlarr asked once, first, for a cached release (#911); its own turn reuses the answer.
+  assert.deepEqual(order, ["prowlarr", "libgen", "standardebooks"]);
+});
+
+test("the series ebook order (#911): a release TorBox has cached first, then MyAnonamouse's EPUB torrent, then the rest", async () => {
+  const { parseMamSearch, mamEbookResult } = await import("../server/sources/myanonamouse.ts");
+  const mamFiles = parseMamSearch(fixture("myanonamouse/ebook-search.json")).results.flatMap((release) => mamEbookResult(release) ?? []);
+  const prowlarrFiles = parseProwlarrEbooks(PROWLARR).files;
+  addWork("work-mam-order-1", "Dungeon Crawler Carl", "Matt Dinniman", 2020);
+  addWork("work-mam-order-2", "Dungeon Crawler Carl", "Matt Dinniman", 2020);
+  const run = async (workId: string, cached: boolean) => {
+    const order: string[] = [];
+    const started: { source: string; title: string }[] = [];
+    setEbookSetDeps({
+      search: async (source) => {
+        order.push(source);
+        if (source === "mam") return { files: mamFiles, website: "" };
+        if (source === "prowlarr")
+          return { files: prowlarrFiles.map((file) => ({ ...file, title: "Dungeon Crawler Carl by Matt Dinniman EPUB", cached })), website: "" };
+        return { files: [], website: "" };
+      },
+      startTorrent: async (file) => {
+        started.push({ source: file.source, title: file.title });
+        return { id: `acquisition-${workId}` };
+      },
+    });
+    const result = await fetchTopKIntoEbookSet(workId, "libgen", { sources: ["mam", "libgen", "prowlarr"] });
+    return { order, started, result };
+  };
+  const cachedFirst = await run("work-mam-order-1", true);
+  assert.deepEqual(cachedFirst.order, ["prowlarr"]);
+  assert.equal(cachedFirst.started[0].source, "prowlarr");
+  const mamNext = await run("work-mam-order-2", false);
+  assert.deepEqual(mamNext.order, ["prowlarr", "mam"]);
+  assert.deepEqual(mamNext.started, [{ source: "mam", title: "Dungeon Crawler Carl" }]);
+  assert.equal(mamNext.result.started, "acquisition-work-mam-order-2");
 });
