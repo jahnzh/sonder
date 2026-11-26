@@ -318,6 +318,53 @@ test("a check that finds no suitable recording is reported as skipped with its r
   }
 });
 
+test("the skip count of a check carries across deploys, and the deploy that reaches the limit fails and rolls back", () => {
+  const reader = "scripts/verify-integrated-reader.mjs";
+  const f = fixture({ "verify-integrated-reader.mjs": { exit: 3, skip: "no aligned recording clear of recent listening" }, "verify-b.mjs": 0 });
+  const latest = () => JSON.parse(readFileSync(join(f.state, "latest.json"), "utf8"));
+  try {
+    const first = f.run(["--no-marker"], { SONDER_DEPLOY_SKIP_LIMIT: "3" });
+    assert.equal(first.status, 0, first.stderr + first.stdout);
+    assert.match(first.stdout, /live check skipped: scripts\/verify-integrated-reader\.mjs \(no suitable recording: [^)]*\); 1 of 3 deploys in a row before it fails/);
+    assert.deepEqual(latest().skipStreak, { [reader]: 1, "scripts/verify-b.mjs": 0 });
+
+    // A deploy that runs no live checks keeps the count.
+    const quiet = f.run(["--no-marker", "--skip-live-checks"], { SONDER_DEPLOY_SKIP_LIMIT: "3" });
+    assert.equal(quiet.status, 0, quiet.stderr + quiet.stdout);
+    assert.equal(latest().skipStreak[reader], 1);
+
+    const second = f.run(["--no-marker"], { SONDER_DEPLOY_SKIP_LIMIT: "3" });
+    assert.equal(second.status, 0, second.stderr + second.stdout);
+    assert.match(second.stdout, /2 of 3 deploys in a row/);
+
+    const third = f.run(["--no-marker"], { SONDER_DEPLOY_SKIP_LIMIT: "3" });
+    assert.equal(third.status, 1, third.stdout);
+    assert.match(third.stderr, /live check failed: scripts\/verify-integrated-reader\.mjs was skipped 3 deploys in a row \(no suitable recording: [^)]*\) and has checked nothing since/);
+    assert.match(third.stderr, /SONDER_VERIFY_RECORDING=<recording id> SONDER_VERIFY_ALLOW_RECENT=1/);
+    assert.match(third.stderr, /1 live check\(s\) failed: scripts\/verify-integrated-reader\.mjs/);
+    assert.equal(latest().result, "rolled_back");
+    assert.equal(latest().skipStreak[reader], 3);
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("five skips in a row is the default limit, and a check that runs resets its count", () => {
+  const f = fixture({ "verify-integrated-reader.mjs": { exit: 3, skip: "none qualifies" }, "verify-b.mjs": 0 });
+  const latest = () => JSON.parse(readFileSync(join(f.state, "latest.json"), "utf8"));
+  try {
+    mkdirSync(f.state, { recursive: true });
+    writeFileSync(join(f.state, "latest.json"), JSON.stringify({ result: "passed", skipStreak: { "scripts/verify-integrated-reader.mjs": 4, "scripts/verify-b.mjs": 4 } }));
+    const r = f.run(["--no-marker"]);
+    assert.equal(r.status, 1, r.stdout);
+    assert.match(r.stderr, /verify-integrated-reader\.mjs was skipped 5 deploys in a row/);
+    assert.doesNotMatch(r.stderr, /verify-b\.mjs was skipped/);
+    assert.deepEqual(latest().skipStreak, { "scripts/verify-integrated-reader.mjs": 5, "scripts/verify-b.mjs": 0 });
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
 test("a skipped check does not hide a real failure of another check", () => {
   const f = fixture({ "verify-integrated-reader.mjs": { exit: 3, skip: "no aligned recording(s) in the library" }, "verify-b.mjs": 1 });
   try {

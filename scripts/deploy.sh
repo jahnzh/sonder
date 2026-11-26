@@ -26,6 +26,7 @@
 #      in the last 48 h (#774). SONDER_VERIFY_RECORDING=<recording id> names the recording instead, and
 #      SONDER_VERIFY_ALLOW_RECENT=1 lets that be a recently played one: both are passed through.
 #      SONDER_DEPLOY_SLICE_PASS=1 adds the slice pass (scripts/verify-slice-pass.mjs, #794) after them.
+#      A check skipped SONDER_DEPLOY_SKIP_LIMIT deploys in a row (5; the count is the result's skipStreak) fails.
 #      A failed check ROLLS BACK: the rollback image is tagged :local again and the container recreated, unless the
 #      container no longer runs this deploy's image (a later deploy), which is then left alone and said.
 #  11. prepare the library's text (#827): scripts/prepare-library.sh starts the server's sweep and waits for it, after
@@ -115,6 +116,9 @@ settle_interval=${SONDER_DEPLOY_SETTLE_INTERVAL:-2}
 for value in "$settle_seconds" "$settle_ceiling" "$health_timeout"; do
   case $value in ''|*[!0-9]*) echo "SONDER_DEPLOY_SETTLE_SECONDS, SONDER_DEPLOY_SETTLE_CEILING and SONDER_DEPLOY_HEALTH_TIMEOUT are whole seconds, got: $value" >&2; exit 2 ;; esac
 done
+# A live check skipped this many deploys in a row fails (the background part, below).
+skip_limit=${SONDER_DEPLOY_SKIP_LIMIT:-5}
+case $skip_limit in ''|*[!0-9]*|0) echo "SONDER_DEPLOY_SKIP_LIMIT is a whole number above 0, got: $skip_limit" >&2; exit 2 ;; esac
 live_checks=${SONDER_DEPLOY_LIVE_CHECKS:-scripts/verify-integrated-reader.mjs scripts/verify-multi-user.mjs scripts/verify-covers.mjs}
 # The command that prepares the library's text after the checks (#827); set but empty leaves the step out.
 prepare_library=${SONDER_DEPLOY_PREPARE_LIBRARY-scripts/prepare-library.sh}
@@ -203,16 +207,32 @@ if [ "$mode" = after ]; then
   skipped_checks=()
   result=""
   prepare_note=""
+  # How many deploys in a row each check was skipped (no suitable recording), carried from the previous deploy's result
+  # (latest.json). A check that has checked nothing for skip_limit deploys in a row fails: the reader
+  # check was broken from #806 until 2026-11-25 while every deploy reported it as skipped. A check that ran resets it; a
+  # check that did not run (--skip-live-checks, superseded) keeps it.
+  declare -A skip_streak=()
+  while read -r name count; do
+    [ -n "$name" ] && skip_streak[$name]=$count
+  done < <(node -e '
+    try {
+      const streak = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).skipStreak || {};
+      for (const [name, count] of Object.entries(streak)) if (Number.isInteger(count) && count > 0 && /^\S+$/.test(name)) console.log(name, count);
+    } catch {}
+  ' "$state_dir/latest.json" 2>/dev/null)
+  streak_list() { local name; for name in "${!skip_streak[@]}"; do printf '%s=%s ' "$name" "${skip_streak[$name]}"; done; }
   write_status() {
     STATUS_FILE="$after_status" STATUS_COMMIT="$commit" STATUS_IMAGE="$after_image" STATUS_ROLLBACK="$after_rollback" \
     STATUS_RESULT="$1" STATUS_FAILED="${failed_checks[*]-}" STATUS_SKIPPED="${skipped_checks[*]-}" \
+    STATUS_STREAK="$(streak_list)" \
     STATUS_PREPARE="$prepare_note" STATUS_TIMES="$(times_line "checks' times")" STATUS_LOG="${SONDER_DEPLOY_AFTER_LOG:-}" \
     node -e '
       const fs = require("node:fs");
       const e = process.env;
       const list = (s) => s.split(" ").filter(Boolean);
+      const skipStreak = Object.fromEntries(list(e.STATUS_STREAK).map((pair) => [pair.slice(0, pair.lastIndexOf("=")), Number(pair.slice(pair.lastIndexOf("=") + 1))]));
       const status = { commit: e.STATUS_COMMIT, image: e.STATUS_IMAGE, rollbackTag: e.STATUS_ROLLBACK, result: e.STATUS_RESULT,
-        failed: list(e.STATUS_FAILED), skipped: list(e.STATUS_SKIPPED), prepare: e.STATUS_PREPARE || null,
+        failed: list(e.STATUS_FAILED), skipped: list(e.STATUS_SKIPPED), skipStreak, prepare: e.STATUS_PREPARE || null,
         times: e.STATUS_TIMES, log: e.STATUS_LOG || null, finishedAt: new Date().toISOString() };
       const text = JSON.stringify(status, null, 2) + "\n";
       fs.writeFileSync(e.STATUS_FILE + ".tmp", text);
@@ -275,11 +295,20 @@ if [ "$mode" = after ]; then
       # Exit 3 counts as skipped only together with a written reason: any other exit 3 stays a failure.
       if [ "$status" -eq "$no_suitable_exit" ] && [ -s "$skip_file" ]; then
         reason=$(head -c 2000 "$skip_file" | tr '\n' ' ')
-        echo "live check skipped: $script (no suitable recording: $reason)"
+        skip_streak[$script]=$(( ${skip_streak[$script]:-0} + 1 ))
         skipped_checks+=("$script")
-      elif [ "$status" -ne 0 ]; then
-        echo "live check failed: $script" >&2
-        failed_checks+=("$script")
+        if [ "${skip_streak[$script]}" -ge "$skip_limit" ]; then
+          echo "live check failed: $script was skipped ${skip_streak[$script]} deploys in a row (no suitable recording: $reason) and has checked nothing since. Make it find a recording, or run it on one with SONDER_VERIFY_RECORDING=<recording id> SONDER_VERIFY_ALLOW_RECENT=1 (its progress writes are protected); a run that checks resets the count" >&2
+          failed_checks+=("$script")
+        else
+          echo "live check skipped: $script (no suitable recording: $reason); ${skip_streak[$script]} of ${skip_limit} deploys in a row before it fails"
+        fi
+      else
+        skip_streak[$script]=0
+        if [ "$status" -ne 0 ]; then
+          echo "live check failed: $script" >&2
+          failed_checks+=("$script")
+        fi
       fi
       rm -f "$skip_file"
     done
