@@ -45,6 +45,8 @@ Run `bash scripts/orca/worker-done.sh <run_id> <msg_id> <worktree path>`. It pri
 
 ## Landing
 
+The land gate is `npm run ci:run -- --level land <sha>` (`land` is the default level): a committed revision in a `git archive` copy on a CI host. A run helper that copies the working tree to lisa (`remote-run.sh '<command>'`) is for a worker's typecheck and unit files and never stands in for it.
+
 The coordinator lands a run's work after one land check of the merged tip (`npm run ci:run <sha>`), deploys at once (`scripts/deploy-prod.sh`) and closes the issues it delivers, without asking the owner (#905). It asks him only for an account or a product choice he would notice. The full browser suite runs nightly and never holds a landing; its failures arrive as `needs-triage` issues (`artifacts/ci/nightly/latest.json`).
 
 `scripts/orca-land.sh` removes the worktree and deletes branches that share the landed tip. When a running worker's branch starts from that tip (a follow-up built on the branch being landed), land with `gh pr merge <n> --merge` instead and remove the worktree later.
