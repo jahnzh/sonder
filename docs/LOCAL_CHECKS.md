@@ -180,6 +180,8 @@ Sonder uses WAL mode. A plain copy of `sonder.db` can omit committed transaction
 
 Production source lives at `/home/jahn/audiobook_streamer`: a **bare** Git repository at `.git` (`core.bare=true`) with the running app checkout as the work tree (same directory). Orca worktrees attach under `.git/worktrees/`; deploy must not export `GIT_DIR` or `GIT_WORK_TREE` into an agent shell.
 
+Being bare, the production directory fails every git command that needs a work tree ("this operation must be run in a work tree", e.g. `git rev-parse --show-toplevel`). The scripts run there handle it: `deploy-prod.sh` sets `GIT_DIR`/`GIT_WORK_TREE` in a subshell, `build-image.sh` and `prebuild-image.sh` read the commit (`git archive`), and `update-ctc-workers.sh` finds the repository with `git rev-parse --absolute-git-dir` and exports `worker/` with `git archive`.
+
 From any checkout (including an Orca worktree), deploy a committed revision with:
 
 ```bash
