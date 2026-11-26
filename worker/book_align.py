@@ -26,6 +26,8 @@ import numpy as np
 
 RATE = 16000
 STRIDE = 320
+# The encoder frame grid both book models share (ctc_acoustic.STRIDE and RECEPTIVE_FIELD, ctc_sewd.frame_grid).
+RECEPTIVE_FIELD = 400
 NEG = -1e30
 # The prototype's tuned alignment parameters (PROTO-D-E.md "Tuning"): unchanged.
 DELTA = 1.5
@@ -868,8 +870,10 @@ def leftover_pass(longform, chain, should_stop=None, rounds=LEFTOVER_ROUNDS, run
 
 
 def frame_boundary(frame):
-    """Sample position of a frame's start boundary on its track's grid (ctc_acoustic.frame_boundary)."""
-    return frame * STRIDE + 40
+    """Sample position of a frame's start boundary on its track's grid (ctc_acoustic.frame_boundary): half a
+    stride before the frame's centre, RECEPTIVE_FIELD / 2 + STRIDE * frame. Both book models (Wav2Vec2 Base and
+    SEW-D tiny, #921) have this grid; `book_encode` refuses a model whose frame count says otherwise."""
+    return frame * STRIDE + (RECEPTIVE_FIELD - STRIDE) // 2
 
 
 def validate(longform, raw, to_seconds=None):

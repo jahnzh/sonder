@@ -55,6 +55,8 @@ export type FakeBookHost = FakeHostState & {
   mapShare: number;
   /** The engine the result names: the whole-book engine by default. */
   resultEngine: string;
+  /** The whole-book engine `/health` reports (the host's book model, #921): Wav2Vec2 Base's by default. */
+  bookEngine: string;
   /** Runs before a whole-book request is answered. */
   onBook?: (method: string, path: string) => void | Promise<void>;
   /** Every whole-book request this host sent an answer to (or cut or dropped), as "METHOD path", in order. */
@@ -279,7 +281,7 @@ function health(host: FakeBookHost) {
     ctc: { engine: CTC_ENGINE, ready: true, device: host.device, precision: host.precision,
       anchorReady: true, passageReady: true, anchorBatch: true },
     ...(host.noBookJobs ? {} : {
-      bookJobs: { engine: BOOK_ENGINE, ready: true, jobs: host.jobs.size, resuming: host.resuming > 0, slotsHeld: host.slotsHeld,
+      bookJobs: { engine: host.bookEngine, ready: true, jobs: host.jobs.size, resuming: host.resuming > 0, slotsHeld: host.slotsHeld,
         batchSeconds: null, stuck: [], diskReservedBytes: 0, diskBudgetBytes: 64 * 1024 ** 3 },
     }),
   };
@@ -298,7 +300,7 @@ export async function fakeBookWorkers(
   for (const spec of specs) {
     const host = Object.assign(ssh.hosts[spec.id], {
       book: [], starts: [], jobs: new Map(), pollsPerStage: 1, holdAt: null, failAt: null, resuming: 0,
-      noBookJobs: false, stuck: false, mapShare: 1, resultEngine: BOOK_ENGINE, answered: [], holdCancel: null, cancelFails: 0,
+      noBookJobs: false, stuck: false, mapShare: 1, resultEngine: BOOK_ENGINE, bookEngine: BOOK_ENGINE, answered: [], holdCancel: null, cancelFails: 0,
       loseStartReplies: 0, statusAnswer: null, resultAnswer: null, cutStatus: 0, cutResult: 0, garbleStatus: 0, misshapeStatus: 0,
       uploads: [], uploadsIntoLiveJobs: [], activeRequests: 0, slotsHeld: 0, healthRequests: 0, healthDrops: 0,
     }) as FakeBookHost;

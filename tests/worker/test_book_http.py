@@ -333,7 +333,9 @@ class StartupWithRetainedJobs(unittest.TestCase):
                 release.wait(15)  # a stalled read of the retained folder (under the jobs' lock)
             return real(path)
 
-        env = mock.patch.dict(os.environ, {"MEDIA_ROOT": str(media), "ALIGNMENT_WORKER_TOKEN": TOKEN})
+        # The retained job is Base's: a worker of the other book model would start it over (#921).
+        env = mock.patch.dict(os.environ, {"MEDIA_ROOT": str(media), "ALIGNMENT_WORKER_TOKEN": TOKEN,
+                                           "ALIGNMENT_BOOK_MODEL": "wav2vec2-base"})
         env.start()
         self.addCleanup(env.stop)
         patch = mock.patch.object(book_job, "folder_bytes", slow)

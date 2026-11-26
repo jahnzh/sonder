@@ -19,7 +19,8 @@ from ctc_pipeline import align_ctc_batch_locate, align_ctc_section, shutdown_loc
 from ctc_decode import evict_decoded
 from ctc_gpu import GpuMonitor
 import ctc_prefetch
-from book_job import BOOK_ENGINE, BookJobs, JobConflict, NotReady, Resuming, UnknownJob, WorkerStages
+from book_job import BookJobs, JobConflict, NotReady, Resuming, UnknownJob, WorkerStages
+from book_model import SEW_D_TINY, book_engine, book_model_name
 from book_session import BudgetExceeded
 from revision import read_revision
 
@@ -28,15 +29,32 @@ root = Path(os.environ.get("MEDIA_ROOT", "/mnt/usb_4t_1/sonder")).resolve()
 REVISION = read_revision()
 
 
+# The model whole-book jobs encode with on this host and its engine (#921): ALIGNMENT_BOOK_MODEL, else Base on a
+# GPU and SEW-D tiny on the CPU. Window requests keep Base (CTC_ENGINE). An unknown value stops the worker here.
+BOOK_MODEL = book_model_name()
+BOOK_ENGINE = book_engine(BOOK_MODEL)
+
+
 def _book_model():
+    if BOOK_MODEL == SEW_D_TINY:
+        from ctc_sewd import resident_sewd
+        return resident_sewd(root / "alignment")
     from ctc_acoustic import resident_model
     return resident_model(root / "alignment")
+
+
+def _book_model_ready(ctc_ready):
+    """The book model can load: Base with the window model's checks, SEW-D tiny also its files and transformers."""
+    if BOOK_MODEL != SEW_D_TINY:
+        return ctc_ready
+    import ctc_sewd
+    return ctc_ready and ctc_sewd.files_present(root / "alignment") and ctc_sewd.transformers_ready()
 
 
 # Whole-book jobs (#402): one per book, in their own folder under the alignment cache.
 book_jobs = BookJobs(root / "alignment" / "book-jobs",
                      WorkerStages(root / "alignment", _book_model, os.environ.get("ALIGNMENT_CTC_DEVICE", "cpu"),
-                                  gpu_monitor=GpuMonitor))
+                                  gpu_monitor=GpuMonitor, engine=BOOK_ENGINE))
 _book_sweeper_stop = threading.Event()
 
 
@@ -236,7 +254,8 @@ def health():
             "anchorReady": ctc_ready, "passageReady": True, "anchorBatch": True},
             # Book work is reported here only: the fields above describe window requests, as before #402.
             # None of these waits on a lock that book bookkeeping holds across disk I/O (book_job.BookJobs).
-            "bookJobs": {"engine": BOOK_ENGINE, "ready": ctc_ready, "jobs": len(book_jobs.keys()),
+            "bookJobs": {"engine": BOOK_ENGINE, "model": BOOK_MODEL, "ready": _book_model_ready(ctc_ready),
+                         "jobs": len(book_jobs.keys()),
                          "resuming": book_jobs.resuming,
                          "slotsHeld": gate.background_active, "batchSeconds": gate.background_seconds(),
                          "stuck": book_jobs.registry.stuck(),

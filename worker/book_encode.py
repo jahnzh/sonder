@@ -19,7 +19,7 @@ import time
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
-from ctc_acoustic import chunks, core_frames, is_out_of_memory
+from ctc_acoustic import RECEPTIVE_FIELD, STRIDE, chunks, core_frames, is_out_of_memory
 from deadline import GateWaitStopped
 
 CLASSES = 29
@@ -138,6 +138,11 @@ def batches(items, size):
         yield current
 
 
+def grid_frames(samples):
+    """Frames a window of `samples` has on the book aligner's grid (stride 320, receptive field 400)."""
+    return max(0, (samples - RECEPTIVE_FIELD) // STRIDE + 1)
+
+
 def thread_stats(stats, count):
     """The torch threads of the CPU batches so far, {min, max, last}, after one more batch of `count`."""
     if stats is None:
@@ -149,7 +154,9 @@ def encode_tracks(model, tracks, folder, identity, batch_size=None, should_stop=
                   on_progress=None, load_pcm=None, admit=None, threads=None):
     """Encode `tracks` ([{"index", "pcm", "samples"}]) into `folder/<index>.f16` with `<index>.json`.
 
-    `model` is a `ctc_acoustic.AcousticModel` (its `.model`, `.torch`, `.device`, `.dtype`). `admit()`, when
+    `model` is the host's book model, `ctc_acoustic.AcousticModel` or `ctc_sewd.SewdModel` (its `.model`,
+    `.torch`, `.device`, `.dtype`); `.model(wave)` returns (logits over the 29 labels, ...), one frame per 320
+    samples, which is checked per batch. `admit()`, when
     given, returns the context held around each batch's inference (one gate slot). On the CPU, `threads()`,
     when given, is the torch thread count for the next batch, asked just before it runs (`cpu_share`: the
     cores no other job holds). Returns stats.
@@ -220,6 +227,10 @@ def encode_tracks(model, tracks, folder, identity, batch_size=None, should_stop=
                     logits, _ = model.model(wave)
                     out = logits.float().log_softmax(-1)
                     valid = out.shape[1]
+                    if valid != grid_frames(waves.shape[1]):
+                        # Another frame grid would put every frame at the wrong time (book_align.frame_boundary).
+                        raise RuntimeError(f"The book model gave {valid} frames for a window of {waves.shape[1]} "
+                                           f"samples, not the {grid_frames(waves.shape[1])} of its frame grid.")
                     parts = []
                     for row, (p, start, end, lo, _hi) in enumerate(group):
                         first, last = core_frames(start, end, lo, valid)

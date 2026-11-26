@@ -13,7 +13,7 @@ import {
   type ListedJob,
   type SyncPageFacts,
 } from "../src/pages/reading-sync-model.ts";
-import { BOOK_ENGINE, bookWorkerJobId } from "../src/reading-types.ts";
+import { BOOK_ENGINE, SEWD_BOOK_ENGINE, bookWorkerJobId } from "../src/reading-types.ts";
 import type { ReadingSyncSummary } from "../src/types.ts";
 
 const NOW = new Date(2026, 10, 17, 15, 0).getTime();
@@ -412,6 +412,16 @@ test("Details: engine, GPU use, processing time, the stage times, the warning an
   assert.deepEqual(older.flags, ["Introduction or credits not in the ebook: 0:00–0:42", "Not found in the narration: Preface"]);
   assert.deepEqual(readingSyncDetails(null), { rows: [], stages: [], warning: null, olderEngine: null, flags: [] });
   assert.equal(stageName("locateWorkers"), "Locate workers");
+});
+
+test("Details name the engine that made a map: SEW-D tiny's whole-book map is a whole-book map (#921)", () => {
+  const sewd = readingSyncDetails(job("partial", { engine: SEWD_BOOK_ENGINE, gpuUtilization: null }));
+  assert.deepEqual(sewd.rows[0], { label: "Engine", value: SEWD_BOOK_ENGINE });
+  assert.equal(sewd.olderEngine, null, "no older engine's progress line");
+  assert.deepEqual(readingSyncDetails(job("partial")).rows[0], { label: "Engine", value: BOOK_ENGINE });
+  // A running job that a CPU host made under SEW-D tiny shows its whole-book steps too.
+  const running = page(job("processing", { engine: SEWD_BOOK_ENGINE, bookJob: worker("encoding", { tracksTotal: 2, tracksEncoded: 1 }, "lisa") }));
+  assert.ok(running.blocks[0].steps, "the whole-book steps");
 });
 
 test("the time of a state: today, yesterday, a date this year and another", () => {

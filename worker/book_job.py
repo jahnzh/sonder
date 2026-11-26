@@ -27,6 +27,7 @@ import time
 import traceback
 from pathlib import Path
 
+from book_model import BOOK_ENGINES, WAV2VEC2_BASE
 from book_session import (BudgetExceeded, SessionEnded, SessionRegistry, emission_bytes, folder_bytes,
                           meta_bytes)
 
@@ -40,7 +41,9 @@ RECORD_KEYS = ("jobId", "engine", "digest", "state", "recordingId", "createdAt",
 # book-v2 (#403): the leftover pass adds intervals the v1 chain never produced (chapters out of the ebook's
 # order) and a wrong book ends as `text_mismatch` instead of an empty map, so a map's content depends on the
 # generation. Retained folders of book-v1 start over (their emissions carry the engine in their identity).
-BOOK_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-book-v2"
+# #921: each host's book model has its own engine (book_model.BOOK_ENGINES); this is Wav2Vec2 Base's, the default
+# of `WorkerStages`. A retained folder of the other model's engine starts over too.
+BOOK_ENGINE = BOOK_ENGINES[WAV2VEC2_BASE]
 # torchaudio WAV2VEC2_ASR_BASE_960H labels (the emissions' 29 classes, blank first).
 LABELS = ("-", "|", "E", "T", "A", "O", "N", "I", "H", "S", "R", "D", "L", "U", "M", "W", "C", "F", "G", "Y",
           "P", "B", "V", "K", "'", "X", "J", "Q", "Z")
@@ -264,6 +267,8 @@ class BookJobs:
         self.root = Path(root)
         self.state_bytes = state_bytes
         self.stages = stages
+        # The engine this worker's book jobs run under: the stages' model (#921).
+        self.engine = getattr(stages, "engine", BOOK_ENGINE)
         self.registry = registry or SessionRegistry()
         self._clock = clock
         # Guards _jobs and job launches, and is held across book bookkeeping on disk (start, resume): only
@@ -361,7 +366,7 @@ class BookJobs:
         if job.state["state"] not in TERMINAL or job.state["state"] == "done":
             job.update(state="cancelled", error=None)
         self._end_job(job, "cancelled")
-        return {"jobId": key, "engine": BOOK_ENGINE, "state": "cancelled"}
+        return {"jobId": key, "engine": self.engine, "state": "cancelled"}
 
     def result(self, key):
         job = self._job(key)
@@ -546,12 +551,12 @@ class BookJobs:
     def _load_or_create(self, key, folder, request, digest):
         folder.mkdir(parents=True, exist_ok=True)
         state = read_json(folder / "state.json")
-        if state is None or state.get("digest") != digest or state.get("engine") != BOOK_ENGINE:
+        if state is None or state.get("digest") != digest or state.get("engine") != self.engine:
             # A new job, or one written by another aligner generation: start it over.
             for name in ("tracks", "emissions", "groups"):
                 shutil.rmtree(folder / name, ignore_errors=True)
             (folder / "result.json").unlink(missing_ok=True)
-            state = {"jobId": key, "engine": BOOK_ENGINE, "digest": digest, "state": "queued",
+            state = {"jobId": key, "engine": self.engine, "digest": digest, "state": "queued",
                      "recordingId": request.get("recordingId"), "createdAt": time.time(),
                      "updatedAt": time.time(), "progress": {"tracksTotal": len(request["tracks"])},
                      "stageTimings": {}, "error": None, "resumed": 0}
@@ -577,7 +582,7 @@ class BookJobs:
         try:
             if job.request.get("language", "eng") != "eng":
                 write_reserved(job, session, job.folder / "result.json",
-                               {"jobId": job.key, "engine": BOOK_ENGINE, "outcome": "language_not_supported",
+                               {"jobId": job.key, "engine": self.engine, "outcome": "language_not_supported",
                                 "intervals": [], "tracks": []}, should_stop, self.state_bytes)
                 self._finish(job, read_json(job.folder / "result.json"))
                 return
@@ -638,14 +643,16 @@ class BookJobs:
 # ------------------------------------------------------------------ the stages on the real worker
 
 class WorkerStages:
-    """Decode, encode, anchor, align and finish with the resident model. `model_loader()` returns a
-    `ctc_acoustic.AcousticModel`; `encode_queue(device)` returns the device's `book_encode.EncodeQueue`."""
+    """Decode, encode, anchor, align and finish with the resident model. `model_loader()` returns the host's
+    book model (`ctc_acoustic.AcousticModel` or `ctc_sewd.SewdModel`), and `engine` is that model's book engine
+    (`book_model.BOOK_ENGINES`); `encode_queue(device)` returns the device's `book_encode.EncodeQueue`."""
 
     def __init__(self, media_folder, model_loader, device="cpu", env=None, gpu_monitor=None, admission=None,
-                 cpu=None):
+                 cpu=None, engine=BOOK_ENGINE):
         from cpu_share import SHARE
         self.media_folder = Path(media_folder)
         self.model_loader = model_loader
+        self.engine = engine
         self.device = device
         self.env = os.environ if env is None else env
         self.gpu_monitor = gpu_monitor
@@ -689,7 +696,7 @@ class WorkerStages:
         if digest is None:
             digest, _version = audio_digest(track["audio"])
             session.digests[index] = digest
-        return {"engine": BOOK_ENGINE, "sha256": digest}
+        return {"engine": self.engine, "sha256": digest}
 
     def decode_and_encode(self, job, session, should_stop):
         from book_audio import (DecodeCancelled, decode_tracks, decode_workers, decoded_samples_bound, peak_bytes,
@@ -1041,7 +1048,7 @@ class WorkerStages:
         mapped_ids = {i["paragraphId"] for i in intervals}
         flags = book_report.flags(sentences, intervals,
                                   [{"id": row["id"], "seconds": row["decodedSeconds"]} for row in track_rows], titles)
-        return {"jobId": job.key, "engine": BOOK_ENGINE, "recordingId": job.request.get("recordingId"),
+        return {"jobId": job.key, "engine": self.engine, "recordingId": job.request.get("recordingId"),
                 "audioFingerprint": job.request.get("audioFingerprint"),
                 "outcome": outcome or ("mapped" if intervals else "unsynced"), "sentences": len(sentences),
                 "mapped": len(intervals), "intervals": intervals,

@@ -14,7 +14,7 @@ import type {
   AlignmentPoolHostWork,
   AlignmentPoolStatus,
 } from "../src/reading-types.ts";
-import { BOOK_ENGINE, CTC_ENGINE } from "./alignment-engine.ts";
+import { BOOK_ENGINES, CTC_ENGINE, isBookEngine } from "./alignment-engine.ts";
 import { untilAborted } from "./until-aborted.ts";
 import type * as schema from "./schema.ts";
 
@@ -100,7 +100,7 @@ export function isFullAlignmentJob(job: AlignmentJob) {
 
 export function shouldDispatchToPool(job: AlignmentJob) {
   return poolEnabled() && job.origin !== "projected" &&
-    (job.engine === CTC_ENGINE || job.engine === BOOK_ENGINE || isFullAlignmentJob(job));
+    (job.engine === CTC_ENGINE || isBookEngine(job.engine) || isFullAlignmentJob(job));
 }
 
 function hostNameFromSshTarget(sshTarget: string) {
@@ -585,7 +585,9 @@ export function workerRevision(value: unknown): string | null {
 export function bookJobsProblem(health: Pick<CtcHealth, "bookJobs">): string | null {
   const book = health.bookJobs;
   if (!book || typeof book !== "object") return "worker runs no whole-book jobs";
-  if (book.engine !== BOOK_ENGINE) return `worker runs whole-book engine ${String(book.engine ?? "none")}, expected ${BOOK_ENGINE}`;
+  // The host's book model chooses its engine (#921): Wav2Vec2 Base or SEW-D tiny, both current.
+  if (typeof book.engine !== "string" || !isBookEngine(book.engine))
+    return `worker runs whole-book engine ${String(book.engine ?? "none")}, expected one of ${BOOK_ENGINES.join(", ")}`;
   if (book.ready !== true) return "whole-book jobs are not ready";
   return null;
 }

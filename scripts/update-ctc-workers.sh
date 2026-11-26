@@ -5,7 +5,9 @@
 # ~/sonder-ctc-worker (SONDER_CTC_DIR overrides):
 #   1. skip it when /health already reports this commit as its revision, or a commit with the same worker/;
 #   2. copy worker/ of the commit to worker.new and write the commit into worker.new/REVISION;
-#   3. import the new code with the host's own environment (worker.env), so a broken copy never goes live;
+#   3. install worker.new/requirements-book.txt into the host's env when its pins are not all there (#921) and fetch
+#      the pinned model weights that are missing (download_model.py, checked by SHA-256);
+#      then import the new code with the host's own environment (worker.env), so a broken copy never goes live;
 #   4. refuse when /health shows a request or a whole-book job running;
 #   5. move worker to worker.bak-<time>, worker.new to worker, restart the systemd user unit;
 #   6. wait until /health is ready and reports the commit; 7. keep the two newest worker.bak-* folders.
@@ -76,6 +78,25 @@ dir=$HOME/$1
 unit=$2
 revision=$3
 cd "$dir/worker.new"
+# Dependencies and weights first (#921): the running worker never imports them, so this changes nothing live.
+if [ -f requirements-book.txt ]; then
+  if ! ../env/bin/python -B - requirements-book.txt <<'PY'
+import sys
+from importlib.metadata import PackageNotFoundError, version
+pins = [line.split("#")[0].strip() for line in open(sys.argv[1])]
+for name, wanted in (pin.split("==", 1) for pin in pins if "==" in pin):
+    try:
+        if version(name) != wanted:
+            sys.exit(1)
+    except PackageNotFoundError:
+        sys.exit(1)
+PY
+  then
+    ../env/bin/pip install -q --no-cache-dir -r requirements-book.txt
+    echo "installed requirements-book.txt"
+  fi
+fi
+(set -a; . ../worker.env; set +a; ../env/bin/python -B download_model.py)
 (set -a; . ../worker.env; set +a; ../env/bin/python -B -c 'import align; align.health()')
 echo "import ok"
 

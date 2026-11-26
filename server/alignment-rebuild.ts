@@ -8,24 +8,26 @@
  * rebuild that is empty or much worse than the kept map does not publish (#379): see `rebuildRejection`.
  */
 import { CTC_ENGINE } from "./alignment-pool.ts";
-import { BOOK_ENGINE, bookJobsEnabled } from "./alignment-engine.ts";
+import { BOOK_ENGINE, BOOK_ENGINES, bookJobsEnabled } from "./alignment-engine.ts";
 import { rebuildState, type AlignmentJob } from "../src/reading-types.ts";
 
 /**
  * Engine generations, oldest first. Append a new engine identity here when it ships; never reorder or remove
  * one. An identity missing from the list is treated as not older, so a rolled-back server never rebuilds the
- * maps of a newer engine with its own older one.
+ * maps of a newer engine with its own older one. An entry that lists several engines is one generation: its
+ * engines are equally current, so none of their maps is rebuilt for another (the whole-book engines of
+ * Wav2Vec2 Base and SEW-D tiny, #921, which the host's model chooses).
  */
 // The first CTC engine joined partly cached windows out of time order, dropping many sentences.
-export const ENGINE_GENERATIONS: readonly string[] = [
+export const ENGINE_GENERATIONS: readonly (string | readonly string[])[] = [
   "aeneas-1.7.3",
   "ctc-wav2vec2-base-960h-torchaudio-2.8-v1",
   CTC_ENGINE,
-  BOOK_ENGINE,
+  BOOK_ENGINES,
 ];
-let generations: readonly string[] = ENGINE_GENERATIONS;
+let generations: readonly (string | readonly string[])[] = ENGINE_GENERATIONS;
 
-export function setEngineGenerationsForTests(list: readonly string[] | null) {
+export function setEngineGenerationsForTests(list: readonly (string | readonly string[])[] | null) {
   generations = list ?? ENGINE_GENERATIONS;
 }
 
@@ -36,7 +38,14 @@ export function currentAlignmentEngine() {
 
 /** Position in ENGINE_GENERATIONS, or -1 for an identity this server does not know. */
 export function engineGenerationRank(engine: string) {
-  return generations.indexOf(engine);
+  return generations.findIndex((entry) => (typeof entry === "string" ? entry === engine : entry.includes(engine)));
+}
+
+/** True when `engine` belongs to the same generation as `target`: a job or map of it needs no replanning. */
+export function engineIsCurrent(engine: string, target = currentAlignmentEngine()) {
+  if (engine === target) return true;
+  const rank = engineGenerationRank(engine);
+  return rank >= 0 && rank === engineGenerationRank(target);
 }
 
 /** True when `engine` is a known generation older than `target`. */
