@@ -29,6 +29,11 @@ if [[ -n "$staged" ]]; then
   fi
 fi
 
+if ! has_dependencies; then
+  echo "Pre-commit hook: no node_modules in this checkout; the typecheck and tests run in the land gate (npm run ci:run)."
+  exit 0
+fi
+
 if ! npx tsc --noEmit; then
   echo "Pre-commit blocked: npx tsc --noEmit failed." >&2
   echo "Skip once with SONDER_SKIP_PRECOMMIT=1 git commit" >&2

@@ -44,6 +44,8 @@ function makeTempRepo() {
     chmodSync(join(root, ".githooks", hook), 0o755);
   }
   gitIn(root, "init", "-q");
+  // A checkout with its dependencies; the hooks pass without a check where there are none.
+  mkdirSync(join(root, "node_modules"));
   return root;
 }
 
@@ -561,4 +563,23 @@ test("prepare command exits 0 when scripts/install-hooks.sh is missing", () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("the hooks pass with one line, and run nothing, in a checkout without node_modules", () => {
+  withRepo(({ root, base, binDir, logPath }) => {
+    rmSync(join(root, "node_modules"), { recursive: true });
+    const { logPath: npxLog } = writeStubNpx(root);
+    writeFileSync(join(root, "src", "app.ts"), "export const one = 11;\n");
+    gitIn(root, "add", "src/app.ts");
+    const commit = runPreCommit(root, binDir, { SONDER_STUB_TSC_EXIT: "1" });
+    assert.equal(commit.status, 0, commit.stderr || commit.stdout);
+    assert.equal(commit.stdout.trim(), "Pre-commit hook: no node_modules in this checkout; the typecheck and tests run in the land gate (npm run ci:run).");
+    gitIn(root, "commit", "-qm", "code", "--no-verify");
+    const head = gitIn(root, "rev-parse", "HEAD");
+    const push = runHook(root, binDir, { SONDER_STUB_BUILD_EXIT: "1" }, update(head, base));
+    assert.equal(push.status, 0, push.stderr || push.stdout);
+    assert.match(push.stdout, /^Pre-push hook: no node_modules in this checkout; the build and tests run in the land gate \(npm run ci:run\)\.$/m);
+    assert.equal(existsSync(npxLog), false);
+    assert.deepEqual(npmCalls(logPath), []);
+  });
 });
