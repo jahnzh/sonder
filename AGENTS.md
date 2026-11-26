@@ -39,7 +39,7 @@ Use Node 24 and install dependencies with `npm ci`.
 - `npm run build` typechecks, builds the client and generates the service worker.
 - `npm test` runs Node tests through `tsx`; `npm run test:browser` runs Playwright. Build first: browser tests serve `dist/`.
 - `npm run check -- --ref <commit>` runs install, build, the unit suite and the browser smoke set (`--level full`: the whole browser suite) in an isolated snapshot of a committed revision. See `docs/LOCAL_CHECKS.md` for reports and options.
-- `scripts/deploy-prod.sh <commit>` checks out the revision in the production bare work tree and runs `scripts/deploy.sh` in a subshell (no leaked `GIT_*` env). `scripts/deploy.sh <commit>` deploys a committed revision to the production container (backup, rollback tag, build, markers, health, live checks). See `docs/LOCAL_CHECKS.md` (Production deployment).
+- `scripts/deploy-prod.sh <commit>` checks out the revision in the production bare work tree and runs `scripts/deploy.sh` in a subshell (no leaked `GIT_*` env). `scripts/deploy.sh <commit>` deploys a committed revision to the production container (image built ahead by `scripts/build-image.sh` or now, backup, rollback tag, markers and smoke in one container, swap, health once; then the live checks in the background, rolling back on a failure, waited for with `scripts/deploy-wait.sh`). See `docs/LOCAL_CHECKS.md` (Production deployment).
 
 ## CI over SSH
 

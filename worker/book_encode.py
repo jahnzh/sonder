@@ -138,18 +138,31 @@ def batches(items, size):
         yield current
 
 
+def thread_stats(stats, count):
+    """The torch threads of the CPU batches so far, {min, max, last}, after one more batch of `count`."""
+    if stats is None:
+        return {"min": count, "max": count, "last": count}
+    return {"min": min(stats["min"], count), "max": max(stats["max"], count), "last": count}
+
+
 def encode_tracks(model, tracks, folder, identity, batch_size=None, should_stop=None, on_track=None,
-                  on_progress=None, load_pcm=None, admit=None):
+                  on_progress=None, load_pcm=None, admit=None, threads=None):
     """Encode `tracks` ([{"index", "pcm", "samples"}]) into `folder/<index>.f16` with `<index>.json`.
 
     `model` is a `ctc_acoustic.AcousticModel` (its `.model`, `.torch`, `.device`, `.dtype`). `admit()`, when
-    given, returns the context held around each batch's inference (one gate slot). Returns stats.
+    given, returns the context held around each batch's inference (one gate slot). On the CPU, `threads()`,
+    when given, is the torch thread count for the next batch, asked just before it runs (`cpu_share`: the
+    cores no other job holds). Returns stats.
     """
     import numpy as np
+    from ctc_acoustic import use_cpu_threads
     torch = model.torch
+    device_type = getattr(model.device, "type", model.device)
+    on_cpu = str(device_type).startswith("cpu")
+    used_threads = None
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
-    batch_size = batch_size or encode_batch(device=getattr(model.device, "type", model.device))
+    batch_size = batch_size or encode_batch(device=device_type)
     load_pcm = load_pcm or (lambda track: np.memmap(track["pcm"], dtype="<i2", mode="r"))
     audio = {}
     handles = {}
@@ -198,6 +211,11 @@ def encode_tracks(model, tracks, folder, identity, batch_size=None, should_stop=
             try:
                 # The batch's results are on the CPU before the slot is given back.
                 with (admit() if admit is not None else nullcontext()), torch.inference_mode():
+                    if on_cpu and threads is not None:
+                        # Asked once the slot is held, so the count is the one free while the batch runs.
+                        count = threads()
+                        use_cpu_threads(torch, count)
+                        used_threads = thread_stats(used_threads, count)
                     wave = torch.from_numpy(waves).to(device=model.device, dtype=model.dtype)
                     logits, _ = model.model(wave)
                     out = logits.float().log_softmax(-1)
@@ -237,4 +255,5 @@ def encode_tracks(model, tracks, folder, identity, batch_size=None, should_stop=
     total = sum(track["samples"] for track in tracks)
     return {"encodeSeconds": elapsed, "encodedAudioSeconds": encoded_samples / 16000,
             "audioSeconds": total / 16000, "realtime": (total / 16000 / elapsed) if elapsed else None,
-            "batch": batch_size, "oomHalvings": halvings}
+            "batch": batch_size, "oomHalvings": halvings,
+            "threads": used_threads}

@@ -111,6 +111,20 @@ function fakeMam(answer: (url: URL, init: RequestInit) => Response) {
   return { asked, fetch };
 }
 
+test("a download hash without its tid gets ?tid=<id> appended, as MAM's API list says", async () => {
+  const bare = fixtureText("audio-search.json").replace(/(DOWNLOAD-TOKEN)\?tid=\d+/g, "$1");
+  const mam = fakeMam((url) => {
+    if (url.href.startsWith(MAM_ENDPOINTS.search.url)) return new Response(bare, { headers: { "content-type": "application/json" } });
+    if (url.href.startsWith(MAM_ENDPOINTS.download.url))
+      return new Response(fixtureBytes("892986.torrent"), { headers: { "content-type": "application/x-bittorrent" } });
+    throw new Error(`not allowed: ${url}`);
+  });
+  const client = createMamClient({ fetch: mam.fetch, session: () => "a-session-value", saveSession: () => {} });
+  await client.search("Dungeon Crawler Carl", "audio");
+  await client.torrentFile(1097985);
+  assert.equal(mam.asked[1].url.href, `${MAM_ENDPOINTS.download.url}DOWNLOAD-TOKEN?tid=1097985`);
+});
+
 test("the client calls only the allow-listed search and download, with the session as the mam_id cookie, and keeps the renewed session", async () => {
   const sessions: string[] = [];
   const mam = fakeMam((url) => {

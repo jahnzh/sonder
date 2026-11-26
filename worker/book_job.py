@@ -641,7 +641,9 @@ class WorkerStages:
     """Decode, encode, anchor, align and finish with the resident model. `model_loader()` returns a
     `ctc_acoustic.AcousticModel`; `encode_queue(device)` returns the device's `book_encode.EncodeQueue`."""
 
-    def __init__(self, media_folder, model_loader, device="cpu", env=None, gpu_monitor=None, admission=None):
+    def __init__(self, media_folder, model_loader, device="cpu", env=None, gpu_monitor=None, admission=None,
+                 cpu=None):
+        from cpu_share import SHARE
         self.media_folder = Path(media_folder)
         self.model_loader = model_loader
         self.device = device
@@ -649,6 +651,8 @@ class WorkerStages:
         self.gpu_monitor = gpu_monitor
         # The window endpoints' deadline.Gate: each encode batch holds one of its slots (window requests first).
         self.admission = admission
+        # The worker's cpu_share.CpuShare: decode and align claim cores, a CPU encode takes the rest per batch.
+        self.cpu = SHARE if cpu is None else cpu
 
     def encode_position(self, key):
         from book_encode import encode_queue
@@ -668,7 +672,8 @@ class WorkerStages:
         metas = self.decode_and_encode(job, session, should_stop)
         if should_stop():
             raise Stopped()
-        self.align(job, session, metas, should_stop)
+        with self.cpu.claim(1):  # the job's thread: anchors, text match, leftover pass, validation
+            self.align(job, session, metas, should_stop)
 
     @staticmethod
     def reserve(job, session, should_stop, adds):
@@ -687,7 +692,8 @@ class WorkerStages:
         return {"engine": BOOK_ENGINE, "sha256": digest}
 
     def decode_and_encode(self, job, session, should_stop):
-        from book_audio import DecodeCancelled, decode_tracks, decoded_samples_bound, peak_bytes, plan_tracks
+        from book_audio import (DecodeCancelled, decode_tracks, decode_workers, decoded_samples_bound, peak_bytes,
+                                plan_tracks)
         from book_encode import EncodeCancelled, complete_emissions, emission_paths, encode_queue, encode_tracks
         from deadline import GateWaitStopped
         tracks = job.request["tracks"]
@@ -732,9 +738,11 @@ class WorkerStages:
                 job.progress(tracksDecoded=len(tracks) - len(missing) + len(decoded))
 
             started = time.monotonic()
+            workers = min(decode_workers(self.env), max(1, sum(len(plan["ranges"]) for plan in plans)))
             try:
-                decode_tracks([plan["track"] for plan in plans], decoded_dir, should_stop=should_stop,
-                              on_track=on_track, plans=plans)
+                with self.cpu.claim(workers):
+                    decode_tracks([plan["track"] for plan in plans], decoded_dir, workers=workers,
+                                  should_stop=should_stop, on_track=on_track, plans=plans)
             except DecodeCancelled:
                 raise Stopped()
             job.timing("decode", time.monotonic() - started)
@@ -779,7 +787,8 @@ class WorkerStages:
                         stats = encode_tracks(model, work, emissions_dir, None, should_stop=should_stop,
                                               on_track=on_encoded, on_progress=on_progress,
                                               admit=None if gate is None else lambda: gate.hold_background(
-                                                  should_stop, on_wait=job.gate_wait))
+                                                  should_stop, on_wait=job.gate_wait),
+                                              threads=self.cpu.free)
                     finally:
                         if monitor is not None:
                             monitor.stop()
@@ -943,32 +952,34 @@ class WorkerStages:
             return
         import concurrent.futures
         import multiprocessing
+        workers = min(workers, len(tasks))
         pool = concurrent.futures.ProcessPoolExecutor(
-            max_workers=min(workers, len(tasks)), mp_context=multiprocessing.get_context("spawn"),
+            max_workers=workers, mp_context=multiprocessing.get_context("spawn"),
             initializer=book_align.pool_init, initargs=(str(book_path), 29, LABELS, sentences, None, os.getpid()))
         futures = {}
         finished_all = False
-        try:
-            futures = session.start_pool(
-                pool, lambda started: {started.submit(there, task): (n, task) for n, task in enumerate(tasks)})
-            pending = set(futures)
-            while pending:
-                if should_stop():
-                    raise Stopped()
-                finished, pending = concurrent.futures.wait(pending, timeout=0.5,
-                                                            return_when=concurrent.futures.FIRST_COMPLETED)
-                for future in finished:
-                    try:
-                        output = future.result()
-                    except Exception:
-                        if should_stop():  # the session ended and stopped the processes
-                            raise Stopped()
-                        raise
-                    on_done(*futures[future], output)
-            finished_all = True
-        finally:
-            # A stopped or failed job's processes are terminated and waited for, not left to finish their task.
-            session.release_pool(pool, stop=not finished_all)
+        with self.cpu.claim(workers):  # the pool's processes, until they are gone
+            try:
+                futures = session.start_pool(
+                    pool, lambda started: {started.submit(there, task): (n, task) for n, task in enumerate(tasks)})
+                pending = set(futures)
+                while pending:
+                    if should_stop():
+                        raise Stopped()
+                    finished, pending = concurrent.futures.wait(pending, timeout=0.5,
+                                                                return_when=concurrent.futures.FIRST_COMPLETED)
+                    for future in finished:
+                        try:
+                            output = future.result()
+                        except Exception:
+                            if should_stop():  # the session ended and stopped the processes
+                                raise Stopped()
+                            raise
+                        on_done(*futures[future], output)
+                finished_all = True
+            finally:
+                # A stopped or failed job's processes are terminated and waited for, not left to finish their task.
+                session.release_pool(pool, stop=not finished_all)
 
     @staticmethod
     def offsets(metas):

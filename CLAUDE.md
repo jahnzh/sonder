@@ -25,7 +25,7 @@ npx playwright test tests/e2e/releases.spec.ts -g "name" # one browser test
 
 Playwright starts `tests/browser-server.ts`, which runs the real app on :4173 against a throwaway temp DB/media dir with AudiobookDB/Open Library, Prowlarr, series and alignment fixtures installed (`tests/*-fixture.ts`) and no password. Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` if the pinned Chromium path in `playwright.config.ts` is missing.
 
-Deploy (production runs from Docker, not `npm start`); use `scripts/deploy-prod.sh <commit>` from any checkout — see `docs/LOCAL_CHECKS.md` (Production deployment).
+Deploy (production runs from Docker, not `npm start`); use `scripts/deploy-prod.sh <commit>` from any checkout — see `docs/LOCAL_CHECKS.md` (Production deployment). It swaps to the commit's image (`sonder-audiobooks:commit-<sha>`, built ahead by `scripts/prebuild-image.sh` or during the deploy) and returns; the live checks run after it in the background and roll back on a failure (`scripts/deploy-wait.sh` waits for them).
 
 ```bash
 npm run backup -- data/sonder.db data/backups/before-<change>-$(date +%s).db

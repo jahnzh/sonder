@@ -173,8 +173,10 @@ test("every stage of the whole-book worker has a line", () => {
 
 test("the server imports nothing from the status lines, and only files the production image copies", () => {
   const root = join(import.meta.dirname, "..");
-  // The image copies `server/` whole and these files of `src/`, as the Dockerfile says.
-  const copied = new Set([...readFileSync(join(root, "Dockerfile"), "utf8").matchAll(/\/app\/src\/([\w.-]+) /g)].map((match) => match[1]));
+  // The image copies `server/` whole and these files of `src/`, as the Dockerfile's runtime stage names them
+  // (`COPY … src/types.ts src/appearance.ts … ./src/`; the client stage copies `src` whole, by no file's name).
+  const copyLines = readFileSync(join(root, "Dockerfile"), "utf8").split("\n").filter((line) => line.startsWith("COPY "));
+  const copied = new Set(copyLines.flatMap((line) => [...line.matchAll(/(?<![\w/.])src\/([\w.-]+\.ts)\b/g)].map((match) => match[1])));
   assert.deepEqual([...copied].sort(), ["appearance.ts", "prepared-text-rules.ts", "reading-types.ts", "series-selection.ts", "types.ts"]);
   const imported = new Set<string>();
   for (const name of readdirSync(join(root, "server"))) {

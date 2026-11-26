@@ -1,10 +1,74 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { accessSync, constants, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, constants, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, resolve, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+
+// The deploy's image markers (#915), checked here so the markers and the smoke share one container:
+//   image-smoke.mjs [--marker <string>]... [--marker-file <path>]...
+// A --marker string must be in a file under server/, dist/ or src/ (not node_modules); a --marker-file path must be a
+// regular file. Every one is checked, and any that is missing fails the smoke before the server is imported.
+function parseMarkers(args) {
+  const markers = [];
+  const files = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const [flag, value] = [args[i], args[i + 1]];
+    if ((flag !== "--marker" && flag !== "--marker-file") || value === undefined) {
+      throw new Error(`usage: image-smoke.mjs [--marker <string>]... [--marker-file <path>]... (got ${JSON.stringify(flag)})`);
+    }
+    (flag === "--marker" ? markers : files).push(value);
+    i += 1;
+  }
+  return { markers, files };
+}
+
+function* filesUnder(dir) {
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) yield* filesUnder(path);
+    else if (entry.isFile()) yield path;
+  }
+}
+
+function checkMarkers({ markers, files }) {
+  const missing = [];
+  if (markers.length > 0) {
+    const left = new Set(markers);
+    for (const dir of ["server", "dist", "src"]) {
+      for (const path of filesUnder(resolve(dir))) {
+        if (left.size === 0) break;
+        const bytes = readFileSync(path);
+        for (const marker of left) if (bytes.includes(marker)) left.delete(marker);
+      }
+    }
+    for (const marker of markers) {
+      if (left.has(marker)) missing.push(`marker not found in the built image: ${marker}`);
+      else console.log(`marker ok: ${marker}`);
+    }
+  }
+  for (const file of files) {
+    let regular = false;
+    try {
+      regular = statSync(file).isFile();
+    } catch {}
+    if (regular) console.log(`marker file ok: ${file}`);
+    else missing.push(`marker file not found in the built image: ${file}`);
+  }
+  if (missing.length > 0) {
+    for (const line of missing) console.error(line);
+    process.exit(1);
+  }
+}
+
+checkMarkers(parseMarkers(process.argv.slice(2)));
 
 // Importing the app opens its database, so never use the image's DATA_DIR.
 const dataDir = mkdtempSync(join(tmpdir(), "sonder-image-smoke-"));
