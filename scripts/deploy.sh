@@ -125,6 +125,8 @@ fi
 # The background part gets the list the deploy settled on.
 [ "$mode" = after ] && live_checks=${SONDER_DEPLOY_AFTER_CHECKS-$live_checks}
 checks_pid_file=$state_dir/checks.pid
+# A live check that found no recording it can run on exits with this (scripts/live-check-recording.mjs, #431).
+no_suitable_exit=3
 
 cd "$repo_root"
 
@@ -132,7 +134,8 @@ cd "$repo_root"
 # `docker images` reports 12-char short ids — always compare in the short form.
 image_short() { s=${1#sha256:}; printf '%.12s' "$s"; }
 
-now_ms() { date +%s%3N; }
+# Milliseconds since boot (/proc/uptime: it never goes back, as the wall clock does when NTP corrects it; 10 ms steps).
+now_ms() { local up; read -r up _ </proc/uptime; up=${up/./}; echo $(( 10#$up * 10 )); }
 # The steps' times: `timed <name>` before a step, `timed` after it, `times_line` prints them.
 step_names=()
 step_ms=()
@@ -175,10 +178,13 @@ stop_checks() {
   pid=$(cat "$checks_pid_file" 2>/dev/null)
   case $pid in ''|*[!0-9]*) rm -f "$checks_pid_file"; return 0 ;; esac
   if kill -0 "$pid" 2>/dev/null; then
-    echo "stopping the background checks of an earlier deploy (process group $pid)"
+    echo "stopping the background checks of an earlier deploy (process group $pid); its image stays live unchecked if this deploy fails before its swap"
+    # A rollback under way finishes first: up to two minutes.
+    for _ in $(seq 1 480); do { [ -e "$state_dir/rollback.$pid" ] && kill -0 "$pid" 2>/dev/null; } || break; sleep 0.25; done
     kill -TERM -- "-$pid" 2>/dev/null
     for _ in $(seq 1 60); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
     kill -0 "$pid" 2>/dev/null && kill -KILL -- "-$pid" 2>/dev/null
+    rm -f "$state_dir/rollback.$pid"
   fi
   rm -f "$checks_pid_file"
 }
@@ -256,7 +262,6 @@ if [ "$mode" = after ]; then
   # SONDER_LIVE_CHECK_SKIP_FILE it is reported as skipped and not counted as a failure (#431).
   # SONDER_VERIFY_PRODUCTION=1 lets the checks run against production, which they refuse without it
   # (scripts/live-check-target.mjs).
-  no_suitable_exit=3
   if [ "$skip_live" -eq 0 ]; then
     for script in $live_checks; do
       timed "$(basename "$script" .mjs)"
@@ -287,6 +292,8 @@ if [ "$mode" = after ]; then
       echo "not rolled back: the container runs image $(image_short "$running"), not this deploy's $(image_short "$after_image") (a later deploy or a manual change)" >&2
       result=not_rolled_back
     else
+      # A stop now would leave :local and the container apart: --stop-checks waits while this file is there.
+      touch "$state_dir/rollback.$$"
       echo "rolling back: ${repo_name}:${after_rollback} becomes :local again and the container is recreated" >&2
       if $docker tag "${repo_name}:${after_rollback}" ${repo_name}:local \
         && $docker compose up -d --no-build sonder && wait_health "$health_timeout"; then
@@ -296,6 +303,7 @@ if [ "$mode" = after ]; then
         echo "ROLLBACK FAILED: run docker tag ${repo_name}:${after_rollback} ${repo_name}:local && docker compose up -d --no-build sonder" >&2
         result=rollback_failed
       fi
+      rm -f "$state_dir/rollback.$$"
     fi
     timed
     write_status "$result"
@@ -519,13 +527,23 @@ log_file=$state_dir/${short}-${ts}.log
 export SONDER_DEPLOY_AFTER_CHECKS="$live_checks"
 if [ "$wait_checks" -eq 1 ]; then
   echo "record the deploy in artifacts/orca/STATE.md (commit, backup, image tag, live-check results)"
-  # Release the deploy lock for the checks: they are not a deploy.
+  # Release the deploy lock for the checks: they are not a deploy. They run in a process group of their own, as in the
+  # background, so a later deploy can stop them (--stop-checks); an interrupt here is passed on to them.
   exec 8>&-
-  bash "$self" "${after_args[@]}" --status "$status_file"
-  exit $?
+  setsid bash "$self" "${after_args[@]}" --status "$status_file" &
+  checks=$!
+  echo "$checks" > "$checks_pid_file"
+  trap 'kill -TERM -- "-$checks" 2>/dev/null' INT TERM
+  wait "$checks"
+  status=$?
+  # An interrupted wait: wait for the checks' own end (they write their result first).
+  while kill -0 "$checks" 2>/dev/null; do wait "$checks"; status=$?; done
+  exit "$status"
 fi
 exec 8>&-
 SONDER_DEPLOY_AFTER_LOG="$log_file" setsid bash "$self" "${after_args[@]}" --status "$status_file" >"$log_file" 2>&1 </dev/null &
+# Written here as well as by the checks themselves, so scripts/deploy-wait.sh started right after this finds them.
+echo "$!" > "$checks_pid_file"
 if [ "$skip_live" -eq 1 ]; then
   echo "live checks: skipped (--skip-live-checks); the library's text is prepared in the background"
 else

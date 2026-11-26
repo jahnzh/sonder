@@ -60,6 +60,20 @@ Every invocation uses separate build output, a browser-test port, and a report d
 
 Port leases coordinate runners that use the current contender protocol. Do not overlap one with a check runner started from a revision before issue #59: a legacy runner can decide that an old lock is stale, pause, and then unlink the current runner's replacement because it does not revalidate the lock identity or observe contender records. Wait for every legacy check process to exit before starting a current runner; the current runner cannot close that mixed-version race unilaterally.
 
+### The land check's time (#915)
+
+Measured on lisa (20 cores, shared with other workers) on 26 Nov 2026; WSL could not be reached that night. The land check is install, build, the unit suite and the browser smoke set:
+
+| Stage | Time on lisa |
+| --- | --- |
+| `npm ci` (npm's cache warm) | 8.2 s |
+| `npm run build` | 13–60 s (60 s under a load of 10) |
+| Unit suite, before (c65c6a3) | 180 s and 176 s (loads 18 and 21) |
+| Unit suite, after | 125 s and 126 s (loads 33 and 30) |
+| Smoke set (16 tests tagged `@smoke`) | about 62 s of test time, from the full run of 25 Nov |
+
+The unit suite was the biggest stage. Its files run in parallel, so its time is set by its longest files and by the CPU they all take: `tests/orca-preflight.test.ts` took 71 s alone, because `scripts/orca-preflight.sh` forked a `readlink` for each of lisa's 530 processes, twice per call. One `find` over `/proc` now reads them all: the file takes 4 s, `tests/orca-reap.test.ts` 14 s instead of 33 s. The longest left are the Python worker tests (`test_book_align.Reordered` 55 s, most of it the class's shared setup, so splitting it by method gains nothing) and `tests/ci-ssh.test.ts` (29 s alone, 70 s under the suite's own load).
+
 ## Known failures
 
 ```bash
@@ -201,9 +215,9 @@ Exit codes: 0 deployed (with `--wait-checks`: and the checks passed or were skip
 
 ### Images built ahead (#915)
 
-`scripts/build-image.sh <commit>` builds `sonder-audiobooks:commit-<sha>` from `git archive <commit>`, so it can run while production runs another commit. The Dockerfile's stages are keyed by what each reads: the production `node_modules` by the lockfile (`npm ci --omit=dev`, no prune), the client (`vite build` + `build-sw.mjs`) by `src/`, `public/`, `index.html`, `vite.config.ts`, `tsconfig.json`, `scripts/build-sw.mjs` and the lockfile, and the server's files are copied last. There is no typecheck in the image: the land check typechecks every commit before it can deploy. A built commit is not built again; one build runs at a time (`flock`); after a build the newest five commit images (`SONDER_IMAGE_KEEP`) keep their tags and older ones are untagged. Tailwind scans only the client's files in the image, so the image's CSS leaves out utilities that only a server, test or doc file spelled (dead rules: no client code sets those classes).
+`scripts/build-image.sh <commit>` builds `sonder-audiobooks:commit-<sha>` from `git archive <commit>`, so it can run while production runs another commit. The Dockerfile's stages are keyed by what each reads: the production `node_modules` by the lockfile (`npm ci --omit=dev`, no prune), the client (`vite build` + `build-sw.mjs`) by `src/`, `public/`, `index.html`, `vite.config.ts`, `tsconfig.json`, `scripts/build-sw.mjs` and the lockfile, and the server's files are copied last. There is no typecheck in the image: the land check typechecks every commit before it can deploy. A built commit is not built again; one build runs at a time (`flock` on `/tmp/sonder-image-build-<uid>.lock`); after a build the newest five commit images (`SONDER_IMAGE_KEEP`) keep their tags and older ones are untagged, and the build cache is trimmed to 8 GB (`SONDER_BUILD_CACHE_MAX`, least recently used first; empty leaves it alone). Tailwind scans only the client's files in the image, so the image's CSS leaves out utilities that only a server, test or doc file spelled (dead rules: no client code sets those classes).
 
-`scripts/prebuild-image.sh [--fetch] [<commit>]` builds a landed commit in the production repository (default `origin/main`; `--fetch` fetches origin's main first) and logs to `artifacts/deploy/prebuild-<short>.log`. `scripts/install-prebuild.sh` installs it as the systemd user timer `sonder-prebuild.timer` (once a minute, `--fetch`), so the image of every commit that lands is ready by the time it is deployed; run the script by hand right after a landing to start at once. A deploy of a commit the timer has not reached builds it itself.
+`scripts/prebuild-image.sh [--fetch] [<commit>]` builds a landed commit in the production repository (default `origin/main`; `--fetch` fetches origin's main first) and logs to `artifacts/deploy/prebuild-<short>.log`. It builds nothing while a deploy's live checks run (`artifacts/deploy/checks.pid`): a build would load the machine under them, the slow-server false failure of #822, which now rolls a sound deploy back; the timer builds a minute later. `scripts/install-prebuild.sh` installs it as the systemd user timer `sonder-prebuild.timer` (once a minute, `--fetch`), so the image of every commit that lands is ready by the time it is deployed; run the script by hand right after a landing to start at once. A deploy of a commit the timer has not reached builds it itself.
 
 Measured on andi (4 cores) on 26 Nov 2026, with a copy of the database and an internal Docker network (no outbound calls), in a test project of its own:
 
@@ -218,12 +232,16 @@ Measured on andi (4 cores) on 26 Nov 2026, with a copy of the database and an in
 | Smoke | 4.3–5.8 s | 3.7–7.5 s (markers included) |
 | Swap and first health answer | `compose up` 0.6 s, Docker "healthy" after 8.6 s | `compose up --no-build` 0.5–1.0 s, health answers 2.9–5.9 s later |
 | Settle wait (60 s) and live checks | held the deploy | after the swap, in the background |
-| Deploy, prebuilt commit | 2 min 53 s (PR #914) | 14–17 s |
-| Deploy, server-only commit not prebuilt | 2 min 53 s | 10.3 s |
+| Deploy, prebuilt commit | 2 min 53 s (PR #914) | 7.4–17 s |
+| Deploy, server-only commit not prebuilt | 2 min 53 s | 9.9–10.3 s |
+
+The spread of the smoke and the health answer (3–7 s each) follows andi's load at the moment, not whether the image was prebuilt. The step times are counted on the clock since boot (`/proc/uptime`): a busy host's wall clock steps back by tenths of a second when NTP corrects it (lisa, 26 Nov 2026).
 
 The new server's start is most of the swap's few seconds of downtime: on andi tsx loads the server's TypeScript in 2.6–3.0 s and `createApp` takes 0.3–0.5 s.
 
-Rollback is retagging the previous image and a no-build recreate:
+### Roll back by hand
+
+A failed live check rolls back by itself (step 9). By hand, rollback is retagging the previous image and a no-build recreate:
 
 ```bash
 docker tag sonder-audiobooks:<rollback-tag> sonder-audiobooks:local && docker compose up -d --no-build sonder

@@ -7,7 +7,8 @@
 # A commit whose image is already there is not built again. One build at a time on this machine (flock on
 # SONDER_IMAGE_LOCK): a deploy that asks for the image a prebuild is making waits for that build and then uses it.
 # After a build, the newest SONDER_IMAGE_KEEP (5) commit images keep their tags and the older ones are untagged
-# (docker rmi without force: an image a container uses, or one with another tag, stays).
+# (docker rmi without force: an image a container uses, or one with another tag, stays), and the build cache is trimmed
+# to SONDER_BUILD_CACHE_MAX (8gb, least recently used first).
 # The last line says "image ready: <tag> (prebuilt)" or "image ready: <tag> (built in <seconds>s)".
 # Exit codes: 0 the image is ready, 1 the commit is unknown or the build failed, 2 bad usage.
 set -u
@@ -21,7 +22,10 @@ usage() {
 case $1 in -*) usage ;; esac
 
 docker=${SONDER_DEPLOY_DOCKER:-docker}
-lock=${SONDER_IMAGE_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/sonder-image-build.lock}
+# One path for every caller on this machine (the timer's environment has no XDG_RUNTIME_DIR of a shell's).
+lock=${SONDER_IMAGE_LOCK:-/tmp/sonder-image-build-$(id -u).lock}
+# The build cache is trimmed to this after a build (least recently used first); empty leaves it alone.
+cache_max=${SONDER_BUILD_CACHE_MAX-8gb}
 keep=${SONDER_IMAGE_KEEP:-5}
 # Another repository only for a test project (deploy.sh's SONDER_DEPLOY_IMAGE_REPO).
 repo_name=${SONDER_DEPLOY_IMAGE_REPO:-sonder-audiobooks}
@@ -45,8 +49,10 @@ if ready; then
   exit 0
 fi
 
+# Milliseconds since boot: the wall clock can go back (NTP).
+now_ms() { local up; read -r up _ </proc/uptime; up=${up/./}; echo $(( 10#$up * 10 )); }
 echo "building $tag"
-began=$(date +%s%3N)
+began=$(now_ms)
 # The builder's own lines go to a file; a failed build prints their end.
 build_log=$(mktemp "${TMPDIR:-/tmp}/sonder-image-build-XXXXXX.log") || { echo "cannot create a build log" >&2; exit 1; }
 if ! git archive --format=tar "$full" | $docker build --progress=plain --label "sonder.commit=$full" -t "$tag" - >"$build_log" 2>&1; then
@@ -55,7 +61,7 @@ if ! git archive --format=tar "$full" | $docker build --progress=plain --label "
   exit 1
 fi
 rm -f "$build_log"
-took=$(( $(date +%s%3N) - began ))
+took=$(( $(now_ms) - began ))
 if ! ready; then
   echo "the build ended but $tag is not labelled sonder.commit=$full" >&2
   exit 1
@@ -67,5 +73,10 @@ $docker images --filter "reference=$repo_name:commit-*" --format '{{.CreatedAt}}
   | while read -r old; do
       [ -n "$old" ] && $docker rmi "$old" >/dev/null 2>&1 && echo "untagged an older commit image: $old"
     done
+
+# The build cache grows with every build (andi's disk filled up on 19 Nov 2026).
+if [ -n "$cache_max" ]; then
+  $docker builder prune -f --max-used-space "$cache_max" >/dev/null 2>&1 || echo "warning: could not trim the build cache to $cache_max" >&2
+fi
 
 printf 'image ready: %s (built in %d.%01ds)\n' "$tag" $(( took / 1000 )) $(( took % 1000 / 100 ))

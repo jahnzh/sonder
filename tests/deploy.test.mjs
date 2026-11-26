@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -148,7 +148,8 @@ function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", t
     `if [ "$(wc -l < ${q(times)})" -gt 1 ]; then sed -i 1d ${q(times)}; fi`,
     `echo "$next" >> ${q(asked)}`,
     // When each request ended, in milliseconds: a test measures a stretch by the clock, not by how many requests fit in it.
-    `date +%s%3N >> ${q(ended)}`,
+    // Since boot, as deploy.sh counts: the wall clock of a busy host can go back (NTP).
+    `read -r up _ </proc/uptime; up=\${up/./}; echo $(( 10#$up * 10 )) >> ${q(ended)}`,
     `[ "$next" = fail ] && exit 7`,
     `printf %s "$next"`,
   ].join("\n"));
@@ -753,6 +754,8 @@ test("checks that pass in the background prepare the library, and deploy-wait.sh
   try {
     const r = f.run(["--no-marker"], {}, { background: true });
     assert.equal(r.status, 0, r.stderr + r.stdout);
+    // The deploy itself names the checks' process, so a wait started at once finds them.
+    assert.ok(existsSync(join(f.state, "checks.pid")));
     // Without a file, the newest deploy's.
     const waited = f.script("deploy-wait.sh", ["--timeout", "20"]);
     assert.equal(waited.status, 0, waited.stderr + waited.stdout);
@@ -809,5 +812,24 @@ test("a second deploy while one runs is refused", () => {
     assert.equal(r.status, 1, r.stderr + r.stdout);
     assert.match(r.stderr, /another deploy is running/);
     assert.equal(f.dockerCalls().some((c) => c.startsWith("tag ") || c.startsWith("compose ")), false);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test("checks waited for with --wait-checks can be stopped by a later deploy too", async () => {
+  const f = fixture({ "verify-a.mjs": { exit: 0, sleep: 20000 } }, { prebuilt: true });
+  try {
+    const waiting = spawn("bash", ["scripts/deploy.sh", "HEAD", "--no-marker", "--wait-checks"], {
+      cwd: f.repo,
+      env: cleanEnv({ PATH: `${join(f.dir, "bin")}:${process.env.PATH}`, SONDER_DEPLOY_DOCKER: join(f.dir, "bin", "docker"), SONDER_DEPLOY_LIVE_CHECKS: "scripts/verify-a.mjs", SONDER_DEPLOY_SETTLE_SECONDS: "0", SONDER_DEPLOY_STATE_DIR: f.state, SONDER_IMAGE_LOCK: join(f.dir, "build.lock"), TMPDIR: join(f.dir, "tmp") }),
+      stdio: "ignore",
+    });
+    const ended = new Promise((resolveEnd) => waiting.on("close", (status) => resolveEnd(status)));
+    const until = Date.now() + 10000;
+    while (!f.ran().length && Date.now() < until) await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    assert.deepEqual(f.ran(), ["verify-a.mjs"], "the check has started");
+    const stopped = f.script("deploy.sh", ["--stop-checks"]);
+    assert.match(stopped.stdout, /stopping the background checks of an earlier deploy/);
+    assert.notEqual(await ended, 0, "the waiting deploy ends with the stopped checks");
+    assert.equal(JSON.parse(readFileSync(join(f.state, "latest.json"), "utf8")).result, "superseded");
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
 });
