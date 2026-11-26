@@ -8,6 +8,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  torrentContainerHasOwnVpn,
   torrentContainerJoinsVpn,
   vpnStartedSinceTorrents,
   startedAtNanos,
@@ -35,6 +36,9 @@ const iso = (ms) => new Date(ms).toISOString();
 export function planCheck({ vpn, torrents, now, restarts = [], settleMs, maxRestartsPerHour }) {
   if (!vpn) return { action: "none", note: `${VPN} does not exist; nothing to do.` };
   if (!torrents) return { action: "none", note: `${TORRENTS} does not exist; nothing to do.` };
+  // Its own VPN connection (#911): a restart of the shared VPN does not concern it.
+  if (torrentContainerHasOwnVpn(torrents))
+    return { action: "none", note: `${TORRENTS} has its own VPN connection; nothing to do.` };
   // Docker can report Running while a container waits out its restart policy's back-off.
   if (!vpn.State?.Running || vpn.State.Restarting)
     return { action: "none", note: `${VPN} is not running; waiting for it to start.` };

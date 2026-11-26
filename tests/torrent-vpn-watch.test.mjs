@@ -71,6 +71,13 @@ test("planCheck leaves a container on another network to the setup script", () =
   assert.match(result.note, /setup-local-torrents\.mjs/);
 });
 
+test("planCheck leaves a sonder-torrents with its own VPN alone (#911)", () => {
+  const ownVpn = { ...torrentsAt(iso(T0), { networkMode: "bridge" }), Config: { Env: ["SONDER_MEDIA_VOLUME_ID=vol"], Labels: { "sonder.vpn": "own" } } };
+  const result = plan(vpnAt(iso(VPN_RESTART)), ownVpn, VPN_RESTART + HOUR);
+  assert.equal(result.action, "none");
+  assert.match(result.note, /its own VPN/);
+});
+
 test("planCheck stops at the hourly restart bound and says until when", () => {
   const now = VPN_RESTART + 2 * HOUR;
   const restarts = [now - 50 * 60_000, now - 20 * 60_000, now - 5 * 60_000];
