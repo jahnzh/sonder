@@ -52,7 +52,7 @@ def main(argv=None):
     parser.add_argument("--keep", action="store_true", help="keep the emissions and the decoded stretch")
     args = parser.parse_args(argv)
     from book_encode import encode_tracks
-    from ctc_acoustic import AcousticModel, use_cpu_threads
+    from ctc_acoustic import AcousticModel
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     pcm, samples = decode(args.audio, args.start, args.seconds, out)
@@ -62,7 +62,6 @@ def main(argv=None):
     for batch in [int(b) for b in args.batch.split(",")]:
         for threads in [int(t) for t in args.threads.split(",")]:
             folder = out / f"t{threads}-b{batch}"
-            use_cpu_threads(model.torch, threads)
             started = time.monotonic()
             stats = encode_tracks(model, [track], folder, None, batch_size=batch,
                                   threads=lambda: threads)
@@ -77,7 +76,7 @@ def main(argv=None):
             print(json.dumps(row), flush=True)
     if not args.keep:
         for path in out.glob("t*-b*/*"):
-            if path != reference and path.parent != reference.parent:
+            if path.parent != reference.parent:
                 path.unlink()
         pcm.unlink()
     return 0

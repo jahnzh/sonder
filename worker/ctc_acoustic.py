@@ -188,10 +188,11 @@ def _share_cpu_threads(model, env=None):
     """On a CPU host, window requests running at once split the cores instead of each claiming all of them;
     with one slot a request keeps torch's own default. A whole-book encode sets its own per batch
     (`cpu_share`), so each window request sets its share again before its forward pass."""
+    from cpu_share import host_cores
     from deadline import worker_slots
     slots = worker_slots(env)
     if model.device.type == "cpu":
-        model.window_threads = (max(1, (os.cpu_count() or 1) // slots) if slots > 1
+        model.window_threads = (max(1, host_cores() // slots) if slots > 1
                                 else model.torch.get_num_threads())
         use_cpu_threads(model.torch, model.window_threads)
 

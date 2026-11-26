@@ -184,7 +184,7 @@ class WindowThreads(unittest.TestCase):
         self.model = model
 
     def test_a_window_request_keeps_its_share_after_an_encode_took_every_core(self):
-        with mock.patch.object(ctc_acoustic.os, "cpu_count", lambda: 20):
+        with mock.patch.object(cpu_share, "host_cores", lambda: 20):
             ctc_acoustic._share_cpu_threads(self.model, {"ALIGNMENT_WORKER_SLOTS": "3"})
         self.assertEqual(self.model.window_threads, 6)
         # A book encode in its own thread set 20 since; a window request in a new thread still runs on 6.
