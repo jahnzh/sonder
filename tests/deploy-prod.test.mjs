@@ -225,14 +225,14 @@ function commitToProd(f, files, message) {
   return sha;
 }
 
-test("a --marker found in the commit's server/ or only in src/ goes on to deploy.sh", () => {
+test("a --marker found in the commit's server/, or only in src/ or public/, goes on to deploy.sh", () => {
   const f = prodFixture();
   try {
     // Production runs a detached commit; a push to main must not move its work tree.
     f.checkoutProd(f.sha2);
-    const sha3 = commitToProd(f, { "server/app.ts": "export const serverMarker = 1;\n", "src/view.tsx": "export const label = 'Client marker';\n" }, "code");
+    const sha3 = commitToProd(f, { "server/app.ts": "export const serverMarker = 1;\n", "src/view.tsx": "export const label = 'Client marker';\n", "public/sw.js": "// service worker marker\n" }, "code");
     writeFileSync(f.stubLog, "");
-    const r = f.run(sha3, ["--marker", "serverMarker", "--marker", "Client marker"]);
+    const r = f.run(sha3, ["--marker", "serverMarker", "--marker", "Client marker", "--marker", "service worker marker"]);
     assert.equal(r.status, 0, r.stderr + r.stdout);
     assert.equal(f.headSha(), sha3);
     assert.ok(f.stubLines().find((l) => l.startsWith("ARGS="))?.includes("--marker Client marker"));
@@ -247,8 +247,8 @@ test("a --marker the commit does not hold fails before the checkout, naming --no
     writeFileSync(f.stubLog, "");
     const r = f.run(f.sha2, ["--marker", "absent string"]);
     assert.equal(r.status, 1, r.stdout);
-    assert.match(r.stderr, /marker not found in [0-9a-f]{7} \(server\/, src\/, dist\/\): absent string/);
-    assert.match(r.stderr, /changes none of the image's code since [0-9a-f]{7} \(production\): deploy it with --no-marker/);
+    assert.match(r.stderr, /marker not found in [0-9a-f]{7} \(server\/, src\/, public\/, index\.html\): absent string/);
+    assert.match(r.stderr, /changes none of the image's code since [0-9a-f]{7}: deploy it with --no-marker/);
     assert.equal(f.headSha(), f.sha1);
     assert.equal(f.stubLines().length, 0);
 
@@ -261,4 +261,14 @@ test("a --marker the commit does not hold fails before the checkout, naming --no
     assert.equal(f.headSha(), f.sha1);
     assert.equal(f.stubLines().length, 0);
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test("the image's code paths of the marker check name every source the Dockerfile copies", () => {
+  const listed = readFileSync(join(repoRoot, "scripts", "lib", "deploy-markers.sh"), "utf8").match(/deploy_image_code_paths=\(([^)]*)\)/)[1].split(/\s+/).filter(Boolean);
+  const copied = readFileSync(join(repoRoot, "Dockerfile"), "utf8").split("\n")
+    .filter((line) => line.startsWith("COPY ") && !line.includes("--from="))
+    .flatMap((line) => line.replace(/^COPY\s+/, "").replace(/--\S+\s+/g, "").trim().split(/\s+/).slice(0, -1));
+  assert.ok(copied.length > 5, copied.join(" "));
+  for (const source of copied) assert.ok(listed.some((path) => source === path || source.startsWith(`${path}/`)), `${source} is not in deploy_image_code_paths`);
+  assert.ok(listed.includes("Dockerfile"));
 });

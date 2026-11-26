@@ -26,7 +26,8 @@
 #      in the last 48 h (#774). SONDER_VERIFY_RECORDING=<recording id> names the recording instead, and
 #      SONDER_VERIFY_ALLOW_RECENT=1 lets that be a recently played one: both are passed through.
 #      SONDER_DEPLOY_SLICE_PASS=1 adds the slice pass (scripts/verify-slice-pass.mjs, #794) after them.
-#      A check skipped SONDER_DEPLOY_SKIP_LIMIT deploys in a row (5; the count is the result's skipStreak) fails.
+#      A check skipped SONDER_DEPLOY_SKIP_LIMIT deploys in a row (5; the count is the result's skipStreak) fails the
+#      result ("skipped_too_often") without a rollback.
 #      A failed check ROLLS BACK: the rollback image is tagged :local again and the container recreated, unless the
 #      container no longer runs this deploy's image (a later deploy), which is then left alone and said.
 #  11. prepare the library's text (#827): scripts/prepare-library.sh starts the server's sweep and waits for it, after
@@ -36,7 +37,7 @@
 #      sign-in, HTTP 429) is said as that, not as an unprepared library. SONDER_DEPLOY_PREPARE_LIBRARY= (empty) leaves
 #      the step out; the server sweeps by itself 15 minutes after a start.
 # The background part writes its lines to artifacts/deploy/<short>-<epoch>.log and its result to the .json beside it
-# (and latest.json): "passed", "rolled_back", "rollback_failed", "not_rolled_back" or "superseded" (a later deploy
+# (and latest.json): "passed", "skipped_too_often", "rolled_back", "rollback_failed", "not_rolled_back" or "superseded" (a later deploy
 # stopped it). SONDER_DEPLOY_STATE_DIR moves that folder.
 # At least one --marker or --marker-file is required; --no-marker explicitly skips image verification (non-app changes)
 # and cannot be combined with either. A --marker string the commit's server/, src/ or dist/ does not hold (git grep)
@@ -205,10 +206,13 @@ if [ "$mode" = after ]; then
   short=${commit:0:7}
   failed_checks=()
   skipped_checks=()
+  # Checks skipped skip_limit deploys in a row: the result is a failure, but nothing is rolled back (a skip says nothing
+  # about this build, and a rollback would leave every later deploy rolled back too until the check runs).
+  stale_checks=()
   result=""
   prepare_note=""
   # How many deploys in a row each check was skipped (no suitable recording), carried from the previous deploy's result
-  # (latest.json). A check that has checked nothing for skip_limit deploys in a row fails: the reader
+  # (latest.json). A check that has checked nothing for skip_limit deploys in a row fails the result: the reader
   # check was broken from #806 until 2026-11-25 while every deploy reported it as skipped. A check that ran resets it; a
   # check that did not run (--skip-live-checks, superseded) keeps it.
   declare -A skip_streak=()
@@ -224,7 +228,7 @@ if [ "$mode" = after ]; then
   write_status() {
     STATUS_FILE="$after_status" STATUS_COMMIT="$commit" STATUS_IMAGE="$after_image" STATUS_ROLLBACK="$after_rollback" \
     STATUS_RESULT="$1" STATUS_FAILED="${failed_checks[*]-}" STATUS_SKIPPED="${skipped_checks[*]-}" \
-    STATUS_STREAK="$(streak_list)" \
+    STATUS_STALE="${stale_checks[*]-}" STATUS_STREAK="$(streak_list)" \
     STATUS_PREPARE="$prepare_note" STATUS_TIMES="$(times_line "checks' times")" STATUS_LOG="${SONDER_DEPLOY_AFTER_LOG:-}" \
     node -e '
       const fs = require("node:fs");
@@ -232,7 +236,7 @@ if [ "$mode" = after ]; then
       const list = (s) => s.split(" ").filter(Boolean);
       const skipStreak = Object.fromEntries(list(e.STATUS_STREAK).map((pair) => [pair.slice(0, pair.lastIndexOf("=")), Number(pair.slice(pair.lastIndexOf("=") + 1))]));
       const status = { commit: e.STATUS_COMMIT, image: e.STATUS_IMAGE, rollbackTag: e.STATUS_ROLLBACK, result: e.STATUS_RESULT,
-        failed: list(e.STATUS_FAILED), skipped: list(e.STATUS_SKIPPED), skipStreak, prepare: e.STATUS_PREPARE || null,
+        failed: list(e.STATUS_FAILED), skipped: list(e.STATUS_SKIPPED), skippedTooOften: list(e.STATUS_STALE), skipStreak, prepare: e.STATUS_PREPARE || null,
         times: e.STATUS_TIMES, log: e.STATUS_LOG || null, finishedAt: new Date().toISOString() };
       const text = JSON.stringify(status, null, 2) + "\n";
       fs.writeFileSync(e.STATUS_FILE + ".tmp", text);
@@ -299,7 +303,7 @@ if [ "$mode" = after ]; then
         skipped_checks+=("$script")
         if [ "${skip_streak[$script]}" -ge "$skip_limit" ]; then
           echo "live check failed: $script was skipped ${skip_streak[$script]} deploys in a row (no suitable recording: $reason) and has checked nothing since. Make it find a recording, or run it on one with SONDER_VERIFY_RECORDING=<recording id> SONDER_VERIFY_ALLOW_RECENT=1 (its progress writes are protected); a run that checks resets the count" >&2
-          failed_checks+=("$script")
+          stale_checks+=("$script")
         else
           echo "live check skipped: $script (no suitable recording: $reason); ${skip_streak[$script]} of ${skip_limit} deploys in a row before it fails"
         fi
@@ -360,6 +364,14 @@ if [ "$mode" = after ]; then
     fi
   fi
   timed
+  if [ ${#stale_checks[@]} -gt 0 ]; then
+    write_status skipped_too_often
+    times_line "checks' times"
+    echo "deploy of ${short}: live checks failed: ${stale_checks[*]} skipped ${skip_limit} or more deploys in a row; not rolled back (a skip says nothing about this build)" >&2
+    [ -n "$prepare_note" ] && echo "$prepare_note" >&2
+    finish
+    exit 1
+  fi
   write_status passed
   times_line "checks' times"
   if [ "$skip_live" -eq 1 ]; then echo "deploy of ${short}: live checks skipped (--skip-live-checks)"; else echo "deploy of ${short}: live checks passed"; fi

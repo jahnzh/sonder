@@ -261,7 +261,7 @@ test("a --marker the commit does not hold fails before the image is built", () =
   try {
     const r = f.run(["--marker", "needle", "--marker", "not-in-the-code"]);
     assert.equal(r.status, 1, r.stdout);
-    assert.match(r.stderr, /marker not found in [0-9a-f]{7} \(server\/, src\/, dist\/\): not-in-the-code/);
+    assert.match(r.stderr, /marker not found in [0-9a-f]{7} \(server\/, src\/, public\/, index\.html\): not-in-the-code/);
     assert.doesNotMatch(r.stderr, /marker not found[^\n]*: needle/);
     assert.match(r.stderr, /nothing was built/);
     const calls = f.dockerCalls();
@@ -318,7 +318,7 @@ test("a check that finds no suitable recording is reported as skipped with its r
   }
 });
 
-test("the skip count of a check carries across deploys, and the deploy that reaches the limit fails and rolls back", () => {
+test("the skip count of a check carries across deploys, and the deploy that reaches the limit fails without a rollback", () => {
   const reader = "scripts/verify-integrated-reader.mjs";
   const f = fixture({ "verify-integrated-reader.mjs": { exit: 3, skip: "no aligned recording clear of recent listening" }, "verify-b.mjs": 0 });
   const latest = () => JSON.parse(readFileSync(join(f.state, "latest.json"), "utf8"));
@@ -341,9 +341,17 @@ test("the skip count of a check carries across deploys, and the deploy that reac
     assert.equal(third.status, 1, third.stdout);
     assert.match(third.stderr, /live check failed: scripts\/verify-integrated-reader\.mjs was skipped 3 deploys in a row \(no suitable recording: [^)]*\) and has checked nothing since/);
     assert.match(third.stderr, /SONDER_VERIFY_RECORDING=<recording id> SONDER_VERIFY_ALLOW_RECENT=1/);
-    assert.match(third.stderr, /1 live check\(s\) failed: scripts\/verify-integrated-reader\.mjs/);
-    assert.equal(latest().result, "rolled_back");
+    assert.match(third.stderr, /skipped 3 or more deploys in a row; not rolled back/);
+    assert.equal(latest().result, "skipped_too_often");
+    assert.deepEqual(latest().skippedTooOften, [reader]);
     assert.equal(latest().skipStreak[reader], 3);
+    assert.equal(f.runningImage(), "bbbbbbbbbbbb", "the new build stays live");
+    assert.equal(f.dockerCalls().filter((c) => c === "tag sonder-audiobooks:rollback sonder-audiobooks:local").length, 0);
+
+    // It stays a failure at every deploy until the check runs.
+    const fourth = f.run(["--no-marker"], { SONDER_DEPLOY_SKIP_LIMIT: "3" });
+    assert.equal(fourth.status, 1);
+    assert.equal(latest().skipStreak[reader], 4);
   } finally {
     rmSync(f.dir, { recursive: true, force: true });
   }
@@ -358,6 +366,8 @@ test("five skips in a row is the default limit, and a check that runs resets its
     const r = f.run(["--no-marker"]);
     assert.equal(r.status, 1, r.stdout);
     assert.match(r.stderr, /verify-integrated-reader\.mjs was skipped 5 deploys in a row/);
+    // The build itself was checked by the other check: the library's text is prepared as after a pass.
+    assert.ok(f.everything().some((line) => line.startsWith("prepare-library.sh")), f.everything().join("\n"));
     assert.doesNotMatch(r.stderr, /verify-b\.mjs was skipped/);
     assert.deepEqual(latest().skipStreak, { "scripts/verify-integrated-reader.mjs": 5, "scripts/verify-b.mjs": 0 });
   } finally {
