@@ -116,3 +116,20 @@ test("install-nightly.sh --print renders the service and the timer from this che
   assert.match(result.stdout, /OnCalendar=\*-\*-\* 02:30/);
   assert.doesNotMatch(result.stdout, /@REPO@|@NODE@|@PATH@/);
 });
+
+test("install-nightly.sh --print renders from a copy that is no git checkout, at the copy's own path", () => {
+  // What a land check runs in: a `git archive` copy without .git.
+  const copy = tempDir("sonder-nightly-copy-");
+  for (const file of ["scripts/install-nightly.sh", "deploy/sonder-nightly.service", "deploy/sonder-nightly.timer"]) {
+    fs.mkdirSync(path.join(copy, path.dirname(file)), { recursive: true });
+    fs.copyFileSync(path.join(repository, file), path.join(copy, file));
+  }
+  const env = { ...process.env, PATH: `${path.dirname(fakeGh().gh)}:${process.env.PATH}`, GIT_CEILING_DIRECTORIES: path.dirname(copy) };
+  const result = spawnSync("bash", [path.join(copy, "scripts", "install-nightly.sh"), "--print"], { encoding: "utf8", env });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.includes(`WorkingDirectory=${copy}\n`), result.stdout);
+  // Installing still needs the main checkout.
+  const install = spawnSync("bash", [path.join(copy, "scripts", "install-nightly.sh")], { encoding: "utf8", env });
+  assert.equal(install.status, 1);
+  assert.match(install.stderr, /is not a git checkout/);
+});

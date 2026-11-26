@@ -37,8 +37,12 @@ if [[ ${#hosts[@]} -eq 0 ]]; then
   read -r -a hosts <<<"${SONDER_CTC_HOSTS:-192.168.1.119 lisa}"
 fi
 
-repo=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
-revision=$(git -C "$repo" rev-parse --verify "$commit^{commit}")
+# The repository by its git directory, not its work tree: the production directory is a bare repository
+# (core.bare=true), where --show-toplevel fails with "must be run in a work tree" (deploy-prod.sh's layout). Everything
+# below reads commits only (rev-parse, archive, cat-file, diff of two commits), which a bare repository answers.
+git_dir=$(git -C "$(dirname "$0")" rev-parse --absolute-git-dir)
+repo_git() { git --git-dir="$git_dir" "$@"; }
+revision=$(repo_git rev-parse --verify "$commit^{commit}")
 remote_dir=${SONDER_CTC_DIR:-sonder-ctc-worker}
 unit=sonder-ctc-worker.service
 ssh_cmd=${SONDER_CTC_SSH:-ssh}
@@ -46,7 +50,7 @@ rsync_cmd=${SONDER_CTC_RSYNC:-rsync}
 
 stage=$(mktemp -d "${TMPDIR:-/tmp}/sonder-ctc-update-XXXXXX")
 trap 'rm -rf "$stage"' EXIT
-git -C "$repo" archive "$revision" worker | tar -x -C "$stage"
+repo_git archive "$revision" worker | tar -x -C "$stage"
 printf '%s\n' "$revision" >"$stage/worker/REVISION"
 
 for host in "${hosts[@]}"; do
@@ -60,8 +64,8 @@ for host in "${hosts[@]}"; do
     continue
   fi
   # A commit that leaves worker/ as it is needs no copy and no restart; the host keeps reporting its older commit.
-  if [[ $current =~ ^[0-9a-f]{40}$ ]] && git -C "$repo" cat-file -e "$current^{commit}" 2>/dev/null &&
-    git -C "$repo" diff --quiet "$current" "$revision" -- worker; then
+  if [[ $current =~ ^[0-9a-f]{40}$ ]] && repo_git cat-file -e "$current^{commit}" 2>/dev/null &&
+    repo_git diff --quiet "$current" "$revision" -- worker; then
     echo "runs ${current:0:7}: worker/ is the same at ${revision:0:7}"
     continue
   fi

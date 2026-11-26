@@ -2,7 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   torrentContainerAction,
+  torrentContainerHasOwnVpn,
   torrentContainerIsCurrent,
+  rpcHostAddresses,
   vpnStartedSinceTorrents,
   startedAtNanos,
   // @ts-expect-error The setup helper is plain JavaScript without type declarations.
@@ -28,35 +30,40 @@ const container = (
   State: { Status: state.Running ? "running" : "exited", ...state },
 });
 
-test("r3: setup recreates the torrent container when the VPN container was recreated", () => {
-  assert.equal(
-    torrentContainerIsCurrent(container(`container:${vpn.Id}`), vpn, "vol"),
-    true,
-  );
-  assert.equal(
-    torrentContainerIsCurrent(container(`container:${"a".repeat(64)}`), vpn, "vol"),
-    false,
-  );
-  assert.equal(
-    torrentContainerAction(container(`container:${"a".repeat(64)}`), vpn, "vol"),
-    "recreate",
-  );
-  assert.equal(
-    torrentContainerIsCurrent(container("container:transmission-openvpn"), vpn, "vol"),
-    true,
-  );
-  assert.equal(torrentContainerIsCurrent(container("host"), vpn, "vol"), false);
-  assert.equal(
-    torrentContainerIsCurrent(container(`container:${vpn.Id}`, "old"), vpn, "vol"),
-    false,
-  );
-  assert.equal(
-    torrentContainerAction(container(`container:${vpn.Id}`, "old"), vpn, "vol"),
-    "recreate",
-  );
+const own = (volume = "vol", running = true) => ({
+  ...container("bridge", volume, { Running: running, StartedAt: "2026-11-26T10:00:00.000000000Z" }),
+  Config: { Env: [`SONDER_MEDIA_VOLUME_ID=${volume}`], Labels: { "sonder.vpn": "own" } },
 });
 
-test("#123: a VPN restarted after sonder-torrents started leaves it stale, and setup restarts it", () => {
+test("#911: setup keeps a container with its own VPN, starts it when stopped, recreates it for another drive", () => {
+  assert.equal(torrentContainerHasOwnVpn(own()), true);
+  assert.equal(torrentContainerAction(own(), vpn, "vol"), "keep");
+  assert.equal(torrentContainerIsCurrent(own(), vpn, "vol"), true);
+  assert.equal(torrentContainerAction(own("vol", false), vpn, "vol"), "start");
+  assert.equal(torrentContainerAction(own("old"), vpn, "vol"), "recreate");
+});
+
+test("the RPC published elsewhere than asked (a LAN address added or removed) recreates the container", () => {
+  const published = (...hosts: string[]) => ({
+    ...own(),
+    HostConfig: { NetworkMode: "bridge", PortBindings: { "9092/tcp": hosts.map((HostIp) => ({ HostIp, HostPort: "9092" })) } },
+  });
+  assert.deepEqual(rpcHostAddresses(published("192.168.1.1", "127.0.0.1"), 9092), ["127.0.0.1", "192.168.1.1"]);
+  assert.equal(torrentContainerAction(published("127.0.0.1"), vpn, "vol", { port: 9092, hosts: ["127.0.0.1"] }), "keep");
+  assert.equal(torrentContainerAction(published("127.0.0.1"), vpn, "vol", { port: 9092, hosts: ["127.0.0.1", "192.168.1.1"] }), "recreate");
+  assert.equal(torrentContainerAction(published("127.0.0.1", "192.168.1.1"), vpn, "vol", { port: 9092, hosts: ["192.168.1.1", "127.0.0.1"] }), "keep");
+  assert.equal(torrentContainerAction(published("127.0.0.1", "192.168.1.1"), vpn, "vol", { port: 9092, hosts: ["127.0.0.1"] }), "recreate");
+});
+
+test("#911: a container still in the shared VPN's network is recreated with its own VPN, whatever its state", () => {
+  assert.equal(torrentContainerHasOwnVpn(container(`container:${vpn.Id}`)), false);
+  assert.equal(torrentContainerAction(container(`container:${vpn.Id}`), vpn, "vol"), "recreate");
+  assert.equal(torrentContainerAction(container("container:transmission-openvpn"), vpn, "vol"), "recreate");
+  assert.equal(torrentContainerAction(container(`container:${"a".repeat(64)}`), vpn, "vol"), "recreate");
+  assert.equal(torrentContainerAction(container("host"), vpn, "vol"), "recreate");
+});
+
+test("#123: the watcher's rule for a container in the shared namespace: stale once the VPN started after it", () => {
   // The case from the issue: the VPN restarted on 2026-10-30 (same container ID), sonder-torrents ran since 2026-10-27.
   const stale = container(`container:${vpn.Id}`, "vol", {
     Running: true,
@@ -64,18 +71,8 @@ test("#123: a VPN restarted after sonder-torrents started leaves it stale, and s
   });
   const restartedVpn = { ...vpn, State: { ...vpn.State, StartedAt: "2026-10-30T00:38:57.012345678Z" } };
   assert.equal(vpnStartedSinceTorrents(stale, restartedVpn), true);
-  assert.equal(torrentContainerIsCurrent(stale, restartedVpn, "vol"), false);
-  assert.equal(torrentContainerAction(stale, restartedVpn, "vol"), "restart");
   // At boot Docker starts the VPN first and sonder-torrents 1.7 s later: that one is current.
-  assert.equal(torrentContainerAction(container(`container:${vpn.Id}`), vpn, "vol"), "keep");
-});
-
-test("#123: a stopped container is started, because a start joins the VPN's current network", () => {
-  const stopped = container(`container:${vpn.Id}`, "vol", {
-    Running: false,
-    StartedAt: "2026-10-27T11:47:02.512310004Z",
-  });
-  assert.equal(torrentContainerAction(stopped, vpn, "vol"), "start");
+  assert.equal(vpnStartedSinceTorrents(container(`container:${vpn.Id}`), vpn), false);
 });
 
 test("#123: start times compare to the nanosecond, and unknown times never trigger a restart", () => {
@@ -96,5 +93,4 @@ test("#123: start times compare to the nanosecond, and unknown times never trigg
   assert.equal(vpnStartedSinceTorrents(sameMs, vpn), true);
   const unknown = container(`container:${vpn.Id}`, "vol", { Running: true, StartedAt: "" });
   assert.equal(vpnStartedSinceTorrents(unknown, vpn), false);
-  assert.equal(torrentContainerAction(unknown, vpn, "vol"), "keep");
 });

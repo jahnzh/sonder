@@ -50,15 +50,19 @@ log() { printf 'mam-dynamic-seedbox: %s\n' "$*"; }
 
 last_ip=""
 last_call=0
+refused=""
 if [ -f "$state_file" ]; then
   last_ip="$(sed -n 's/^ip=//p' "$state_file" | head -n1)"
   last_call="$(sed -n 's/^at=//p' "$state_file" | head -n1)"
+  refused="$(sed -n 's/^refused=//p' "$state_file" | head -n1)"
   [[ "$last_call" =~ ^[0-9]+$ ]] || last_call=0
 fi
+# The session file's fingerprint: a session MAM refused is not sent again until the file changes.
+session_id="$( [ -r "$session_file" ] && sha256sum "$session_file" | cut -c1-16 || echo none)"
 
 write_state() {
   mkdir -p "$(dirname "$state_file")"
-  printf 'ip=%s\nat=%s\n' "$1" "$2" >"$state_file.tmp"
+  printf 'ip=%s\nat=%s\nrefused=%s\n' "$1" "$2" "${3:-}" >"$state_file.tmp"
   mv "$state_file.tmp" "$state_file"
 }
 
@@ -80,6 +84,10 @@ fi
 if [ $((now - last_call)) -lt "$MIN_INTERVAL" ]; then
   log "exit address changed to $ip, but the last change was less than an hour ago; next run"
   exit 0
+fi
+if [ -n "$refused" ] && [ "$refused" = "$session_id" ]; then
+  log "MAM refused this session before; make a new one (ASN-locked, allowed to set the dynamic seedbox) and put it in $session_file"
+  exit 1
 fi
 if [ "$dry_run" = true ]; then
   log "exit address changed from ${last_ip:-none} to $ip; would set it (dry run)"
@@ -111,6 +119,12 @@ if printf '%s' "$body" | grep -q '"Success"[[:space:]]*:[[:space:]]*true'; then
 elif printf '%s' "$body" | grep -qi 'no change'; then
   write_state "$ip" "$now"
   log "MAM already had $ip"
+elif printf '%s' "$body" | grep -qi 'invalid session'; then
+  # A session MAM does not take from this address (an IP-locked one, or one not allowed to set the seedbox): not sent
+  # again until the session file changes.
+  write_state "$last_ip" "$now" "$session_id"
+  log "MAM refused the session: ${body:0:200}"
+  exit 1
 elif printf '%s' "$body" | grep -qi 'too recent'; then
   # MAM's own limit: tried again on the next run, an hour from now.
   write_state "$last_ip" "$now"

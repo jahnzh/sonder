@@ -25,10 +25,6 @@ case "${1:-}" in
 esac
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-if ! git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
-  echo "error: $repo is not a git checkout; install from the main checkout" >&2
-  exit 1
-fi
 node_path="$(command -v node)" || { echo "error: node is not on PATH" >&2; exit 1; }
 gh_path="$(command -v gh)" || { echo "error: gh is not on PATH (the nightly files its failures with it)" >&2; exit 1; }
 service_path="$(dirname "$node_path"):$(dirname "$gh_path"):/usr/local/bin:/usr/bin:/bin"
@@ -40,6 +36,11 @@ if [ "$print_only" = true ]; then
   exit 0
 fi
 
+# --print renders from wherever this copy is, also a `git archive` copy of a check; installing needs the main checkout.
+if ! git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
+  echo "error: $repo is not a git checkout; install from the main checkout" >&2
+  exit 1
+fi
 if [ "$(git -C "$repo" rev-parse --git-dir)" != "$(git -C "$repo" rev-parse --git-common-dir)" ]; then
   echo "error: $repo is a worktree; install from the main checkout" >&2
   exit 1

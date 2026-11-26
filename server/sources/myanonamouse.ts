@@ -353,7 +353,9 @@ export function createMamClient(deps: MamClientDeps) {
     if (!token) throw new Error(MAM_NO_TORRENT);
     // The token is a path segment of the download endpoint, as the search answers it ("<token>?tid=<id>"), nothing else.
     if (!/^[A-Za-z0-9_-]{8,400}(\?tid=\d{1,12})?$/.test(token.dl)) throw new Error(`${MAM_NAME} answered an unknown download link.`);
-    const { response } = await mamRequest("download", token.dl, false);
+    // MAM's API list: the hash goes after download.php/ with "?tid=<id>" appended.
+    const link = token.dl.includes("?tid=") ? token.dl : `${token.dl}?tid=${id}`;
+    const { response } = await mamRequest("download", link, false);
     const type = response.headers.get("content-type") ?? "";
     const data = Buffer.from(await response.arrayBuffer());
     // A torrent file is a bencoded dictionary; a page in its place (a refusal, a notice) is not one.
