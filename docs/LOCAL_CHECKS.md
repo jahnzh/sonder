@@ -186,7 +186,7 @@ From any checkout (including an Orca worktree), deploy a committed revision with
 scripts/deploy-prod.sh <commit> [--marker <string>]... [--marker-file <path>]... [--no-marker] [--skip-live-checks] [--wait-checks] [--dry-run]
 ```
 
-`deploy-prod.sh` stops the background checks of an earlier deploy (`deploy.sh --stop-checks`: they run from the work tree it is about to change), checks out `<commit>` into the production work tree and runs `scripts/deploy.sh` inside a subshell so `GIT_DIR`/`GIT_WORK_TREE` never escape to the caller. It refuses when tracked work-tree files are modified and passes through `deploy.sh` exit codes and flags (including `--dry-run`).
+`deploy-prod.sh` stops the background checks of an earlier deploy (`deploy.sh --stop-checks`: they run from the work tree it is about to change), checks out `<commit>` into the production work tree and runs `scripts/deploy.sh` inside a subshell so `GIT_DIR`/`GIT_WORK_TREE` never escape to the caller. It refuses when tracked work-tree files are modified and passes through `deploy.sh` exit codes and flags (including `--dry-run`). Before it stops or checks out anything, each `--marker` string must be in the commit's `server/`, `src/` or `dist/` (`git grep -F`; `dist/` is built, so a client marker is found in `src/`): a missing one fails at once with nothing built, and when the commit changes none of the image's code since the work tree's commit the message says to deploy with `--no-marker` (`scripts/lib/deploy-markers.sh`; `deploy.sh` checks the same before its build).
 
 `scripts/deploy.sh` alone is for use **inside** the production work tree when it is already at `<commit>` with a clean index:
 

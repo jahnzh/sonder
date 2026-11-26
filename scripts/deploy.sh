@@ -38,7 +38,8 @@
 # (and latest.json): "passed", "rolled_back", "rollback_failed", "not_rolled_back" or "superseded" (a later deploy
 # stopped it). SONDER_DEPLOY_STATE_DIR moves that folder.
 # At least one --marker or --marker-file is required; --no-marker explicitly skips image verification (non-app changes)
-# and cannot be combined with either.
+# and cannot be combined with either. A --marker string the commit's server/, src/ or dist/ does not hold (git grep)
+# fails at step 1, before the build (scripts/lib/deploy-markers.sh).
 # Exit codes: 0 deployed (with --wait-checks: and the checks passed or were skipped), 1 a step failed (with
 # --wait-checks: or a check failed, and the deploy was rolled back), 2 bad usage.
 set -u
@@ -378,6 +379,15 @@ fi
 state=$($docker inspect --format '{{.State.Status}}' "$container")
 [ "$state" = "running" ] || { echo "production container 'sonder' is not running (state: $state)" >&2; exit 1; }
 old_id=$($docker inspect --format '{{.Image}}' "$container")
+# A --marker the commit does not hold fails before the build (deploy-prod.sh checks it already; this is for a direct
+# call). The commit production runs, from its image's label, decides whether to name --no-marker.
+if [ ${#markers[@]} -gt 0 ]; then
+  # shellcheck source=scripts/lib/deploy-markers.sh
+  source "$repo_root/scripts/lib/deploy-markers.sh"
+  running_commit=$($docker image inspect --format '{{index .Config.Labels "sonder.commit"}}' "$old_id" 2>/dev/null) || running_commit=""
+  git rev-parse -q --verify "${running_commit:-none}^{commit}" >/dev/null 2>&1 || running_commit=""
+  check_markers_in_commit "$full" "$running_commit" "${markers[@]}" || exit 1
+fi
 image_tag=${repo_name}:commit-$full
 smoke_args=()
 for m in ${markers[@]+"${markers[@]}"}; do smoke_args+=(--marker "$m"); done

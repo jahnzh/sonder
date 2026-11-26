@@ -39,6 +39,11 @@ function fixture(checks, { images = "sonder-audiobooks:rollback aaaaaaaaaaaa", t
   mkdirSync(bin);
   for (const name of ["deploy.sh", "deploy-prod.sh", "build-image.sh", "deploy-wait.sh"])
     copyFileSync(join(repoRoot, "scripts", name), join(repo, "scripts", name));
+  mkdirSync(join(repo, "scripts", "lib"));
+  copyFileSync(join(repoRoot, "scripts", "lib", "deploy-markers.sh"), join(repo, "scripts", "lib", "deploy-markers.sh"));
+  // The commit's code, which a --marker is looked for in before the build: "needle" is in it.
+  mkdirSync(join(repo, "server"));
+  writeFileSync(join(repo, "server", "app.ts"), "export const needle = 1;\n");
   writeFileSync(join(repo, "package.json"), JSON.stringify({ scripts: { backup: "cp" } }));
   const sqlite = new Database(join(repo, "data", "sonder.db"));
   sqlite.exec(`
@@ -245,6 +250,22 @@ test("a failing marker restores :local from the rollback tag and does not compos
     assert.equal(calls.filter((c) => c.startsWith("run ") || c.startsWith("compose run ")).length, 1, calls.join("\n"));
     assert.ok(calls.some((c) => c === "tag sonder-audiobooks:rollback sonder-audiobooks:local"), calls.join("\n"));
     assert.equal(calls.some((c) => c.startsWith("compose up")), false);
+    assert.deepEqual(f.ran(), []);
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("a --marker the commit does not hold fails before the image is built", () => {
+  const f = fixture({ "verify-a.mjs": 0 });
+  try {
+    const r = f.run(["--marker", "needle", "--marker", "not-in-the-code"]);
+    assert.equal(r.status, 1, r.stdout);
+    assert.match(r.stderr, /marker not found in [0-9a-f]{7} \(server\/, src\/, dist\/\): not-in-the-code/);
+    assert.doesNotMatch(r.stderr, /marker not found[^\n]*: needle/);
+    assert.match(r.stderr, /nothing was built/);
+    const calls = f.dockerCalls();
+    assert.equal(calls.some((c) => c.startsWith("build ") || c.startsWith("tag ") || c.startsWith("compose ")), false, calls.join("\n"));
     assert.deepEqual(f.ran(), []);
   } finally {
     rmSync(f.dir, { recursive: true, force: true });
