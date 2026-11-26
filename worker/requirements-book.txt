@@ -4,4 +4,4 @@ transformers==4.56.2
 huggingface-hub==0.36.2
 tokenizers==0.22.2
 safetensors==0.8.0
-regex==2026.11.25
+regex==2025.11.3  # a release that still installs on Python 3.10 (WSL's worker env)
