@@ -89,7 +89,13 @@ try {
     }),
   )[0];
 } catch {}
-const action = existing ? torrentContainerAction(existing, vpn, volumeId) : "create";
+// The RPC port is published on loopback for Sonder, and on the LAN address named by TRANSMISSION_RPC_LAN_ADDRESS in
+// .env (the router's, 192.168.1.1) for a remote GUI on the LAN; Docker's userland proxy puts it behind the router's
+// input chain, which takes LAN and WireGuard, never WAN.
+const lanAddress = get("TRANSMISSION_RPC_LAN_ADDRESS")?.trim();
+if (lanAddress && !/^(\d{1,3}\.){3}\d{1,3}$/.test(lanAddress)) throw new Error("TRANSMISSION_RPC_LAN_ADDRESS must be an IPv4 address.");
+const rpcHosts = ["127.0.0.1", ...(lanAddress && lanAddress !== "127.0.0.1" ? [lanAddress] : [])];
+const action = existing ? torrentContainerAction(existing, vpn, volumeId, { port: RPC_PORT, hosts: rpcHosts }) : "create";
 if (action === "recreate") {
   execFileSync("docker", ["stop", "sonder-torrents"], { stdio: "ignore" });
   execFileSync("docker", ["rm", "sonder-torrents"], { stdio: "ignore" });
@@ -146,8 +152,7 @@ if (!existing) {
       `${OWN_VPN_LABEL}=own`,
       "--cap-add",
       "NET_ADMIN",
-      "--publish",
-      `127.0.0.1:${RPC_PORT}:${RPC_PORT}`,
+      ...rpcHosts.flatMap((host) => ["--publish", `${host}:${RPC_PORT}:${RPC_PORT}`]),
       "--log-opt",
       "max-size=10m",
       "--mount",
@@ -175,5 +180,5 @@ if (!existing) {
     execFileSync("docker", ["start", "sonder-torrents"], { stdio: "ignore" });
 }
 console.log(
-  `Sonder torrent queue is configured. Media: ${root}. VPN: its own ${vpnEnv.OPENVPN_PROVIDER} connection (${vpnEnv.OPENVPN_CONFIG || "default region"}), RPC on 127.0.0.1:${RPC_PORT}. Credentials saved privately in .env and data/transmission-vpn.env.`,
+  `Sonder torrent queue is configured. Media: ${root}. VPN: its own ${vpnEnv.OPENVPN_PROVIDER} connection (${vpnEnv.OPENVPN_CONFIG || "default region"}), RPC on ${rpcHosts.map((host) => `${host}:${RPC_PORT}`).join(" and ")}. Credentials saved privately in .env and data/transmission-vpn.env.`,
 );

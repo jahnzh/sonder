@@ -4,6 +4,7 @@ import {
   torrentContainerAction,
   torrentContainerHasOwnVpn,
   torrentContainerIsCurrent,
+  rpcHostAddresses,
   vpnStartedSinceTorrents,
   startedAtNanos,
   // @ts-expect-error The setup helper is plain JavaScript without type declarations.
@@ -40,6 +41,18 @@ test("#911: setup keeps a container with its own VPN, starts it when stopped, re
   assert.equal(torrentContainerIsCurrent(own(), vpn, "vol"), true);
   assert.equal(torrentContainerAction(own("vol", false), vpn, "vol"), "start");
   assert.equal(torrentContainerAction(own("old"), vpn, "vol"), "recreate");
+});
+
+test("the RPC published elsewhere than asked (a LAN address added or removed) recreates the container", () => {
+  const published = (...hosts: string[]) => ({
+    ...own(),
+    HostConfig: { NetworkMode: "bridge", PortBindings: { "9092/tcp": hosts.map((HostIp) => ({ HostIp, HostPort: "9092" })) } },
+  });
+  assert.deepEqual(rpcHostAddresses(published("192.168.1.1", "127.0.0.1"), 9092), ["127.0.0.1", "192.168.1.1"]);
+  assert.equal(torrentContainerAction(published("127.0.0.1"), vpn, "vol", { port: 9092, hosts: ["127.0.0.1"] }), "keep");
+  assert.equal(torrentContainerAction(published("127.0.0.1"), vpn, "vol", { port: 9092, hosts: ["127.0.0.1", "192.168.1.1"] }), "recreate");
+  assert.equal(torrentContainerAction(published("127.0.0.1", "192.168.1.1"), vpn, "vol", { port: 9092, hosts: ["192.168.1.1", "127.0.0.1"] }), "keep");
+  assert.equal(torrentContainerAction(published("127.0.0.1", "192.168.1.1"), vpn, "vol", { port: 9092, hosts: ["127.0.0.1"] }), "recreate");
 });
 
 test("#911: a container still in the shared VPN's network is recreated with its own VPN, whatever its state", () => {
