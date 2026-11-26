@@ -173,6 +173,41 @@ class JobsCarryTheHostsEngine(unittest.TestCase):
         self.assertEqual(BookJobs(self.root, Old()).engine, book_job.BOOK_ENGINE)
 
 
+class SewdThreads(unittest.TestCase):
+    """SEW-D tiny's CPU batches use at most the physical cores; Base keeps every free core (#921)."""
+
+    def test_physical_cores_count_hyperthread_siblings_once(self):
+        import os
+        from unittest import mock
+        import cpu_share
+        with tempfile.TemporaryDirectory() as folder:
+            for cpu in range(4):  # two cores with two threads each: siblings 0,2 and 1,3
+                topology = Path(folder) / f"cpu{cpu}" / "topology"
+                topology.mkdir(parents=True)
+                (topology / "thread_siblings_list").write_text(f"{cpu % 2},{cpu % 2 + 2}\n")
+            with mock.patch.object(os, "sched_getaffinity", lambda _pid: {0, 1, 2, 3}):
+                self.assertEqual(cpu_share.physical_cores(folder), 2)
+                self.assertEqual(cpu_share.physical_cores(str(Path(folder) / "missing")), 4, "no sysfs: every core")
+
+    def test_the_encode_takes_the_free_cores_up_to_the_models_limit(self):
+        from book_job import WorkerStages
+        from cpu_share import CpuShare
+        share = CpuShare(cores=20)
+        stages = WorkerStages(Path("/nonexistent"), None, "cpu", env={}, cpu=share)
+
+        class Sewd:
+            max_threads = 10
+
+        class Base:
+            pass
+
+        self.assertEqual(stages.encode_threads(Sewd())(), 10)
+        self.assertEqual(stages.encode_threads(Base())(), 20)
+        with share.claim(14):  # another book aligns beside it
+            self.assertEqual(stages.encode_threads(Sewd())(), 6)
+            self.assertEqual(stages.encode_threads(Base())(), 6)
+
+
 try:
     import fastapi  # noqa: F401
 except ImportError:  # pragma: no cover

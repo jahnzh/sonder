@@ -203,6 +203,7 @@ The Steam Deck is no longer a pool host (#279): `ALIGNMENT_POOL_DECK_HOST` and
 `ALIGNMENT_POOL_DECK_WORKER_URL` are ignored.
 
 - **WSL (Primary)**: Equipped with an NVIDIA GPU running PyTorch with CUDA `2.8.0+cu128`. Port 3012 is forwarded from the Windows host to the WSL2 virtual machine via Windows portproxy and firewall rules.
+- **Book model** (#921): `ALIGNMENT_BOOK_MODEL` in a host's `worker.env`, `wav2vec2-base` or `sew-d-tiny`; unset, a `cuda` host keeps Wav2Vec2 Base and any other takes SEW-D tiny. So WSL encodes whole books with Base and lisa with SEW-D tiny; window requests use Base on both. An unknown value stops the worker at start. `scripts/install-ctc-workers.sh --book-model <name>` writes it (and keeps it on a reinstall).
 - **Lisa (Fallback)**: CPU-only worker running PyTorch `2.8.0+cpu`. Worker listens locally on `127.0.0.1:3012` and is reverse-proxied by Caddy under `https://audiobooks.amatox.in/sonder-ctc` with an IP allowlist restricted to the production server.
 
 ## Server SSH access and key layout
@@ -489,16 +490,21 @@ ADR 0016's whole-book request. The server calls it only with
 runner" below). The window endpoints (`/align`, `/anchor`, `/anchor-batch`) and their
 engine `ctc-wav2vec2-base-960h-torchaudio-2.8-v2` are unchanged. A whole-book
 job is a new engine generation, `ctc-wav2vec2-base-960h-torchaudio-2.8-book-v2`
-(`book_job.BOOK_ENGINE`), with the same model. `book-v1` was #402's; #403 made
+(`book_job.BOOK_ENGINE`), with the same model. Since #921 a CPU host encodes whole books
+with SEW-D tiny instead, under its own engine
+`ctc-sew-d-tiny-100k-ft-ls100h-transformers-4.56-book-v2`, the same generation
+(see "SEW-D tiny for whole-book jobs on CPU hosts" below). `book-v1` was #402's; #403 made
 `book-v2` because its maps hold more than v1's could (the leftover pass maps
 chapters read out of the ebook's order, and a wrong book ends as
 `text_mismatch`), so a map's content depends on the generation. A retained job
 folder of `book-v1` starts over, emissions included (their identity carries the
-engine). `/health`'s existing fields
+engine), and so does one of the other book model's engine. `/health`'s existing fields
 (`busy`, `busySeconds`, `activeRequests`, `slots`, `stuck`) describe window
 requests only, exactly as before; book work is reported only under
-`bookJobs: {engine, ready, jobs, resuming, slotsHeld, batchSeconds, stuck,
-diskReservedBytes, diskBudgetBytes}`. `resuming` is `true` while the worker
+`bookJobs: {engine, model, ready, jobs, resuming, slotsHeld, batchSeconds, stuck,
+diskReservedBytes, diskBudgetBytes}`: `engine` and `model` (`wav2vec2-base` or
+`sew-d-tiny`) are the host's book model's, and `ready` also needs that model's
+weights (and for SEW-D tiny the pinned transformers). `resuming` is `true` while the worker
 still picks up its retained job folders after a start (book requests get
 `503` until then). `slotsHeld` is the number of the
 worker's slots that encode batches hold at that moment and `batchSeconds` the

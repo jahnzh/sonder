@@ -119,6 +119,10 @@ class SewdModel:
     """SEW-D tiny with the attributes `book_encode.encode_tracks` uses: `.model`, `.torch`, `.device`, `.dtype`."""
     # Book encodes set their own threads per batch (cpu_share); this model serves no window request.
     window_threads = None
+    # The most torch threads a batch of this model uses (`max_threads`, set at load: the physical cores). On lisa
+    # (2026-11-26, 300 s of one book, two rounds) SEW-D tiny encodes 18 to 23x on 10 threads, 19 to 21x on 14 and
+    # 15.5x on all 20: hyperthreads slow this small model down, while Base is fastest on all 20 (4.8x against 4.0x).
+    max_threads = None
 
     def __init__(self, alignment_folder, device=None):
         import json
@@ -148,6 +152,8 @@ class SewdModel:
         self.model = _Labelled(torch, model, torch.tensor(indices, dtype=torch.long),
                                bool(preprocessor.get("do_normalize")))
         self.labels = LABELS
+        from cpu_share import physical_cores
+        self.max_threads = physical_cores() if self.device.type == "cpu" else None
 
     def release_memory(self):
         if self.device.type == "cuda":

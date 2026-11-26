@@ -20,6 +20,23 @@ def host_cores():
         return os.cpu_count() or 1
 
 
+def physical_cores(topology="/sys/devices/system/cpu"):
+    """The physical cores among this process's CPUs: one per set of hyperthread siblings (Linux sysfs), else
+    `host_cores()`. lisa: 10 of its 20."""
+    try:
+        cpus = sorted(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        return host_cores()
+    siblings = set()
+    for cpu in cpus:
+        try:
+            with open(f"{topology}/cpu{cpu}/topology/thread_siblings_list") as handle:
+                siblings.add(handle.read().strip())
+        except OSError:
+            return host_cores()
+    return len(siblings) or host_cores()
+
+
 class CpuShare:
     def __init__(self, cores=None):
         self._cores = cores

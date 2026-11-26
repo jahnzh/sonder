@@ -661,6 +661,14 @@ class WorkerStages:
         # The worker's cpu_share.CpuShare: decode and align claim cores, a CPU encode takes the rest per batch.
         self.cpu = SHARE if cpu is None else cpu
 
+    def encode_threads(self, model):
+        """The torch threads of the next CPU batch: the cores no other work claims (`cpu_share`), at most the
+        model's own limit (`max_threads`: SEW-D tiny's physical cores, #921; Base has none)."""
+        limit = getattr(model, "max_threads", None)
+        if not limit:
+            return self.cpu.free
+        return lambda: max(1, min(self.cpu.free(), int(limit)))
+
     def encode_position(self, key):
         from book_encode import encode_queue
         return encode_queue(self.device).position(key)
@@ -795,7 +803,7 @@ class WorkerStages:
                                               on_track=on_encoded, on_progress=on_progress,
                                               admit=None if gate is None else lambda: gate.hold_background(
                                                   should_stop, on_wait=job.gate_wait),
-                                              threads=self.cpu.free)
+                                              threads=self.encode_threads(model))
                     finally:
                         if monitor is not None:
                             monitor.stop()
