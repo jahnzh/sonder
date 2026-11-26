@@ -60,6 +60,20 @@ Every invocation uses separate build output, a browser-test port, and a report d
 
 Port leases coordinate runners that use the current contender protocol. Do not overlap one with a check runner started from a revision before issue #59: a legacy runner can decide that an old lock is stale, pause, and then unlink the current runner's replacement because it does not revalidate the lock identity or observe contender records. Wait for every legacy check process to exit before starting a current runner; the current runner cannot close that mixed-version race unilaterally.
 
+### The land check's time (#915)
+
+Measured on lisa (20 cores, shared with other workers) on 26 Nov 2026; WSL could not be reached that night. The land check is install, build, the unit suite and the browser smoke set:
+
+| Stage | Time on lisa |
+| --- | --- |
+| `npm ci` (npm's cache warm) | 8.2 s |
+| `npm run build` | 13–60 s (60 s under a load of 10) |
+| Unit suite, before (c65c6a3) | 180 s and 176 s (loads 18 and 21) |
+| Unit suite, after | 125 s and 126 s (loads 33 and 30) |
+| Smoke set (16 tests tagged `@smoke`) | about 62 s of test time, from the full run of 25 Nov |
+
+The unit suite was the biggest stage. Its files run in parallel, so its time is set by its longest files and by the CPU they all take: `tests/orca-preflight.test.ts` took 71 s alone, because `scripts/orca-preflight.sh` forked a `readlink` for each of lisa's 530 processes, twice per call. One `find` over `/proc` now reads them all: the file takes 4 s, `tests/orca-reap.test.ts` 14 s instead of 33 s. The longest left are the Python worker tests (`test_book_align.Reordered` 55 s, most of it the class's shared setup, so splitting it by method gains nothing) and `tests/ci-ssh.test.ts` (29 s alone, 70 s under the suite's own load).
+
 ## Known failures
 
 ```bash
@@ -169,32 +183,65 @@ Production source lives at `/home/jahn/audiobook_streamer`: a **bare** Git repos
 From any checkout (including an Orca worktree), deploy a committed revision with:
 
 ```bash
-scripts/deploy-prod.sh <commit> [--marker <string>]... [--marker-file <path>]... [--no-marker] [--skip-live-checks] [--dry-run]
+scripts/deploy-prod.sh <commit> [--marker <string>]... [--marker-file <path>]... [--no-marker] [--skip-live-checks] [--wait-checks] [--dry-run]
 ```
 
-`deploy-prod.sh` checks out `<commit>` into the production work tree and runs `scripts/deploy.sh` inside a subshell so `GIT_DIR`/`GIT_WORK_TREE` never escape to the caller. It refuses when tracked work-tree files are modified and passes through `deploy.sh` exit codes and flags (including `--dry-run`).
+`deploy-prod.sh` stops the background checks of an earlier deploy (`deploy.sh --stop-checks`: they run from the work tree it is about to change), checks out `<commit>` into the production work tree and runs `scripts/deploy.sh` inside a subshell so `GIT_DIR`/`GIT_WORK_TREE` never escape to the caller. It refuses when tracked work-tree files are modified and passes through `deploy.sh` exit codes and flags (including `--dry-run`).
 
 `scripts/deploy.sh` alone is for use **inside** the production work tree when it is already at `<commit>` with a clean index:
 
 ```bash
-scripts/deploy.sh <commit> [--marker <string>]... [--marker-file <path>]... [--no-marker] [--skip-live-checks] [--dry-run]
+scripts/deploy.sh <commit> [--marker <string>]... [--marker-file <path>]... [--no-marker] [--skip-live-checks] [--wait-checks] [--dry-run]
+scripts/deploy.sh --stop-checks
 ```
 
-Deploys a committed revision to the local production container (`sonder` in `compose.yaml`, image `sonder-audiobooks:local`, port 3001). Production runs on this machine and the compose build context is the working tree, so the checkout must be exactly at `<commit>` with no tracked changes before the build; the script verifies that first, then:
+Deploys a committed revision to the local production container (`sonder` in `compose.yaml`, image `sonder-audiobooks:local`, port 3001). The checkout must be exactly at `<commit>` with no tracked changes (compose.yaml, the live checks and the preparing of the library run from it); the image itself is built from the commit, not from the work tree. One deploy runs at a time (a lock in `artifacts/deploy/`). The deploy's own steps, which it waits for (#915):
 
-1. backs up the running database with the online backup API (`data/backups/before-<short>-<epoch>.db`);
-2. tags the running image for rollback before building — it reuses an existing `sonder-audiobooks:*` tag (other than `:local`) of that image, or adds `sonder-audiobooks:before-<short>-<epoch>` when it has none; if the tag cannot be made the script stops before building and says how to roll back by rebuilding the previous commit. The build moves `:local`, so tagging afterwards loses an image whose only tag was `:local` (#153);
-3. builds `sonder-audiobooks:local` with `docker compose build sonder`;
-4. verifies every `--marker` string in the built image's `/app` (server code and built client) and every `--marker-file <path>` exists in the image (`docker run --rm --entrypoint test <image> -f <path>`); a failure restores the rollback `:local` tag and leaves the container running. At least one `--marker` or `--marker-file` is required: the script exits 2 ("refusing to deploy with no verification") unless `--no-marker` is given, which explicitly skips the image check for non-app changes (docs, scripts) and cannot be combined with the other two. `deploy-prod.sh` applies the same rule before touching the work tree;
-5. runs the image smoke using the `sonder` service's environment, network and mounts, without starting its dependencies; the smoke checks server imports and the consensus worker, and, when `ALIGNMENT_POOL_ENABLED=1`, checks that `ssh` and `scp` are present and that every configured pool host answers `/health` and `ssh true` using the container's SSH credentials. A failure restores the rollback image's `:local` tag and leaves the existing container running;
-6. recreates the container, waits for the health check, then curls `/api/health`;
-7. waits for the server to settle before any live check: until `/api/health` has answered in under half a second for 60 seconds in a row. An answer that is slow, refused or an error starts the stretch again. After 300 seconds without such a stretch the script prints `not settled: … starting the live checks anyway` and goes on. `SONDER_DEPLOY_SETTLE_SECONDS` (the stretch; `0` skips the wait), `SONDER_DEPLOY_SETTLE_ANSWER` (how quick an answer must be, in seconds), `SONDER_DEPLOY_SETTLE_CEILING` and `SONDER_DEPLOY_SETTLE_INTERVAL` (how often it asks) set the four numbers. With `--skip-live-checks` there is no wait. On 20 Nov 2026 the reader check started the moment health answered, on a loaded machine, and failed a sound build because the audio did not start within 30 seconds (#822);
-8. runs the live verification scripts (reader and multi-user) unless `--skip-live-checks`, every one of them even when an earlier one fails, then exits 1 listing the failures. Each check picks its own recording, never one listened to in the last 48 hours or another recording of its work (#774); `deploy.sh` passes no recording id. The reader check takes a recording that plays from the server's own copy before one that streams from TorBox or another remote source, so it does not depend on a service outside the machine when it need not (#822). No check is run again by the script: one that fails fails the deploy. `SONDER_VERIFY_RECORDING=<recording id>` names the recording instead and `deploy.sh` passes it through to every check, with `SONDER_VERIFY_ALLOW_RECENT=1` when that recording was played in the last 48 hours (without it the check refuses the recording and fails). A check that exits 3 and writes a reason to the file named by `SONDER_LIVE_CHECK_SKIP_FILE` found no recording it can run on without moving the owner's saved position (the reader check after the owner finished its only aligned book, #431): the deploy prints `live check skipped: <script> (no suitable recording: <reason>)` and does not count it as a failure. Any other non-zero exit, including 3 without a reason, is a failure.
-9. prepares the library's text (#827): `scripts/prepare-library.sh` on the deployed server, after the live checks have passed or were skipped, so nothing heavy runs under a check. Its failure is printed loudly and named in the deploy's last line, and does not change the exit code: the deploy is live and checked by then.
+1. the image `sonder-audiobooks:commit-<sha>` (labelled `sonder.commit=<sha>`): when a prebuild has made it (below) it is used as it is, otherwise `scripts/build-image.sh <sha>` builds it now; a build that is running for it already is waited for. A failed build stops the deploy with nothing touched;
+2. backs up the running database with the online backup API (`data/backups/before-<short>-<epoch>.db`);
+3. tags the running image for rollback before `:local` moves — it reuses an existing `sonder-audiobooks:*` tag of that image (not `:local`, not a `commit-<sha>` tag, which `build-image.sh` untags when it is old), or adds `sonder-audiobooks:before-<short>-<epoch>`; if the tag cannot be made the script stops before `:local` moves and says how to roll back by rebuilding the previous commit (#153);
+4. tags the new image `sonder-audiobooks:local`;
+5. one container of the new image, with the `sonder` service's environment, network and mounts and without its dependencies, checks every `--marker` string under the image's `/app/server`, `/app/dist` and `/app/src` and that every `--marker-file <path>` is a file, then runs the image smoke (`scripts/image-smoke.mjs --marker … --marker-file …`): server imports, the consensus worker, the preparing thread and, when `ALIGNMENT_POOL_ENABLED=1`, that `ssh` and `scp` are present and that every configured pool host answers `/health` and `ssh true` with the container's SSH credentials. A failure restores the rollback image's `:local` tag and leaves the running container alone. At least one `--marker` or `--marker-file` is required: the script exits 2 ("refusing to deploy with no verification") unless `--no-marker` is given, which explicitly skips the image check for non-app changes (docs, scripts) and cannot be combined with the other two. `deploy-prod.sh` applies the same rule before touching the work tree;
+6. recreates the container (`docker compose up -d --no-build sonder`) and asks `/api/health` every quarter second until it answers once; a container that does not answer within `SONDER_DEPLOY_HEALTH_TIMEOUT` (60 s) is rolled back at once (`:local` back to the rollback image, recreated again);
+7. prints `deployed <short>`, the backup, the rollback command and the steps' times (`deploy times: verify … · image … · backup … · rollback-tag … · smoke … · swap … · health … · total …`), and starts the checks after the swap in the background.
 
-Exit codes: 0 success (skipped live checks included), 1 a step failed, 2 bad usage. Environment overrides: `SONDER_DEPLOY_DOCKER`, `SONDER_DEPLOY_DB`, `SONDER_DEPLOY_BACKUP_DIR`, `SONDER_DEPLOY_HEALTH_TIMEOUT`, `SONDER_DEPLOY_PORT`, `SONDER_DEPLOY_LIVE_CHECKS`, and the four `SONDER_DEPLOY_SETTLE_*` settings of step 7.
+The checks after the swap run in their own process group (log `artifacts/deploy/<short>-<epoch>.log`, result `artifacts/deploy/<short>-<epoch>.json` and `artifacts/deploy/latest.json`; `SONDER_DEPLOY_STATE_DIR` moves the folder). `--wait-checks` runs them in the foreground instead and gives their result as the exit code. `scripts/deploy-wait.sh [<result file>]` waits for them (without a file: the newest deploy's) and exits 0 when they passed, 1 when they failed or were superseded, 3 when there is no result. Their steps:
 
-Rollback is retagging the previous image and a no-build recreate:
+8. waits for the server to settle before any live check: until `/api/health` has answered in under half a second for 60 seconds in a row. An answer that is slow, refused or an error starts the stretch again. After 300 seconds without such a stretch it prints `not settled: … starting the live checks anyway` and goes on. `SONDER_DEPLOY_SETTLE_SECONDS` (the stretch; `0` skips the wait), `SONDER_DEPLOY_SETTLE_ANSWER` (how quick an answer must be, in seconds), `SONDER_DEPLOY_SETTLE_CEILING` and `SONDER_DEPLOY_SETTLE_INTERVAL` (how often it asks) set the four numbers. With `--skip-live-checks` there is no wait. On 20 Nov 2026 the reader check started the moment health answered, on a loaded machine, and failed a sound build because the audio did not start within 30 seconds (#822);
+9. runs the live verification scripts (reader, multi-user and covers) unless `--skip-live-checks`, every one of them even when an earlier one fails. Each check picks its own recording, never one listened to in the last 48 hours or another recording of its work (#774); `deploy.sh` passes no recording id. The reader check takes a recording that plays from the server's own copy before one that streams from TorBox or another remote source, so it does not depend on a service outside the machine when it need not (#822). No check is run again by the script. `SONDER_VERIFY_RECORDING=<recording id>` names the recording instead and `deploy.sh` passes it through to every check, with `SONDER_VERIFY_ALLOW_RECENT=1` when that recording was played in the last 48 hours (without it the check refuses the recording and fails). A check that exits 3 and writes a reason to the file named by `SONDER_LIVE_CHECK_SKIP_FILE` found no recording it can run on without moving the owner's saved position (the reader check after the owner finished its only aligned book, #431): it prints `live check skipped: <script> (no suitable recording: <reason>)` and does not count as a failure. Any other non-zero exit, including 3 without a reason, is a failure, and a failure **rolls back**: the rollback image is tagged `:local` again and the container recreated (result `rolled_back`, or `rollback_failed` with the command to run). When the container no longer runs this deploy's image (a later deploy, a manual change) nothing is rolled back (`not_rolled_back`). A later deploy stops the checks of an earlier one (`superseded`, no rollback);
+10. prepares the library's text (#827): `scripts/prepare-library.sh` on the deployed server, after the live checks have passed or were skipped, so nothing heavy runs under a check. Its failure is printed loudly, kept in the result's `prepare` field and named in the log's last line; the result stays `passed`.
+
+Exit codes: 0 deployed (with `--wait-checks`: and the checks passed or were skipped), 1 a step failed (with `--wait-checks`: or a check failed, and the deploy was rolled back), 2 bad usage. Environment overrides: `SONDER_DEPLOY_DOCKER`, `SONDER_DEPLOY_DB`, `SONDER_DEPLOY_BACKUP_DIR`, `SONDER_DEPLOY_STATE_DIR`, `SONDER_DEPLOY_HEALTH_TIMEOUT`, `SONDER_DEPLOY_PORT`, `SONDER_DEPLOY_LIVE_CHECKS`, the four `SONDER_DEPLOY_SETTLE_*` settings of step 8, and, only for a test project that must not touch production's names, `SONDER_DEPLOY_CONTAINER`, `SONDER_DEPLOY_IMAGE_REPO` and `SONDER_DEPLOY_HOST`.
+
+### Images built ahead (#915)
+
+`scripts/build-image.sh <commit>` builds `sonder-audiobooks:commit-<sha>` from `git archive <commit>`, so it can run while production runs another commit. The Dockerfile's stages are keyed by what each reads: the production `node_modules` by the lockfile (`npm ci --omit=dev`, no prune), the client (`vite build` + `build-sw.mjs`) by `src/`, `public/`, `index.html`, `vite.config.ts`, `tsconfig.json`, `scripts/build-sw.mjs` and the lockfile, and the server's files are copied last. There is no typecheck in the image: the land check typechecks every commit before it can deploy. A built commit is not built again; one build runs at a time (`flock` on `/tmp/sonder-image-build-<uid>.lock`); after a build the newest five commit images (`SONDER_IMAGE_KEEP`) keep their tags and older ones are untagged, and the build cache is trimmed to 8 GB (`SONDER_BUILD_CACHE_MAX`, least recently used first; empty leaves it alone). Tailwind scans only the client's files in the image, so the image's CSS leaves out utilities that only a server, test or doc file spelled (dead rules: no client code sets those classes).
+
+`scripts/prebuild-image.sh [--fetch] [<commit>]` builds a landed commit in the production repository (default `origin/main`; `--fetch` fetches origin's main first) and logs to `artifacts/deploy/prebuild-<short>.log`. It builds nothing while a deploy's live checks run (`artifacts/deploy/checks.pid`): a build would load the machine under them, the slow-server false failure of #822, which now rolls a sound deploy back; the timer builds a minute later. `scripts/install-prebuild.sh` installs it as the systemd user timer `sonder-prebuild.timer` (once a minute, `--fetch`), so the image of every commit that lands is ready by the time it is deployed; run the script by hand right after a landing to start at once. A deploy of a commit the timer has not reached builds it itself.
+
+Measured on andi (4 cores) on 26 Nov 2026, with a copy of the database and an internal Docker network (no outbound calls), in a test project of its own:
+
+| Step | Before (c65c6a3) | After |
+| --- | --- | --- |
+| Image build, server-only change | 73.3 s (`npm run build && npm prune` 65.9 s) | 1.7–2.6 s; 0 s when prebuilt |
+| Image build, client change | 73.3 s | 14.9 s |
+| Image build, new lockfile (deps and client stages uncached) | about 2 min | 38.9 s |
+| Backup | 0.5 s | 0.3–0.7 s |
+| Rollback tag | — (listing every image: 1.6–2.1 s) | 0.2–0.3 s (the image's own tags) |
+| Markers | 0.4–0.5 s per marker, one container each | in the smoke's container |
+| Smoke | 4.3–5.8 s | 3.7–7.5 s (markers included) |
+| Swap and first health answer | `compose up` 0.6 s, Docker "healthy" after 8.6 s | `compose up --no-build` 0.5–1.0 s, health answers 2.9–5.9 s later |
+| Settle wait (60 s) and live checks | held the deploy | after the swap, in the background |
+| Deploy, prebuilt commit | 2 min 53 s (PR #914) | 7.4–17 s |
+| Deploy, server-only commit not prebuilt | 2 min 53 s | 9.9–10.3 s |
+
+The spread of the smoke and the health answer (3–7 s each) follows andi's load at the moment, not whether the image was prebuilt. The step times are counted on the clock since boot (`/proc/uptime`): a busy host's wall clock steps back by tenths of a second when NTP corrects it (lisa, 26 Nov 2026).
+
+The new server's start is most of the swap's few seconds of downtime: on andi tsx loads the server's TypeScript in 2.6–3.0 s and `createApp` takes 0.3–0.5 s.
+
+### Roll back by hand
+
+A failed live check rolls back by itself (step 9). By hand, rollback is retagging the previous image and a no-build recreate:
 
 ```bash
 docker tag sonder-audiobooks:<rollback-tag> sonder-audiobooks:local && docker compose up -d --no-build sonder
@@ -242,7 +289,7 @@ The script prints the exact rollback command on failure and at the end of a succ
 scripts/prepare-library.sh
 ```
 
-`scripts/deploy.sh` runs this itself as its last step, after the live checks have passed (step 9 below): it starts the server's sweep as the administrator (through `scripts/admin-curl.sh`, on the deployed port), prints the count as it grows, and ends 0 when the library is prepared, or 1 with the names when a book could not be prepared or the wait ran out (`SONDER_PREPARE_TIMEOUT`, 1800 s in a deploy). A deploy that is live and checked is not failed by it: the result is printed, and a library that is not fully prepared is named again in the deploy's last line. `SONDER_DEPLOY_PREPARE_LIBRARY=` (empty) leaves the step out.
+`scripts/deploy.sh` runs this itself as the last of its checks after the swap, once the live checks have passed (step 10 of [Production deployment](#production-deployment), in the background): it starts the server's sweep as the administrator (through `scripts/admin-curl.sh`, on the deployed port), prints the count as it grows, and ends 0 when the library is prepared, or 1 with the names when a book could not be prepared or the wait ran out (`SONDER_PREPARE_TIMEOUT`, 1800 s in a deploy). A deploy that is live and checked is not failed by it: the result is printed, and a library that is not fully prepared is named in the result file's `prepare` field and again in the log's last line. `SONDER_DEPLOY_PREPARE_LIBRARY=` (empty) leaves the step out.
 
 The server also sweeps by itself, 15 minutes after a start (`PREPARED_TEXT_FIRST_SWEEP_MINUTES`) and every hour (README "Prepared text"): that is for a restart without a deploy, and late enough to stay out from under a deploy's settle wait and live checks. Run the command by hand after a change of the Node version or whenever you want to know that the whole library is prepared. It changes nothing but the prepared-text cache, reads no page and saves no position; stopping it does not stop the sweep.
 

@@ -1,0 +1,11 @@
+[Unit]
+Description=Sonder: build the image of origin/main before its deploy (scripts/prebuild-image.sh, #915)
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+ExecStart=/bin/bash @REPO@/scripts/prebuild-image.sh --fetch
+Environment=PATH=@PATH@
+Environment=SONDER_PROD_ROOT=@REPO@
+Nice=10
+TimeoutStartSec=20min

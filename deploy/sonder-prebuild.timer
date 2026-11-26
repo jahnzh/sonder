@@ -1,0 +1,10 @@
+[Unit]
+Description=Build the image of each commit that lands on Sonder's main, once a minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
