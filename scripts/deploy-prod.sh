@@ -4,7 +4,8 @@
 # the background checks of an earlier deploy (deploy.sh --stop-checks), which run from that work tree.
 #   deploy-prod.sh <commit> [deploy.sh args...]
 # deploy.sh requires --marker, --marker-file or --no-marker; deploy-prod.sh rejects a call with none of them (exit 2)
-# before touching the work tree.
+# before touching the work tree, and a --marker string the commit's server/, src/ or dist/ does not hold (exit 1),
+# naming --no-marker when the commit changes none of the image's code since the work tree's commit.
 # Refuses when tracked work-tree files are modified (same rule as deploy.sh). Passes through
 # deploy.sh's exit code. Production paths default to /home/jahn/audiobook_streamer; override with
 # SONDER_PROD_ROOT, SONDER_PROD_GIT_DIR, SONDER_PROD_WORK_TREE, or SONDER_PROD_DEPLOY_SCRIPT (tests).
@@ -20,8 +21,11 @@ commit=$1
 shift
 
 has_marker=0
-for arg in "$@"; do
-  case $arg in --marker|--marker-file|--no-marker) has_marker=1 ;; esac
+markers=()
+args=("$@")
+for i in "${!args[@]}"; do
+  case ${args[$i]} in --marker|--marker-file|--no-marker) has_marker=1 ;; esac
+  [ "${args[$i]}" = --marker ] && [ $((i + 1)) -lt ${#args[@]} ] && markers+=("${args[$((i + 1))]}")
 done
 if [ "$has_marker" -eq 0 ]; then
   echo "refusing to deploy with no verification: pass --marker <string>, --marker-file <path>, or --no-marker for a non-app change" >&2
@@ -55,6 +59,13 @@ for arg in "$@"; do
 done
 
 head=$(git rev-parse HEAD)
+# A --marker the commit does not hold fails now, before the earlier deploy's checks stop and the image is built.
+# shellcheck source=scripts/lib/deploy-markers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/deploy-markers.sh"
+if [ ${#markers[@]} -gt 0 ] && ! check_markers_in_commit "$full" "$head" "${markers[@]}"; then
+  exit 1
+fi
+
 if [ "$dry_run" -eq 1 ] && [ "$head" != "$full" ]; then
   echo "dry-run: would run: git checkout --detach ${full} (work tree is at ${head:0:7}, not ${full:0:7})" >&2
   exit 0

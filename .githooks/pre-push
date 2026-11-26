@@ -73,6 +73,10 @@ if [[ $has_code -eq 0 && $unknown -eq 0 ]]; then
     echo "Pre-push hook: only documentation is pushed (docs/ or markdown); the build is not run."
   fi
 else
+  if ! has_dependencies; then
+    echo "Pre-push hook: no node_modules in this checkout; the build and tests run in the land gate (npm run ci:run)."
+    exit 0
+  fi
   if [[ $has_code -eq 0 ]]; then
     echo "Pre-push hook: could not list what is pushed; running the build."
   fi

@@ -139,3 +139,54 @@ test("update-ctc-workers.sh skips a host at the commit or at one with the same w
   assert.equal(log.trim().split("\n").length, 4, "one health read per host and nothing else");
   assert.deepEqual(readdirSync(stage), [], "the staged copy is removed");
 });
+
+test("update-ctc-workers.sh runs from the production directory, a bare repository with its files beside it", () => {
+  const dir = tempDir("sonder-ctc-update-bare-");
+  const gitEnv = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")));
+  const git = (cwd: string, ...args: string[]) => {
+    const result = spawnSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.invalid", ...args], { cwd, env: gitEnv, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  const seed = join(dir, "seed");
+  mkdirSync(join(seed, "scripts"), { recursive: true });
+  mkdirSync(join(seed, "worker"));
+  copyFileSync(script("update-ctc-workers.sh"), join(seed, "scripts", "update-ctc-workers.sh"));
+  writeFileSync(join(seed, "worker", "align.py"), "# worker\n");
+  git(seed, "init", "-q", "-b", "main");
+  git(seed, "add", "-A");
+  git(seed, "commit", "-q", "-m", "worker");
+  const older = git(seed, "rev-parse", "HEAD");
+  writeFileSync(join(seed, "worker", "align.py"), "# worker, changed\n");
+  git(seed, "commit", "-q", "-am", "worker changed");
+  writeFileSync(join(seed, "README.md"), "docs only\n");
+  git(seed, "add", "-A");
+  git(seed, "commit", "-q", "-m", "docs");
+  const head = git(seed, "rev-parse", "HEAD");
+  const first = git(seed, "rev-parse", "HEAD~1");
+  // Production's layout: a bare repository at <dir>/.git and its files checked out in <dir> (deploy-prod.sh).
+  const prod = join(dir, "prod");
+  git(dir, "init", "-q", "--bare", join(prod, ".git"));
+  git(seed, "push", "-q", join(prod, ".git"), "main");
+  git(dir, "--git-dir", join(prod, ".git"), "--work-tree", prod, "checkout", "-q", "-f", "main");
+  const toplevel = spawnSync("git", ["-C", join(prod, "scripts"), "rev-parse", "--show-toplevel"], { env: gitEnv, encoding: "utf8" });
+  assert.notEqual(toplevel.status, 0, "the fixture is bare, as production is");
+
+  const calls = join(dir, "calls.log");
+  const ssh = join(dir, "ssh");
+  const revisions = { same: first, older };
+  const cases = Object.entries(revisions).map(([host, revision]) => `${host}) echo '{"ready":true,"revision":"${revision}"}' ;;`).join("\n");
+  writeFileSync(ssh, `#!/usr/bin/env bash\necho "ssh $*" >> "${calls}"\ncase $1 in\n${cases}\nesac\n`);
+  chmodSync(ssh, 0o755);
+  const stage = join(dir, "stage");
+  mkdirSync(stage);
+  const result = spawnSync("bash", [join(prod, "scripts", "update-ctc-workers.sh"), "HEAD", "--dry-run", "--host", "same", "--host", "older"], {
+    cwd: prod,
+    env: { ...gitEnv, SONDER_CTC_SSH: ssh, SONDER_CTC_RSYNC: "false", TMPDIR: stage },
+    encoding: "utf8",
+    timeout: 60_000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`== same\\nruns ${first.slice(0, 7)}: worker/ is the same at ${head.slice(0, 7)}\\n== older\\nruns ${older.slice(0, 12)}, wants ${head.slice(0, 7)}\\ndry run:`));
+  assert.deepEqual(readdirSync(stage), [], "the staged copy is removed");
+});

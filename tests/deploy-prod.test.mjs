@@ -210,3 +210,65 @@ test("forwards --marker-file to deploy.sh", () => {
     assert.ok(f.stubLines().find((l) => l.startsWith("ARGS="))?.includes("--marker-file /app/dist/index.html"));
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
 });
+
+/** A third commit on top of the fixture's two, pushed to production's repository; returns its sha. */
+function commitToProd(f, files, message) {
+  const seed = join(f.dir, "seed");
+  for (const [path, content] of Object.entries(files)) {
+    mkdirSync(dirname(join(seed, path)), { recursive: true });
+    writeFileSync(join(seed, path), content);
+    git(seed, ["add", path]);
+  }
+  git(seed, ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", message]);
+  const sha = spawnSync("git", ["rev-parse", "HEAD"], { cwd: seed, encoding: "utf8", env: cleanEnv() }).stdout.trim();
+  git(seed, ["push", "-q", "bare", "main"]);
+  return sha;
+}
+
+test("a --marker found in the commit's server/, or only in src/ or public/, goes on to deploy.sh", () => {
+  const f = prodFixture();
+  try {
+    // Production runs a detached commit; a push to main must not move its work tree.
+    f.checkoutProd(f.sha2);
+    const sha3 = commitToProd(f, { "server/app.ts": "export const serverMarker = 1;\n", "src/view.tsx": "export const label = 'Client marker';\n", "public/sw.js": "// service worker marker\n" }, "code");
+    writeFileSync(f.stubLog, "");
+    const r = f.run(sha3, ["--marker", "serverMarker", "--marker", "Client marker", "--marker", "service worker marker"]);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.equal(f.headSha(), sha3);
+    assert.ok(f.stubLines().find((l) => l.startsWith("ARGS="))?.includes("--marker Client marker"));
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test("a --marker the commit does not hold fails before the checkout, naming --no-marker when no image code changed", () => {
+  const f = prodFixture();
+  try {
+    // sha1 -> sha2 changes marker.txt only: none of the image's code.
+    f.checkoutProd(f.sha1);
+    writeFileSync(f.stubLog, "");
+    const r = f.run(f.sha2, ["--marker", "absent string"]);
+    assert.equal(r.status, 1, r.stdout);
+    assert.match(r.stderr, /marker not found in [0-9a-f]{7} \(server\/, src\/, public\/, index\.html\): absent string/);
+    assert.match(r.stderr, /changes none of the image's code since [0-9a-f]{7}: deploy it with --no-marker/);
+    assert.equal(f.headSha(), f.sha1);
+    assert.equal(f.stubLines().length, 0);
+
+    // A commit that changes server code but not with the marker: the message asks for a marker it holds.
+    const sha3 = commitToProd(f, { "server/app.ts": "export const other = 1;\n" }, "server change");
+    const changed = f.run(sha3, ["--marker", "absent string"]);
+    assert.equal(changed.status, 1);
+    assert.doesNotMatch(changed.stderr, /--no-marker/);
+    assert.match(changed.stderr, /pass --marker with a string the commit holds/);
+    assert.equal(f.headSha(), f.sha1);
+    assert.equal(f.stubLines().length, 0);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test("the image's code paths of the marker check name every source the Dockerfile copies", () => {
+  const listed = readFileSync(join(repoRoot, "scripts", "lib", "deploy-markers.sh"), "utf8").match(/deploy_image_code_paths=\(([^)]*)\)/)[1].split(/\s+/).filter(Boolean);
+  const copied = readFileSync(join(repoRoot, "Dockerfile"), "utf8").split("\n")
+    .filter((line) => line.startsWith("COPY ") && !line.includes("--from="))
+    .flatMap((line) => line.replace(/^COPY\s+/, "").replace(/--\S+\s+/g, "").trim().split(/\s+/).slice(0, -1));
+  assert.ok(copied.length > 5, copied.join(" "));
+  for (const source of copied) assert.ok(listed.some((path) => source === path || source.startsWith(`${path}/`)), `${source} is not in deploy_image_code_paths`);
+  assert.ok(listed.includes("Dockerfile"));
+});
