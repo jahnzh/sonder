@@ -6,6 +6,7 @@ import {
   torboxCachedHashes,
 } from "./services.ts";
 import { sqlite } from "./db.ts";
+import { MAM_NAME, mam, mamAudiobookRelease, mamLink, mamUsable, type MamRelease } from "./sources/myanonamouse.ts";
 import { audiobookDbBook, audiobookDbByAsin, audiobookDbRelease } from "./audiobookdb.ts";
 import { findAsin } from "./catalogue-links.ts";
 import { DEFAULT_SERIES_LANGUAGE } from "../src/series-selection.ts";
@@ -26,7 +27,8 @@ export type SeriesVolumeRef = {
 };
 
 export type SeriesAudioCandidate = {
-  source: "abb" | "prowlarr";
+  /** "mam": MyAnonamouse (#911), a private torrent with no hash until its `.torrent` is fetched when it is got. */
+  source: "abb" | "prowlarr" | "mam";
   id: string;
   title: string;
   size?: string | null;
@@ -38,7 +40,7 @@ export type SeriesAudioCandidate = {
   cached?: boolean;
   /** The release's length where the source names one (milliseconds). */
   lengthMs?: number | null;
-  /** The language the source names: AudioBookBay's "Language" field. Prowlarr's results name none (#897). */
+  /** The language the source names: AudioBookBay's "Language" field, MyAnonamouse's. Prowlarr's results name none (#897). */
   language?: string | null;
   /** An Audible ASIN in the title, and what AudiobookDB says of it (`resolveCandidateAsins`). */
   asin?: string | null;
@@ -219,6 +221,15 @@ export function lengthMatches(candidateMs: number | null | undefined, expectedMs
   return !!candidateMs && !!expectedMs && Math.abs(candidateMs - expectedMs) <= Math.max(120_000, expectedMs * 0.03);
 }
 
+/**
+ * The owner's order of sources (#911), before any other ranking: a release TorBox has cached (from any source), then a
+ * MyAnonamouse one, then every other.
+ */
+export const sourceTier = (candidate: Pick<SeriesAudioCandidate, "cached" | "source">) => (candidate.cached ? 0 : candidate.source === "mam" ? 1 : 2);
+
+/** A candidate the queue can get: one with an info hash, or a MAM torrent (its hash comes with its `.torrent`). */
+export const canBeGot = (candidate: Pick<SeriesAudioCandidate, "hash" | "source" | "id">) => !!candidate.hash || (candidate.source === "mam" && !!candidate.id);
+
 export function rankSeriesAudioCandidate(candidate: SeriesAudioCandidate, expected?: SeriesAudioExpectation | null) {
   let score = candidate.kind === "plain" ? 100 : candidate.kind === "episodic" ? 10 : -100;
   if (candidate.cached) score += 50;
@@ -242,12 +253,19 @@ export function pickAutoAcquireCandidate(
 ): SeriesAudioCandidate | null {
   const list = candidates
     .filter((candidate) => {
-      if (!isAutoAcquireKind(candidate.kind) || !candidate.hash || candidate.asinCheck === "other_book") return false;
+      if (!isAutoAcquireKind(candidate.kind) || !canBeGot(candidate) || candidate.asinCheck === "other_book") return false;
       const verdict = candidateLanguageFits(candidate, language, ownTitles);
       return verdict === "fits" || (verdict === "unnamed" && candidateIsWantedEdition(candidate, expected));
     })
+    // The owner's order of sources (#911): TorBox's cached copy first; then, of the others, one with the release's
+    // narrator, length or ASIN before one without, and only then MyAnonamouse's before the rest, so an upload of MAM
+    // with no such evidence never wins over another source's that has it.
     .sort(
-      (a, b) => rankSeriesAudioCandidate(b, expected) - rankSeriesAudioCandidate(a, expected),
+      (a, b) =>
+        Number(!!b.cached) - Number(!!a.cached) ||
+        Number(candidateIsWantedEdition(b, expected)) - Number(candidateIsWantedEdition(a, expected)) ||
+        sourceTier(a) - sourceTier(b) ||
+        rankSeriesAudioCandidate(b, expected) - rankSeriesAudioCandidate(a, expected),
     );
   return list[0] || null;
 }
@@ -341,12 +359,79 @@ export type SeriesAudioSearchDeps = {
   abbMagnetLink: typeof abbMagnet;
   prowlarrMagnetLink: typeof prowlarrMagnet;
   cachedHashes: typeof torboxCachedHashes;
+  /**
+   * MyAnonamouse's audiobooks for the words (#911), when a session is saved; absent asks none. One search per book (and
+   * one per series for its packs): MAM is asked for few things, spaced (`server/sources/myanonamouse.ts`).
+   */
+  mamSearch?: (q: string) => Promise<{ results: SeriesMamResult[] }>;
   /** What AudiobookDB says of an Audible ASIN: its book and the language of its release (#897). Absent: the real one. */
   asinRelease?: (asin: string) => Promise<AsinRelease | null>;
   log?: (message: string) => void;
 };
 
 export type AsinRelease = { bookId: string | null; language: string | null };
+
+/** A MyAnonamouse audiobook as the series search reads it: the Get sheet's row, with its authors and series. */
+export type SeriesMamResult = {
+  id: string;
+  title: string;
+  size?: string | null;
+  format?: string | null;
+  narrator?: string | null;
+  language?: string | null;
+  lengthMs?: number | null;
+  seeders?: number | null;
+  url?: string | null;
+  indexer?: string | null;
+  authors: string[];
+  series: { name: string; position: string | null }[];
+};
+
+/** MAM's search, as the series search reads it. */
+export async function mamSeriesSearch(q: string): Promise<{ results: SeriesMamResult[] }> {
+  return { results: mamSeriesRows((await mam().search(q, "audio")).results) };
+}
+
+/** MAM's rows as the series search reads them. */
+export function mamSeriesRows(releases: MamRelease[]): SeriesMamResult[] {
+  return releases.map((release) => {
+    const row = mamAudiobookRelease(release);
+    return {
+      id: row.id,
+      title: row.title,
+      size: row.size,
+      format: row.format,
+      narrator: row.narrator,
+      language: row.language,
+      lengthMs: row.lengthMs,
+      seeders: row.seeders,
+      url: row.url,
+      indexer: MAM_NAME,
+      authors: release.authors,
+      series: release.series,
+    };
+  });
+}
+
+/** The torrent id of a MAM row's id (`mam-<id>`). */
+const mamTorrentId = (id: string) => /^mam-(\d+)$/.exec(id)?.[1] ?? null;
+
+/**
+ * Which volume a MAM row is (#911): MAM names a book's series and its place in it, so a row of this series at a
+ * volume's place is that volume; else its title says, as for the other sources. A row by none of the book's authors is
+ * not this book (a title alone can be another book's).
+ */
+export function mamVolume(result: SeriesMamResult, volumes: SeriesVolumeRef[], seriesName: string, author: string): number | null {
+  const surname = author.trim().split(/\s+/).pop()?.toLowerCase();
+  if (surname && result.authors.length && !result.authors.some((name) => name.toLowerCase().includes(surname))) return null;
+  const seriesKey = normalizeSeriesAudioTitle(seriesName);
+  for (const entry of result.series) {
+    if (normalizeSeriesAudioTitle(entry.name) !== seriesKey || !entry.position || !/^\d+(\.\d+)?$/.test(entry.position)) continue;
+    const position = Number(entry.position);
+    if (volumes.some((volume) => volume.position === position)) return position;
+  }
+  return classifyVolumeFromTitle(result.title, volumes, seriesName);
+}
 
 /** `GET /audiobooks/external/audible/{ASIN}`, then the release's language (`GET /releases/{id}`); background priority, cached. */
 export async function audiobookDbAsinRelease(asin: string): Promise<AsinRelease | null> {
@@ -376,7 +461,7 @@ export async function resolveCandidateAsins(
   const lookup = deps.asinRelease ?? audiobookDbAsinRelease;
   let lookups = 0;
   for (const candidate of candidates) {
-    if (!isAutoAcquireKind(candidate.kind) || !candidate.hash) continue;
+    if (!isAutoAcquireKind(candidate.kind) || !canBeGot(candidate)) continue;
     candidate.asin = findAsin([candidate.title]);
     if (!candidate.asin) continue;
     candidate.asinCheck = "unknown";
@@ -400,7 +485,26 @@ export const defaultDeps = (): SeriesAudioSearchDeps => ({
   abbMagnetLink: abbMagnet,
   prowlarrMagnetLink: prowlarrMagnet,
   cachedHashes: torboxCachedHashes,
+  // Not while MAM refuses the saved session: the queue does not ask it again until a new one is saved or tested.
+  ...(mamUsable() ? { mamSearch: mamSeriesSearch } : {}),
 });
+
+/** A MAM row as a candidate of the series search. */
+function mamCandidate(result: SeriesMamResult, kind: SeriesAudioKind, query: string): SeriesAudioCandidate {
+  return {
+    source: "mam",
+    id: mamTorrentId(result.id) ?? result.id,
+    title: result.title,
+    size: result.size,
+    format: result.format,
+    narrator: result.narrator,
+    language: result.language,
+    lengthMs: result.lengthMs ?? null,
+    kind,
+    query,
+    cached: false,
+  };
+}
 
 export async function searchVolumeAudioCandidates(
   volume: SeriesVolumeRef,
@@ -421,6 +525,18 @@ export async function searchVolumeAudioCandidates(
     const key = candidate.hash || `${candidate.source}:${candidate.id || candidate.title}`;
     if (!candidates.has(key)) candidates.set(key, candidate);
   };
+
+  // MyAnonamouse once per book (#911), with the book's own title: its rows name their series and place in it.
+  if (deps.mamSearch && queries[0]) {
+    const query = queries[0];
+    await withProviderRetry(`MyAnonamouse "${query}"`, async () => {
+      const response = await deps.mamSearch!(query);
+      for (const result of response.results) {
+        if (mamVolume(result, allVolumes, seriesName, author) !== volume.position) continue;
+        add(mamCandidate(result, classifySeriesAudioKind(result.title), query));
+      }
+    }, log, 1);
+  }
 
   for (const query of queries) {
     await withProviderRetry(`AudioBookBay "${query}"`, async () => {
@@ -467,7 +583,8 @@ export async function searchVolumeAudioCandidates(
   const list = [...candidates.values()];
   await Promise.all(
     list
-      .filter((candidate) => !candidate.hash)
+      // A MAM torrent's hash comes with its `.torrent`, fetched only for the one got (#911).
+      .filter((candidate) => !candidate.hash && candidate.source !== "mam")
       .map(async (candidate) => {
         const magnet = await withProviderRetry(
           `${candidate.source} magnet ${candidate.id}`,
@@ -545,8 +662,8 @@ export async function autoAcquireSeriesVolume(
   const seriesLanguage = input.seriesLanguage || DEFAULT_SERIES_LANGUAGE;
   await resolveCandidateAsins(candidates, { language: seriesLanguage, bookId: input.bookId, ownTitles }, deps);
   const chosen = pickAutoAcquireCandidate(candidates, input.expected, seriesLanguage, ownTitles);
-  input.onCandidates?.(candidates, chosen?.hash ? chosen : null);
-  if (!chosen?.hash) {
+  input.onCandidates?.(candidates, chosen && canBeGot(chosen) ? chosen : null);
+  if (!chosen || !canBeGot(chosen)) {
     markWorkEmptySearch(userId, input.workId);
     return getWorkMediaState(userId, input.workId);
   }
@@ -580,6 +697,8 @@ async function resolveCandidateMagnet(
   candidate: SeriesAudioCandidate,
   deps: SeriesAudioSearchDeps,
 ) {
+  // A MAM torrent's link: its `.torrent` is fetched when it is added, by the local client only (#911).
+  if (candidate.source === "mam") return mamLink(candidate.id);
   if (candidate.source === "prowlarr" && candidate.hash) {
     try {
       return await deps.prowlarrMagnetLink(candidate.id);
@@ -739,7 +858,16 @@ export async function searchSeriesPackCandidates(
     const key = candidate.hash || `${candidate.source}:${candidate.id || candidate.title}`;
     if (!candidates.has(key)) candidates.set(key, candidate);
   };
-  for (const query of buildPackSearchQueries(seriesName, author)) {
+  const queries = buildPackSearchQueries(seriesName, author);
+  // MyAnonamouse once per series (#911), by the series' name.
+  if (deps.mamSearch && queries[0]) {
+    const query = queries[0];
+    await withProviderRetry(`MyAnonamouse pack "${query}"`, async () => {
+      const response = await deps.mamSearch!(query);
+      for (const result of response.results) add(mamCandidate(result, "compilation", query));
+    }, log, 1);
+  }
+  for (const query of queries) {
     await withProviderRetry(`AudioBookBay pack "${query}"`, async () => {
       for (let page = 1, next: number | null = 1; next && page <= 2; page++) {
         const response = await deps.abbSearch(query, page);
@@ -784,7 +912,7 @@ export type SeriesPackChoice = {
 
 /**
  * The pack the queue takes (ADR 0027): one not in another language (`candidateLanguageFits`) that covers at least two of the
- * waiting books; the one covering the most of them, then TorBox's cached copy and the per-book ranking. Null when
+ * waiting books; the one covering the most of them, then TorBox's cached copy, MyAnonamouse's (#911) and the per-book ranking. Null when
  * no pack covers two.
  */
 export function pickSeriesPack(
@@ -797,7 +925,7 @@ export function pickSeriesPack(
   const ownTitles = [seriesName, ...volumes.map((volume) => volume.title)];
   const options = candidates.flatMap((candidate) => {
     // A pack whose source or title names another language is never taken; one that names none is (#897's rule).
-    if (!candidate.hash || candidateLanguageFits(candidate, language, ownTitles) === "other") return [];
+    if (!canBeGot(candidate) || candidateLanguageFits(candidate, language, ownTitles) === "other") return [];
     const covered = packCoverage(candidate.title, volumes, seriesName);
     if (!covered) return [];
     const hits = covered.filter((position) => wanted.has(position));
@@ -806,6 +934,8 @@ export function pickSeriesPack(
   options.sort(
     (a, b) =>
       b.wanted.length - a.wanted.length ||
+      // The owner's order of sources (#911): TorBox's cached copy, then MyAnonamouse, then the others.
+      sourceTier(a.candidate) - sourceTier(b.candidate) ||
       rankSeriesAudioCandidate({ ...b.candidate, kind: "plain" }) - rankSeriesAudioCandidate({ ...a.candidate, kind: "plain" }),
   );
   return options[0] ?? null;

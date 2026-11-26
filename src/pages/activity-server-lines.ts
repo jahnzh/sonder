@@ -3,7 +3,7 @@
 // answer. Pure: no React, no fetch. The screen is activity-server.tsx.
 //
 // A page module: the server imports none of it.
-import type { ActivityItem, ActivityProcess, ActivityResponse } from "../types";
+import type { ActivityItem, ActivityProcess, ActivityResponse, MamSeeding } from "../types";
 import { QUEUE_OFF_LINE, WORKER_OFF_LINE } from "../status-lines";
 import { processNeedsAttention } from "../activity-now";
 
@@ -67,6 +67,41 @@ export const lightsDot = (process: ActivityProcess | undefined) => !!process && 
 /** The torrent client's line: "Running", or the health message when it cannot download. */
 export function torrentLine(process: ActivityProcess): string {
   return process.health === "ok" ? TORRENT_RUNNING_LINE : process.reason || "Not checked yet";
+}
+
+export type { MamSeeding };
+
+/** The least a MAM torrent seeds (the owner's rule, #911): 72 hours, as `MAM_MIN_SEED_SECONDS` on the server. */
+export const MAM_SEED_HOURS = 72;
+
+/** A seeding time: "40 min", "31 h", "3 d 4 h". */
+export function seedingTime(seconds: number): string {
+  const minutes = Math.floor(Math.max(0, seconds) / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours} h`;
+  const days = Math.floor(hours / 24);
+  const rest = hours % 24;
+  return rest ? `${days} d ${rest} h` : `${days} d`;
+}
+
+/**
+ * A MAM torrent's line on Activity › Server (#911): "Seeding · 31 h of 72 h · Ratio 0.42" until it has seeded its 72
+ * hours, then "Seeding · 3 d 4 h · Ratio 1.20"; "Downloading 45%"; "Stopped in the torrent client"; "Not in the torrent
+ * client".
+ */
+export function mamSeedingLine(torrent: MamSeeding): string {
+  const ratio = torrent.ratio === null ? null : `Ratio ${torrent.ratio.toFixed(2)}`;
+  const seeded =
+    torrent.secondsSeeding === null
+      ? null
+      : torrent.seededEnough
+        ? seedingTime(torrent.secondsSeeding)
+        : `${seedingTime(torrent.secondsSeeding)} of ${MAM_SEED_HOURS} h`;
+  if (torrent.state === "missing") return "Not in the torrent client";
+  if (torrent.state === "downloading") return [`Downloading ${Math.floor(torrent.progress * 100)}%`, ratio].filter(Boolean).join(DOT);
+  if (torrent.state === "stopped") return ["Stopped in the torrent client", seeded && `Seeded ${seeded}`, ratio].filter(Boolean).join(DOT);
+  return ["Seeding", seeded, ratio].filter(Boolean).join(DOT);
 }
 
 /** The device a worker runs on, as the boards write it. */

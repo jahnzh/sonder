@@ -28,9 +28,10 @@ import {
   restoreManualSeriesReleaseClaim,
   seriesWorkAcquisitions,
 } from "./series-acquisition.ts";
+import { mam, mamAudiobookRelease, mamConfigured, mamLink } from "./sources/myanonamouse.ts";
 
 export type SeriesReleaseSourceError = {
-  source: "abb" | "prowlarr";
+  source: "abb" | "prowlarr" | "mam";
   label: string;
   error: string;
 };
@@ -42,6 +43,8 @@ export type SeriesReleaseSearchDeps = {
   abbMagnet?: typeof abbMagnet;
   prowlarrRelease?: typeof prowlarrRelease;
   prowlarrMagnet?: typeof prowlarrMagnet;
+  /** MyAnonamouse's audiobooks for the words (#911); absent: the saved session's, when one is saved. */
+  mamReleaseSearch?: (q: string) => Promise<ReturnType<typeof mamAudiobookRelease>[]>;
   acquire?: typeof defaultAcquire;
   replacePreviousAcquisition?: typeof replacePreviousAcquisition;
 };
@@ -67,6 +70,16 @@ function requireAbbSlugFromSearch(slug: string) {
     );
 }
 
+/** What a recent MAM search said of its rows (narrator, language), for the Get of one (`mam-<id>` and its torrent id). */
+const mamRows = new Map<string, { narrator: string | null; language: string | null; expires: number }>();
+function rememberMamRows(rows: { id: string; narrator: string | null; language: string | null }[]) {
+  const expires = Date.now() + ABB_SEARCH_CACHE_MS;
+  for (const row of rows) mamRows.set(row.id.replace(/^mam-/, ""), { narrator: row.narrator, language: row.language, expires });
+  for (const [id, row] of mamRows) if (row.expires <= Date.now() || mamRows.size > 5000) mamRows.delete(id);
+}
+
+const mamSearchDefault = async (q: string) => (await mam().search(q, "audio")).results.map(mamAudiobookRelease);
+
 export function setSeriesReleaseSearchDeps(overrides: SeriesReleaseSearchDeps) {
   deps = { ...deps, ...overrides };
 }
@@ -74,6 +87,7 @@ export function setSeriesReleaseSearchDeps(overrides: SeriesReleaseSearchDeps) {
 export function resetSeriesReleaseSearchDeps() {
   deps = {};
   abbSearchSlugs.clear();
+  mamRows.clear();
 }
 
 export function savedSeriesWork(
@@ -153,6 +167,17 @@ export async function searchSeriesWorkReleases(
       });
     }
   }
+  // MyAnonamouse (#911), once for the words: its rows come first after TorBox's cached ones in the sheet.
+  const mamSearchFn = deps.mamReleaseSearch ?? (mamConfigured() ? mamSearchDefault : null);
+  if (page === 1 && mamSearchFn) {
+    try {
+      const rows = await mamSearchFn(q);
+      rememberMamRows(rows);
+      results = [...rows.map((release) => ({ ...release, source: "mam" as const })), ...results];
+    } catch (error) {
+      sourceErrors.push({ source: "mam", label: "MyAnonamouse", error: (error as Error).message });
+    }
+  }
   return { results, sourceErrors, nextPage };
 }
 
@@ -161,7 +186,7 @@ export async function selectSeriesWorkRelease(
   seriesId: string,
   bookId: string,
   input: {
-    source: "abb" | "prowlarr";
+    source: "abb" | "prowlarr" | "mam";
     id: string;
     replaceActive?: boolean;
     confirmExistingAudio?: boolean;
@@ -207,7 +232,14 @@ export async function selectSeriesWorkRelease(
       );
     heldAcquire = true;
     claim = beginManualSeriesReleaseClaim(userId, work.workId);
-    if (input.source === "prowlarr") {
+    if (input.source === "mam") {
+      // Its torrent id: `mam-<id>` from a search's row, the bare id from the queue's stored candidate.
+      const torrentId = /^(?:mam-)?(\d{1,12})$/.exec(input.id)?.[1];
+      if (!torrentId) throw Object.assign(new Error("This MyAnonamouse release could not be found. Search again."), { statusCode: 400 });
+      const row = mamRows.get(torrentId);
+      magnet = mamLink(torrentId);
+      metadata = { title: work.title, author: work.author ?? undefined, language: row?.language ?? null, narrator: row?.narrator ?? null };
+    } else if (input.source === "prowlarr") {
       const link = (deps.prowlarrRelease ?? prowlarrRelease)(input.id);
       magnet = await (deps.prowlarrMagnet ?? prowlarrMagnet)(input.id);
       metadata = {

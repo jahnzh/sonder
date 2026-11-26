@@ -43,9 +43,10 @@ import {
 // The sources (#901): Library Genesis (the libgen.li family), Anna’s Archive with the member key in Settings,
 // Z-Library with the account in Settings, the other Library Genesis family (libgen.rs), Prowlarr's book indexers and
 // the public-domain Standard Ebooks and Project Gutenberg.
-export type EbookSource = "libgen" | "annas" | "zlib" | "libgenrs" | "prowlarr" | "standardebooks" | "gutenberg";
-/** The sources in the order the series search asks them (#901). */
+export type EbookSource = "libgen" | "annas" | "zlib" | "libgenrs" | "prowlarr" | "standardebooks" | "gutenberg" | "mam";
+/** The sources (#901), and MyAnonamouse's ebooks with the session in Settings (#911), a private torrent's. */
 export const EBOOK_SOURCES = [
+  "mam",
   "libgen",
   "annas",
   "zlib",
@@ -169,6 +170,11 @@ export async function searchEbooks(
   pageNumber = 1,
 ): Promise<{ files: EbookResult[]; website: string }> {
   if (source === "libgen") return searchLibgen(q, pageNumber);
+  if (source === "mam") {
+    const { mam, mamEbookResult } = await import("./sources/myanonamouse.ts");
+    const answer = await mam().search(q, "ebook");
+    return { files: answer.results.flatMap((release) => mamEbookResult(release) ?? []), website: "" };
+  }
   if (source === "annas") return searchAnnas(q);
   if (source === "zlib") return searchZlib(q);
   if (source === "libgenrs") return searchLibgenRs(q);

@@ -72,3 +72,15 @@ export function approvedLine(username: string, delivered: boolean): string {
 export const APPROVING_NOTE = "Approving sends an invite link by email. The link works for 7 days.";
 export const NO_REQUESTS = "No account requests";
 export const KEYS_ENCRYPTED = "Connection keys are stored encrypted on your server.";
+
+/** MyAnonamouse's status line (#911): refused (with the day it was), the session saved, or none saved. */
+export function mamStatus(settings: { mamConfigured?: boolean; mamRefusedAt?: number | null } | null): string {
+  if (!settings?.mamConfigured) return "Not set up";
+  if (settings.mamRefusedAt) return "Refused";
+  return "Session saved";
+}
+/** What Settings says when MyAnonamouse refused the saved session (#911). */
+export function mamRefusedLine(at: number, locale?: string): string {
+  const day = new Date(at).toLocaleDateString(locale, { day: "numeric", month: "short" });
+  return `MyAnonamouse refused this session on ${day}. Make a new session in MyAnonamouse’s preferences (Security) and paste its mam_id.`;
+}

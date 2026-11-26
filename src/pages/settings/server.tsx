@@ -16,6 +16,8 @@ import {
   APPROVING_NOTE,
   KEYS_ENCRYPTED,
   MEDIA_DRIVE_CONNECTED,
+  mamRefusedLine,
+  mamStatus,
   MEDIA_DRIVE_NOT_CONNECTED,
   NO_REQUESTS,
   approvedLine,
@@ -122,16 +124,21 @@ async function patchSettings(body: Record<string, string>) {
   await api("/settings", { method: "PATCH", body: JSON.stringify(body) });
 }
 
-/** TorBox, Prowlarr, AudioBookBay, Library Genesis, Anna’s Archive, Z-Library, AudiobookDB and Open Library (the administrator's). */
+/** TorBox, Prowlarr, MyAnonamouse, AudioBookBay, Library Genesis, Anna’s Archive, Z-Library, AudiobookDB and Open Library (the administrator's). */
 export function ConnectionsPage({ user, settings, onSaved, notify }: Props) {
   const admin = user.role === "admin";
-  const [testing, setTesting] = useState<"" | "torbox" | "prowlarr" | "annas" | "zlib">("");
-  // What the last check of Anna’s Archive's key and Z-Library's account said (#901), shown in its group.
-  const [checked, setChecked] = useState<{ annas?: string; zlib?: string }>({});
-  const check = async (service: "annas" | "zlib") => {
+  const [testing, setTesting] = useState<"" | "torbox" | "prowlarr" | "annas" | "zlib" | "mam">("");
+  // What the last check of Anna’s Archive's key, Z-Library's account (#901) and MyAnonamouse's session (#911) said,
+  // shown in its group.
+  const [checked, setChecked] = useState<{ annas?: string; zlib?: string; mam?: string }>({});
+  const check = async (service: "annas" | "zlib" | "mam") => {
     setTesting(service);
     try {
-      if (service === "annas") {
+      if (service === "mam") {
+        await api("/mam/test", { method: "POST" });
+        setChecked((was) => ({ ...was, mam: "The session searched MyAnonamouse." }));
+        onSaved();
+      } else if (service === "annas") {
         await api("/annas/test", { method: "POST" });
         setChecked((was) => ({ ...was, annas: "The key signed in and searched." }));
       } else {
@@ -140,6 +147,8 @@ export function ConnectionsPage({ user, settings, onSaved, notify }: Props) {
       }
     } catch (error) {
       setChecked((was) => ({ ...was, [service]: (error as Error).message }));
+      // A refused session is said by the status too.
+      if (service === "mam") onSaved();
     } finally {
       setTesting("");
     }
@@ -213,6 +222,26 @@ export function ConnectionsPage({ user, settings, onSaved, notify }: Props) {
                   onClick={() => void save({ prowlarr: "", prowlarrUrl: "" }, "Prowlarr removed.")().catch(() => {})}
                 >
                   Disconnect
+                </Button>
+              </ActionsRow>
+            )}
+          </Group>
+          <Group caption="MyAnonamouse">
+            <Row label="Status" value={mamStatus(settings)} />
+            {settings?.mamConfigured && settings.mamRefusedAt ? <Row label="Check" value={mamRefusedLine(settings.mamRefusedAt)} /> : checked.mam && <Row label="Check" value={checked.mam} />}
+            <FieldRow label="Session (mam_id)" name="MyAnonamouse session" type="password" secret isSet={settings?.mamConfigured} onSave={(value) => save({ mam: value }, "MyAnonamouse session saved.")().then(() => setChecked((was) => ({ ...was, mam: undefined }))).catch(() => {})} />
+            {settings?.mamConfigured && (
+              <ActionsRow>
+                <Button kind="secondary" disabled={testing === "mam"} aria-label="Test MyAnonamouse" onClick={() => void check("mam")}>
+                  {testing === "mam" ? "Testing…" : "Test"}
+                </Button>
+                <Button
+                  kind="quiet"
+                  className="settings-failed-action"
+                  aria-label="Remove the MyAnonamouse session"
+                  onClick={() => void save({ mam: "" }, "MyAnonamouse session removed.")().catch(() => {})}
+                >
+                  Remove
                 </Button>
               </ActionsRow>
             )}

@@ -16,9 +16,13 @@ export { EBOOK_SOURCE_NAMES, type EbookSourceId };
 /** Library Genesis: the source the sheet's link and "nothing found" name. */
 export const SOURCE_NAME = EBOOK_SOURCE_NAMES.libgen;
 
-/** The sources asked, in the order their rows and failures are listed (the series search's order, #901). */
-export function ebookSources({ prowlarr, annas = false, zlib = false }: { prowlarr: boolean; annas?: boolean; zlib?: boolean }): EbookSourceId[] {
+/**
+ * The sources asked, in the order their rows and failures are listed (the series search's order, #901): MyAnonamouse
+ * first when its session is saved (the owner's order, #911), then the others.
+ */
+export function ebookSources({ prowlarr, annas = false, zlib = false, mam = false }: { prowlarr: boolean; annas?: boolean; zlib?: boolean; mam?: boolean }): EbookSourceId[] {
   return [
+    ...(mam ? (["mam"] as const) : []),
     "libgen",
     ...(annas ? (["annas"] as const) : []),
     ...(zlib ? (["zlib"] as const) : []),
