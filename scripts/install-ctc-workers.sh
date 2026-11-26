@@ -13,13 +13,16 @@ Usage: scripts/install-ctc-workers.sh [options]
 
 Installs a reproducible Sonder CTC worker into a target directory, creates its
 Python virtual environment with pinned dependencies, fetches pinned model
-weights, and configures/restarts the systemd user service.
+weights (Wav2Vec2 Base and SEW-D tiny), and configures/restarts the systemd
+user service.
 
 Options:
   --device <cpu|cuda>       Worker device target (default: auto-detected, fallback: cpu)
   --dir <path>              Installation target directory (default: $HOME/sonder-ctc-worker)
   --port <port>             Worker HTTP port (default: 3012)
   --slots <n>               Book jobs the worker runs at once, sharing one model (1-16; default: keep, else 1)
+  --book-model <name>       Whole-book model: wav2vec2-base or sew-d-tiny (default: keep, else by device:
+                            cuda wav2vec2-base, cpu sew-d-tiny)
   --token <token>           Alignment worker auth token (prefer passing ALIGNMENT_WORKER_TOKEN in env)
   --python <path>           Python interpreter for venv (default: python3)
   --caddy-domain <domain>   Domain for Caddy snippet (required with --print-caddy)
@@ -103,6 +106,7 @@ caddy_domain=""
 prod_ip=""
 skip_models=false
 slots=""
+book_model=""
 skip_service=false
 service_only=false
 print_service=false
@@ -130,6 +134,11 @@ while [[ $# -gt 0 ]]; do
     --slots)
       slots="${2:-}"
       [[ "$slots" =~ ^([1-9]|1[0-6])$ ]] || { echo "error: --slots expects 1-16" >&2; exit 2; }
+      shift 2
+      ;;
+    --book-model)
+      book_model="${2:-}"
+      [[ "$book_model" =~ ^(wav2vec2-base|sew-d-tiny)$ ]] || { echo "error: --book-model expects wav2vec2-base or sew-d-tiny" >&2; exit 2; }
       shift 2
       ;;
     --port)
@@ -276,6 +285,9 @@ fi
 if [[ -z "$slots" && -f "${target_dir}/worker.env" ]]; then
   slots="$(grep -E '^ALIGNMENT_WORKER_SLOTS=' "${target_dir}/worker.env" | cut -d= -f2- || true)"
 fi
+if [[ -z "$book_model" && -f "${target_dir}/worker.env" ]]; then
+  book_model="$(grep -E '^ALIGNMENT_BOOK_MODEL=' "${target_dir}/worker.env" | cut -d= -f2- || true)"
+fi
 
 mkdir -p "$target_dir"
 mkdir -p "$target_dir/media"
@@ -303,6 +315,8 @@ if [[ "$service_only" == false ]]; then
 
   "$target_dir/env/bin/pip" install --no-cache-dir \
     'numpy==1.26.4' 'fastapi==0.121.3' 'uvicorn==0.38.0'
+  # SEW-D tiny for whole-book jobs (#921), on every host so that ALIGNMENT_BOOK_MODEL can switch.
+  "$target_dir/env/bin/pip" install --no-cache-dir -r "$target_dir/worker/requirements-book.txt"
 
   # Download model weights
   if [[ "$skip_models" == false ]]; then
@@ -320,6 +334,7 @@ MEDIA_ROOT=${target_dir}/media
 ALIGNMENT_CTC_DEVICE=${device}
 EOF
   if [[ -n "$slots" ]]; then echo "ALIGNMENT_WORKER_SLOTS=${slots}" >> "${target_dir}/worker.env"; fi
+  if [[ -n "$book_model" ]]; then echo "ALIGNMENT_BOOK_MODEL=${book_model}" >> "${target_dir}/worker.env"; fi
 )
 chmod 600 "${target_dir}/worker.env"
 echo "Configured ${target_dir}/worker.env"

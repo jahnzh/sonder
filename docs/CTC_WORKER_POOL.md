@@ -203,6 +203,7 @@ The Steam Deck is no longer a pool host (#279): `ALIGNMENT_POOL_DECK_HOST` and
 `ALIGNMENT_POOL_DECK_WORKER_URL` are ignored.
 
 - **WSL (Primary)**: Equipped with an NVIDIA GPU running PyTorch with CUDA `2.8.0+cu128`. Port 3012 is forwarded from the Windows host to the WSL2 virtual machine via Windows portproxy and firewall rules.
+- **Book model** (#921): `ALIGNMENT_BOOK_MODEL` in a host's `worker.env`, `wav2vec2-base` or `sew-d-tiny`; unset, a `cuda` host keeps Wav2Vec2 Base and any other takes SEW-D tiny. So WSL encodes whole books with Base and lisa with SEW-D tiny; window requests use Base on both. An unknown value stops the worker at start. `scripts/install-ctc-workers.sh --book-model <name>` writes it (and keeps it on a reinstall).
 - **Lisa (Fallback)**: CPU-only worker running PyTorch `2.8.0+cpu`. Worker listens locally on `127.0.0.1:3012` and is reverse-proxied by Caddy under `https://audiobooks.amatox.in/sonder-ctc` with an IP allowlist restricted to the production server.
 
 ## Server SSH access and key layout
@@ -489,16 +490,21 @@ ADR 0016's whole-book request. The server calls it only with
 runner" below). The window endpoints (`/align`, `/anchor`, `/anchor-batch`) and their
 engine `ctc-wav2vec2-base-960h-torchaudio-2.8-v2` are unchanged. A whole-book
 job is a new engine generation, `ctc-wav2vec2-base-960h-torchaudio-2.8-book-v2`
-(`book_job.BOOK_ENGINE`), with the same model. `book-v1` was #402's; #403 made
+(`book_job.BOOK_ENGINE`), with the same model. Since #921 a CPU host encodes whole books
+with SEW-D tiny instead, under its own engine
+`ctc-sew-d-tiny-100k-ft-ls100h-transformers-4.56-book-v2`, the same generation
+(see "SEW-D tiny for whole-book jobs on CPU hosts" below). `book-v1` was #402's; #403 made
 `book-v2` because its maps hold more than v1's could (the leftover pass maps
 chapters read out of the ebook's order, and a wrong book ends as
 `text_mismatch`), so a map's content depends on the generation. A retained job
 folder of `book-v1` starts over, emissions included (their identity carries the
-engine). `/health`'s existing fields
+engine), and so does one of the other book model's engine. `/health`'s existing fields
 (`busy`, `busySeconds`, `activeRequests`, `slots`, `stuck`) describe window
 requests only, exactly as before; book work is reported only under
-`bookJobs: {engine, ready, jobs, resuming, slotsHeld, batchSeconds, stuck,
-diskReservedBytes, diskBudgetBytes}`. `resuming` is `true` while the worker
+`bookJobs: {engine, model, ready, jobs, resuming, slotsHeld, batchSeconds, stuck,
+diskReservedBytes, diskBudgetBytes}`: `engine` and `model` (`wav2vec2-base` or
+`sew-d-tiny`) are the host's book model's, and `ready` also needs that model's
+weights (and for SEW-D tiny the pinned transformers). `resuming` is `true` while the worker
 still picks up its retained job folders after a start (book requests get
 `503` until then). `slotsHeld` is the number of the
 worker's slots that encode batches hold at that moment and `batchSeconds` the
@@ -1158,6 +1164,123 @@ first hour of a book, against production's map):
 Only SEW-D tiny reaches 2 h on lisa. WSL's GPU encodes the same book in
 minutes, which is why a whole-book job takes lisa only when WSL cannot be used
 ("CPU hosts are the fallback only").
+
+The owner chose SEW-D tiny for CPU hosts on 2026-11-26: #921, below.
+
+## SEW-D tiny for whole-book jobs on CPU hosts, 2026-11-26 (#921)
+
+A whole-book job on a CPU host encodes with SEW-D tiny; WSL's GPU keeps
+Wav2Vec2 Base, which does a book in minutes there. Window requests (`/align`,
+`/anchor`, `/anchor-batch`: the window runner, passage locating and candidate
+probing) stay on Base on every host; nothing measured them with SEW-D tiny.
+
+* **The host's choice.** `ALIGNMENT_BOOK_MODEL` in `worker.env`
+  (`wav2vec2-base` or `sew-d-tiny`); unset, `cuda` hosts take Base and every
+  other SEW-D tiny (`worker/book_model.py`). `/health` names it under
+  `bookJobs.model` with its engine under `bookJobs.engine`.
+* **Engine.** SEW-D tiny's whole-book maps record
+  `ctc-sew-d-tiny-100k-ft-ls100h-transformers-4.56-book-v2`; Base's keep
+  `ctc-wav2vec2-base-960h-torchaudio-2.8-book-v2`. The server plans jobs under
+  Base's book engine and accepts a host and a result of either
+  (`BOOK_ENGINES`, `isBookEngine` in `src/reading-types.ts`); the stored map
+  records the engine its result names, which the Reading sync page's Details
+  show. The two are one generation (`ENGINE_GENERATIONS` in
+  `server/alignment-rebuild.ts`): a map of either is current, neither is
+  rebuilt for the other, and a stored job of either runs without being planned
+  again. A retained worker job folder of the other engine starts over.
+* **Weights.** `asapp/sew-d-tiny-100k-ft-ls100h` at revision
+  `1966cdcfbd2123ee90b003c2aa6ec6fe204cc4d8`: `config.json`,
+  `preprocessor_config.json`, `vocab.json` and `model.safetensors` (96.5 MB),
+  each pinned by SHA-256 in `worker/ctc_sewd.py`, fetched only by
+  `worker/download_model.py` into `MEDIA_ROOT/alignment/models/sew-d-tiny/<revision>/`
+  and checked again before every load. It loads offline through transformers'
+  `SEWDForCTC` (`worker/requirements-book.txt`: transformers 4.56.2, whose
+  version is part of the engine). `scripts/install-ctc-workers.sh` installs
+  both on every host; `scripts/update-ctc-workers.sh` installs a missing pin
+  and fetches missing weights once the worker is idle, before the new code's
+  import check.
+* **Labels.** Its blank is `<pad>` (its CTC blank, `pad_token_id` 0); `|`, A to
+  Z and the apostrophe map to Base's 29 classes in Base's order; `<s>`, `</s>`
+  and `<unk>` are dropped and the log-softmax is taken over the 29 kept. Each
+  window is normalised to zero mean and unit variance first (its
+  `do_normalize`).
+* **Frame grid.** Its feature extractor has stride 320 and receptive field 400
+  (13 convolutions, of which six of kernel and stride 1), and its squeeze is
+  undone before the CTC head, so frame i is centred at sample 200 + 320 i as
+  Base's: `book_align.frame_boundary` converts frames to seconds on that grid.
+  The load computes the grid from the checkpoint's config and refuses another,
+  and every encode batch's frame count is checked against it.
+* **CPU threads.** A SEW-D tiny batch uses at most the host's physical cores
+  (`max_threads`, `cpu_share.physical_cores`; lisa 10), still fewer when other
+  books claim cores. On lisa it encodes the hour below at 21.7x on 10 threads
+  and 17.1x on all 20, measured back to back (300 s, two rounds: 23.4 and 18.3x
+  on 10, 19.4 and 20.9x on 14, 15.5 and 18.5x on 20); on the Deck it is
+  fastest on its 4 physical cores too. Base keeps every free core (on lisa 4.8x
+  on 20 against 4.0x on 14).
+
+**Proof: the whole-book path on the first hour of a real book.** *Dungeon
+Crawler Carl 4* (one 18 h M4B, 18,233 sentences): its first 3,600 s as a WAV
+with the whole sentence list, through a temporary worker of this branch on
+lisa (`~/sonder-replication/issue-921/`, port 43921, `slots` 1, its own media
+root and Python environment; the production worker untouched), once per model
+with `worker/measure_book.py run` and compared with `measure_book.py compare`.
+Both encodes ran on all 20 threads (before the thread cap above).
+
+| | Wav2Vec2 Base | SEW-D tiny |
+| --- | ---: | ---: |
+| Sentences mapped | 991 | 973 |
+| Of production's 970 in that hour | 970 (100 %, median 0 ms: 944 identical) | 955 (98.5 %, median 20 ms, p90 40 ms) |
+| Encode | 812.6 s (4.43x) | 255.7 s (14.1x) |
+| Text match score (threshold 0.10) | 0.716 | 0.503 |
+| Job, start to result | 836 s | 277 s |
+
+SEW-D tiny against Base: 971 sentences in both, 98.0 % of Base's (20 only in
+Base, 2 only in SEW-D tiny); start times differ by a median of 20 ms and a p90
+of 40 ms, 99.4 % within 250 ms, all within 1 s. Both passed the text match
+with room (the wrong-book scores of 2026-11-14 are 0.031 and below). The rest
+of SEW-D tiny's job took 15 s (align 13.5 s, prepare 0.75 s, text match 0.26 s,
+the rest under 0.5 s each); Base's 17 s.
+
+**One whole book on lisa, computed.** *The Butcher's Masquerade* (23.6 h,
+84,845 s): decode 40 s (the job of 2026-11-26), encode at the rate of its hour
+from 10:00:00 below (SEW-D tiny 21.7x on 10 threads: 3,910 s), and the other
+stages about 7 minutes (15 s per hour of audio above; #913 measured 19 s per
+hour with Base). About **1.2 h** end to end, against about 5.4 h with Base
+(4.51x: 18,813 s of encode). The coordinator measures the real job after the
+worker update (`stageTimings`, and `encode.threads`).
+
+**Encode speed on more CPUs** (owner, 2026-11-26). The same decoded hour of
+*The Butcher's Masquerade* (from 10:00:00, 16 kHz s16le, SHA-256 `72a68cab…`)
+on every host, torch 2.8.0 CPU, float32, one 30 s window per batch,
+`worker/measure_encode.py --pcm` in a throwaway environment, CPU only (WSL with
+`CUDA_VISIBLE_DEVICES=`), nice 10 (andi nice 19). Each model ran 300 s at
+several thread counts, then the hour at the fastest (andi: the hour only, on
+its 4 cores). The book's time is its 84,845 s at the hour's rate, encode only.
+
+| Host | CPU | Cores / threads | Vector units | Base: threads, hour's rate, book | SEW-D tiny: threads, hour's rate, book |
+| --- | --- | --- | --- | --- | --- |
+| WSL | AMD Ryzen 7 9800X3D | 8 / 16 | AVX2, AVX-512 (with BF16) | 12: 29.1x, 49 min | 12: 73.9x, 19 min |
+| Deck | AMD Custom APU 0932 (Zen 2) | 4 / 8 | AVX2, no AVX-512 | 6: 5.92x, 4.0 h | 4: 20.6x, 1.1 h |
+| lisa | Intel Xeon E5-2470 v2 (Ivy Bridge) | 10 / 20 | AVX, no AVX2 or FMA | 20: 4.51x, 5.2 h | 10: 21.7x, 1.1 h |
+| ao | arm64, 8 Cortex-A720 + 4 Cortex-A520 | 12 / 12 | NEON, SVE2, BF16, I8MM | 8: 5.89x, 4.0 h | 8: 15.2x, 1.6 h |
+| andi (production) | Intel N150 | 4 / 4 | AVX2, no AVX-512 | 4: 2.84x, 8.3 h | 4: 9.79x, 2.4 h |
+
+The 300 s rates per thread count, the fastest in bold: WSL Base 15.4, 24.9,
+**32.5**, 31.2x on 4, 8, 12, 16 and SEW-D tiny 47.6, 99.2, **116.7**, 97.3x; the
+Deck Base 5.56, **6.05**, 5.82x on 4, 6, 8 and SEW-D tiny **22.3**, 21.2, 18.1x;
+lisa Base 3.57, 3.98, **4.76**x on 10, 14, 20 (SEW-D tiny above); ao Base 4.34,
+**6.12**, 5.87x on 4, 8, 12 and SEW-D tiny 10.4, **15.9**, 12.9x. WSL's hour ran
+slower than its 300 s (74 against 117x, 29 against 33x) with the Windows host's
+load beside it. lisa's first Base hour ran at 3.61x while other work loaded it
+(load 27); the table has the repeat, alone. ao's torch comes from PyPI (its
+aarch64 build; the CPU index has no aarch64 torchaudio), its Python 3.12 from
+uv, as its own Python is 3.14.
+
+**Linear in the audio.** On lisa, SEW-D tiny at 14 threads: 15 min 18.9x,
+30 min 15.7x, 1 h 17.5x, the same cost per audio second within lisa's spread
+between repeats of one setting (15.5 to 18.5x on 300 s). So an hour's rate
+stands for the book to about 10 %. Emissions at different thread counts give
+the same argmax on every frame (at most one float16 step apart).
 
 ## Probing gate (#278)
 

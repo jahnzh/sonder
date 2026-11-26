@@ -24,7 +24,7 @@ import {
 } from "../status-lines";
 import type { Step } from "../parts/Steps";
 import type { TipName } from "../tooltip-texts";
-import { BOOK_ENGINE, bookWorkerJobId, rebuildState, type AlignmentFlag, type AlignmentJob, type BookJobCounts } from "../reading-types";
+import { bookWorkerJobId, isBookEngine, rebuildState, type AlignmentFlag, type AlignmentJob, type BookJobCounts } from "../reading-types";
 import type { ReadingSyncSummary } from "../types";
 import { lengthLine } from "./audiobook-model";
 
@@ -117,7 +117,7 @@ function deviceName(device: string | undefined): string | null {
   return /cuda|gpu/i.test(device) ? "GPU" : /cpu/i.test(device) ? "CPU" : null;
 }
 
-const isWholeBook = (job: Pick<ListedJob, "engine">) => job.engine === BOOK_ENGINE;
+const isWholeBook = (job: Pick<ListedJob, "engine">) => isBookEngine(job.engine);
 const active = (status: string) => status === "queued" || status === "copying" || status === "processing";
 
 /** What the steps show of a run: the running step, the steps it has passed, and its figure. */

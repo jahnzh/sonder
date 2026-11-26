@@ -26,7 +26,7 @@ import { basename } from "node:path";
 import { alignmentJobActive, bookWorkerJobId, type AlignmentInterval, type AlignmentJob, type AlignmentOutcome, type BookJobCounts, type ReaderBook } from "../src/reading-types.ts";
 import { wordCount } from "./alignment-anchors.ts";
 import { bookProgress, bookResult, bookWorker, type BookAnswer, type BookProgress, type BookResult, type BookStartRequest } from "./alignment-book-worker.ts";
-import { BOOK_ENGINE } from "./alignment-engine.ts";
+import { BOOK_ENGINES, isBookEngine } from "./alignment-engine.ts";
 import { unsyncedPassages } from "./alignment-passages.ts";
 import { getAlignmentPoolCoordinator, hostDisabled, storedStaging, type AlignmentJobPoolState, type PoolHostId, type WorkerLease } from "./alignment-pool.ts";
 import { retireStagingName } from "./alignment-pool-sweep.ts";
@@ -367,8 +367,9 @@ async function driveOnHost(host: HostRun): Promise<HostEnd> {
     const result = bookResult.safeParse(fetched.body);
     if (!result.success || result.data.jobId !== workerJobId)
       return ending({ kind: "hostFailed", error: `The alignment worker on ${lease.hostId} returned a result this server cannot read.` });
-    if (result.data.engine !== BOOK_ENGINE)
-      return ending({ kind: "hostFailed", error: `The alignment worker on ${lease.hostId} used engine ${result.data.engine}, expected ${BOOK_ENGINE}.` });
+    // Either whole-book engine (#921): the map records the one the result names (applyBookResult).
+    if (!isBookEngine(result.data.engine))
+      return ending({ kind: "hostFailed", error: `The alignment worker on ${lease.hostId} used engine ${result.data.engine}, expected one of ${BOOK_ENGINES.join(", ")}.` });
     // The fetch ended the worker's job.
     mayExist = false;
     publish(id, generation, host.book, host.tracks, result.data);

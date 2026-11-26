@@ -30,8 +30,8 @@ const { createAlignment, alignmentJob, putAlignmentJob, processAlignments, stopA
 const transition = await import("../server/alignment-transitions.ts");
 const pool = await import("../server/alignment-pool.ts");
 const { getAlignmentPoolCoordinator, resetAlignmentPoolCoordinator, setAlignmentPoolDepsForTests } = pool;
-const { BOOK_ENGINE, CTC_ENGINE, bookJobsEnabled } = await import("../server/alignment-engine.ts");
-const { currentAlignmentEngine } = await import("../server/alignment-rebuild.ts");
+const { BOOK_ENGINE, BOOK_ENGINES, CTC_ENGINE, SEWD_BOOK_ENGINE, bookJobsEnabled } = await import("../server/alignment-engine.ts");
+const { currentAlignmentEngine, engineIsCurrent, engineIsOlder } = await import("../server/alignment-rebuild.ts");
 const bookJob = await import("../server/alignment-book-job.ts");
 const { BOOK_POLL_MS, BOOK_WORKER_RESTART_WAIT_MS, bookWorkerJobId, setBookJobClockForTests } = bookJob;
 const { createCtcProbeSession } = await import("../server/ebook-set-ctc-session.ts");
@@ -553,6 +553,74 @@ test("a result that names another engine is not published: the job moves to the 
   assert.equal(job.status, "partial", job.error ?? undefined);
   assert.equal(job.engine, BOOK_ENGINE);
   assert.equal(job.pool?.hostId, "lisa");
+});
+
+test("either whole-book engine is current: neither is older than the other, both are newer than the window engine (#921)", () => {
+  assert.deepEqual(BOOK_ENGINES, [BOOK_ENGINE, SEWD_BOOK_ENGINE]);
+  assert.equal(currentAlignmentEngine(), BOOK_ENGINE, "jobs are still planned under Base's engine");
+  for (const [engine, target] of [[SEWD_BOOK_ENGINE, BOOK_ENGINE], [BOOK_ENGINE, SEWD_BOOK_ENGINE]]) {
+    assert.equal(engineIsOlder(engine, target), false, `${engine} against ${target}`);
+    assert.equal(engineIsCurrent(engine, target), true, `${engine} against ${target}`);
+  }
+  assert.equal(engineIsOlder(CTC_ENGINE, BOOK_ENGINE), true);
+  assert.equal(engineIsOlder(CTC_ENGINE, SEWD_BOOK_ENGINE), true);
+  assert.equal(engineIsCurrent(CTC_ENGINE, BOOK_ENGINE), false);
+  assert.equal(engineIsCurrent("ctc-something-else-book-v9", BOOK_ENGINE), false, "an unknown engine is not current");
+});
+
+test("a host may run either whole-book engine; another engine or a missing one is skipped (#921)", () => {
+  const { bookJobsProblem } = pool;
+  assert.equal(bookJobsProblem({ bookJobs: { engine: BOOK_ENGINE, ready: true } } as any), null);
+  assert.equal(bookJobsProblem({ bookJobs: { engine: SEWD_BOOK_ENGINE, ready: true } } as any), null);
+  assert.match(bookJobsProblem({ bookJobs: { engine: CTC_ENGINE, ready: true } } as any) ?? "", /expected one of/);
+  assert.match(bookJobsProblem({ bookJobs: { ready: true } } as any) ?? "", /engine none/);
+  assert.equal(bookJobsProblem({ bookJobs: { engine: SEWD_BOOK_ENGINE, ready: false } } as any), "whole-book jobs are not ready");
+});
+
+test("a CPU host's SEW-D tiny map is stored under its own engine and the rebuild scan leaves it and a Base map alone (#921)", async () => {
+  await install(["lisa"]);
+  fake.hosts.lisa.bookEngine = SEWD_BOOK_ENGINE;
+  fake.hosts.lisa.resultEngine = SEWD_BOOK_ENGINE;
+  const created = await anchoredJob();
+  assert.equal(created.engine, BOOK_ENGINE, "planned under Base's engine; the host's model decides");
+  const job = await settled(created.id);
+  assert.equal(job.status, "partial", job.error ?? undefined);
+  assert.equal(job.pool?.hostId, "lisa");
+  assert.equal(job.engine, SEWD_BOOK_ENGINE, "the map names the engine that made it");
+  assert.equal(job.coverage, 1);
+  const row = sqlite.prepare("SELECT engine FROM alignment_jobs WHERE id=?").get(created.id) as { engine: string };
+  assert.equal(row.engine, SEWD_BOOK_ENGINE);
+  assert.equal(transition.servedAlignmentJob(created.id).engine, SEWD_BOOK_ENGINE);
+  only(created.id);
+  const starts = fake.hosts.lisa.starts.length;
+  assert.deepEqual(await queueEngineRebuilds({ warn: () => {} }), { queued: 0, replanned: 0, projections: 0, skipped: 0, failed: 0 });
+  assert.equal(alignmentJob(created.id).generation, job.generation, "not planned again");
+  // A Base map beside it is not rebuilt for SEW-D tiny either.
+  putAlignmentJob({ ...alignmentJob(created.id), engine: BOOK_ENGINE });
+  assert.equal((await queueEngineRebuilds({ warn: () => {} })).queued, 0);
+  assert.equal(alignmentJob(created.id).engine, BOOK_ENGINE);
+  assert.equal(fake.hosts.lisa.starts.length, starts, "no new whole-book job");
+});
+
+test("a paused job that records SEW-D tiny's engine resumes as a whole-book job without being planned again (#921)", async () => {
+  const created = await heldJob();
+  transition.pause(alignmentJob(created.id));
+  const paused = await settled(created.id, ["paused"]);
+  putAlignmentJob({ ...paused, engine: SEWD_BOOK_ENGINE });
+  let plans = 0;
+  alignment.holdRebuildPlansForTests(async () => { plans++; });
+  try {
+    fake.hosts.wsl.holdAt = null;
+    const resumed = transition.resume(alignmentJob(created.id));
+    void processAlignments();
+    const job = await settled(created.id);
+    assert.equal(job.status, "partial", job.error ?? undefined);
+    assert.equal(plans, 0, "the current generation's engine is not planned again");
+    assert.equal(fake.hosts.wsl.starts.at(-1).jobId, bookWorkerJobId(resumed), "it ran as a whole-book job");
+    assert.equal(job.engine, BOOK_ENGINE, "WSL's result names Base's engine");
+  } finally {
+    alignment.holdRebuildPlansForTests(null);
+  }
 });
 
 test("the worker's result becomes the stored map in one function: checked intervals, outcome, passages and flags", () => {

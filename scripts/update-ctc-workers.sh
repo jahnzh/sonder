@@ -5,8 +5,10 @@
 # ~/sonder-ctc-worker (SONDER_CTC_DIR overrides):
 #   1. skip it when /health already reports this commit as its revision, or a commit with the same worker/;
 #   2. copy worker/ of the commit to worker.new and write the commit into worker.new/REVISION;
-#   3. import the new code with the host's own environment (worker.env), so a broken copy never goes live;
-#   4. refuse when /health shows a request or a whole-book job running;
+#   3. refuse when /health shows a request or a whole-book job running;
+#   4. install worker.new/requirements-book.txt into the host's env when its pins are not all there (#921), fetch
+#      the pinned model weights that are missing (download_model.py, checked by SHA-256), import the new code with
+#      the host's own environment (worker.env), so a broken copy never goes live, and refuse again when busy;
 #   5. move worker to worker.bak-<time>, worker.new to worker, restart the systemd user unit;
 #   6. wait until /health is ready and reports the commit; 7. keep the two newest worker.bak-* folders.
 # A failure on a host stops the script; the old code is in worker.bak-<time> (move it back and restart).
@@ -80,20 +82,44 @@ dir=$HOME/$1
 unit=$2
 revision=$3
 cd "$dir/worker.new"
-(set -a; . ../worker.env; set +a; ../env/bin/python -B -c 'import align; align.health()')
-echo "import ok"
-
-busy=$(curl -s -m 5 http://127.0.0.1:3012/health | python3 -c '
+refuse_when_busy() {
+  local busy
+  busy=$(curl -s -m 5 http://127.0.0.1:3012/health | python3 -c '
 import json, sys
 try:
     d = json.load(sys.stdin)
     print(d.get("activeRequests", 0), d.get("busy", False), (d.get("bookJobs") or {}).get("jobs", 0))
 except Exception:
     print("no answer")')
-case $busy in
-  "0 False 0"|"no answer") ;;
-  *) echo "worker is busy ($busy): not swapping" >&2; exit 3 ;;
-esac
+  case $busy in
+    "0 False 0"|"no answer") ;;
+    *) echo "worker is busy ($busy): not swapping" >&2; exit 3 ;;
+  esac
+}
+# Before the packages change (#921): a running SEW-D tiny encode imports transformers from this env.
+refuse_when_busy
+if [ -f requirements-book.txt ]; then
+  if ! ../env/bin/python -B - requirements-book.txt <<'PY'
+import sys
+from importlib.metadata import PackageNotFoundError, version
+pins = [line.split("#")[0].strip() for line in open(sys.argv[1])]
+for name, wanted in (pin.split("==", 1) for pin in pins if "==" in pin):
+    try:
+        if version(name) != wanted:
+            sys.exit(1)
+    except PackageNotFoundError:
+        sys.exit(1)
+PY
+  then
+    ../env/bin/pip install -q --no-cache-dir -r requirements-book.txt
+    echo "installed requirements-book.txt"
+  fi
+fi
+(set -a; . ../worker.env; set +a; ../env/bin/python -B download_model.py)
+(set -a; . ../worker.env; set +a; ../env/bin/python -B -c 'import align; align.health()')
+echo "import ok"
+
+refuse_when_busy  # again: a request may have come in while the packages and weights were set up
 
 cd "$dir"
 stamp=$(date +%s)

@@ -6,7 +6,9 @@ job does (`book_audio.decode_command`) and encodes it with `book_encode.encode_t
 so a run measures the worker's own code. Output holds timings and emission differences only.
 
   measure_encode.py --alignment MEDIA_ROOT/alignment --audio FILE --start S --seconds N --out DIR \
-      [--threads 6,10,20] [--batch 1] [--keep]
+      [--threads 6,10,20] [--batch 1] [--model wav2vec2-base|sew-d-tiny] [--keep]
+  measure_encode.py --alignment MEDIA_ROOT/alignment --pcm FILE.pcm --out DIR ...   (16 kHz mono s16le, no ffmpeg:
+      the same decoded stretch on every host; --start/--seconds then cut it)
 """
 import argparse
 import json
@@ -43,20 +45,36 @@ def compare(reference, other):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--alignment", required=True, help="the worker's MEDIA_ROOT/alignment (the model)")
-    parser.add_argument("--audio", required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--audio")
+    source.add_argument("--pcm", help="an already decoded stretch (16 kHz mono s16le); it is never deleted")
     parser.add_argument("--start", type=float, default=0)
     parser.add_argument("--seconds", type=float, default=300)
     parser.add_argument("--out", required=True)
     parser.add_argument("--threads", default="6,10,20", help="comma-separated torch thread counts")
     parser.add_argument("--batch", default="1", help="comma-separated windows per batch")
+    parser.add_argument("--model", default="wav2vec2-base", choices=("wav2vec2-base", "sew-d-tiny"),
+                        help="the book model to encode with (#921)")
     parser.add_argument("--keep", action="store_true", help="keep the emissions and the decoded stretch")
     args = parser.parse_args(argv)
     from book_encode import encode_tracks
     from ctc_acoustic import AcousticModel
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    pcm, samples = decode(args.audio, args.start, args.seconds, out)
-    model = AcousticModel(Path(args.alignment))
+    if args.pcm:
+        pcm = out / f"slice-{args.start}-{args.seconds}.pcm"
+        first, count = int(args.start * 16000), int(args.seconds * 16000)
+        with open(args.pcm, "rb") as source_file, pcm.open("wb") as target:
+            source_file.seek(first * 2)
+            target.write(source_file.read(count * 2))
+        samples = pcm.stat().st_size // 2
+    else:
+        pcm, samples = decode(args.audio, args.start, args.seconds, out)
+    if args.model == "sew-d-tiny":
+        from ctc_sewd import SewdModel
+        model = SewdModel(Path(args.alignment), "cpu")
+    else:
+        model = AcousticModel(Path(args.alignment))
     track = {"index": 0, "pcm": str(pcm), "samples": samples}
     reference = None
     for batch in [int(b) for b in args.batch.split(",")]:
@@ -65,7 +83,7 @@ def main(argv=None):
             started = time.monotonic()
             stats = encode_tracks(model, [track], folder, None, batch_size=batch,
                                   threads=lambda: threads)
-            row = {"threads": threads, "batch": batch, "audioSeconds": stats["audioSeconds"],
+            row = {"model": args.model, "threads": threads, "batch": batch, "audioSeconds": stats["audioSeconds"],
                    "encodeSeconds": round(stats["encodeSeconds"], 2), "realtime": round(stats["realtime"], 3),
                    "wallSeconds": round(time.monotonic() - started, 2), "load": os.getloadavg()}
             emissions = folder / "0.f16"

@@ -4,7 +4,7 @@
  * writes. A record without a status is queued; a record that cannot be read is failed with the reason.
  */
 import type { ActivityHealth, ActivityHostRestart, ActivityItemAction, ActivityState } from "../src/types.ts";
-import { BOOK_ENGINE, bookWorkerJobId, type AlignmentJob, type AlignmentPoolHostWork, type AlignmentPoolStatus } from "../src/reading-types.ts";
+import { bookWorkerJobId, isBookEngine, type AlignmentJob, type AlignmentPoolHostWork, type AlignmentPoolStatus } from "../src/reading-types.ts";
 import {
   activityFailure, clamp01, defineSource, formatAge, itemWork, offeredActions, stateFrom, stuckMultiplier, withWorks,
   type ActivityAction, type ActivityActionContext, type ActivityService, type ItemWork,
@@ -214,7 +214,7 @@ function parseAlignment(data: string, rowId: string): ParsedAlignment {
   try {
     const job = JSON.parse(data) as Record<string, any>;
     return {
-      coverage: clamp01(job.coverage), wholeBook: job.engine === BOOK_ENGINE, ...workerStage(job, rowId),
+      coverage: clamp01(job.coverage), wholeBook: isBookEngine(job.engine), ...workerStage(job, rowId),
       status: typeof job.status === "string" ? job.status : "queued",
       progress: clamp01(job.progress),
       error: typeof job.error === "string" && job.error ? job.error : null,

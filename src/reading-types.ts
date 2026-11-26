@@ -141,6 +141,16 @@ export type AlignmentStatus = (typeof ALIGNMENT_STATUSES)[number];
  */
 export const BOOK_ENGINE = "ctc-wav2vec2-base-960h-torchaudio-2.8-book-v2";
 /**
+ * SEW-D tiny's whole-book engine (#921): CPU hosts encode whole books with it (`ALIGNMENT_BOOK_MODEL`), GPU hosts keep
+ * Wav2Vec2 Base (`BOOK_ENGINE`). Jobs are planned under `BOOK_ENGINE`; the map records the engine the worker's result
+ * names. Both are one generation, so a map of either is current and never rebuilt for the other.
+ */
+export const SEWD_BOOK_ENGINE = "ctc-sew-d-tiny-100k-ft-ls100h-transformers-4.56-book-v2";
+/** Every whole-book engine a worker may run and a map may record. */
+export const BOOK_ENGINES: readonly string[] = [BOOK_ENGINE, SEWD_BOOK_ENGINE];
+/** The engine made (or runs) a whole-book job. Takes any string, as stored rows are read without validation. */
+export const isBookEngine = (engine: string | null | undefined) => !!engine && BOOK_ENGINES.includes(engine);
+/**
  * The pool worker's id for a whole-book job's current generation (#404): `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`. A
  * stored `bookJob` with another id belongs to an earlier generation.
  */

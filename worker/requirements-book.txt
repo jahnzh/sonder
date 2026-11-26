@@ -1,0 +1,7 @@
+# SEW-D tiny for whole-book jobs on CPU hosts (#921), from PyPI (requirements-ctc.txt is PyTorch's index).
+# transformers' version is part of the SEW-D book engine (book_model.BOOK_ENGINES, ctc_sewd.TRANSFORMERS_VERSION).
+transformers==4.56.2
+huggingface-hub==0.36.2
+tokenizers==0.22.2
+safetensors==0.8.0
+regex==2026.11.25
