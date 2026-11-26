@@ -111,7 +111,15 @@ for name, wanted in (pin.split("==", 1) for pin in pins if "==" in pin):
         sys.exit(1)
 PY
   then
-    ../env/bin/pip install -q --no-cache-dir -r requirements-book.txt
+    # An env made by uv has no pip (WSL's): install with uv into that interpreter.
+    if [ -x ../env/bin/pip ]; then
+      ../env/bin/pip install -q --no-cache-dir -r requirements-book.txt
+    elif uv=$(command -v uv || ls "$HOME/.local/bin/uv" 2>/dev/null); then
+      "$uv" pip install -q --no-cache --python ../env/bin/python -r requirements-book.txt
+    else
+      echo "the worker env has neither pip nor uv: install requirements-book.txt by hand" >&2
+      exit 1
+    fi
     echo "installed requirements-book.txt"
   fi
 fi
